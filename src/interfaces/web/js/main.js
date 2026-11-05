@@ -1,5 +1,5 @@
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
-import { h, clear, modal, toast, debounce, promptBox, $ } from './dom.js';
+import { h, clear, modal, toast, debounce, promptBox, confirmBox, $ } from './dom.js';
 import { api } from './api.js';
 import { state, on, emit } from './state.js';
 import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject } from './actions.js';
@@ -146,6 +146,73 @@ async function insertPresetElement(key) {
   }
 }
 
+async function newProjectAction() {
+  const name = await promptBox('New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
+  if (!name?.trim()) return;
+  try {
+    const created = await api.createProject({ name: name.trim(), visibility: 'private' });
+    state.projects = await api.projects();
+    state.selectedProjectIds.add(created.id);
+    await setActiveProject(created.id);
+    buildTopbar();
+    toast(`Project "${created.name}" created`, 'ok');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function saveProjectAction() {
+  const pid = Number(state.activeProjectId || 1);
+  try {
+    if (app.activeDoc()?.dirty) {
+      await app.activeDoc().save();
+    }
+    const res = await api.saveProject(pid, {});
+    state.projects = await api.projects();
+    buildTopbar();
+    toast(`Saved project "${res.project?.name || '#' + pid}"`, 'ok');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function cloneProjectAction() {
+  const pid = Number(state.activeProjectId || 1);
+  const curProj = (state.projects || []).find(p => Number(p.id) === pid) || { id: pid, name: 'Project' };
+  const name = await promptBox('Clone Project', { value: `${curProj.name} (Clone)`, label: 'Cloned Project Name', okLabel: 'Clone Project' });
+  if (!name?.trim()) return;
+  try {
+    const res = await api.cloneProject(pid, { name: name.trim() });
+    state.projects = await api.projects();
+    state.selectedProjectIds.add(res.project.id);
+    await setActiveProject(res.project.id);
+    buildTopbar();
+    toast(`Cloned project "${res.project.name}" (${res.copiedCount || 0} item(s))`, 'ok');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function deleteProjectAction() {
+  const pid = Number(state.activeProjectId || 1);
+  const curProj = (state.projects || []).find(p => Number(p.id) === pid);
+  if (pid === 1) {
+    toast('The Default Public Project (#1) cannot be deleted. Switch to a custom project first.', 'error');
+    return;
+  }
+  if (!await confirmBox(`Delete project "${curProj?.name || '#' + pid}"?`, { okLabel: 'Delete Project' })) return;
+  try {
+    await api.deleteProject(pid);
+    state.selectedProjectIds.delete(pid);
+    state.projects = await api.projects();
+    await setActiveProject(1);
+    buildTopbar();
+    toast(`Deleted project "${curProj?.name || '#' + pid}"`, 'ok');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
 function menuDef() {
   const s = state.settings, d = () => app.designer;
   const tick = v => (v ? '✓' : '');
@@ -153,6 +220,12 @@ function menuDef() {
   const selOne = d()?.selectedNodes?.()[0] || null;
   return [
     ['Project', [
+      ['New Project…', () => newProjectAction()],
+      ['Save Project', () => saveProjectAction()],
+      ['Clone Project…', () => cloneProjectAction()],
+      ['Browse Projects…', () => openProjectsModal()],
+      ['Delete Project…', () => deleteProjectAction()],
+      '-',
       ['Projects & Collaborators…', () => openProjectsModal()],
       ['Collaborative Change List (Approve / Reject)…', () => openChangesModal()],
       '-',
@@ -481,29 +554,31 @@ function buildProjectsMultiDropdown() {
 
     panel.append(
       h('div', { class: 'menu-sep', style: { margin: '6px 0' } }),
-      h('div', { class: 'row spread', style: { gap: '6px' } },
+      h('div', { class: 'row wrap', style: { gap: '4px' } },
         h('button', {
           class: 'btn sm primary grow create-new-project-btn',
-          onclick: async () => {
-            closeMenus();
-            const name = await promptBox('Create New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
-            if (!name?.trim()) return;
-            try {
-              const created = await api.createProject({ name: name.trim(), visibility: 'private' });
-              state.projects = await api.projects();
-              state.selectedProjectIds.add(created.id);
-              await setActiveProject(created.id);
-              buildTopbar();
-              toast(`Project "${created.name}" created`, 'ok');
-            } catch (err) {
-              toast(err.message, 'error');
-            }
-          }
-        }, '+ Create New Project'),
+          onclick: () => { closeMenus(); newProjectAction(); }
+        }, '+ New Project'),
         h('button', {
-          class: 'btn sm',
+          class: 'btn sm save-project-btn',
+          title: 'Save active project & open design',
+          onclick: () => { closeMenus(); saveProjectAction(); }
+        }, '💾 Save Project'),
+        h('button', {
+          class: 'btn sm clone-project-btn',
+          title: 'Clone active project with its settings and designs',
+          onclick: () => { closeMenus(); cloneProjectAction(); }
+        }, '⧉ Clone Project'),
+        h('button', {
+          class: 'btn sm browse-projects-btn',
+          title: 'Browse and manage all projects',
           onclick: () => { closeMenus(); openProjectsModal(); }
-        }, '⚙ Manage')
+        }, '📂 Browse Projects'),
+        h('button', {
+          class: 'btn sm danger delete-project-btn',
+          title: 'Delete active project',
+          onclick: () => { closeMenus(); deleteProjectAction(); }
+        }, '🗑 Delete Project')
       )
     );
   };

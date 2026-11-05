@@ -1437,4 +1437,183 @@ test('Persona 12 (@kyrpy-uiux-designer): 15 Design Styles (Glassmorphism, Brutal
   });
 });
 
+test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Slider (50-90%, Default Circle), Radial/Drawer/Slider/Carousel/Show-Element Button Actions, Project Lifecycle (New, Save, Clone, Browse, Delete), and Updated Help Guide', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Create a New Project and verify default button settings (buttonStyle: 'circle', buttonIconSizePct: 70)
+    const createProjRes = await req('POST', '/api/projects', {
+      name: 'Interactive Buttons Workspace',
+      description: 'Tests per-project button style & icon size + action menus',
+      visibility: 'private'
+    });
+    assert.equal(createProjRes.status, 200);
+    const proj = createProjRes.body;
+    assert.equal(proj.buttonStyle, 'circle', 'Default project button style must be circle');
+    assert.equal(proj.buttonIconSizePct, 70, 'Default project button icon size must be 70%');
+
+    const getBtnSettings = await req('GET', `/api/projects/${proj.id}/button-settings`);
+    assert.equal(getBtnSettings.status, 200);
+    assert.equal(getBtnSettings.body.buttonStyle, 'circle');
+    assert.equal(getBtnSettings.body.buttonIconSizePct, 70);
+    assert.ok(Array.isArray(getBtnSettings.body.styles) && getBtnSettings.body.styles.some(s => s.key === 'circle'));
+
+    // 2. Apply Button Style ('squircle' and 'circle') and Icon Size Slider (clamped 50-90%) across all buttons in library
+    const applySettingsRes = await req('POST', `/api/projects/${proj.id}/button-settings`, {
+      buttonStyle: 'circle',
+      buttonIconSizePct: 85,
+      scope: 'all'
+    });
+    assert.equal(applySettingsRes.status, 200);
+    assert.equal(applySettingsRes.body.buttonStyle, 'circle');
+    assert.equal(applySettingsRes.body.buttonIconSizePct, 85);
+    assert.ok(applySettingsRes.body.updatedCount > 0, 'Applying button settings must update buttons in library');
+
+    // Verify icon size clamping to [50, 90]
+    const clampHighRes = await req('POST', `/api/projects/${proj.id}/button-settings`, {
+      buttonStyle: 'pill',
+      buttonIconSizePct: 99,
+      scope: 'project'
+    });
+    assert.equal(clampHighRes.status, 200);
+    assert.equal(clampHighRes.body.buttonStyle, 'pill');
+    assert.equal(clampHighRes.body.buttonIconSizePct, 90, 'Icon size above 90% must clamp to 90%');
+
+    const clampLowRes = await req('POST', `/api/projects/${proj.id}/button-settings`, {
+      buttonStyle: 'circle',
+      buttonIconSizePct: 20,
+      scope: 'all'
+    });
+    assert.equal(clampLowRes.status, 200);
+    assert.equal(clampLowRes.body.buttonStyle, 'circle');
+    assert.equal(clampLowRes.body.buttonIconSizePct, 50, 'Icon size below 50% must clamp to 50%');
+
+    // Verify a button in the library has its icon scaled to 50% of its frame
+    const allButtons = (await req('GET', '/api/buttons')).body;
+    const sampleBtn = (await req('GET', `/api/buttons/${allButtons[0].id}`)).body;
+    const iconChild = (sampleBtn.nodes || []).find(n => n.refType === 'icon' || n.tag === 'use');
+    if (iconChild) {
+      assert.equal(iconChild.attrs.width, Math.round(Math.min(sampleBtn.width, sampleBtn.height) * 0.5), 'Button icon width must reflect 50% icon size');
+      assert.equal(iconChild.attrs.height, Math.round(Math.min(sampleBtn.width, sampleBtn.height) * 0.5), 'Button icon height must reflect 50% icon size');
+    }
+
+    // 3. Verify all Button Menu & Action modes: radial, drawer, slider-vertical, slider-horizontal, carousel (2D/3D roll), show-element
+    const allIcons = (await req('GET', '/api/icons')).body;
+    const allElements = (await req('GET', '/api/elements')).body;
+    const menuModes = [
+      { kind: 'radial', layout: 'radial', radius: 1.7, startAngle: -90, sweep: 360 },
+      { kind: 'drawer', layout: 'drawer', side: 'left', gap: 0.25 },
+      { kind: 'slider-vertical', layout: 'slider-vertical', direction: 'down', gap: 0.2 },
+      { kind: 'slider-horizontal', layout: 'slider-horizontal', direction: 'right', gap: 0.2 },
+      { kind: 'carousel', layout: 'carousel', dimension: '3d', direction: 'horizontal', gap: 0.25 },
+      { kind: 'show-element', layout: 'list', targetElementId: allElements[0]?.id || null }
+    ];
+
+    for (const mode of menuModes) {
+      const btnRes = await req('POST', '/api/buttons', {
+        name: `Btn ${mode.kind}`,
+        projectId: proj.id,
+        visibility: 'project',
+        width: 48,
+        height: 48
+      });
+      assert.equal(btnRes.status, 200, `Creating button for menu kind="${mode.kind}" must succeed`);
+      const cfgRes = await req('PUT', `/api/buttons/${btnRes.body.id}/menu/config`, mode);
+      assert.equal(cfgRes.status, 200, `Setting menu config kind="${mode.kind}" must succeed`);
+      assert.equal(cfgRes.body.kind, mode.kind);
+
+      const addItem1 = await req('POST', `/api/buttons/${btnRes.body.id}/menu/items`, {
+        label: 'Action One',
+        iconId: allIcons[0]?.id || null,
+        action: 'act-1'
+      });
+      assert.equal(addItem1.status, 200);
+      const addItem2 = await req('POST', `/api/buttons/${btnRes.body.id}/menu/items`, {
+        label: 'Action Two',
+        iconId: allIcons[1]?.id || null,
+        action: 'act-2'
+      });
+      assert.equal(addItem2.status, 200);
+
+      const svgRes = await req('GET', `/api/buttons/${btnRes.body.id}/svg?openMenu=1`);
+      assert.equal(svgRes.status, 200);
+      assert.ok(String(svgRes.body).includes('<svg'), `SVG for button menu "${mode.kind}" must render cleanly`);
+    }
+
+    // Verify click actions on placed button nodes inside a screen (radial-menu, drawer-menu, slider-vertical, slider-horizontal, carousel-menu, show-element)
+    const actionTypes = ['radial-menu', 'drawer-menu', 'slider-vertical', 'slider-horizontal', 'carousel-menu', 'show-element'];
+    const scrRes = await req('POST', '/api/screens', {
+      name: 'Action Menus Screen',
+      projectId: proj.id,
+      visibility: 'project',
+      width: 390,
+      height: 844
+    });
+    assert.equal(scrRes.status, 200);
+    for (let i = 0; i < actionTypes.length; i++) {
+      const actType = actionTypes[i];
+      const nodeRes = await req('POST', `/api/screens/${scrRes.body.id}/nodes`, {
+        kind: 'instance',
+        tag: 'use',
+        refType: 'button',
+        refId: allButtons[0].id,
+        name: `btn-${actType}`,
+        attrs: { x: 24 + i * 52, y: 120, width: 48, height: 48 },
+        onClick: {
+          type: actType,
+          targetId: allElements[0]?.id || null,
+          displayMode: 'popup',
+          side: 'right',
+          direction: actType === 'carousel-menu' ? 'vertical' : (actType === 'slider-horizontal' ? 'right' : 'down'),
+          dimension: '3d'
+        }
+      });
+      assert.equal(nodeRes.status, 200, `Creating node with onClick.type="${actType}" must return 200`);
+      assert.equal(nodeRes.body.onClick.type, actType);
+    }
+
+    // 4. Project lifecycle: Save Project, Clone Project, Browse Projects, Delete Project
+    const saveProjRes = await req('POST', `/api/projects/${proj.id}/save`, {
+      name: 'Interactive Buttons Workspace Saved',
+      buttonStyle: 'circle',
+      buttonIconSizePct: 75
+    });
+    assert.equal(saveProjRes.status, 200);
+    assert.equal(saveProjRes.body.name, 'Interactive Buttons Workspace Saved');
+    assert.equal(saveProjRes.body.buttonStyle, 'circle');
+    assert.equal(saveProjRes.body.buttonIconSizePct, 75);
+
+    const cloneProjRes = await req('POST', `/api/projects/${proj.id}/clone`, {
+      name: 'Cloned Interactive Workspace'
+    });
+    assert.equal(cloneProjRes.status, 200);
+    assert.equal(cloneProjRes.body.name, 'Cloned Interactive Workspace');
+    assert.equal(cloneProjRes.body.buttonStyle, 'circle');
+    assert.equal(cloneProjRes.body.buttonIconSizePct, 75);
+    assert.ok(cloneProjRes.body.copiedItemsCount >= 1, 'Cloning project must copy project-scoped designs into the cloned project');
+
+    const browseProjsRes = await req('GET', '/api/projects');
+    assert.equal(browseProjsRes.status, 200);
+    assert.ok(browseProjsRes.body.some(p => p.id === cloneProjRes.body.id), 'Browse projects must list cloned project');
+
+    const delProjRes = await req('DELETE', `/api/projects/${cloneProjRes.body.id}`);
+    assert.equal(delProjRes.status, 200);
+    assert.equal(delProjRes.body.deleted, true);
+
+    // 5. Verify Help guide (/guide/usage-and-guide.html) and Screen Inspector visibility removal
+    const guideRes = await req('GET', '/guide/usage-and-guide.html');
+    assert.equal(guideRes.status, 200);
+    const guideHtml = String(guideRes.body);
+    assert.ok(guideHtml.includes('50% – 90%'), 'Help guide must document 50-90% button icon size slider');
+    assert.ok(guideHtml.includes('Carousel animated roll menu'), 'Help guide must document Carousel animated roll menu');
+    assert.ok(guideHtml.includes('Clone Project'), 'Help guide must document Clone Project menu command');
+
+    const inspRes = await req('GET', '/js/components/inspector.js');
+    assert.equal(inspRes.status, 200);
+    const inspJs = String(inspRes.body);
+    assert.ok(inspJs.includes("type === 'screen'\n        ? lockField"), 'Screen inspector must omit the Visibility setting');
+  });
+});
+
+
 

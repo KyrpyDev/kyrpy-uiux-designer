@@ -65,7 +65,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   const settingsRepo = new SettingsRepository(db, pgSync);
 
   const auth = new AuthService({ users: userRepo, transaction });
-  const projects = new ProjectService({ projects: projectRepo, users: userRepo, auth, changes: changeRepo, db, designs, workflows: workflowRepo, transaction });
+  const projects = new ProjectService({ projects: projectRepo, users: userRepo, auth, changes: changeRepo, db, designs, nodes, workflows: workflowRepo, transaction });
   const collaboration = new CollaborationService({
     changes: changeRepo,
     projects,
@@ -133,6 +133,8 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     parseSvg: svgTextToNodes,
     transaction
   });
+  projects.services = services;
+  projects.libraryTransfer = libraryTransfer;
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log });

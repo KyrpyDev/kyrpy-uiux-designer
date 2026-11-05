@@ -47,12 +47,34 @@ export const EVENT_TRIGGERS = ['click', 'dblclick', 'mouseover', 'mouseleave', '
  *   animate  play/toggle animation on node           { type, animationType?: string, targetNodeId?: number }
  *   toggle   toggle flip / active state              { type, targetNodeId?: number }
  */
-export const CLICK_ACTIONS = ['screen', 'popup', 'drawer', 'back', 'element', 'toolbar', 'animate', 'toggle'];
+export const CLICK_ACTIONS = [
+  'screen',
+  'popup',
+  'drawer',
+  'back',
+  'element',
+  'show-element',
+  'toolbar',
+  'animate',
+  'toggle',
+  'radial-menu',
+  'drawer-menu',
+  'slider-vertical',
+  'slider-horizontal',
+  'carousel-menu'
+];
 export const EVENT_ACTIONS = CLICK_ACTIONS;
 export const DRAWER_SIDES = ['left', 'right', 'top', 'bottom'];
 export const TOOLBAR_POSITIONS = ['top', 'bottom', 'left', 'right', 'floating'];
 /** Library type each action needs as its target. */
-export const CLICK_TARGET_TYPE = { screen: 'screen', popup: 'element', drawer: 'element', element: 'element', toolbar: 'element' };
+export const CLICK_TARGET_TYPE = {
+  screen: 'screen',
+  popup: 'element',
+  drawer: 'element',
+  element: 'element',
+  'show-element': 'element',
+  toolbar: 'element'
+};
 
 /** Cleans a click/event action: null for "nothing happens", else a validated object. Throws ValidationError on a malformed one. */
 export function normalizeClickAction(input) {
@@ -63,6 +85,23 @@ export function normalizeClickAction(input) {
   if (type === 'back') return { type };
   if (type === 'animate') return { type, animationType: str(input.animationType, 'pulse'), ...(input.targetNodeId ? { targetNodeId: Number(input.targetNodeId) } : {}) };
   if (type === 'toggle') return { type, ...(input.targetNodeId ? { targetNodeId: Number(input.targetNodeId) } : {}) };
+  if (['radial-menu', 'drawer-menu', 'slider-vertical', 'slider-horizontal', 'carousel-menu'].includes(type)) {
+    const targetId = input.targetId != null && input.targetId !== '' ? Number(input.targetId) : null;
+    const out = { type };
+    if (targetId && Number.isInteger(targetId) && targetId > 0) out.targetId = targetId;
+    if (type === 'drawer-menu') {
+      const side = input.side === undefined || input.side === '' ? 'right' : String(input.side);
+      if (!DRAWER_SIDES.includes(side)) throw new ValidationError(`drawer side must be one of ${DRAWER_SIDES.join(', ')}`);
+      out.side = side;
+    }
+    if (type === 'slider-vertical') out.direction = ['up', 'down'].includes(input.direction) ? input.direction : 'down';
+    if (type === 'slider-horizontal') out.direction = ['left', 'right'].includes(input.direction) ? input.direction : 'right';
+    if (type === 'carousel-menu') {
+      out.dimension = ['2d', '3d'].includes(input.dimension) ? input.dimension : '3d';
+      out.direction = ['horizontal', 'vertical'].includes(input.direction) ? input.direction : 'horizontal';
+    }
+    return out;
+  }
   if (type === 'toolbar') {
     const position = input.position === undefined || input.position === '' ? 'top' : String(input.position);
     if (!TOOLBAR_POSITIONS.includes(position)) throw new ValidationError(`toolbar position must be one of ${TOOLBAR_POSITIONS.join(', ')}`);
@@ -81,6 +120,10 @@ export function normalizeClickAction(input) {
     const side = input.side === undefined || input.side === '' ? 'right' : String(input.side);
     if (!DRAWER_SIDES.includes(side)) throw new ValidationError(`drawer side must be one of ${DRAWER_SIDES.join(', ')}`);
     return { type, targetId, side };
+  }
+  if (type === 'show-element') {
+    const displayMode = ['popup', 'modal', 'drawer', 'inline'].includes(input.displayMode) ? input.displayMode : 'popup';
+    return { type, targetId, displayMode };
   }
   return { type, targetId };
 }
@@ -163,18 +206,108 @@ export const DEFAULT_BUTTON_TEMPLATES = [
   { key: 'retro-light-btn', name: 'Pop & Neon Retro Arcade Button (Light)', category: 'retro', shape: 'rounded', width: 172, height: 48, rxRatio: 0.22, marginRatio: 0.15, strokeRatio: 1.8, role: 'button', hoverEffect: 'glow', indicatorEffect: 'contour-blink', meta: { mode: 'light', pairKey: 'retro-dark-btn', themeKey: 'retro-light', styleFamily: 'Pop & Neon Retro UI' } }
 ];
 
-export const MENU_LAYOUTS = ['fan', 'list'];
-export const MENU_KINDS = ['popup', 'rotating'];
+export const BUTTON_STYLES = [
+  { key: 'circle', label: 'Circle (Default)', shape: 'circle', rxRatio: 0.5 },
+  { key: 'pill', label: 'Pill / Capsule', shape: 'pill', rxRatio: 0.48 },
+  { key: 'rounded', label: 'Rounded Rectangle', shape: 'rounded', rxRatio: 0.28 },
+  { key: 'squircle', label: 'Smooth Squircle', shape: 'squircle', rxRatio: 0.36 },
+  { key: 'square', label: 'Crisp Square', shape: 'square', rxRatio: 0.1 },
+  { key: 'sharp', label: 'Sharp Edge', shape: 'sharp', rxRatio: 0.03 },
+  { key: 'outline', label: 'Outline Ring', shape: 'circle', rxRatio: 0.5, fill: 'none', strokeRatio: 1.4 },
+  { key: 'ghost', label: 'Ghost Minimal', shape: 'circle', rxRatio: 0.5, opacity: 0.85 }
+];
+
+export const DEFAULT_PROJECT_BUTTON_SETTINGS = {
+  buttonStyle: 'circle',
+  buttonIconSizePct: 70
+};
+
+export function normalizeButtonIconSizePct(pct, fallback = 70) {
+  const n = Number(pct);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(50, Math.min(90, Math.round(n)));
+}
+
+export function normalizeButtonStyleKey(styleKey, fallback = 'circle') {
+  const s = String(styleKey || '').trim().toLowerCase();
+  return BUTTON_STYLES.some(x => x.key === s) ? s : fallback;
+}
+
+/**
+ * Applies a project-wide `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–90%`)
+ * to a button's node list (updating surface corner radius/shape and scaling `<use refType="icon">` to 50–90%).
+ */
+export function applyButtonStyleAndIconSizeToNodes(nodes, { width = 64, height = 64, buttonStyle = 'circle', buttonIconSizePct = 70 } = {}) {
+  const styleKey = normalizeButtonStyleKey(buttonStyle);
+  const styleDef = BUTTON_STYLES.find(s => s.key === styleKey) || BUTTON_STYLES[0];
+  const pct = normalizeButtonIconSizePct(buttonIconSizePct);
+  const w = Number(width) || 64;
+  const h = Number(height) || 64;
+  const minDim = Math.min(w, h);
+  const targetRx = Math.round(minDim * styleDef.rxRatio * 100) / 100;
+  const iconSz = Math.round(((minDim * pct) / 100) * 100) / 100;
+  const hasText = (nodes || []).some(o => o.tag === 'text' && String(o.text || '').trim().length > 0);
+
+  return (nodes || []).map((n, idx) => {
+    const attrs = { ...(n.attrs || {}) };
+    const isSurface = n.role === 'button' || n.name === 'surface' || (idx === 0 && ['rect', 'circle'].includes(n.tag) && n.kind !== 'instance');
+    if (isSurface) {
+      if (n.tag === 'rect') {
+        attrs.rx = targetRx;
+        if (attrs.ry !== undefined) attrs.ry = targetRx;
+        if (styleDef.fill === 'none') attrs.fill = 'none';
+        else if (attrs.fill === 'none' && n.role === 'button') delete attrs.fill;
+      } else if (n.tag === 'circle' && !['circle', 'outline', 'ghost'].includes(styleKey)) {
+        const r = Number(attrs.r) || minDim / 2;
+        const cx = Number(attrs.cx) || w / 2;
+        const cy = Number(attrs.cy) || h / 2;
+        delete attrs.cx;
+        delete attrs.cy;
+        delete attrs.r;
+        attrs.x = Math.round((cx - r) * 100) / 100;
+        attrs.y = Math.round((cy - r) * 100) / 100;
+        attrs.width = Math.round(r * 2 * 100) / 100;
+        attrs.height = Math.round(r * 2 * 100) / 100;
+        attrs.rx = targetRx;
+        return { ...n, tag: 'rect', attrs };
+      }
+      return { ...n, attrs };
+    }
+    if ((n.role === 'shine' || n.name === 'shine') && n.tag === 'rect') {
+      attrs.rx = Math.max(2, Math.round(targetRx * 0.55));
+      return { ...n, attrs };
+    }
+    if ((n.kind === 'instance' || n.tag === 'use') && n.refType === 'icon') {
+      attrs.width = iconSz;
+      attrs.height = iconSz;
+      if (!hasText || Math.abs(w - h) <= 16) {
+        attrs.x = Math.round(((w - iconSz) / 2) * 100) / 100;
+        attrs.y = Math.round(((h - iconSz) / 2) * 100) / 100;
+      } else {
+        attrs.x = Math.max(4, Math.round(((h - iconSz) / 2) * 100) / 100);
+        attrs.y = Math.round(((h - iconSz) / 2) * 100) / 100;
+      }
+      return { ...n, attrs };
+    }
+    return { ...n, attrs };
+  });
+}
+
+export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
+export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element'];
 /** Default menu settings of a button. Sizes are ratios of the button size so the menu scales with the button. */
 export const DEFAULT_MENU = {
-  kind: 'popup',        // popup = opens in place; rotating = replaces the centre icon with the clicked item and shows its sub items
-  layout: 'list',       // fan | list
-  direction: 'up',      // list: up | down | left | right
-  radius: 1.7,          // fan radius / button size
-  startAngle: -160,     // fan: angle of the first item, degrees (0 = right, -90 = up)
-  sweep: 140,           // fan: angle covered by the items
+  kind: 'popup',        // popup | rotating | radial | drawer | slider-vertical | slider-horizontal | carousel | show-element
+  layout: 'list',       // fan | radial | list | drawer | slider-vertical | slider-horizontal | carousel
+  direction: 'up',      // list/slider: up | down | left | right; carousel: horizontal | vertical
+  dimension: '3d',      // carousel: 2d | 3d
+  side: 'right',        // drawer: left | right | top | bottom
+  targetElementId: null,// show-element: element ID to open when triggered
+  radius: 1.7,          // fan/radial radius / button size
+  startAngle: -160,     // fan/radial: angle of the first item, degrees (0 = right, -90 = up)
+  sweep: 140,           // fan/radial: angle covered by the items
   itemScale: 0.75,      // item size / button size
-  gap: 0.2,             // list gap / button size
+  gap: 0.2,             // list/slider/carousel gap / button size
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

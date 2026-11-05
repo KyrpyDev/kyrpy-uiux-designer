@@ -170,15 +170,18 @@ export class Inspector {
       })));
     }
     if (type === 'element') kids.push(this.field('HTML element', this.text('doc-tag', doc.meta?.htmlTag, v => d.updateDoc({ meta: { ...doc.meta, htmlTag: v.trim() } }), { placeholder: 'button, input, div…' })));
+    const lockField = this.field('Lock design', h('label', { class: 'row', style: { paddingTop: '5px' } }, h('input', { type: 'checkbox', checked: !!doc.locked, onchange: e => d.updateDoc({ locked: e.target.checked }) }), h('span', {}, doc.locked ? '🔒 Locked' : '🔓 Editable')));
     kids.push(
-      h('div', { class: 'grid2' },
-        this.field('Visibility', this.select('doc-vis', doc.visibility || 'public', [
-          ['public', '🌐 Public (all users)'],
-          ['private', '👤 Private (all my projects)'],
-          ['project', '📁 Project-only']
-        ], v => d.updateDoc({ visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 }))),
-        this.field('Lock design', h('label', { class: 'row', style: { paddingTop: '5px' } }, h('input', { type: 'checkbox', checked: !!doc.locked, onchange: e => d.updateDoc({ locked: e.target.checked }) }), h('span', {}, doc.locked ? '🔒 Locked' : '🔓 Editable')))
-      ),
+      type === 'screen'
+        ? lockField
+        : h('div', { class: 'grid2' },
+            this.field('Visibility', this.select('doc-vis', doc.visibility || 'public', [
+              ['public', '🌐 Public (all users)'],
+              ['private', '👤 Private (all my projects)'],
+              ['project', '📁 Project-only']
+            ], v => d.updateDoc({ visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 }))),
+            lockField
+          ),
       h('div', { class: 'row wrap', style: { fontSize: '11px' } },
         h('span', { class: 'badge' }, `Owner ID: #${doc.rootOwnerId || doc.creatorId || 1}`),
         doc.clonedFromId ? h('span', { class: 'badge accent' }, `Cloned from #${doc.clonedFromId}`) : null,
@@ -192,7 +195,7 @@ export class Inspector {
     return this.section(`${type} · ${doc.key}${doc.builtin ? ' · built-in' : ''}`, ...kids);
   }
 
-  /** Buttons & Button Instances: popup / rotating menu settings and the nested menu items (order, add, remove, visible). */
+  /** Buttons & Button Instances: action/menu modes (radial, drawer, vertical/horizontal slider, carousel animated roll, show element) and nested menu items. */
   menuSection(buttonId = null) {
     const d = this.d;
     const bid = buttonId || (d.type === 'button' ? d.doc.id : null);
@@ -201,13 +204,58 @@ export class Inspector {
     const cfg = { ...DEFAULT_MENU, ...(btnDoc.meta?.menu || {}) }, rows = btnDoc.menuItems || [];
     const set = patch => menuActions.config(d, patch, bid);
     const num = (k, label, step = 0.05) => this.field(label, this.num(`mc-${bid}-${k}`, cfg[k], v => set({ [k]: v }), { step }));
+    const els = [...(state.library.elements || [])].sort((a, b) => a.name.localeCompare(b.name));
     const settings = [
       h('div', { class: 'grid2' },
-        this.field('Menu type', this.select(`mc-${bid}-kind`, cfg.kind, [['popup', 'popup (opens in place)'], ['rotating', 'rotating (centre takes the clicked icon)']], v => set({ kind: v }))),
-        this.field('Layout', this.select(`mc-${bid}-layout`, cfg.layout, MENU_LAYOUTS, v => set({ layout: v })))),
-      cfg.layout === 'fan'
+        this.field('Button Action / Menu Mode', this.select(`mc-${bid}-kind`, cfg.kind, [
+          ['popup', 'Popup Menu (opens in place)'],
+          ['rotating', 'Rotating Radial Hub'],
+          ['radial', 'Radial Menu (arc fan)'],
+          ['drawer', 'Drawer Menu (slide-in panel)'],
+          ['slider-vertical', 'Vertical Slider Menu'],
+          ['slider-horizontal', 'Horizontal Slider Menu'],
+          ['carousel', 'Carousel Animated Roll Menu (2D/3D)'],
+          ['show-element', 'Show Element (Popup / Modal / Drawer)']
+        ], v => {
+          const autoLayout = v === 'radial' || v === 'rotating'
+            ? 'fan'
+            : ['drawer', 'slider-vertical', 'slider-horizontal', 'carousel'].includes(v)
+              ? v
+              : cfg.layout;
+          set({ kind: v, layout: autoLayout });
+        })),
+        this.field('Menu Layout', this.select(`mc-${bid}-layout`, cfg.layout, [
+          ['fan', 'Radial / Fan Arc'],
+          ['radial', 'Radial Circle'],
+          ['list', 'Directional List'],
+          ['drawer', 'Slide-Out Drawer'],
+          ['slider-vertical', 'Vertical Slider'],
+          ['slider-horizontal', 'Horizontal Slider'],
+          ['carousel', 'Carousel Animated Roll']
+        ], v => set({ layout: v })))
+      ),
+      cfg.kind === 'show-element'
+        ? this.field('Element to Show', this.select(`mc-${bid}-target-el`, cfg.targetElementId ?? '', [
+            ['', '(choose an element…)'],
+            ...els.map(el => [el.id, `${el.name} (${el.key})`])
+          ], v => set({ targetElementId: v ? Number(v) : null })))
+        : null,
+      (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
         ? h('div', { class: 'grid2' }, num('radius', 'Radius × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
-        : h('div', { class: 'grid2' }, this.field('Direction', this.select(`mc-${bid}-dir`, cfg.direction, ['up', 'down', 'left', 'right'], v => set({ direction: v }))), num('itemScale', 'Item size × button'), num('gap', 'Gap × button')),
+        : (cfg.layout === 'carousel' || cfg.kind === 'carousel')
+          ? h('div', { class: 'grid2' },
+              this.field('Roll Dimension', this.select(`mc-${bid}-dim`, cfg.dimension || '3d', [['3d', '3D Perspective Roll'], ['2d', '2D Flat Roll']], v => set({ dimension: v }))),
+              this.field('Roll Direction', this.select(`mc-${bid}-dir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal Roll'], ['vertical', 'Vertical Roll']], v => set({ direction: v }))),
+              num('itemScale', 'Item size × button'),
+              num('gap', 'Gap × button')
+            )
+          : (cfg.layout === 'drawer' || cfg.kind === 'drawer')
+            ? h('div', { class: 'grid2' },
+                this.field('Drawer Side', this.select(`mc-${bid}-side`, cfg.side || 'right', DRAWER_SIDES, v => set({ side: v, direction: v }))),
+                num('itemScale', 'Item size × button'),
+                num('gap', 'Gap × button')
+              )
+            : h('div', { class: 'grid2' }, this.field('Direction', this.select(`mc-${bid}-dir`, cfg.direction, ['up', 'down', 'left', 'right'], v => set({ direction: v }))), num('itemScale', 'Item size × button'), num('gap', 'Gap × button')),
       this.field('Centre icon turns while open (°, 0 = off)', this.num(`mc-${bid}-rot`, cfg.rotateOnOpen, v => set({ rotateOnOpen: v }), { step: 5 }))
     ];
     const tree = buildMenuTree(rows, { includeHidden: true });
@@ -510,20 +558,36 @@ export class Inspector {
     const typeSel = this.select('ck-type', type, [
       ['none', '(nothing)'],
       ['screen', 'Route to a screen'],
+      ['show-element', 'Show element (Popup / Modal / Drawer / Inline)'],
       ['element', 'Open an element'],
       ['popup', 'Open a popup'],
       ['toolbar', 'Open a small element toolbar'],
       ['drawer', 'Open a drawer'],
+      ['radial-menu', 'Act as Radial Menu'],
+      ['drawer-menu', 'Act as Drawer Menu'],
+      ['slider-vertical', 'Act as Vertical Slider Menu'],
+      ['slider-horizontal', 'Act as Horizontal Slider Menu'],
+      ['carousel-menu', 'Act as Carousel Animated Roll Menu (2D/3D)'],
       ['animate', 'Trigger animation'],
       ['toggle', 'Toggle visibility / flip'],
       ['back', 'Go back']
     ], v => {
       if (v === 'none') return save(null);
       if (v === 'back') return save({ type: 'back' });
-      const isEl = ['element', 'popup', 'toolbar', 'drawer'].includes(v);
-      const wasEl = ['element', 'popup', 'toolbar', 'drawer'].includes(cur?.type);
+      if (['radial-menu', 'drawer-menu', 'slider-vertical', 'slider-horizontal', 'carousel-menu'].includes(v)) {
+        return save({
+          type: v,
+          ...(cur?.targetId ? { targetId: cur.targetId } : {}),
+          ...(v === 'drawer-menu' ? { side: cur?.side || 'right' } : {}),
+          ...(v === 'slider-vertical' ? { direction: cur?.direction || 'down' } : {}),
+          ...(v === 'slider-horizontal' ? { direction: cur?.direction || 'right' } : {}),
+          ...(v === 'carousel-menu' ? { dimension: cur?.dimension || '3d', direction: cur?.direction || 'horizontal' } : {})
+        });
+      }
+      const isEl = ['element', 'show-element', 'popup', 'toolbar', 'drawer'].includes(v);
+      const wasEl = ['element', 'show-element', 'popup', 'toolbar', 'drawer'].includes(cur?.type);
       const keep = cur?.targetId && ((v === 'screen' && cur.type === 'screen') || (isEl && wasEl)) ? cur.targetId : null;
-      if (keep) return save({ type: v, targetId: keep, ...(v === 'drawer' ? { side: cur.side || 'right' } : {}) });
+      if (keep) return save({ type: v, targetId: keep, ...(v === 'drawer' ? { side: cur.side || 'right' } : {}), ...(v === 'show-element' ? { displayMode: cur.displayMode || 'popup' } : {}) });
       if (v === 'animate' || v === 'toggle') return save({ type: v, animationType: 'pulse' });
       this.pendingClick.set(e.id, { type: v }); this.render();
     });
@@ -533,11 +597,25 @@ export class Inspector {
       const screens = this.screenChoices();
       kids.push(this.field('Target screen', this.select('ck-screen', cur.targetId ?? '', [['', '(choose a screen…)'], ...screens.filter(s => s.id !== d.doc.id).map(s => [s.id, s.name])], v => v && save({ type: 'screen', targetId: Number(v) }))));
       if (cur.targetId) open.push(h('button', { class: 'btn small', onclick: () => d.opts.openDesign?.('screen', cur.targetId) }, 'Open that screen'));
-    } else if (['element', 'popup', 'toolbar', 'drawer'].includes(type)) {
+    } else if (['element', 'show-element', 'popup', 'toolbar', 'drawer'].includes(type)) {
       const els = [...state.library.elements].sort((a, b) => a.name.localeCompare(b.name));
-      kids.push(this.field('Element / Toolbar to open', this.select('ck-element', cur.targetId ?? '', [['', '(choose an element…)'], ...els.map(x => [x.id, x.name])], v => v && save({ type, targetId: Number(v), ...(type === 'drawer' ? { side: cur.side || 'right' } : {}) }))));
+      kids.push(this.field('Element / Toolbar to open', this.select('ck-element', cur.targetId ?? '', [['', '(choose an element…)'], ...els.map(x => [x.id, x.name])], v => v && save({ type, targetId: Number(v), ...(type === 'drawer' ? { side: cur.side || 'right' } : {}), ...(type === 'show-element' ? { displayMode: cur.displayMode || 'popup' } : {}) }))));
       if (type === 'drawer') kids.push(this.field('Slides in from', this.select('ck-side', cur.side || 'right', DRAWER_SIDES, v => cur.targetId && save({ type, targetId: cur.targetId, side: v }))));
+      if (type === 'show-element') kids.push(this.field('Display Mode', this.select('ck-display-mode', cur.displayMode || 'popup', [['popup', 'Popup / Modal Box'], ['drawer', 'Slide-In Drawer'], ['inline', 'Inline Overlay']], v => cur.targetId && save({ type, targetId: cur.targetId, displayMode: v }))));
       if (cur.targetId) open.push(h('button', { class: 'btn small', onclick: () => d.opts.openDesign?.('element', cur.targetId) }, 'Open that element'));
+    } else if (type === 'drawer-menu') {
+      kids.push(this.field('Drawer Side', this.select('ck-drawer-menu-side', cur?.side || 'right', DRAWER_SIDES, v => save({ ...cur, type, side: v }))));
+    } else if (type === 'slider-vertical') {
+      kids.push(this.field('Slider Direction', this.select('ck-slider-v-dir', cur?.direction || 'down', [['down', 'Slide Down'], ['up', 'Slide Up']], v => save({ ...cur, type, direction: v }))));
+    } else if (type === 'slider-horizontal') {
+      kids.push(this.field('Slider Direction', this.select('ck-slider-h-dir', cur?.direction || 'right', [['right', 'Slide Right'], ['left', 'Slide Left']], v => save({ ...cur, type, direction: v }))));
+    } else if (type === 'carousel-menu') {
+      kids.push(
+        h('div', { class: 'grid2' },
+          this.field('Roll Dimension', this.select('ck-car-dim', cur?.dimension || '3d', [['3d', '3D Perspective Roll'], ['2d', '2D Flat Roll']], v => save({ ...cur, type, dimension: v, direction: cur?.direction || 'horizontal' }))),
+          this.field('Roll Direction', this.select('ck-car-dir', cur?.direction || 'horizontal', [['horizontal', 'Horizontal Roll'], ['vertical', 'Vertical Roll']], v => save({ ...cur, type, dimension: cur?.dimension || '3d', direction: v })))
+        )
+      );
     } else if (type === 'animate' || type === 'toggle') {
       kids.push(this.field('Animation preset', this.select('ck-anim', cur.animationType || 'pulse', ['pulse', 'bounce', 'flip', 'shake', 'swing', 'glow', 'fade'], v => save({ type, animationType: v }))));
     }
@@ -559,10 +637,16 @@ export class Inspector {
     const hint = {
       none: 'Pick what happens on click, or open Multi-Events for mouseover, release, drag&drop, etc.',
       screen: 'Routes to the target screen.',
+      'show-element': 'Shows the chosen element as a popup/modal box, drawer, or inline overlay.',
       element: 'Opens the chosen element overlay.',
       popup: 'Opens the element in a modal dialog over the page.',
       toolbar: 'Opens a floating small element toolbar anchored near this element.',
       drawer: 'Slides the element in from the chosen edge.',
+      'radial-menu': 'Acts as a radial fan menu around the button.',
+      'drawer-menu': 'Acts as a slide-in drawer menu.',
+      'slider-vertical': 'Acts as a vertical sliding menu bar.',
+      'slider-horizontal': 'Acts as a horizontal sliding menu bar.',
+      'carousel-menu': 'Acts as a 2D/3D horizontal or vertical animated roll carousel menu.',
       animate: 'Runs an interactive animation on this element.',
       toggle: 'Toggles visibility or flips a flip-box.',
       back: 'Navigates back one screen.'

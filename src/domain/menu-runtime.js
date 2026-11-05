@@ -19,7 +19,8 @@ export function bindMenus(root, opts) {
   function get(btn) { var s = states.get(btn); if (!s) { s = { open: false, path: [] }; states.set(btn, s); } return s; }
   function apply(btn, st) {
     var menu = btn.querySelector('.ud-menu');
-    var rotating = !!menu && menu.getAttribute('data-kind') === 'rotating';
+    var kind = menu ? menu.getAttribute('data-kind') : '';
+    var rotating = kind === 'rotating' || kind === 'radial';
     var key = st.path.join('/');
     btn.setAttribute('data-open', st.open ? '1' : '0');
     btn.setAttribute('data-center', rotating && st.open && st.path.length ? '1' : '0');
@@ -34,6 +35,16 @@ export function bindMenus(root, opts) {
     if (!btn) return;
     var st = get(btn), next;
     if (t.getAttribute('data-rm') === 'center') {
+      var showElId = t.getAttribute('data-show-element-id');
+      if (showElId && opts.onAction) {
+        opts.onAction({
+          menu: btn.getAttribute('data-menu'),
+          item: 'center',
+          action: 'show-element',
+          targetElement: showElId,
+          targetElementId: showElId
+        });
+      }
       if (!st.open) next = { open: true, path: [] };
       else if (st.path.length) next = { open: true, path: st.path.slice(0, -1) };
       else next = { open: false, path: [] };

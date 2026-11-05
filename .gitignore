@@ -38,6 +38,11 @@ credentials.env
 # Node / Runtime / Temporary Artifacts inside whitelisted folders
 node_modules/
 src/node_modules/
+src/data/designer.prod.db
+src/data/designer.prod.db-*
+src/data/*.prod.db*
+src/data/*.backup.db*
+src/data/*.tmp.db*
 src/data/*.db-shm
 src/data/*.db-wal
 src/data/*.db-journal

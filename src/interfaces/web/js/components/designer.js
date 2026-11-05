@@ -1084,9 +1084,26 @@ export class Designer {
       this.showToolbarPreview(n, c, el);
       return;
     }
+    if (['radial-menu', 'drawer-menu', 'slider-vertical', 'slider-horizontal', 'carousel-menu'].includes(c.type)) {
+      const domEl = this.stage.querySelector(`[data-el="${n.id}"]`);
+      const udBtn = domEl?.classList?.contains('ud-btn') ? domEl : domEl?.querySelector?.('.ud-btn') || this.stage.querySelector('.ud-btn');
+      if (udBtn && this.menu?.ctl) {
+        const curSt = this.menu.ctl.get(udBtn);
+        this.menu.ctl.set(udBtn, { open: !curSt.open, path: [] });
+        toast(`⚡ ${c.type}: ${!curSt.open ? 'opened' : 'closed'}`, 'ok', 1400);
+        return;
+      }
+      if (c.targetId) {
+        const el = findDesign('element', c.targetId);
+        if (el) return this.showPreview(c.type === 'drawer-menu' ? 'drawer' : 'popup', c.side || 'right', el);
+      }
+      toast(`⚡ Triggered ${c.type} on "${n.name || n.tag}"`, 'ok', 1400);
+      return;
+    }
     const el = findDesign('element', c.targetId);
     if (!el) return toast('The element to open no longer exists', 'error');
-    this.showPreview(c.type, c.side || c.position, el);
+    const pvKind = c.type === 'show-element' ? (c.displayMode === 'drawer' ? 'drawer' : 'popup') : c.type;
+    this.showPreview(pvKind, c.side || c.position, el);
   }
 
   /** Renders a small element floating toolbar near the target node on the canvas. */

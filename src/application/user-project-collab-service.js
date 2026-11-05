@@ -8,7 +8,18 @@
  */
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { ConflictError, DomainError, NotFoundError, ValidationError } from '../domain/errors.js';
-import { DEVICES, DEFAULT_BUTTON_TEMPLATES, USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS } from '../domain/entities.js';
+import {
+  DEVICES,
+  DEFAULT_BUTTON_TEMPLATES,
+  USER_ROLES,
+  PROJECT_ROLES,
+  VISIBILITY_LEVELS,
+  BUTTON_STYLES,
+  DEFAULT_PROJECT_BUTTON_SETTINGS,
+  normalizeButtonIconSizePct,
+  normalizeButtonStyleKey,
+  applyButtonStyleAndIconSizeToNodes
+} from '../domain/entities.js';
 import { isValidKey, slugify, uniqueKey } from '../domain/naming.js';
 import { restoreBody, workflowRestoreBody } from '../domain/doc-fingerprint.js';
 
@@ -300,8 +311,8 @@ export class AuthService {
 }
 
 export class ProjectService {
-  constructor({ projects, users, auth, changes, db, transaction }) {
-    Object.assign(this, { projects, users, auth, changes, db, transaction });
+  constructor({ projects, users, auth, changes, db, designs, nodes, workflows, services = null, libraryTransfer = null, transaction }) {
+    Object.assign(this, { projects, users, auth, changes, db, designs, nodes, workflows, services, libraryTransfer, transaction });
     this.ensureDefaultProject();
   }
 
@@ -315,7 +326,8 @@ export class ProjectService {
         description: 'Default workspace project containing public and shared UI/UX designs.',
         ownerId: 1,
         visibility: 'public',
-        requireApproval: true
+        requireApproval: true,
+        settings: { ...DEFAULT_PROJECT_BUTTON_SETTINGS }
       });
     }
     this.projects.upsertMember({ projectId: p.id, userId: 1, invitedBy: 1, role: 'owner', status: 'accepted' });
@@ -334,7 +346,23 @@ export class ProjectService {
     const members = this.projects.members(p.id);
     const owner = this.users.get(p.ownerId);
     const pendingChanges = this.changes ? this.changes.list({ projectId: p.id, status: 'pending' }).length : 0;
-    return { ...p, ownerUsername: owner?.username || 'kyrpy', members, memberCount: members.length, pendingChanges };
+    const rawSettings = (p.settings && typeof p.settings === 'object') ? p.settings : {};
+    const settings = {
+      ...DEFAULT_PROJECT_BUTTON_SETTINGS,
+      ...rawSettings,
+      buttonStyle: normalizeButtonStyleKey(rawSettings.buttonStyle, DEFAULT_PROJECT_BUTTON_SETTINGS.buttonStyle),
+      buttonIconSizePct: normalizeButtonIconSizePct(rawSettings.buttonIconSizePct, DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct)
+    };
+    return {
+      ...p,
+      settings,
+      buttonStyle: settings.buttonStyle,
+      buttonIconSizePct: settings.buttonIconSizePct,
+      ownerUsername: owner?.username || 'kyrpy',
+      members,
+      memberCount: members.length,
+      pendingChanges
+    };
   }
 
   get(idOrKey) {
@@ -371,6 +399,12 @@ export class ProjectService {
     const rawVis = input.visibility === 'project' ? 'private' : input.visibility;
     const visibility = ['public', 'private'].includes(rawVis) ? rawVis : 'public';
     return this.transaction(() => {
+      const mergedSettings = {
+        ...DEFAULT_PROJECT_BUTTON_SETTINGS,
+        ...(input.settings && typeof input.settings === 'object' ? input.settings : {}),
+        ...(input.buttonStyle !== undefined ? { buttonStyle: normalizeButtonStyleKey(input.buttonStyle) } : {}),
+        ...(input.buttonIconSizePct !== undefined ? { buttonIconSizePct: normalizeButtonIconSizePct(input.buttonIconSizePct) } : {})
+      };
       const p = this.projects.create({
         key,
         name,
@@ -379,7 +413,7 @@ export class ProjectService {
         ownerId,
         visibility,
         requireApproval: input.requireApproval !== false,
-        settings: input.settings || {}
+        settings: mergedSettings
       });
       this.projects.upsertMember({ projectId: p.id, userId: ownerId, invitedBy: ownerId, role: 'owner', status: 'accepted' });
       return this.get(p.id);
@@ -400,9 +434,149 @@ export class ProjectService {
       clean.visibility = rawVis;
     }
     if (patch.requireApproval !== undefined) clean.requireApproval = !!patch.requireApproval;
-    if (patch.settings !== undefined && typeof patch.settings === 'object') clean.settings = patch.settings;
+    if (patch.settings !== undefined || patch.buttonStyle !== undefined || patch.buttonIconSizePct !== undefined) {
+      const nextSettings = {
+        ...(p.settings || {}),
+        ...(patch.settings && typeof patch.settings === 'object' ? patch.settings : {})
+      };
+      if (patch.buttonStyle !== undefined) nextSettings.buttonStyle = normalizeButtonStyleKey(patch.buttonStyle, nextSettings.buttonStyle);
+      if (patch.buttonIconSizePct !== undefined) nextSettings.buttonIconSizePct = normalizeButtonIconSizePct(patch.buttonIconSizePct, nextSettings.buttonIconSizePct);
+      clean.settings = nextSettings;
+    }
     this.projects.update(p.id, clean);
     return this.get(p.id);
+  }
+
+  /**
+   * Saves project metadata & per-project settings (`Save Project` menu action).
+   */
+  saveProject(id, patch = {}, optsOrActor = {}) {
+    const p = this.update(id, {
+      ...patch,
+      settings: {
+        ...(this.get(id).settings || {}),
+        ...(patch.settings && typeof patch.settings === 'object' ? patch.settings : {}),
+        lastSavedAt: new Date().toISOString()
+      }
+    }, optsOrActor);
+    if (patch.applyToButtons || patch.applyButtonSettings) {
+      return this.applyButtonSettings(p.id, {
+        buttonStyle: p.settings.buttonStyle,
+        buttonIconSizePct: p.settings.buttonIconSizePct,
+        scope: patch.scope || 'all'
+      }, optsOrActor);
+    }
+    return { ...p, saved: true, project: p };
+  }
+
+  /**
+   * Stores `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–90%`) per project
+   * and applies them to all buttons in the Buttons library.
+   */
+  applyButtonSettings(projectId, { buttonStyle, buttonIconSizePct, scope = 'all' } = {}, optsOrActor = {}) {
+    const actor = optsOrActor && 'actor' in optsOrActor ? optsOrActor.actor : (optsOrActor && optsOrActor.id ? optsOrActor : null);
+    const p = this.get(projectId || 1);
+    if (actor && !this.isOwnerOrAdmin(p.id, actor) && p.id !== 1) {
+      throw new ForbiddenError('Only the project owner or admin can update project button settings');
+    }
+    const styleKey = normalizeButtonStyleKey(buttonStyle ?? p.settings?.buttonStyle, 'circle');
+    const pct = normalizeButtonIconSizePct(buttonIconSizePct ?? p.settings?.buttonIconSizePct, 70);
+    const nextSettings = {
+      ...(p.settings || {}),
+      buttonStyle: styleKey,
+      buttonIconSizePct: pct
+    };
+
+    return this.transaction(() => {
+      this.projects.update(p.id, { settings: nextSettings });
+      let updatedCount = 0;
+      const btnRepo = this.designs?.button || this.services?.button?.designs;
+      const nodeRepo = this.nodes || this.services?.button?.nodes;
+      if (btnRepo && nodeRepo) {
+        const allButtons = btnRepo.list({ projectId: p.id, includePublic: scope !== 'project', includePrivate: true, actorId: actor?.id ?? 1 });
+        for (const b of allButtons) {
+          if (scope === 'project' && Number(b.projectId) !== Number(p.id)) continue;
+          const curNodes = nodeRepo.listByOwner('button', b.id);
+          const nextNodes = applyButtonStyleAndIconSizeToNodes(curNodes, {
+            width: b.width,
+            height: b.height,
+            buttonStyle: styleKey,
+            buttonIconSizePct: pct
+          });
+          nodeRepo.replaceAll('button', b.id, nextNodes);
+          btnRepo.update(b.id, {
+            meta: {
+              ...(b.meta || {}),
+              shape: styleKey,
+              buttonStyle: styleKey,
+              buttonIconSizePct: pct
+            }
+          });
+          updatedCount++;
+        }
+      }
+      const updatedProject = this.get(p.id);
+      return {
+        ...updatedProject,
+        saved: true,
+        projectId: p.id,
+        buttonStyle: styleKey,
+        buttonIconSizePct: pct,
+        updatedCount,
+        styles: BUTTON_STYLES,
+        project: updatedProject
+      };
+    });
+  }
+
+  /**
+   * Clones a project (`Clone Project` menu action), copying its per-project settings (`buttonStyle`, `buttonIconSizePct`)
+   * and all project-scoped designs (`paths`, `icons`, `buttons`, `elements`, `screens`, `workflows`) into the new project.
+   */
+  clone(id, input = {}, optsOrActor = {}) {
+    const actor = optsOrActor && 'actor' in optsOrActor ? optsOrActor.actor : (optsOrActor && optsOrActor.id ? optsOrActor : null);
+    const src = this.get(id);
+    const cloneName = String(input.name || `${src.name} (Clone)`).trim();
+    const created = this.create({
+      name: cloneName,
+      key: input.key,
+      label: input.label || cloneName,
+      description: input.description !== undefined ? input.description : src.description,
+      visibility: input.visibility || src.visibility || 'private',
+      requireApproval: src.requireApproval,
+      settings: { ...(src.settings || {}) }
+    }, actor || { actorId: src.ownerId });
+
+    let copiedCount = 0;
+    if (this.libraryTransfer) {
+      const itemsToCopy = [];
+      for (const [t, tbl] of [['path', 'paths'], ['icon', 'icons'], ['button', 'buttons'], ['element', 'elements'], ['screen', 'screens'], ['workflow', 'workflows']]) {
+        const rows = this.db.prepare(
+          src.id === 1
+            ? `SELECT id FROM ${tbl} WHERE project_id = ? AND visibility = 'project'`
+            : `SELECT id FROM ${tbl} WHERE project_id = ?`
+        ).all(src.id);
+        for (const r of rows) itemsToCopy.push({ type: t, id: r.id });
+      }
+      if (itemsToCopy.length > 0) {
+        const res = this.libraryTransfer.copyToProjects({
+          items: itemsToCopy,
+          projectIds: [created.id],
+          visibility: 'project',
+          actor: actor || { id: created.ownerId, role: 'admin' }
+        });
+        copiedCount = res.copiedCount || 0;
+      }
+    }
+    const clonedProject = this.get(created.id);
+    return {
+      ...clonedProject,
+      cloned: true,
+      sourceProjectId: src.id,
+      copiedCount,
+      copiedItemsCount: copiedCount,
+      project: clonedProject
+    };
   }
 
   /** Bulk-updates visibility ('public' | 'project') of all items belonging to a project. */

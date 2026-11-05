@@ -617,9 +617,26 @@ export async function openProjectsModal() {
                   }
                 }, 'Set as Active Project')
               : h('span', { class: 'badge accent' }, '✓ Active Project'),
+            h('button', {
+              class: 'btn sm clone-project-btn',
+              title: 'Clone this project and all its project-scoped designs & button settings',
+              onclick: async () => {
+                const cloneName = await promptBox('Clone Project', { value: `${current.name} (Clone)`, label: 'Cloned Project Name', okLabel: 'Clone Project' });
+                if (!cloneName?.trim()) return;
+                try {
+                  const res = await api.cloneProject(current.id, { name: cloneName.trim(), visibility: current.visibility });
+                  selectedId = res.project.id;
+                  await setActiveProject(res.project.id);
+                  toast(`Cloned project "${res.project.name}" (${res.copiedCount || 0} item(s))`, 'ok');
+                  await refresh();
+                } catch (e) {
+                  toast(e.message, 'error');
+                }
+              }
+            }, '⧉ Clone Project'),
             current.id !== 1
               ? h('button', {
-                  class: 'btn sm danger',
+                  class: 'btn sm danger delete-project-btn',
                   onclick: async () => {
                     if (!await confirmBox(`Delete project "${current.name}"? Items will move to Default Public Project.`)) return;
                     await api.deleteProject(current.id);
@@ -627,7 +644,7 @@ export async function openProjectsModal() {
                     await setActiveProject(1);
                     await refresh();
                   }
-                }, 'Delete')
+                }, 'Delete Project')
               : null
           )
         ),
@@ -640,7 +657,7 @@ export async function openProjectsModal() {
             style: { alignSelf: 'flex-end' },
             onclick: async () => {
               try {
-                await api.updateProject(current.id, {
+                await api.saveProject(current.id, {
                   name: editName.value.trim(),
                   visibility: editVis.value,
                   description: editDesc.value

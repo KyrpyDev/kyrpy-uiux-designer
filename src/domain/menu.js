@@ -30,11 +30,36 @@ export function buildMenuTree(rows, { includeHidden = false } = {}) {
 
 /** Item centres relative to the button centre (px), for n items. */
 export function layoutItems(cfg, n, size) {
-  const s = cfg.itemScale * size, gap = cfg.gap * size, out = [];
+  const s = (cfg.itemScale || 0.75) * size, gap = (cfg.gap ?? 0.2) * size, out = [];
+  const effLayout = cfg.layout || (
+    cfg.kind === 'radial' ? 'fan'
+      : cfg.kind === 'drawer' ? 'drawer'
+      : cfg.kind === 'slider-vertical' ? 'slider-vertical'
+      : cfg.kind === 'slider-horizontal' ? 'slider-horizontal'
+      : cfg.kind === 'carousel' ? 'carousel'
+      : 'list'
+  );
   for (let i = 0; i < n; i++) {
-    if (cfg.layout === 'fan') {
+    if (effLayout === 'fan' || effLayout === 'radial') {
       const a = (cfg.startAngle + (n > 1 ? cfg.sweep * i / (n - 1) : cfg.sweep / 2)) * Math.PI / 180, R = cfg.radius * size;
       out.push({ x: R * Math.cos(a), y: R * Math.sin(a), s });
+    } else if (effLayout === 'slider-horizontal') {
+      const dirSign = cfg.direction === 'left' ? -1 : 1;
+      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      out.push({ x: dirSign * d, y: 0, s });
+    } else if (effLayout === 'slider-vertical') {
+      const dirSign = cfg.direction === 'up' ? -1 : 1;
+      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      out.push({ x: 0, y: dirSign * d, s });
+    } else if (effLayout === 'carousel') {
+      const isVert = cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down';
+      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      out.push({ x: isVert ? 0 : d, y: isVert ? d : 0, s });
+    } else if (effLayout === 'drawer') {
+      const side = cfg.side || cfg.direction || 'right';
+      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const dir = { up: [0, -1], top: [0, -1], down: [0, 1], bottom: [0, 1], left: [-1, 0], right: [1, 0] }[side] || [1, 0];
+      out.push({ x: dir[0] * d, y: dir[1] * d, s });
     } else {
       const d = size / 2 + gap + s / 2 + i * (s + gap);
       const dir = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[cfg.direction] || [0, -1];
@@ -56,6 +81,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
   const surface = roleAttrs(ctx.theme, 'button');
   const itemAttrs = a => attrString({ ...surface, ...a });
   const iconSize = size * cfg.itemScale * 0.62;
+  const isCarousel = cfg.layout === 'carousel' || cfg.kind === 'carousel';
+  if (isCarousel) ctx.hasCarousel = true;
+  const carDim = cfg.dimension === '2d' ? '2d' : '3d';
+  const carDir = (cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down') ? 'vertical' : 'horizontal';
   const iconUse = (id, x, y, sz) => {
     const key = id != null ? iconKey(id) : null;
     if (!key) return '';
@@ -75,17 +104,21 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
         + `<title>${esc(it.label || it.name)}</title><circle r="${round(r)}"${itemAttrs({})}/>`
         + `<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSize)}</g>`;
     });
-    levels.push(`<g class="rm-level" data-level="${esc(parentPath)}">${els.join('')}</g>`);
+    const innerItems = isCarousel
+      ? `<g class="ud-carousel-track ud-carousel-${carDim}-${carDir}" style="--roll-dur:2400ms">${els.join('')}</g>`
+      : els.join('');
+    levels.push(`<g class="rm-level" data-level="${esc(parentPath)}" data-layout="${esc(cfg.layout || 'list')}">${innerItems}</g>`);
     for (const it of items) {
-      if (cfg.kind === 'rotating' && it.children.length || cfg.kind === 'rotating' && ctx.editor) {
+      if ((cfg.kind === 'rotating' || cfg.kind === 'radial') && it.children.length || (cfg.kind === 'rotating' || cfg.kind === 'radial') && ctx.editor) {
         centers.push(`<g class="rm-center" data-for="${esc(it.path)}"><circle cx="${round(cx)}" cy="${round(cy)}" r="${round(size / 2)}"${itemAttrs({})}/>${iconUse(it.iconId, cx, cy, size * 0.625)}</g>`);
       }
       if (it.children.length) walk(it.children, it.path, it);
     }
   };
   walk(tree, '', null);
-  const hub = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(size / 2)}" fill="transparent"/>`;
-  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hub}</g>`;
+  const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
+  const hub = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(size / 2)}" fill="transparent"${showElAttr}/>`;
+  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}"${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hub}</g>`;
 }
 
 /** Stylesheet shared by the designer canvas and exported pages (transitions of the menu). */

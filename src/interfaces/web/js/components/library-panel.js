@@ -5,11 +5,11 @@
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
 import { api } from '../api.js';
 import { state, on, emit, libOf, PLURAL } from '../state.js';
-import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog } from '../actions.js';
+import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog, reloadLibrary } from '../actions.js';
 import { openExportDialog } from './export-dialog.js';
 import { openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
-import { TYPES, canContain } from '/domain/entities.js';
+import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS } from '/domain/entities.js';
 
 const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
 const HINT = {
@@ -275,10 +275,99 @@ export class LibraryPanel {
     return e => { e.dataTransfer.setData('application/x-ud', JSON.stringify({ type, id: rec.id })); e.dataTransfer.effectAllowed = 'copy'; };
   }
 
+  /**
+   * Per-project Button Style (default `'circle'`) & Icon Size Slider (`50–90%`)
+   * that applies to all buttons under the Buttons library.
+   */
+  projectButtonSettingsBar() {
+    const pid = Number(state.activeProjectId || state.currentProjectId || 1);
+    const proj = (state.projects || []).find(p => Number(p.id) === pid) || state.projects?.[0];
+    const curStyle = proj?.settings?.buttonStyle || proj?.buttonStyle || DEFAULT_PROJECT_BUTTON_SETTINGS.buttonStyle || 'circle';
+    const curPct = Math.max(50, Math.min(90, Number(proj?.settings?.buttonIconSizePct ?? proj?.buttonIconSizePct ?? DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct ?? 70)));
+
+    const styleSel = h('select', {
+      class: 'project-button-style-select',
+      name: 'project-button-style',
+      'aria-label': 'Button style for all buttons',
+      title: 'Button style applied to all buttons in this project (default: Circle)',
+      style: { flex: '1', minWidth: '110px' }
+    }, BUTTON_STYLES.map(s => h('option', { value: s.key, selected: s.key === curStyle }, s.label)));
+
+    const pctBadge = h('span', { class: 'badge project-button-icon-pct', style: { minWidth: '38px', textAlign: 'center' } }, `${curPct}%`);
+    const iconSlider = h('input', {
+      type: 'range',
+      class: 'project-button-icon-slider',
+      name: 'project-button-icon-size',
+      'aria-label': 'Button icon size percentage (50% to 90%)',
+      min: '50',
+      max: '90',
+      step: '1',
+      value: String(curPct),
+      title: 'Icon size slider for buttons (50%–90%), stored per project',
+      style: { flex: '1', minWidth: '80px', cursor: 'pointer' },
+      oninput: e => {
+        pctBadge.textContent = `${e.target.value}%`;
+      }
+    });
+
+    const applySettings = async () => {
+      const nextStyle = styleSel.value;
+      const nextPct = Math.max(50, Math.min(90, Number(iconSlider.value) || 70));
+      try {
+        const res = await api.applyProjectButtonSettings(pid, {
+          buttonStyle: nextStyle,
+          buttonIconSizePct: nextPct,
+          scope: 'all'
+        });
+        if (proj) {
+          proj.settings = { ...(proj.settings || {}), buttonStyle: res.buttonStyle, buttonIconSizePct: res.buttonIconSizePct };
+          proj.buttonStyle = res.buttonStyle;
+          proj.buttonIconSizePct = res.buttonIconSizePct;
+        }
+        await reloadLibrary();
+        if (this.app?.designer?.doc) await this.app.designer.reload();
+        toast(`Applied "${res.buttonStyle}" button style & ${res.buttonIconSizePct}% icon size to ${res.updatedCount} buttons`, 'ok', 2000);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    };
+
+    styleSel.addEventListener('change', applySettings);
+    iconSlider.addEventListener('change', applySettings);
+
+    return h('div', {
+      class: 'proj-btn-settings-bar',
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        padding: '7px 8px',
+        border: '1px solid rgba(46,155,255,0.3)',
+        borderRadius: '8px',
+        background: 'rgba(46,155,255,0.07)'
+      }
+    },
+    h('div', { class: 'row spread', style: { gap: '6px' } },
+      h('span', { style: { fontSize: '11px', fontWeight: '700', color: '#cfe6ff' } }, '⚙ Button Style (All Buttons)'),
+      styleSel,
+      h('button', {
+        class: 'btn small primary apply-project-btn-settings',
+        title: 'Apply selected button style and icon size (50–90%) to all buttons in the library',
+        onclick: applySettings
+      }, 'Apply All')
+    ),
+    h('div', { class: 'row spread', style: { gap: '6px' } },
+      h('span', { class: 'muted', style: { fontSize: '11px', whiteSpace: 'nowrap' } }, 'Icon Size (50–90%):'),
+      iconSlider,
+      pctBadge
+    ));
+  }
+
   head(type, list, fill, extra = [], selBar = null) {
     return h('div', { class: 'lib-tools' },
       this.searchBox(type, fill),
       this.visBar(() => this.renderBody()),
+      type === 'button' ? this.projectButtonSettingsBar() : null,
       this.chips(type, list, () => this.renderBody()),
       selBar,
       h('div', { class: 'row' },

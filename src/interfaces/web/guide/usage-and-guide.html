@@ -97,28 +97,55 @@
     <tr><td>Path</td><td>A reusable group of vector shapes on a 24×24 grid</td><td>shapes, other path groups</td></tr>
     <tr><td>Icon</td><td>24×24 composition</td><td>path groups, own shapes</td></tr>
     <tr><td>Button</td><td>Themed frame with an icon, optionally a popup or rotating menu</td><td>icons, paths, shapes</td></tr>
-    <tr><td>Element</td><td>UI building block: HTML elements, forms, cards, navbars…</td><td>shapes, icons, buttons, other elements</td></tr>
-    <tr><td>Screen</td><td>A device-sized composition</td><td>icons, buttons, elements</td></tr>
+    <tr><td>Element</td><td>UI building block: HTML elements, forms, cards, navbars, <b>containers &amp; 2D/3D carousel containers</b>…</td><td>shapes, icons, buttons, other elements</td></tr>
+    <tr><td>Screen</td><td>A device-sized composition</td><td>icons, buttons, elements, containers</td></tr>
     <tr><td>Workflow</td><td>Screens placed on a canvas and linked together</td><td>screens</td></tr>
   </table>
   <p>If you drop something into a level that cannot hold it, you get a hint and nothing happens. An element can never contain itself.</p>
   <h4>The window</h4>
   <ul>
-    <li><b>Top bar</b>: menus (Design, Edit, Path, View, Theme, Export, Help), the <i>Screen designer / Workflow designer</i> switch, and the theme selector.</li>
-    <li><b>Left panel</b>: the libraries <i>Paths · Icons · Buttons · Elements</i>, the <i>Screens</i> catalog and the <i>Workflows</i>. Drag the divider to resize it, double-click it to collapse.</li>
+    <li><b>Top bar</b>: menus (<b>Project</b>, Design, Edit, Path, View, Theme, Export, Help), the <i>Screen designer / Workflow designer</i> switch, the active project selector, and the theme selector (30 built-in Dark &amp; Light themes across 15 design style families).</li>
+    <li><b>Left panel</b>: the libraries <i>Paths · Icons · Buttons · Elements</i>, the <i>Screens</i> catalog and the <i>Workflows</i>, with 3-tier scope filters (<b>All · 🌐 Public · 🔒 My Global · 📁 Project</b>), Import/Export JSON/SVG/HTML controls, and per-project Button Style &amp; Icon Size settings under the Buttons tab. Drag the divider to resize it, double-click it to collapse.</li>
     <li><b>Right panel</b>: the designer of whatever you opened, with its toolbar, canvas and inspector.</li>
     <li><b>Status bar</b>: the pointer position and the totals of your library.</li>
   </ul>
   <h4>Using the libraries</h4>
   <ul>
-    <li><b>Search</b> and the category chips filter every library.</li>
+    <li><b>Search</b>, scope filter pills (<b>All · 🌐 Public · 🔒 My Global · 📁 Project</b>), and category chips filter every library.</li>
     <li><b>Hover a cell</b> for its toolbar: <kbd>✎</kbd> edit, <kbd>⧉</kbd> clone, <kbd>⤓</kbd> export SVG, <kbd>🗑</kbd> delete.</li>
     <li><b>Click</b> a cell to open it in its own designer. <b>Drag</b> it onto the open designer, or <b>double-click</b> it, to place it.</li>
     <li>Cells that the open designer cannot accept are dimmed.</li>
-    <li><b>+ New …</b> creates a path, icon, button, element or screen. <b>Import SVG</b> turns any SVG file into a path group, icon or element.</li>
+    <li><b>+ New …</b> creates a path, icon, button, element or screen. <b>Import SVG</b> and <b>📤 Import / 📥 Export</b> import or export paths, icons, buttons, elements, screens, and workflows as JSON, SVG, or HTML into project, personal global, or public libraries.</li>
   </ul>
   <div class="tip">Every design has a <b>variable name</b> (dashed words, unique, used in code), a <b>label</b> (shown to users) and a <b>description-dev</b> (instructions for the dev team and their coding agents). Fill them in; they are exported to <code>DEV-NOTES.md</code>.</div>
   <p>Every change is written to the database the moment you make it, and can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>. <b>Save</b> marks a version you are happy with; <b>Reset</b> goes back to it (see <a href="#saving">Save, Save as, Reset and Back</a>).</p>
+</section>
+
+<!-- ===================================================== PROJECTS & OWNERSHIP -->
+<section id="projects" data-title="Projects, scopes & multi-target Save as" data-group="Basics">
+  <h3>Projects, library scopes &amp; ownership</h3>
+  <p class="lead">Manage multiple projects from the top bar <b>Project</b> menu or the project selector dropdown, and share reusable items across Public, Personal Global, and Project libraries.</p>
+  <h4>Project menu commands</h4>
+  <table>
+    <tr><th>Menu item</th><th>What it does</th></tr>
+    <tr><td><b>➕ New Project…</b></td><td>Creates a new project with default button settings (<code>circle</code> button style, <code>70%</code> icon size) and switches to it.</td></tr>
+    <tr><td><b>💾 Save Project</b></td><td>Saves the active project metadata and persists its current per-project button style and icon size settings.</td></tr>
+    <tr><td><b>⧉ Clone Project…</b></td><td>Clones the active project (or any project in the Projects browser) together with its per-project settings and all project-scoped designs into a new independent project.</td></tr>
+    <tr><td><b>🗂 Browse Projects…</b></td><td>Opens the Projects &amp; Workspace modal to inspect, switch, create, save, clone, or delete projects, and open the <b>Full Item Browser</b>.</td></tr>
+    <tr><td><b>🗑 Delete Project…</b></td><td>Deletes the selected non-default project after confirmation and falls back to the Default Public Project.</td></tr>
+  </table>
+  <h4>Three-tier library scopes</h4>
+  <ul>
+    <li><b>🌐 Public (<code>public</code>)</b>: Default built-in basic items and community templates visible to all users.</li>
+    <li><b>🔒 My Global (<code>private</code>)</b>: Your personal global item library available across all of your own projects.</li>
+    <li><b>📁 Project (<code>project</code>)</b>: Items scoped specifically to a single project.</li>
+  </ul>
+  <h4>Ownership, Copy/Move &amp; Multi-Target Save as…</h4>
+  <ul>
+    <li><b>Copy vs. Move rules</b>: Default built-in items and items owned by other users cannot be moved—they can only be <b>copied</b>. Moving items is restricted to projects you own.</li>
+    <li><b>Automatic dependency tree copying</b>: Whenever an item (screen, workflow, element, button, or icon) is copied, moved, or saved to target projects, all nested sub-items (elements, buttons, icons, paths) are recursively copied to the target project(s) as well.</li>
+    <li><b>Read-only Save lock &amp; Multi-Target Save as…</b>: When editing a built-in item or an item owned by another user, the <b>💾 Save</b> button is disabled (🔒) and <b>Save as…</b> remains active. Next to <b>Save as…</b>, use the <b>🎯 Target Projects</b> selector to pick multiple projects (plus optional <b>🔒 My Global Library</b> or <b>🌐 Public Library</b>)—clicking <b>Save as…</b> saves the item and its dependencies into all selected targets at once.</li>
+  </ul>
 </section>
 
 <!-- ===================================================== SAVING -->
@@ -128,8 +155,9 @@
   <table>
     <tr><th>Button</th><th>What it does</th></tr>
     <tr><td><b>← Back</b></td><td>Returns to the page you had open before (<kbd>Alt</kbd>+<kbd>←</kbd> or the browser's Back button do the same). Its tooltip names that page. It is greyed out on the first page.</td></tr>
-    <tr><td><b>💾 Save</b> <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Marks the current version as the saved one. <b>It blinks while there are changes you have not saved.</b> Next to it you read <i>Unsaved changes</i> or <i>All changes saved</i>.</td></tr>
-    <tr><td><b>Save as…</b></td><td>Stores the current version, including your unsaved changes, as a <i>new</i> design under a name you type, and opens it. The original goes back to the version it had at its last save.</td></tr>
+    <tr><td><b>💾 Save</b> <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Marks the current version as the saved one. <b>It blinks while there are changes you have not saved.</b> Disabled (🔒) when viewing a built-in default item or an item owned by another user—use <b>Save as…</b> instead.</td></tr>
+    <tr><td><b>Save as…</b></td><td>Stores the current version, including your unsaved changes, as a <i>new</i> design under a name you type, and copies it (along with all sub-items) into all projects selected in the <b>🎯 Target Projects</b> picker next to the button.</td></tr>
+    <tr><td><b>🎯 Target Projects</b></td><td>Multi-target project and scope selector right after <b>Save as…</b>. Pick one or more projects, your <b>🔒 My Global Library</b>, or <b>🌐 Public</b> before clicking <b>Save as…</b>.</td></tr>
     <tr><td><b>↺ Reset</b></td><td>Throws away every change since the last save (asks first). Greyed out when there is nothing to throw away.</td></tr>
   </table>
   <h4>Good to know</h4>
@@ -262,23 +290,35 @@
 </section>
 
 <!-- ===================================================== BUTTON -->
-<section id="button" data-title="Button designer & menus" data-group="Designers">
-  <h3>Button designer</h3>
-  <p class="lead">A button is a themed frame with an icon. It can also own a popup menu or a rotating radial menu with nested sub items.</p>
+<section id="button" data-title="Button designer, styles & menus" data-group="Designers">
+  <h3>Button designer, per-project styles &amp; interactive menus</h3>
+  <p class="lead">A button is a themed frame with an icon. Each project stores its own global <b>Button Style</b> (default: <code>circle</code>) and <b>Icon Size slider (50–90%)</b> that apply across all buttons in the Buttons library, and every button can act as a Radial Menu, Drawer Menu, Vertical/Horizontal Slider Menu, Carousel Animated Roll Menu, or Show Element trigger.</p>
+  <h4>Per-project Button Style &amp; Icon Size (50–90%)</h4>
+  <p>At the top of the <b>Buttons</b> library tab, the <b>Project Button Style &amp; Icon Size</b> bar controls all buttons in the active project:</p>
+  <table>
+    <tr><th>Setting</th><th>Options / Range</th><th>What it does</th></tr>
+    <tr><td><b>Button Style</b></td><td><code>circle</code> (Default), <code>pill</code>, <code>rounded</code>, <code>squircle</code>, <code>square</code>, <code>sharp</code>, <code>outline</code>, <code>ghost</code></td><td>Reshapes button outer frames, inner highlight rings, and border treatment across all buttons in the library and stores the preference on the project.</td></tr>
+    <tr><td><b>Icon Size slider</b></td><td><b>50% – 90%</b> (default <b>70%</b>)</td><td>Scales the placed icon inside every button relative to the button's bounding box (clamped between 50% and 90%) and persists per project.</td></tr>
+    <tr><td><b>Apply to all buttons</b></td><td>All buttons or project-only</td><td>Immediately updates all buttons in the library and re-renders active canvases and thumbnails.</td></tr>
+  </table>
   <h4>Build a button</h4>
   <ol>
-    <li>Open the <b>Buttons</b> tab and click <b>+ New button</b> (or start from a ready-made one).</li>
-    <li>Drag an <b>icon</b> from the Icons tab into the frame. It is centred at 62.5% of the button, the same ratio the app uses everywhere.</li>
+    <li>Open the <b>Buttons</b> tab and click <b>+ New button</b> (or start from any of the 40 Dark &amp; Light style templates).</li>
+    <li>Drag an <b>icon</b> from the Icons tab into the frame. It is centred using the project's configured icon size percentage (50–90%).</li>
     <li>Change the size with the box handles or the W/H fields. <b>Scale contents</b> (toolbar) makes the frame and icon scale together.</li>
   </ol>
-  <h4>Add a menu</h4>
-  <p>In the inspector, open the <b>Menu</b> section.</p>
+  <h4>Button action &amp; menu modes</h4>
+  <p>In the inspector, open the <b>Menu</b> section (or the <b>Click action</b> section when a button is placed on an Element or Screen) to configure how the button behaves:</p>
   <table>
-    <tr><th>Setting</th><th>Meaning</th></tr>
-    <tr><td>Menu type</td><td><b>popup</b>: opens in place · <b>rotating</b>: the clicked item's icon replaces the centre and its sub items are shown</td></tr>
-    <tr><td>Layout</td><td><b>fan</b> (radius, start angle, sweep) or <b>list</b> (direction up / down / left / right, gap)</td></tr>
-    <tr><td>Item size</td><td>as a ratio of the button size, so the menu scales with the button</td></tr>
-    <tr><td>Centre icon turns</td><td>degrees the centre icon rotates while open (0 = off)</td></tr>
+    <tr><th>Mode / Action</th><th>Meaning</th></tr>
+    <tr><td><b>Popup menu (<code>popup</code>)</b></td><td>Opens sub-items in place around or beside the button.</td></tr>
+    <tr><td><b>Rotating menu (<code>rotating</code>)</b></td><td>Clicking an item with sub-items rotates its icon into the centre button and expands its child level.</td></tr>
+    <tr><td><b>Radial menu (<code>radial</code> / <code>radial-menu</code>)</b></td><td>Arranges menu items in a full 360° circle or custom arc (radius, start angle, sweep) radiating from the button.</td></tr>
+    <tr><td><b>Drawer menu (<code>drawer</code> / <code>drawer-menu</code>)</b></td><td>Opens a slide-out drawer panel (<code>left</code>, <code>right</code>, <code>top</code>, or <code>bottom</code>) containing the menu items or target element.</td></tr>
+    <tr><td><b>Vertical slider menu (<code>slider-vertical</code>)</b></td><td>Expands a smooth vertical sliding strip of interactive buttons with configurable gap and direction.</td></tr>
+    <tr><td><b>Horizontal slider menu (<code>slider-horizontal</code>)</b></td><td>Expands a smooth horizontal sliding strip of interactive buttons.</td></tr>
+    <tr><td><b>Carousel animated roll menu (<code>carousel</code> / <code>carousel-menu</code>)</b></td><td>Presents items in an animated <b>2D or 3D</b> (<code>carouselDimension: 2d | 3d</code>) <b>horizontal or vertical</b> (<code>carouselDirection: horizontal | vertical</code>) rolling carousel with Previous/Next controls and perspective depth.</td></tr>
+    <tr><td><b>Show element (<code>show-element</code>)</b></td><td>Reveals a target library element or node on click as a <b>popup</b>, <b>drawer</b>, or <b>inline</b> toggle.</td></tr>
   </table>
   <h4>Add, edit and delete menu items</h4>
   <ol>
@@ -290,26 +330,38 @@
   </ol>
   <h4>How the menu behaves</h4>
   <ol>
-    <li>Click the button: the items open.</li>
+    <li>Click the button: the items open using the chosen mode (Radial, Drawer, Vertical/Horizontal Slider, 2D/3D Carousel Roll, or Show Element).</li>
     <li>Click it again: they close.</li>
     <li>Click an item with sub items: (rotating) its icon replaces the centre and its sub items are displayed.</li>
     <li>Click the centre again: the menu goes one level back.</li>
     <li>Click an item without sub items: its action runs (or it navigates to its target screen) and the menu closes.</li>
   </ol>
-  <p>Switch on <b>Test menu</b> in the toolbar to try exactly this on the canvas. Switch it off to edit again.</p>
-  <div class="note">The menu belongs to the <b>button</b>. A button placed in an element or on a screen shows the same menu, and a change here applies everywhere that button is used. To get an independent menu, clone the button (⧉ in the Buttons tab). In the element and screen designers a menu stays closed; try it with <i>Test menu</i> here or in an exported page.</div>
+  <p>Switch on <b>Test menu</b> in the toolbar to try the interactive menu on the canvas. Switch it off to edit again.</p>
+  <div class="note">The menu belongs to the <b>button</b>. A button placed in an element or on a screen carries its menu and click action everywhere it is used. To create an independent variation, clone the button (⧉ in the Buttons tab).</div>
 </section>
 
-<!-- ===================================================== ELEMENT -->
-<section id="element" data-title="Element designer" data-group="Designers">
-  <h3>Element designer</h3>
-  <p class="lead">Elements are UI building blocks: the basic HTML elements, forms, cards, navigation bars and more, built from shapes, icons, buttons and other elements.</p>
+<!-- ===================================================== ELEMENT & CONTAINERS -->
+<section id="element" data-title="Element designer & Containers" data-group="Designers">
+  <h3>Element designer, Containers &amp; Carousel Containers</h3>
+  <p class="lead">Elements are UI building blocks: basic HTML elements, forms, cards, navigation bars, <b>Container</b> shells, and <b>Carousel Containers</b> with 2D/3D horizontal and vertical animated roll effects.</p>
   <h4>Create an element</h4>
   <ol>
     <li>Open the <b>Elements</b> tab and click <b>+ New element</b>.</li>
-    <li>Pick a <b>preset</b> (buttons, inputs, select, checkbox, radio, switch, slider, headings, lists, table, card, modal, alerts, tabs, breadcrumb, pagination, toolbars, radial and popup menu buttons…) or start from a <b>blank bounding box</b>.</li>
+    <li>Pick a <b>preset</b> (<b>Container (Shell / Box)</b>, <b>Carousel Container (2D/3D Roll)</b>, buttons, inputs, select, checkbox, radio, switch, slider, headings, lists, table, card, modal, alerts, tabs, breadcrumb, pagination, toolbars, radial and popup menu buttons…) or start from a <b>blank bounding box</b>.</li>
     <li>Name it. A copy of the preset is created for you; the presets themselves stay untouched.</li>
   </ol>
+  <h4>Container &amp; Carousel Container basic elements</h4>
+  <ul>
+    <li><b>Container (Shell / Outer Box)</b>: Acts as a structural shell or placeholder for any child elements. Drag and drop a Container onto a screen or inside another element:
+      <ul>
+        <li><b>Fit to Device Screen</b>: One click expands the container to match the full screen dimensions (minus outer margin).</li>
+        <li><b>Fixed or Responsive sizing</b>: Choose <code>fixed</code> pixel bounds or <code>responsive</code> fluid layout.</li>
+        <li><b>InnerPadding &amp; OuterMargin</b>: Configure inner padding and outer margin (`0–120px`); the dashed inner guide shows the content boundary.</li>
+        <li><b>Automatic child max-size clamping</b>: Any item dropped or resized inside a Container is automatically clamped so its maximum width and height never exceed the container's inner content area. A screen can hold many containers, and a container can hold many sub-elements.</li>
+      </ul>
+    </li>
+    <li><b>Carousel Container (2D / 3D Horizontal &amp; Vertical Animated Roll)</b>: A specialized container whose sub-elements animate with a <b>2D slide</b> or <b>3D perspective drum roll</b> along the <b>horizontal</b> or <b>vertical</b> axis, with configurable interval, perspective depth, and navigation indicators.</li>
+  </ul>
   <h4>The bounding box</h4>
   <ul>
     <li>Every element starts as a box (dashed). Everything you add is placed inside it.</li>
@@ -318,7 +370,7 @@
   </ul>
   <h4>Fill it</h4>
   <ul>
-    <li>Drag <b>icons</b>, <b>buttons</b> and other <b>elements</b> in from the libraries. Draw shapes and add text with the toolbar.</li>
+    <li>Drag <b>icons</b>, <b>buttons</b>, <b>containers</b> and other <b>elements</b> in from the libraries. Draw shapes and add text with the toolbar.</li>
     <li>Give shapes a <a href="#surface-roles" data-go="themes">surface role</a> (card, button, field) so they take the look of the active theme.</li>
     <li>Set the <b>HTML element</b> (<code>button</code>, <code>input</code>, <code>div</code>…) in the inspector. The export uses it so the dev team knows the semantic tag.</li>
     <li>Write the <b>description-dev</b>: props, states, behaviour.</li>
@@ -338,7 +390,7 @@
     <li>Write a <b>name</b>, <b>label</b> and <b>description-dev</b> for the screen, and give important items a variable name and a description-dev too.</li>
   </ol>
   <h4>Themes</h4>
-  <p>Switch the theme in the top bar at any time. The same screen is shown as Liquid glass, Glow lines or Neumorphic light / dark.</p>
+  <p>Switch the theme in the top bar at any time across all <b>30 built-in Dark &amp; Light mode themes</b> (15 design style families including Liquid Glass, Glassmorphism, Brutalism / Neo-Brutalism, Minimalist, Skeuomorphism, Aurora, Gradient 3D Claymorphism, Cyberpunk, Synthwave, Pastel Minimal / Cozy UI, Cosmic / Space Adventure UI, Flat Playful, Pop &amp; Neon Retro UI, Glow Lines, and Neumorphic).</p>
   <h4>The catalog</h4>
   <ul>
     <li>Tick screens for export, or use <b>Select all</b>, <b>None</b> and <b>Invert</b>. The search and the category chips narrow the list first.</li>
@@ -357,17 +409,23 @@
   </table>
 
   <h4>Click actions</h4>
-  <p>Select an element and use the <b>Click action</b> section of the inspector to say what happens when the user clicks or taps it in the finished app:</p>
+  <p>Select an element or placed button and use the <b>Click action</b> section of the inspector to say what happens when the user clicks or taps it in the finished app:</p>
   <table>
-    <tr><th>Action</th><th>Result in the exported page</th></tr>
-    <tr><td><b>Route to a screen</b></td><td>the element becomes a link to that screen's page</td></tr>
-    <tr><td><b>Open an element as a popup</b></td><td>the chosen element opens in a dialog over the page</td></tr>
-    <tr><td><b>Open an element as a drawer</b></td><td>the element slides in from the left, right, top or bottom</td></tr>
-    <tr><td><b>Go back</b></td><td>returns to the previous page</td></tr>
+    <tr><th>Action</th><th>Result in the canvas &amp; exported page</th></tr>
+    <tr><td><b>Route to a screen (<code>route</code>)</b></td><td>the element becomes a link to that screen's page</td></tr>
+    <tr><td><b>Show Element (<code>show-element</code>)</b></td><td>reveals the chosen element as a popup, drawer, or inline overlay</td></tr>
+    <tr><td><b>Open an element as a popup (<code>popup</code>)</b></td><td>the chosen element opens in a dialog over the page</td></tr>
+    <tr><td><b>Open an element as a drawer (<code>drawer</code>)</b></td><td>the element slides in from the left, right, top or bottom</td></tr>
+    <tr><td><b>Radial Menu (<code>radial-menu</code>)</b></td><td>expands a 360° or arc radial menu around the button</td></tr>
+    <tr><td><b>Drawer Menu (<code>drawer-menu</code>)</b></td><td>slides out a drawer menu (`left`, `right`, `top`, `bottom`)</td></tr>
+    <tr><td><b>Vertical Slider Menu (<code>slider-vertical</code>)</b></td><td>opens a vertical sliding strip of menu buttons</td></tr>
+    <tr><td><b>Horizontal Slider Menu (<code>slider-horizontal</code>)</b></td><td>opens a horizontal sliding strip of menu buttons</td></tr>
+    <tr><td><b>Carousel Animated Roll Menu (<code>carousel-menu</code>)</b></td><td>opens a 2D or 3D horizontal/vertical rolling carousel menu</td></tr>
+    <tr><td><b>Go back (<code>back</code>)</b></td><td>returns to the previous page</td></tr>
   </table>
   <ul>
-    <li>Popups and drawers close with the ✕, a click on the backdrop or <kbd>Esc</kbd>. Build the content once as an <b>element</b> (a menu, a filter sheet, a confirmation…), then open it from as many screens as you like.</li>
-    <li>Turn on <b>Test actions</b> in the toolbar to try the actions on the canvas. Routes open the target screen, popups and drawers appear over the canvas. Turn it off to edit again.</li>
+    <li>Popups, drawers, radial menus, slider menus, and carousel menus close with the ✕, a click on the backdrop or <kbd>Esc</kbd>. Build the content once as an <b>element</b> or <b>button menu</b>, then trigger it from as many screens as you like.</li>
+    <li>Turn on <b>Test actions</b> in the toolbar to try the actions on the canvas. Routes open the target screen; popups, drawers, radial menus, sliders, and carousel roll menus appear live over the canvas. Turn it off to edit again.</li>
     <li>Elements with an action show a <b>⚡</b> badge in the Layers list. The action sits on the element you click; if it is inside a group, put it on the group.</li>
     <li>Routes are also available as <b>links in the Workflow designer</b>. If both exist on the same element the page gets one clickable area, not two.</li>
     <li>If the element or screen that an action points to is deleted later, that action is left out of the export.</li>
@@ -393,23 +451,42 @@
 </section>
 
 <!-- ===================================================== THEMES -->
-<section id="themes" data-title="Themes & surface roles" data-group="Concepts">
-  <h3>Themes and surface roles</h3>
-  <p class="lead">One stored design renders in every theme. Four are built in: Liquid glass, Glow lines, Neumorphic light and Neumorphic dark.</p>
+<section id="themes" data-title="Themes, 15 design styles & surface roles" data-group="Concepts">
+  <h3>Themes, 15 design styles (Dark &amp; Light) and surface roles</h3>
+  <p class="lead">One stored design renders in every theme. <b>30 built-in themes</b> (15 design style families, each with both <b>Dark</b> and <b>Light</b> modes) and <b>40 Dark &amp; Light button templates</b> are included out of the box.</p>
+  <h4>Built-in Design Style Families (Dark &amp; Light Modes)</h4>
+  <table>
+    <tr><th>Design Style Family</th><th>Dark &amp; Light Theme Keys</th><th>Visual Signature</th></tr>
+    <tr><td><b>Liquid Glass</b></td><td><code>liquid</code> · <code>liquid-light</code></td><td>Translucent layered glass, cyan-purple gradient strokes, specular shine</td></tr>
+    <tr><td><b>Glow Lines</b></td><td><code>glow</code> · <code>glow-light</code></td><td>High-contrast neon vector outlines with outer bloom</td></tr>
+    <tr><td><b>Neumorphic</b></td><td><code>neumorph-dark</code> · <code>neumorph-light</code></td><td>Soft extruded dual-shadow tactile surfaces</td></tr>
+    <tr><td><b>Glassmorphism</b></td><td><code>glassmorphism-dark</code> · <code>glassmorphism-light</code></td><td>Frosted acrylic blur panels, crisp 1px rim highlights</td></tr>
+    <tr><td><b>Brutalism / Neo-Brutalism</b></td><td><code>brutalism-dark</code> · <code>brutalism-light</code></td><td>Bold ink borders, hard offset shadows, punchy high-contrast fills</td></tr>
+    <tr><td><b>Minimalist</b></td><td><code>minimalist-dark</code> · <code>minimalist-light</code></td><td>Clean Swiss typography, hairline rules, zero visual clutter</td></tr>
+    <tr><td><b>Skeuomorphism</b></td><td><code>skeuomorphism-dark</code> · <code>skeuomorphism-light</code></td><td>Rich physical bevels, brushed gradients, tactile recessed/raised controls</td></tr>
+    <tr><td><b>Aurora</b></td><td><code>aurora-dark</code> · <code>aurora-light</code></td><td>Ethereal northern-lights mesh gradients and soft luminous cards</td></tr>
+    <tr><td><b>Gradient 3D Claymorphism</b></td><td><code>claymorphism-dark</code> · <code>claymorphism-light</code></td><td>Inflated 3D matte clay shapes with soft inner volume shadows</td></tr>
+    <tr><td><b>Cyberpunk</b></td><td><code>cyberpunk-dark</code> · <code>cyberpunk-light</code></td><td>Electric yellow/magenta/cyan HUD chrome and high-voltage accents</td></tr>
+    <tr><td><b>Synthwave</b></td><td><code>synthwave-dark</code> · <code>synthwave-light</code></td><td>80s sunset chrome gradients, violet-magenta-cyan outrun glow</td></tr>
+    <tr><td><b>Pastel Minimal / Cozy UI</b></td><td><code>pastel-cozy-dark</code> · <code>pastel-cozy-light</code></td><td>Warm soothing pastel palettes, rounded organic comfort</td></tr>
+    <tr><td><b>Cosmic / Space Adventure UI</b></td><td><code>cosmic-space-dark</code> · <code>cosmic-space-light</code></td><td>Deep-space starlight gradients, orbital rings, nebula accents</td></tr>
+    <tr><td><b>Flat Playful</b></td><td><code>flat-playful-dark</code> · <code>flat-playful-light</code></td><td>Crisp shadowless geometric blocks with cheerful primary pops</td></tr>
+    <tr><td><b>Pop &amp; Neon Retro UI</b></td><td><code>pop-neon-retro-dark</code> · <code>pop-neon-retro-light</code></td><td> Halftone arcade energy, bold outlines, electric retro pop colours</td></tr>
+  </table>
   <ul>
-    <li>Choose a theme in the top bar or the <b>Theme</b> menu. The canvas, thumbnails and exports follow it.</li>
+    <li>Choose any Dark or Light theme in the top bar or the <b>Theme</b> menu. The canvas, thumbnails and exports follow it immediately.</li>
     <li><b>Theme → Edit themes…</b>: change colours, the <b>global line size</b>, button size and margin, clone a theme to make your own, or edit its surface roles.</li>
     <li>Colours in a design are <b>tokens</b> such as <code>{{accent}}</code> or <code>{{text}}</code>, not fixed values, so they change with the theme.</li>
   </ul>
   <h4 id="surface-roles">What a surface role is</h4>
-  <p>A <b>surface role</b> tells the theme how to paint a shape (fill, border, shadow), so the same shape looks right in all four themes.</p>
+  <p>A <b>surface role</b> tells the theme how to paint a shape (fill, border, shadow), so the same shape looks right across all 30 Dark &amp; Light themes.</p>
   <table>
     <tr><th>Role</th><th>Use it for</th><th>Look</th></tr>
-    <tr><td>card</td><td>panels, cards, sheets</td><td>glass gradient with a shadow · glowing outline · raised</td></tr>
-    <tr><td>button</td><td>round or pill button frames</td><td>glass bubble · glowing outline · small raised bump</td></tr>
+    <tr><td>card</td><td>panels, cards, sheets, containers</td><td>glass gradient with a shadow · glowing outline · raised / brutal / clay / cozy card</td></tr>
+    <tr><td>button</td><td>circle, pill, squircle, or square button frames</td><td>themed button surface with style-specific border and shadow</td></tr>
     <tr><td>field</td><td>inputs, tab bars, tracks</td><td>translucent glass · thin outline · inset (pressed in)</td></tr>
-    <tr><td>shine</td><td>highlight on glass buttons</td><td>shown in Liquid, hidden in Glow and Neumorphic</td></tr>
-    <tr><td>bg / bg-glow</td><td>screen background, soft glow</td><td>theme background; the glow only in Liquid</td></tr>
+    <tr><td>shine</td><td>highlight on glass/clay/skeuo buttons</td><td>shown on glossy/dimensional themes, hidden on flat/minimal themes</td></tr>
+    <tr><td>bg / bg-glow</td><td>screen background, soft glow</td><td>theme background and ambient atmospheric glow</td></tr>
     <tr><td>(none)</td><td>everything else</td><td>keeps its own fill and stroke</td></tr>
   </table>
   <div class="note">If you set a fill or stroke on a shape that has a role, your colour wins over the theme. Remove it to give control back to the theme.</div>
@@ -437,8 +514,13 @@
 </section>
 
 <!-- ===================================================== EXPORT -->
-<section id="export" data-title="Export" data-group="Concepts">
-  <h3>Export</h3>
+<section id="export" data-title="Import & Export (JSON, SVG, HTML)" data-group="Concepts">
+  <h3>Import &amp; Export (JSON, SVG, HTML)</h3>
+  <h4>Library Import &amp; Export (Paths, Icons, Buttons, Elements, Screens, Workflows)</h4>
+  <ul>
+    <li>Use the <b>📤 Import</b> and <b>📥 Export</b> buttons in the left Library header or the top <b>Export</b> menu to export or import any subset of Paths, Icons, Buttons, Elements, Screens, and Workflows as <b>JSON</b>, <b>SVG</b>, or standalone <b>HTML</b> bundles.</li>
+    <li>When importing, choose the destination visibility scope (<b>📁 Active Project</b>, <b>🔒 My Global Library</b>, or <b>🌐 Public Library</b>). All nested dependencies are imported automatically.</li>
+  </ul>
   <h4>One design as an SVG file</h4>
   <p>Click <kbd>⤓</kbd> on a library cell, or use <b>Export → Export open design as SVG</b>. Animations are included. A button is exported with its menu.</p>
   <h4>A working project (HTML, CSS, TS, JS and SVG)</h4>

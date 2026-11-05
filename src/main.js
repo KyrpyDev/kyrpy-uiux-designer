@@ -29,7 +29,14 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv.slice(2));
 const cmd = args._[0] || 'serve';
-const dbFile = resolve(args.db || join(here, 'data', 'designer.db'));
+const seedDbFile = join(here, 'data', 'designer.db');
+const prodDbFile = join(here, 'data', 'designer.prod.db');
+const explicitDb = args.db || process.env.DESIGNER_DB_PATH || process.env.DB_FILE;
+if (!explicitDb && cmd === 'serve' && !existsSync(prodDbFile) && existsSync(seedDbFile)) {
+  mkdirSync(dirname(prodDbFile), { recursive: true });
+  copyFileSync(seedDbFile, prodDbFile);
+}
+const dbFile = resolve(explicitDb || (existsSync(prodDbFile) ? prodDbFile : seedDbFile));
 const defaultLegacy = existsSync(resolve(here, '..', 'v1'))
   ? resolve(here, '..', 'v1')
   : resolve(here, '..', '.archive', 'v1');

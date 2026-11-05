@@ -3,7 +3,7 @@
  * Change Request Approval/Rejection, Editable Templates (Devices & Buttons),
  * Translations, and Offline-First PostgreSQL Synchronization.
  */
-import { USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS, EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS } from '../../../domain/entities.js';
+import { USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS, EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, BUTTON_STYLES } from '../../../domain/entities.js';
 
 export function collabRoutes(router, c) {
   // ---- Auth & Session ----
@@ -46,6 +46,20 @@ export function collabRoutes(router, c) {
   router.post('/api/projects', ({ body, actor }) => c.projects.create(body, actor));
   router.get('/api/projects/:id', ({ params }) => c.projects.get(params.id));
   router.put('/api/projects/:id', ({ params, body, actor }) => c.projects.update(params.id, body, actor));
+  router.post('/api/projects/:id/save', ({ params, body, actor }) => c.projects.saveProject(params.id, body || {}, actor));
+  router.post('/api/projects/:id/clone', ({ params, body, actor }) => c.projects.clone(params.id, body || {}, actor));
+  router.get('/api/projects/:id/button-settings', ({ params }) => {
+    const p = c.projects.get(params.id);
+    return {
+      projectId: p.id,
+      buttonStyle: p.settings?.buttonStyle || 'circle',
+      buttonIconSizePct: p.settings?.buttonIconSizePct ?? 70,
+      styles: BUTTON_STYLES
+    };
+  });
+  router.post('/api/projects/:id/button-settings', ({ params, body, actor }) =>
+    c.projects.applyButtonSettings(params.id, body || {}, actor)
+  );
   router.delete('/api/projects/:id', ({ params, actor }) => c.projects.remove(params.id, actor));
   router.post('/api/projects/:id/visibility', ({ params, body, actor }) =>
     c.projects.setAllItemsVisibility(params.id, body?.visibility || 'public', actor)

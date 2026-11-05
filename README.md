@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e9bff.svg)](./LICENSE)
 [![Runtime: Node.js 22+](https://img.shields.io/badge/Node.js-22%2B%20(Zero%20NPM%20Deps)-3fb950.svg)](https://nodejs.org)
 [![Database: Offline-First SQLite + PostgreSQL](https://img.shields.io/badge/Database-SQLite%20%2B%20PostgreSQL%20Sync-8a5cf6.svg)](./sql/)
-[![Tests: 67 Passing](https://img.shields.io/badge/Tests-67%2F67%20Passing-brightgreen.svg)](./src/tests/)
+[![Tests: 72 Passing](https://img.shields.io/badge/Tests-72%2F72%20Passing-brightgreen.svg)](./src/tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](./CONTRIBUTING.md)
 
 **Kyrpy UI/UX App Designer** is a zero-dependency, offline-first, collaborative vector & interactive UI/UX design studio built for **developers, product designers, and AI coding agents**.
@@ -19,13 +19,14 @@ Unlike traditional design tools that trap your layouts in opaque proprietary blo
 - **🧱 Strict Composable Design Hierarchy**:
   - **Paths (`24×24`)**: Reusable vector path primitives with Bezier vertex editing, Boolean pathfinder ops (`unite`, `subtract`, `intersect`, `exclude`), pen tool, crop, and simplify.
   - **Icons (`24×24`)**: Composed from reusable Path groups + custom vector shapes.
-  - **Buttons**: Interactive frames + icons + nested **Popup / Rotating Radial Menus** where each menu item can trigger events, route to screens, or **open any Element as a Popup / Modal Box**.
-  - **Elements**: Reusable UI building blocks & 15+ interactive HTML components (forms, inputs, flip-boxes, accordions, sliders, tabs, floating toolbars, cards).
-  - **Screens**: Device-framed compositions (`iPhone 15`, `iPhone 16 Pro Max`, `Pixel 8`, `Galaxy S24`, `iPad Pro`, `Desktop 1080p`, `Watch`, plus custom editable device templates).
+  - **Buttons**: Interactive frames + icons with **per-project Button Style** (`circle` [Default], `pill`, `rounded`, `squircle`, `square`, `sharp`, `outline`, `ghost`) and **per-project Button Icon Size Slider (`50–90%`, default `70%`)** that apply across all buttons in the Buttons library, plus interactive **Radial Menu**, **Drawer Menu**, **Vertical/Horizontal Slider Menu**, **2D/3D Carousel Animated Roll Menu**, and **Show Element** actions.
+  - **Elements & Containers**: Reusable UI building blocks, **Container** shells (fit-to-screen, fixed/responsive, inner/outer margins, child max-size clamping), **Carousel Containers** (2D/3D horizontal & vertical animated roll), and 15+ interactive HTML components.
+  - **Screens & 15 Design Style Families (30 Dark & Light Themes)**: Device-framed compositions rendered across **15 design style families** in both **Dark and Light modes** (*Liquid Glass, Glow Lines, Neumorphic, Glassmorphism, Brutalism / Neo-Brutalism, Minimalist, Skeuomorphism, Aurora, Gradient 3D Claymorphism, Cyberpunk, Synthwave, Pastel Minimal / Cozy UI, Cosmic / Space Adventure UI, Flat Playful, Pop & Neon Retro UI*).
   - **Workflows**: Visual screen-to-screen routing graphs with interactive hotspot links and live routing simulation.
-- **🟢 Live "Test Actions" Simulation Mode**: Flip on **`▶ Test actions`** in any Button, Element, Screen, or Workflow designer to test real text inputs, checkboxes, toggles, sliders, CSS keyframe animations, floating toolbars, modal popups, drawers, and multi-screen navigation live on the canvas.
-- **👥 Multi-Project Workspaces, RBAC/ACL & Collaborative Change Review**:
-  - Public (`🌐 Public`) vs. Project-Private (`📁 Project-only`) libraries.
+- **🟢 Live "Test Actions" Simulation Mode**: Flip on **`▶ Test actions`** in any Button, Element, Screen, or Workflow designer to test real text inputs, checkboxes, toggles, sliders, CSS keyframe animations, radial/drawer/slider/carousel menus, modal popups, drawers, and multi-screen navigation live on the canvas.
+- **👥 Multi-Project Workspaces (`New`, `Save`, `Clone`, `Browse`, `Delete`), 3-Tier Scopes & Collaborative Change Review**:
+  - Manage projects directly from the **Project** menu (`New Project`, `Save Project`, `Clone Project`, `Browse Projects`, `Delete Project`).
+  - Three-tier visibility scopes: **🌐 Public (`public`)**, **🔒 My Global Library (`private`)**, and **📁 Project (`project`)**, plus multi-target **`Save as…`** across multiple projects at once.
   - Copy or Move items across multiple projects in one click—automatically cascading all referenced sub-items (`screen → element → button → icon → path`).
   - Full **Root-Owner Lineage Tree** across multi-hop clones.
   - **Owner Approval / Rejection Workflow**: Edits by collaborators generate diff snapshots (`change_requests`) that project owners can approve or roll back in one click.
