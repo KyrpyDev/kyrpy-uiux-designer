@@ -165,4 +165,28 @@ export function collabRoutes(router, c) {
       actor
     })
   );
+
+  // ---- Export & Import Library Items (paths, icons, buttons, elements, screens, workflows) in HTML, SVG, JSON ----
+  router.post('/api/library/export-items', ({ body, projectId }) =>
+    c.libraryTransfer.exportLibraryItems({
+      items: body?.items || [],
+      types: body?.types || [],
+      format: body?.format || 'json',
+      projectId: body?.projectId ?? projectId,
+      visibility: body?.visibility || 'all',
+      includeSubItems: body?.includeSubItems !== false
+    })
+  );
+  router.post('/api/library/import-items', ({ body, actor, projectId }) =>
+    c.libraryTransfer.importLibraryItems({
+      format: body?.format || 'auto',
+      content: body?.content || '',
+      targetType: body?.targetType || body?.type || 'auto',
+      projectId: body?.projectId ?? projectId ?? 1,
+      visibility: body?.visibility || 'project',
+      category: body?.category || 'imported',
+      name: body?.name || '',
+      actor
+    })
+  );
 }

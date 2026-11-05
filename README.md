@@ -157,14 +157,55 @@ PGADMINDB=postgres
 - **Immutable Public Default Library & Trash Bin**: Default public libraries are protected from accidental emptying (`409 Conflict`). Deleted items go to the **Trash Bin (`🗑 Trash`)** first, where they can be restored or permanently purged (public items require `admin`/`superadmin`).
 
 ### 4. Full-Stack Code & Bundle Exporter
+### 9. Multi-Format Library Export & Import (`HTML`, `SVG`, `JSON`)
+Export and import **Paths**, **Icons**, **Buttons**, **Elements**, **Screens**, and **Workflows** directly into either **Project-Specific (`visibility: 'project'`)** or **Public (`visibility: 'public'`)** libraries in three interchangeable formats:
+- **`JSON` (`.json`)**: Structured `kyrpy-uiux-library-v2` bundle with cascading sub-items (`screen → element → button → icon → path` + menu items + workflow screen bindings).
+- **`SVG` (`.svg`)**: Standalone vector artwork or multi-item SVG sheet with embedded lossless library metadata (`<!-- KYRPY_UIUX_LIBRARY_PAYLOAD:... -->`) and raw `<svg>` shape parser fallback.
+- **`HTML` (`.html`)**: Self-contained interactive HTML catalog previewing every exported item with inline SVGs plus an embedded `#ud-library-payload` script for lossless round-trip re-import.
+
+### 10. Production Bundle Exporter
 Export any set of screens and themes into a clean, self-contained **HTML + CSS + TypeScript + JavaScript + SVG Sprite** bundle (`DEV-NOTES.md`, `manifest.json`, `screens/*.html`, `svg/sprite.svg`, `ts/app.ts`) ready for your engineering team or AI coding agents to wire into production.
+
+---
+
+## 🤖 AI Agent Skill for GitHub Actions, Push, Pull, Fix & Issues
+
+This repository ships with a built-in AI Agent Skill at [`skills/github-workflow-agent/SKILL.md`](./skills/github-workflow-agent/SKILL.md) alongside our automated GitHub Actions pipeline ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)).
+AI coding assistants (Antigravity, Claude Code, Cursor, GitHub Copilot Workspace, OpenHands) can load `skills/github-workflow-agent/SKILL.md` to autonomously execute:
+- **`pull`**: `git fetch origin && git pull --rebase origin main && (cd src && npm test)`
+- **`push`**: Pre-push test gate (`npm test`), zero-secret audit, Conventional Commits, and `git push origin main`
+- **`fix`**: Issue reproduction, regression test authoring in `src/tests/`, branch creation, and PR linking
+- **`issue`**: Triage, creation, commenting, and closing via `gh issue`
+- **`actions`**: Inspecting workflow runs (`gh run list`, `gh run view --log-failed`), triggering `ci.yml`, and re-running failed jobs
+
+---
+
+## 🗺️ Future Tasks & AI Roadmap
+
+We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborative design platform. Upcoming roadmap milestones include:
+
+1. **🤝 Integrate with AI Collaboration**
+   - Real-time human + multi-agent collaborative sessions on the shared canvas and workflow graph.
+   - AI design co-pilots that propose layout refinements, accessibility (WCAG AAA) fixes, theme token harmonization, and interactive state wiring directly through the **Collaborative Change Request (`pending` → `approved` / `rejected`)** review pipeline.
+   - Automated multi-persona UX evaluation agents that simulate user journeys across workflows and attach structured UX feedback to screens.
+
+2. **🔌 Create an MCP (Model Context Protocol) Server**
+   - Expose the entire 5-layer design hierarchy (`paths`, `icons`, `buttons`, `elements`, `screens`, `workflows`), theme tokens, and live SVG/HTML renderer as a standard **MCP Server** (`stdio` and `HTTP/SSE`).
+   - Enable any MCP-compatible IDE or agent (Claude Code, Antigravity, Cursor, Windsurf, Zed) to query existing components, inspect screen layouts, create/modify vector nodes, wire screen transitions, and export production bundles via native MCP tool calls.
+
+3. **🔑 Use BYOK (Bring Your Own Key) for Users' AI-Assisted Item Generator Features**
+   - Built-in **BYOK (Bring Your Own Key)** settings vault allowing each user to configure their own API keys (OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or local Ollama/vLLM endpoints) stored locally or encrypted per user profile.
+   - **AI-Assisted Item Generator** across all library tiers:
+     - **Paths & Icons**: Natural-language prompt to clean SVG vector path groups and Liquid-Glow icons.
+     - **Buttons & Elements**: Prompt-to-component generation with automatic hover/click animations, form fields, and theme token bindings.
+     - **Screens & Workflows**: Multi-screen user flow synthesis from product requirements or wireframes directly into editable hierarchical screens and connected workflow graphs.
 
 ---
 
 ## 🧪 Running Tests & Server Management
 
 ```bash
-# Run the full 67-test automated suite (unit + integration + 8 adversarial user personas)
+# Run the full 68-test automated suite (unit + integration + 9 adversarial user personas)
 cd src && npm test
 
 # Service management via run.sh

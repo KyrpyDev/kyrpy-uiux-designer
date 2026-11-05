@@ -4,7 +4,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UI/UX App Designer</title>
-<link rel="stylesheet" href="/css/app.css?v=20261105">
+<script>
+// Replace deprecated Range.prototype.expand with Selection.modify so browser scripts/extensions never trigger deprecation warnings
+if (typeof Range !== 'undefined' && Range.prototype && 'expand' in Range.prototype) {
+  Range.prototype.expand = function expandViaSelectionModify(unit = 'word') {
+    const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+    if (!sel) return;
+    try {
+      sel.removeAllRanges();
+      sel.addRange(this);
+      if (typeof sel.modify === 'function') {
+        sel.modify('move', 'backward', unit);
+        sel.modify('extend', 'forward', unit);
+        if (sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          this.setStart(r.startContainer, r.startOffset);
+          this.setEnd(r.endContainer, r.endOffset);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+}
+</script>
+<link rel="stylesheet" href="/css/app.css?v=20261105b">
 </head>
 <body>
 <div id="app">
@@ -19,6 +41,6 @@
 <div id="toasts" aria-live="polite"></div>
 <div id="modal-root"></div>
 <div id="sprite-host" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"></div>
-<script type="module" src="/js/main.js?v=20261105"></script>
+<script type="module" src="/js/main.js?v=20261105b"></script>
 </body>
 </html>

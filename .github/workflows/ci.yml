@@ -1,0 +1,33 @@
+name: Kyrpy UI/UX Designer CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-and-audit:
+    name: Node.js 22 Test Suite & Secret Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify zero leaked credentials in tracked files
+        run: |
+          if git grep -iE "PG_PASSWORD=[^c]|POSTGRES_PASSWORD=[^c]|SUPABASE_SERVICE_ROLE_KEY=eyJ" -- ':!*.example'; then
+            echo "❌ Potential secret detected in tracked files!"
+            exit 1
+          fi
+          echo "✅ Zero secrets detected in tracked files."
+
+      - name: Run full test suite (68+ tests)
+        working-directory: src
+        run: npm test

@@ -24,6 +24,7 @@ import {
   openItemBrowserModal,
   openTrashModal,
   openCopyMoveToProjectsModal,
+  openLibraryExportImportModal,
   refreshGlobalLibraryAndCounts
 } from './components/item-browser.js';
 
@@ -178,6 +179,8 @@ function menuDef() {
       '-',
       ['Import from SVG Folder to Current Library…', async () => { const r = await importFolderOrFontDialog(state.tab, 'folder'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
       ['Import from Fonts (.svg / .ttf / .woff / Glyphs) to Current Library…', async () => { const r = await importFolderOrFontDialog(state.tab, 'font'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
+      ['Export Library Items (HTML / SVG / JSON)…', () => openLibraryExportImportModal({ initialTab: 'export', defaultType: state.tab })],
+      ['Import Library Items to Project / Public (HTML / SVG / JSON)…', () => openLibraryExportImportModal({ initialTab: 'import', defaultType: state.tab })],
       ['Import SVG as path group…', async () => { const r = await importSvgDialog('path'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
       ['Import SVG as icon…', async () => { const r = await importSvgDialog('icon'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
       ['Import SVG as button…', async () => { const r = await importSvgDialog('button'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],

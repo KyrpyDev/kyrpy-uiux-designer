@@ -315,5 +315,7 @@ export const api = {
   emptyProjectLibrary: (projectId, body = {}) =>
     projectId
       ? api.post(`/api/projects/${projectId}/empty-library`, body)
-      : api.post('/api/library/empty', body)
+      : api.post('/api/library/empty', body),
+  exportLibraryItems: body => api.post('/api/library/export-items', body),
+  importLibraryItems: body => api.post('/api/library/import-items', body)
 };

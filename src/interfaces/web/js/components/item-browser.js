@@ -676,6 +676,22 @@ export function buildItemBrowserElement({
       onclick: () => executeBulkTransfer('move')
     }, '📤 Move to Projects'),
     h('button', {
+      class: 'btn sm ib-btn-export-import',
+      title: 'Export or Import paths, icons, buttons, elements, screens, and workflows as HTML, SVG, or JSON',
+      onclick: () => {
+        const items = [...selectedKeys].map(k => {
+          const [type, idStr] = k.split(':');
+          return { type, id: Number(idStr) };
+        });
+        openLibraryExportImportModal({
+          initialTab: 'export',
+          preselectedItems: items,
+          defaultType: typeFilter,
+          onDone: () => loadAllItems()
+        });
+      }
+    }, '⇅ Export / Import (HTML·SVG·JSON)'),
+    h('button', {
       class: 'btn sm ib-btn-empty-private',
       title: 'Empty selected project’s private library (default libraries are immutable)',
       onclick: executeEmptyPrivateLibrary
@@ -916,5 +932,376 @@ export async function openTrashModal() {
     title: '🗑 Trash Management — Restore or Purge Deleted Items',
     wide: true,
     content
+  });
+}
+
+/**
+ * Unified Export & Import Modal for paths, icons, buttons, elements, screens, and workflows
+ * into Project (`visibility: 'project'`) or Public (`visibility: 'public'`) libraries
+ * in HTML, SVG, and JSON formats.
+ */
+export function openLibraryExportImportModal({
+  initialTab = 'export',
+  preselectedItems = [],
+  defaultType = 'all',
+  onDone = null
+} = {}) {
+  let activeTab = initialTab === 'import' ? 'import' : 'export';
+  const selectedTypes = new Set(
+    defaultType && defaultType !== 'all' ? [defaultType] : ['path', 'icon', 'button', 'element', 'screen', 'workflow']
+  );
+  let exportFormat = 'json';
+  let exportScope = 'all';
+  let exportProjectId = state.activeProjectId || 1;
+  let includeSubItems = true;
+  let usePreselected = Array.isArray(preselectedItems) && preselectedItems.length > 0;
+  let exportResultText = '';
+  let exportFilename = 'kyrpy-library-export.json';
+  let exportContentType = 'application/json';
+
+  let importFormat = 'auto';
+  let importTargetType = defaultType && defaultType !== 'all' ? defaultType : 'auto';
+  let importVisibility = 'project';
+  let importProjectId = state.activeProjectId || 1;
+  let importCategory = 'imported';
+  let importName = '';
+  let importContentText = '';
+
+  const tabBar = h('div', { class: 'seg', style: { marginBottom: '12px' } });
+  const bodyHost = h('div', { class: 'stack', style: { gap: '12px' } });
+
+  function triggerDownload(filename, contentType, text) {
+    const blob = new Blob([text], { type: contentType || 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'kyrpy-library-export.txt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function renderTabs() {
+    clear(tabBar);
+    for (const [k, label] of [
+      ['export', '⬇ Export Library (HTML · SVG · JSON)'],
+      ['import', '⬆ Import to Project / Public Library (HTML · SVG · JSON)']
+    ]) {
+      tabBar.append(
+        h('button', {
+          class: activeTab === k ? 'on' : '',
+          dataset: { libExImTab: k },
+          onclick: () => {
+            activeTab = k;
+            renderTabs();
+            renderBody();
+          }
+        }, label)
+      );
+    }
+  }
+
+  function renderBody() {
+    clear(bodyHost);
+    if (activeTab === 'export') {
+      const formatBar = h('div', { class: 'seg' },
+        ...[['json', '{ } JSON (.json)'], ['svg', '◈ SVG (.svg)'], ['html', '🌐 HTML (.html)']].map(([fmt, label]) =>
+          h('button', {
+            class: exportFormat === fmt ? 'on' : '',
+            dataset: { exportFormat: fmt },
+            onclick: () => {
+              exportFormat = fmt;
+              renderBody();
+            }
+          }, label)
+        )
+      );
+
+      const typeChecks = h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
+        ...ALL_ITEM_TYPES.map(t => {
+          const chk = h('input', {
+            type: 'checkbox',
+            checked: selectedTypes.has(t),
+            disabled: usePreselected,
+            onchange: e => {
+              if (e.target.checked) selectedTypes.add(t);
+              else selectedTypes.delete(t);
+            }
+          });
+          return h('label', { class: 'chip', style: { display: 'inline-flex', alignItems: 'center', gap: '5px' } }, chk, TYPE_LABELS[t]);
+        })
+      );
+
+      const scopeSelect = h('select', {
+        disabled: usePreselected,
+        onchange: e => { exportScope = e.target.value; }
+      },
+        h('option', { value: 'all', selected: exportScope === 'all' }, 'All (Public + Project)'),
+        h('option', { value: 'public', selected: exportScope === 'public' }, '🌐 Public Library Only'),
+        h('option', { value: 'project', selected: exportScope === 'project' }, '📁 Project Library Only')
+      );
+
+      const projSelect = h('select', {
+        disabled: usePreselected,
+        onchange: e => { exportProjectId = Number(e.target.value); }
+      },
+        ...(state.projects || []).map(p =>
+          h('option', { value: String(p.id), selected: Number(exportProjectId) === Number(p.id) }, `📁 ${p.name} (#${p.id})`)
+        )
+      );
+
+      const previewArea = h('textarea', {
+        rows: 10,
+        readonly: true,
+        placeholder: 'Click "Generate Export" or "Download File" to export paths, icons, buttons, elements, screens, and workflows as HTML, SVG, or JSON…',
+        style: { width: '100%', fontFamily: 'var(--mono)', fontSize: '11px' },
+        value: exportResultText
+      });
+
+      const runExport = async (downloadImmediately = false) => {
+        try {
+          const payload = usePreselected
+            ? { items: preselectedItems, format: exportFormat, includeSubItems }
+            : {
+                types: [...selectedTypes],
+                format: exportFormat,
+                visibility: exportScope,
+                projectId: exportProjectId,
+                includeSubItems
+              };
+          const res = await api.exportLibraryItems(payload);
+          exportResultText = res.content || '';
+          exportFilename = res.filename || `kyrpy-library-export.${exportFormat}`;
+          exportContentType = res.contentType || 'text/plain';
+          previewArea.value = exportResultText;
+          toast(`Exported ${res.totalCount} item(s) as ${exportFormat.toUpperCase()}`, 'ok');
+          if (downloadImmediately && exportResultText) {
+            triggerDownload(exportFilename, exportContentType, exportResultText);
+          }
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      };
+
+      bodyHost.append(
+        preselectedItems.length > 0
+          ? h('label', { class: 'row', style: { gap: '8px', fontSize: '12px' } },
+              h('input', {
+                type: 'checkbox',
+                checked: usePreselected,
+                onchange: e => { usePreselected = e.target.checked; renderBody(); }
+              }),
+              `Export only the ${preselectedItems.length} currently selected item(s)`
+            )
+          : null,
+        h('div', { class: 'row spread', style: { gap: '10px', flexWrap: 'wrap' } },
+          h('div', { class: 'stack', style: { gap: '4px' } },
+            h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Export Format (HTML / SVG / JSON)'),
+            formatBar
+          ),
+          h('div', { class: 'stack', style: { gap: '4px' } },
+            h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Library Scope'),
+            scopeSelect
+          ),
+          h('div', { class: 'stack', style: { gap: '4px' } },
+            h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Project Filter'),
+            projSelect
+          ),
+          h('label', { class: 'row', style: { gap: '6px', marginTop: '16px', fontSize: '12px' } },
+            h('input', {
+              type: 'checkbox',
+              checked: includeSubItems,
+              onchange: e => { includeSubItems = e.target.checked; }
+            }),
+            'Include cascading sub-items (paths, icons, buttons, elements, screens)'
+          )
+        ),
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Item Types to Include'),
+          typeChecks
+        ),
+        h('div', { class: 'row', style: { gap: '8px' } },
+          h('button', {
+            class: 'btn primary lib-run-export-btn',
+            onclick: () => runExport(false)
+          }, `⚡ Generate ${exportFormat.toUpperCase()} Export`),
+          h('button', {
+            class: 'btn lib-download-export-btn',
+            onclick: () => runExport(true)
+          }, `⤓ Download .${exportFormat} File`),
+          h('button', {
+            class: 'btn',
+            onclick: async () => {
+              if (!previewArea.value) await runExport(false);
+              if (previewArea.value && navigator.clipboard) {
+                await navigator.clipboard.writeText(previewArea.value);
+                toast('Copied export output to clipboard', 'ok');
+              }
+            }
+          }, '📋 Copy Output')
+        ),
+        previewArea
+      );
+      return;
+    }
+
+    // activeTab === 'import'
+    const visToggle = h('div', { class: 'seg' },
+      ...[['project', '📁 Project Library (Private)'], ['public', '🌐 Public Library']].map(([v, label]) =>
+        h('button', {
+          class: importVisibility === v ? 'on' : '',
+          dataset: { importVis: v },
+          onclick: () => { importVisibility = v; renderBody(); }
+        }, label)
+      )
+    );
+
+    const targetProjSelect = h('select', {
+      onchange: e => { importProjectId = Number(e.target.value); }
+    },
+      ...(state.projects || []).map(p =>
+        h('option', { value: String(p.id), selected: Number(importProjectId) === Number(p.id) }, `📁 ${p.name} (#${p.id})`)
+      )
+    );
+
+    const fmtSelect = h('select', {
+      onchange: e => { importFormat = e.target.value; }
+    },
+      h('option', { value: 'auto', selected: importFormat === 'auto' }, 'Auto-detect (HTML / SVG / JSON)'),
+      h('option', { value: 'json', selected: importFormat === 'json' }, 'JSON (.json)'),
+      h('option', { value: 'svg', selected: importFormat === 'svg' }, 'SVG (.svg)'),
+      h('option', { value: 'html', selected: importFormat === 'html' }, 'HTML (.html)')
+    );
+
+    const targetTypeSelect = h('select', {
+      onchange: e => { importTargetType = e.target.value; }
+    },
+      h('option', { value: 'auto', selected: importTargetType === 'auto' }, 'Auto / Bundle Item Types'),
+      h('option', { value: 'path', selected: importTargetType === 'path' }, 'Path'),
+      h('option', { value: 'icon', selected: importTargetType === 'icon' }, 'Icon'),
+      h('option', { value: 'button', selected: importTargetType === 'button' }, 'Button'),
+      h('option', { value: 'element', selected: importTargetType === 'element' }, 'Element'),
+      h('option', { value: 'screen', selected: importTargetType === 'screen' }, 'Screen'),
+      h('option', { value: 'workflow', selected: importTargetType === 'workflow' }, 'Workflow')
+    );
+
+    const nameInput = h('input', {
+      type: 'text',
+      placeholder: 'Optional name override for single imported item…',
+      value: importName,
+      oninput: e => { importName = e.target.value; }
+    });
+
+    const catInput = h('input', {
+      type: 'text',
+      placeholder: 'Category (e.g. imported)',
+      value: importCategory,
+      oninput: e => { importCategory = e.target.value; }
+    });
+
+    const contentArea = h('textarea', {
+      rows: 10,
+      placeholder: 'Paste .json, .svg (<svg>...</svg>), or .html content here, or choose file(s) above…',
+      style: { width: '100%', fontFamily: 'var(--mono)', fontSize: '11px' },
+      value: importContentText,
+      oninput: e => { importContentText = e.target.value; }
+    });
+
+    const fileInput = h('input', {
+      type: 'file',
+      accept: '.json,.svg,.html,.htm',
+      multiple: true,
+      onchange: async e => {
+        const files = [...(e.target.files || [])];
+        if (!files.length) return;
+        const texts = await Promise.all(files.map(f => f.text()));
+        importContentText = texts.join('\n\n');
+        contentArea.value = importContentText;
+        const ext = files[0].name.split('.').pop()?.toLowerCase();
+        if (['json', 'svg', 'html'].includes(ext)) {
+          importFormat = ext;
+          fmtSelect.value = ext;
+        }
+        toast(`Loaded ${files.length} file(s) ready to import`, 'ok');
+      }
+    });
+
+    const executeImport = async () => {
+      if (!importContentText.trim()) {
+        toast('Choose a .html, .svg, or .json file or paste content first', 'err');
+        return;
+      }
+      try {
+        const res = await api.importLibraryItems({
+          format: importFormat,
+          content: importContentText,
+          targetType: importTargetType,
+          projectId: importProjectId,
+          visibility: importVisibility,
+          category: importCategory || 'imported',
+          name: importName.trim()
+        });
+        await refreshGlobalLibraryAndCounts();
+        onDone?.(res);
+        toast(
+          `Imported ${res.importedCount} item(s) into ${res.visibility === 'public' ? 'Public Library' : `Project #${res.projectId} Library`}`,
+          'ok'
+        );
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+
+    bodyHost.append(
+      h('div', { class: 'row spread', style: { gap: '10px', flexWrap: 'wrap' } },
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Target Library Visibility'),
+          visToggle
+        ),
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Target Project'),
+          targetProjSelect
+        ),
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Input Format'),
+          fmtSelect
+        ),
+        h('div', { class: 'stack', style: { gap: '4px' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Target Item Type'),
+          targetTypeSelect
+        )
+      ),
+      h('div', { class: 'row', style: { gap: '10px', flexWrap: 'wrap' } },
+        h('div', { class: 'stack', style: { gap: '4px', flex: '1' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Choose File (.html, .svg, .json)'),
+          fileInput
+        ),
+        h('div', { class: 'stack', style: { gap: '4px', flex: '1' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Category'),
+          catInput
+        ),
+        h('div', { class: 'stack', style: { gap: '4px', flex: '1' } },
+          h('label', { class: 'muted', style: { fontSize: '11px' } }, 'Optional Name Override'),
+          nameInput
+        )
+      ),
+      contentArea,
+      h('div', { class: 'row', style: { gap: '8px' } },
+        h('button', {
+          class: 'btn primary lib-run-import-btn',
+          onclick: executeImport
+        }, '⬆ Import into Library')
+      )
+    );
+  }
+
+  renderTabs();
+  renderBody();
+
+  return modal({
+    title: '⇅ Export & Import Library Items (HTML · SVG · JSON)',
+    wide: true,
+    content: h('div', { class: 'stack', style: { gap: '10px' } }, tabBar, bodyHost)
   });
 }

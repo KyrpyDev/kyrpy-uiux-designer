@@ -8,7 +8,7 @@ import { state, on, emit, libOf, PLURAL } from '../state.js';
 import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog } from '../actions.js';
 import { openExportDialog } from './export-dialog.js';
 import { openLineageModal } from './collab-modals.js';
-import { openCopyMoveToProjectsModal, openItemBrowserModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
+import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
 import { TYPES, canContain } from '/domain/entities.js';
 
 const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
@@ -188,6 +188,23 @@ export class LibraryPanel {
         title: 'Open 90% wide Item Browser to Move selected items to project(s)',
         onclick: () => openBrowserWithSelection('move')
       }, '📤 Move to…'),
+      h('button', {
+        class: 'btn small lib-export-import-btn',
+        title: 'Export or Import paths, icons, buttons, elements, screens, and workflows as HTML, SVG, or JSON',
+        onclick: () => {
+          const preselected = [...selSet].map(id => ({ type, id }));
+          openLibraryExportImportModal({
+            initialTab: 'export',
+            preselectedItems: preselected,
+            defaultType: type,
+            onDone: async () => {
+              if (type === 'screen') this.screensList = null;
+              if (type === 'workflow') await this.loadWorkflows();
+              this.renderBody();
+            }
+          });
+        }
+      }, '⇅ HTML·SVG·JSON'),
       h('button', {
         class: 'btn small lib-empty-private-btn',
         title: 'Empty active project’s private library (default libraries are immutable)',

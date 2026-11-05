@@ -886,3 +886,131 @@ test('Persona 8 (@kyrpy-gru & @kyrpy-testusers-team): Workflow Filters, Copy/Mov
     assert.ok(String(menuEditorJs.body).includes('Edit menu item'), 'menu-editor.js hover toolbar must show Edit menu item button');
   });
 });
+
+test('Persona 9 (@kyrpy-gru & @kyrpy-testusers-team): Multi-Format (HTML, SVG, JSON) Export & Import of Paths, Icons, Buttons, Elements, Screens, and Workflows into Project & Public Libraries + Selection.modify & Form Field ID/Name Compliance', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Verify Range.prototype.expand -> Selection.modify shim in index.html & form field id/name guard in dom.js
+    const indexHtml = await req('GET', '/');
+    assert.equal(indexHtml.status, 200);
+    assert.ok(String(indexHtml.body).includes('expandViaSelectionModify'), 'index.html must polyfill deprecated Range.expand with Selection.modify');
+
+    const domJs = await req('GET', '/js/dom.js');
+    assert.equal(domJs.status, 200);
+    assert.ok(String(domJs.body).includes('ensureFormFieldIdentity'), 'dom.js must auto-assign id and name attributes to all form fields');
+
+    // 2. Create a target project for private library imports
+    const projRes = await req('POST', '/api/projects', { name: 'MultiFormat Import Project', visibility: 'private' });
+    assert.equal(projRes.status, 200);
+    const targetPid = projRes.body.id;
+
+    // 3. Pick one item of each of the 6 types (path, icon, button, element, screen, workflow)
+    const paths = (await req('GET', '/api/paths')).body;
+    const icons = (await req('GET', '/api/icons')).body;
+    const buttons = (await req('GET', '/api/buttons')).body;
+    const elements = (await req('GET', '/api/elements')).body;
+    const screens = (await req('GET', '/api/screens')).body;
+    const workflows = (await req('GET', '/api/workflows')).body;
+
+    const sampleItems = [
+      { type: 'path', id: paths[0].id },
+      { type: 'icon', id: icons[0].id },
+      { type: 'button', id: buttons[0].id },
+      { type: 'element', id: elements[0].id },
+      { type: 'screen', id: screens[0].id },
+      { type: 'workflow', id: workflows[0].id }
+    ];
+
+    // 4. Export as JSON, SVG, and HTML
+    const expJson = await req('POST', '/api/library/export-items', {
+      items: sampleItems,
+      format: 'json',
+      includeSubItems: true
+    });
+    assert.equal(expJson.status, 200);
+    assert.equal(expJson.body.format, 'json');
+    assert.ok(expJson.body.totalCount >= 6, 'JSON export must include all 6 item types plus cascading sub-items');
+
+    const expSvg = await req('POST', '/api/library/export-items', {
+      items: sampleItems,
+      format: 'svg',
+      includeSubItems: false
+    });
+    assert.equal(expSvg.status, 200);
+    assert.equal(expSvg.body.format, 'svg');
+    assert.ok(expSvg.body.content.includes('<svg'), 'SVG export must contain valid <svg> markup');
+
+    const expHtml = await req('POST', '/api/library/export-items', {
+      items: sampleItems,
+      format: 'html',
+      includeSubItems: false
+    });
+    assert.equal(expHtml.status, 200);
+    assert.equal(expHtml.body.format, 'html');
+    assert.ok(expHtml.body.content.includes('<!DOCTYPE html>'), 'HTML export must produce a standalone HTML document');
+    assert.ok(expHtml.body.content.includes('id="ud-library-payload"'), 'HTML export must embed lossless library payload');
+
+    // 5. Import JSON bundle into Project Library (visibility: 'project')
+    const impJsonProj = await req('POST', '/api/library/import-items', {
+      format: 'json',
+      content: expJson.body.content,
+      projectId: targetPid,
+      visibility: 'project'
+    });
+    assert.equal(impJsonProj.status, 200);
+    assert.ok(impJsonProj.body.importedCount >= 6, 'JSON import must create all 6 item types in target project library');
+    assert.ok(impJsonProj.body.created.every(x => x.visibility === 'project' && x.projectId === targetPid));
+
+    // 6. Import SVG bundle into Public Library (visibility: 'public')
+    const impSvgPub = await req('POST', '/api/library/import-items', {
+      format: 'svg',
+      content: expSvg.body.content,
+      projectId: 1,
+      visibility: 'public'
+    });
+    assert.equal(impSvgPub.status, 200);
+    assert.equal(impSvgPub.body.importedCount, 6);
+    assert.ok(impSvgPub.body.created.every(x => x.visibility === 'public'));
+
+    // 7. Import HTML bundle into Project Library (visibility: 'project')
+    const impHtmlProj = await req('POST', '/api/library/import-items', {
+      format: 'html',
+      content: expHtml.body.content,
+      projectId: targetPid,
+      visibility: 'project'
+    });
+    assert.equal(impHtmlProj.status, 200);
+    assert.equal(impHtmlProj.body.importedCount, 6);
+
+    // 8. Import raw standalone SVG (without embedded payload) as an Icon and as a Screen
+    const rawSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 12h16M12 4v16"/></svg>';
+    for (const targetType of ['path', 'icon', 'button', 'element', 'screen', 'workflow']) {
+      const impRawSvg = await req('POST', '/api/library/import-items', {
+        format: 'svg',
+        content: rawSvg,
+        targetType,
+        projectId: targetPid,
+        visibility: 'project',
+        name: `Raw SVG ${targetType}`
+      });
+      assert.equal(impRawSvg.status, 200, `Raw SVG import for ${targetType} failed: ${JSON.stringify(impRawSvg.body)}`);
+      assert.equal(impRawSvg.body.importedCount, 1);
+      assert.equal(impRawSvg.body.created[0].type, targetType);
+    }
+
+    // 9. Import raw HTML snippet (without embedded payload) as an Element into Public Library
+    const rawHtml = '<!DOCTYPE html><html><head><title>Custom Promo Widget</title></head><body><div class="card"><h2>Promo Card</h2></div></body></html>';
+    const impRawHtml = await req('POST', '/api/library/import-items', {
+      format: 'html',
+      content: rawHtml,
+      targetType: 'element',
+      projectId: 1,
+      visibility: 'public'
+    });
+    assert.equal(impRawHtml.status, 200);
+    assert.equal(impRawHtml.body.importedCount, 1);
+    assert.equal(impRawHtml.body.created[0].type, 'element');
+    assert.equal(impRawHtml.body.created[0].visibility, 'public');
+  });
+});

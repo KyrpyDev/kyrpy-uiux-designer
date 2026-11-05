@@ -117,20 +117,21 @@ export function buildContainer({ dbFile, syncEnabled, log = () => {} } = {}) {
     auth,
     transaction
   });
+  const templates = new TemplateService({ templates: templateRepo, services, transaction });
+  const translations = new TranslationService({ translations: translationRepo });
+  const settings = new SettingsService({ settings: settingsRepo });
+  const menuService = new MenuService({ buttons: designs.button, icons: designs.icon, screens: designs.screen, elements: designs.element, menus });
+  const render = new RenderService({ designs, nodes, animations, themes: themeRepo, menus });
   const libraryTransfer = new LibraryTransferService({
     services,
     workflows,
     menus,
     projects,
     auth,
+    render,
+    parseSvg: svgTextToNodes,
     transaction
   });
-
-  const templates = new TemplateService({ templates: templateRepo, services, transaction });
-  const translations = new TranslationService({ translations: translationRepo });
-  const settings = new SettingsService({ settings: settingsRepo });
-  const menuService = new MenuService({ buttons: designs.button, icons: designs.icon, screens: designs.screen, elements: designs.element, menus });
-  const render = new RenderService({ designs, nodes, animations, themes: themeRepo, menus });
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log });

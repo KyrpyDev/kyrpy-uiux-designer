@@ -1,4 +1,48 @@
 /** Tiny DOM helpers: h() builds nodes, modal()/toast()/confirmBox()/promptBox() are the shared dialogs. */
+let formFieldSeq = 0;
+const FORM_TAGS = new Set(['input', 'select', 'textarea']);
+
+function ensureFormFieldIdentity(el, props = {}) {
+  const tag = (el.tagName || '').toLowerCase();
+  if (!FORM_TAGS.has(tag)) return;
+  const rawHint = props.id || props.name || props['data-f'] || props['aria-label'] || props.placeholder || props.title || tag;
+  const baseSlug = String(rawHint)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 36) || tag;
+  const seq = ++formFieldSeq;
+  if (!el.getAttribute('id')) {
+    el.setAttribute('id', `ud-f-${baseSlug}-${seq}`);
+  }
+  if (!el.getAttribute('name')) {
+    el.setAttribute('name', props['data-f'] ? String(props['data-f']) : `ud_${baseSlug.replace(/-/g, '_')}_${seq}`);
+  }
+  if (tag === 'input' && !el.getAttribute('autocomplete') && !['checkbox', 'radio', 'color', 'range', 'file', 'button', 'submit'].includes(el.type)) {
+    el.setAttribute('autocomplete', 'off');
+  }
+}
+
+if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
+  const fixTree = root => {
+    if (!root || !root.querySelectorAll) return;
+    if (root.tagName && FORM_TAGS.has(root.tagName.toLowerCase())) ensureFormFieldIdentity(root);
+    root.querySelectorAll('input:not([id]), input:not([name]), select:not([id]), select:not([name]), textarea:not([id]), textarea:not([name])').forEach(node => {
+      ensureFormFieldIdentity(node);
+    });
+  };
+  const mo = new MutationObserver(mutations => {
+    for (const m of mutations) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1) fixTree(n);
+      }
+    }
+  });
+  if (document.documentElement) {
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
+}
+
 export function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -12,9 +56,16 @@ export function h(tag, props = {}, ...kids) {
     else if (k === 'checked' || k === 'disabled' || k === 'selected') el[k] = !!v;
     else el.setAttribute(k, v === true ? '' : v);
   }
+  if (FORM_TAGS.has(String(tag).toLowerCase())) {
+    ensureFormFieldIdentity(el, props || {});
+  }
   for (const kid of kids.flat(Infinity)) {
     if (kid === null || kid === undefined || kid === false) continue;
     el.appendChild(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  if (el.tagName === 'LABEL' && !el.getAttribute('for')) {
+    const ctrl = el.querySelector('input, select, textarea');
+    if (ctrl && ctrl.id) el.setAttribute('for', ctrl.id);
   }
   return el;
 }

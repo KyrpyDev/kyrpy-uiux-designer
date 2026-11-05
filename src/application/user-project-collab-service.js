@@ -1022,8 +1022,8 @@ export class TrashService {
  *    to Trash while rejecting attempts to empty immutable default/public libraries.
  */
 export class LibraryTransferService {
-  constructor({ services, workflows, menus, projects, auth, transaction }) {
-    Object.assign(this, { services, workflows, menus, projects, auth, transaction });
+  constructor({ services, workflows, menus, projects, auth, transaction, render = null, parseSvg = null }) {
+    Object.assign(this, { services, workflows, menus, projects, auth, transaction, render, parseSvg });
   }
 
   #normalizeTargetProjects(projectIds) {
@@ -1371,6 +1371,591 @@ export class LibraryTransferService {
         emptiedCount: trashed.length,
         trashed
       };
+    });
+  }
+
+  /**
+   * Export paths, icons, buttons, elements, screens, and workflows in JSON, SVG, or HTML format.
+   * Supports exporting either an explicit list of `items: [{ type, id }]` or all items matching
+   * `types` / `projectId` / `visibility`, optionally cascading referenced sub-items (`includeSubItems`).
+   */
+  exportLibraryItems({
+    items = [],
+    types = [],
+    format = 'json',
+    projectId = null,
+    visibility = 'all',
+    includeSubItems = true
+  } = {}) {
+    const fmt = String(format || 'json').trim().toLowerCase();
+    if (!['json', 'svg', 'html'].includes(fmt)) {
+      throw new ValidationError(`Unsupported export format '${format}'. Expected json, svg, or html.`);
+    }
+
+    const ALL_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
+    const collected = {
+      path: new Map(),
+      icon: new Map(),
+      button: new Map(),
+      element: new Map(),
+      screen: new Map(),
+      workflow: new Map()
+    };
+
+    const collectEntity = (type, id) => {
+      const normType = String(type || '').trim().replace(/s$/, '');
+      const numId = Number(id);
+      if (!ALL_TYPES.includes(normType) || !numId) return;
+      if (collected[normType].has(numId)) return;
+
+      if (normType === 'workflow') {
+        try {
+          const wf = this.workflows.get(numId);
+          collected.workflow.set(numId, wf);
+          if (includeSubItems && Array.isArray(wf.nodes)) {
+            for (const wn of wf.nodes) {
+              if (wn.screenId) collectEntity('screen', Number(wn.screenId));
+            }
+          }
+        } catch { /* ignore missing */ }
+        return;
+      }
+
+      const svc = this.services[normType];
+      if (!svc) return;
+      try {
+        const entity = svc.get(numId);
+        let menuItems = [];
+        if (this.menus && (normType === 'element' || normType === 'screen')) {
+          try {
+            menuItems = this.menus.list({ ownerType: normType, ownerId: numId });
+          } catch { /* ignore */ }
+        }
+        collected[normType].set(numId, { ...entity, menuItems });
+        if (includeSubItems) {
+          for (const node of (entity.nodes || [])) {
+            if (node.kind === 'instance' && node.refType && node.refId) {
+              collectEntity(node.refType, Number(node.refId));
+            }
+          }
+          for (const mi of menuItems) {
+            if (mi.popupElementId) collectEntity('element', Number(mi.popupElementId));
+          }
+        }
+      } catch { /* ignore missing */ }
+    };
+
+    if (Array.isArray(items) && items.length > 0) {
+      for (const ref of this.#normalizeItems(items)) {
+        collectEntity(ref.type, ref.id);
+      }
+    } else {
+      const requestedTypes = (Array.isArray(types) && types.length > 0)
+        ? types.map(t => String(t).trim().replace(/s$/, '')).filter(t => ALL_TYPES.includes(t))
+        : ALL_TYPES;
+      const pid = projectId ? Number(projectId) : null;
+      const visFilter = String(visibility || 'all').toLowerCase();
+
+      for (const t of requestedTypes) {
+        const list = t === 'workflow'
+          ? this.workflows.list({ projectId: pid, includePublic: true })
+          : this.services[t].list({ projectId: pid, includePublic: true });
+        for (const row of list) {
+          if (visFilter === 'public' && row.visibility !== 'public') continue;
+          if (visFilter === 'project' && row.visibility !== 'project') continue;
+          if (pid && visFilter === 'project' && Number(row.projectId) !== pid) continue;
+          collectEntity(t, row.id);
+        }
+      }
+    }
+
+    const payload = {
+      schema: 'kyrpy-uiux-library-v2',
+      exportedAt: new Date().toISOString(),
+      format: fmt,
+      counts: {},
+      items: {}
+    };
+    let totalCount = 0;
+    for (const t of ALL_TYPES) {
+      const arr = [...collected[t].values()];
+      payload.items[t] = arr;
+      payload.counts[t] = arr.length;
+      totalCount += arr.length;
+    }
+
+    const jsonString = JSON.stringify(payload, null, 2);
+    const b64Payload = Buffer.from(jsonString, 'utf8').toString('base64');
+
+    if (fmt === 'json') {
+      return {
+        format: 'json',
+        filename: 'kyrpy-library-export.json',
+        contentType: 'application/json',
+        totalCount,
+        counts: payload.counts,
+        content: jsonString
+      };
+    }
+
+    const renderItemSvg = (type, item) => {
+      if (type === 'workflow') {
+        const nodes = item.nodes || [];
+        const edges = item.edges || [];
+        const w = 720;
+        const h = Math.max(260, nodes.length * 70 + 80);
+        const nodeMap = new Map(nodes.map((n, i) => [n.id, { ...n, x: Number(n.x ?? (80 + (i % 3) * 210)), y: Number(n.y ?? (60 + Math.floor(i / 3) * 100)) }]));
+        const edgeLines = edges.map(e => {
+          const from = nodeMap.get(e.from);
+          const to = nodeMap.get(e.to);
+          if (!from || !to) return '';
+          return `<line x1="${from.x + 70}" y1="${from.y + 28}" x2="${to.x + 70}" y2="${to.y + 28}" stroke="#6C5CE7" stroke-width="2" />`;
+        }).join('\n  ');
+        const nodeBoxes = [...nodeMap.values()].map(n => {
+          const safeTitle = String(n.title || n.id || 'Screen').replace(/[<>&"]/g, '');
+          return `<g transform="translate(${n.x},${n.y})"><rect width="140" height="56" rx="12" fill="#171B26" stroke="#00D2D3" stroke-width="2"/><text x="70" y="32" text-anchor="middle" fill="#F1F5F9" font-family="Inter, sans-serif" font-size="12" font-weight="600">${safeTitle}</text></g>`;
+        }).join('\n  ');
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" data-item-type="workflow" data-item-id="${item.id}" data-item-name="${String(item.name || '').replace(/"/g, '&quot;')}">\n  <rect width="${w}" height="${h}" rx="16" fill="#0F1117"/>\n  ${edgeLines}\n  ${nodeBoxes}\n</svg>`;
+      }
+      if (this.render) {
+        try {
+          return this.render.renderEntity(type, item.id).svg;
+        } catch { /* fallback */ }
+      }
+      const vb = item.viewBox || '0 0 24 24';
+      const w = item.width || 64;
+      const h = item.height || 64;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${w}" height="${h}" data-item-type="${type}" data-item-id="${item.id}"></svg>`;
+    };
+
+    if (fmt === 'svg') {
+      const renderedBlocks = [];
+      let yCursor = 20;
+      let maxW = 640;
+      for (const t of ALL_TYPES) {
+        for (const item of payload.items[t]) {
+          const rawSvg = renderItemSvg(t, item);
+          const w = Number(item.width) || (t === 'workflow' ? 720 : t === 'screen' ? 390 : 96);
+          const h = Number(item.height) || (t === 'workflow' ? 280 : t === 'screen' ? 844 : 96);
+          maxW = Math.max(maxW, w + 40);
+          const inner = rawSvg.replace(/^<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '');
+          const vb = item.viewBox || `0 0 ${w} ${h}`;
+          const safeName = String(item.name || `${t}-${item.id}`).replace(/[<>&"]/g, '');
+          renderedBlocks.push(
+            `  <g id="item-${t}-${item.id}" data-item-type="${t}" data-item-id="${item.id}" data-item-name="${safeName}" transform="translate(20, ${yCursor})">\n` +
+            `    <svg viewBox="${vb}" width="${w}" height="${h}">\n${inner}\n    </svg>\n` +
+            `  </g>`
+          );
+          yCursor += h + 32;
+        }
+      }
+
+      if (totalCount === 1) {
+        for (const t of ALL_TYPES) {
+          if (payload.items[t].length === 1) {
+            const singleSvg = renderItemSvg(t, payload.items[t][0]);
+            const annotated = `<!-- KYRPY_UIUX_LIBRARY_PAYLOAD:${b64Payload} -->\n${singleSvg}`;
+            return {
+              format: 'svg',
+              filename: `${payload.items[t][0].slug || `${t}-${payload.items[t][0].id}`}.svg`,
+              contentType: 'image/svg+xml',
+              totalCount,
+              counts: payload.counts,
+              content: annotated
+            };
+          }
+        }
+      }
+
+      const sheetH = Math.max(120, yCursor);
+      const svgContent =
+        `<!-- KYRPY_UIUX_LIBRARY_PAYLOAD:${b64Payload} -->\n` +
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${maxW} ${sheetH}" width="${maxW}" height="${sheetH}">\n` +
+        `${renderedBlocks.join('\n')}\n` +
+        `</svg>`;
+
+      return {
+        format: 'svg',
+        filename: 'kyrpy-library-export.svg',
+        contentType: 'image/svg+xml',
+        totalCount,
+        counts: payload.counts,
+        content: svgContent
+      };
+    }
+
+    // fmt === 'html'
+    const cardsHtml = [];
+    for (const t of ALL_TYPES) {
+      for (const item of payload.items[t]) {
+        const svgMarkup = renderItemSvg(t, item);
+        const safeName = String(item.name || `${t}-${item.id}`).replace(/[<>&"]/g, '');
+        const safeCat = String(item.category || 'general').replace(/[<>&"]/g, '');
+        const safeVis = String(item.visibility || 'public').replace(/[<>&"]/g, '');
+        cardsHtml.push(
+          `    <article class="ud-lib-card" data-item-type="${t}" data-item-id="${item.id}" data-item-name="${safeName}" data-item-visibility="${safeVis}">\n` +
+          `      <header class="ud-lib-card-head">\n` +
+          `        <span class="ud-badge ud-badge-${t}">${t.toUpperCase()}</span>\n` +
+          `        <strong>${safeName}</strong>\n` +
+          `        <small>${safeCat} · ${safeVis}</small>\n` +
+          `      </header>\n` +
+          `      <div class="ud-lib-preview">${svgMarkup}</div>\n` +
+          `    </article>`
+        );
+      }
+    }
+
+    const htmlContent = [
+      '<!DOCTYPE html>',
+      '<html lang="en">',
+      '<head>',
+      '  <meta charset="utf-8"/>',
+      '  <meta name="viewport" content="width=device-width, initial-scale=1"/>',
+      '  <title>Kyrpy UI/UX Designer — Library Export</title>',
+      '  <style>',
+      '    body { margin: 0; padding: 24px; background: #0B0D14; color: #F1F5F9; font-family: Inter, system-ui, sans-serif; }',
+      '    h1 { font-size: 20px; margin: 0 0 16px; }',
+      '    .ud-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }',
+      '    .ud-lib-card { background: #141824; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }',
+      '    .ud-lib-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }',
+      '    .ud-lib-card-head small { color: #94A3B8; margin-left: auto; }',
+      '    .ud-badge { padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; background: rgba(108,92,231,0.22); color: #A29BFE; }',
+      '    .ud-lib-preview { display: flex; align-items: center; justify-content: center; min-height: 110px; background: rgba(0,0,0,0.28); border-radius: 8px; padding: 12px; overflow: auto; }',
+      '    .ud-lib-preview svg { max-width: 100%; max-height: 300px; height: auto; }',
+      '  </style>',
+      '</head>',
+      '<body>',
+      `  <h1>Kyrpy UI/UX Library Export (${totalCount} items)</h1>`,
+      '  <section class="ud-lib-grid">',
+      cardsHtml.join('\n'),
+      '  </section>',
+      `  <script type="application/json" id="ud-library-payload">${jsonString}</script>`,
+      '</body>',
+      '</html>'
+    ].join('\n');
+
+    return {
+      format: 'html',
+      filename: 'kyrpy-library-export.html',
+      contentType: 'text/html',
+      totalCount,
+      counts: payload.counts,
+      content: htmlContent
+    };
+  }
+
+  /**
+   * Import paths, icons, buttons, elements, screens, and workflows from HTML, SVG, or JSON content
+   * into either a Project library (`visibility: 'project'`) or the Public library (`visibility: 'public'`).
+   */
+  importLibraryItems({
+    format = 'auto',
+    content = '',
+    targetType = 'auto',
+    projectId = 1,
+    visibility = 'project',
+    category = 'imported',
+    name = '',
+    actor = null
+  } = {}) {
+    const rawText = typeof content === 'string' ? content.trim() : JSON.stringify(content || {});
+    if (!rawText) {
+      throw new ValidationError('Import content is required (HTML, SVG, or JSON)');
+    }
+
+    const pid = Number(projectId) || 1;
+    this.projects.get(pid);
+    const targetVis = visibility === 'public' ? 'public' : 'project';
+
+    const ALL_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
+    const normTargetType = String(targetType || 'auto').trim().toLowerCase().replace(/s$/, '');
+
+    // 1. Detect embedded or direct JSON library bundle (`kyrpy-uiux-library-v2` or single/array JSON)
+    let parsedBundle = null;
+    const svgPayloadMatch = rawText.match(/<!--\s*KYRPY_UIUX_LIBRARY_PAYLOAD:([A-Za-z0-9+/=]+)\s*-->/);
+    const htmlPayloadMatch = rawText.match(/<script[^>]*id=["']ud-library-payload["'][^>]*>([\s\S]*?)<\/script>/i);
+
+    if (svgPayloadMatch) {
+      try {
+        parsedBundle = JSON.parse(Buffer.from(svgPayloadMatch[1], 'base64').toString('utf8'));
+      } catch { /* fallback to raw SVG */ }
+    } else if (htmlPayloadMatch) {
+      try {
+        parsedBundle = JSON.parse(htmlPayloadMatch[1].trim());
+      } catch { /* fallback to raw HTML */ }
+    } else if (format === 'json' || rawText.startsWith('{') || rawText.startsWith('[')) {
+      try {
+        parsedBundle = JSON.parse(rawText);
+      } catch (err) {
+        if (format === 'json') throw new ValidationError(`Invalid JSON payload: ${err.message}`);
+      }
+    }
+
+    if (parsedBundle) {
+      return this.#importStructuredBundle(parsedBundle, {
+        projectId: pid,
+        visibility: targetVis,
+        targetType: normTargetType,
+        category,
+        name,
+        actor
+      });
+    }
+
+    // 2. Raw SVG or HTML without embedded JSON payload
+    const isHtml = format === 'html' || /<!doctype\s+html|<html[\s>]|<article[\s>]|<div[\s>]/i.test(rawText);
+    const effectiveType = ALL_TYPES.includes(normTargetType) ? normTargetType : 'icon';
+
+    return this.transaction(() => {
+      const created = [];
+      const svgMatches = [...rawText.matchAll(/<svg[\s\S]*?<\/svg>/gi)].map(m => m[0]);
+
+      if (svgMatches.length > 0) {
+        svgMatches.forEach((svgBlock, idx) => {
+          const itemName = name
+            ? (svgMatches.length > 1 ? `${name} ${idx + 1}` : name)
+            : (svgBlock.match(/data-item-name=["']([^"']+)["']/i)?.[1] || `Imported ${effectiveType} ${idx + 1}`);
+          const itemTypeAttr = svgBlock.match(/data-item-type=["']([^"']+)["']/i)?.[1]?.toLowerCase()?.replace(/s$/, '');
+          const chosenType = (normTargetType === 'auto' && ALL_TYPES.includes(itemTypeAttr))
+            ? itemTypeAttr
+            : effectiveType;
+          const record = this.#createEntityFromSvg(chosenType, svgBlock, {
+            name: itemName,
+            category,
+            projectId: pid,
+            visibility: targetVis,
+            actor
+          });
+          created.push({ type: chosenType, id: record.id, name: record.name, visibility: targetVis, projectId: pid });
+        });
+      } else if (isHtml) {
+        const chosenType = ALL_TYPES.includes(normTargetType) ? normTargetType : 'element';
+        const itemName = name || `Imported HTML ${chosenType}`;
+        const record = this.#createEntityFromHtml(chosenType, rawText, {
+          name: itemName,
+          category,
+          projectId: pid,
+          visibility: targetVis,
+          actor
+        });
+        created.push({ type: chosenType, id: record.id, name: record.name, visibility: targetVis, projectId: pid });
+      } else {
+        throw new ValidationError('Could not recognize valid JSON, SVG (<svg>...</svg>), or HTML content to import');
+      }
+
+      return {
+        importedCount: created.length,
+        projectId: pid,
+        visibility: targetVis,
+        created
+      };
+    });
+  }
+
+  #importStructuredBundle(bundle, { projectId, visibility, targetType, category, name, actor }) {
+    const ALL_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
+    const buckets = { path: [], icon: [], button: [], element: [], screen: [], workflow: [] };
+
+    if (bundle && typeof bundle === 'object' && bundle.items && typeof bundle.items === 'object') {
+      for (const t of ALL_TYPES) {
+        if (Array.isArray(bundle.items[t])) buckets[t].push(...bundle.items[t]);
+        else if (Array.isArray(bundle.items[`${t}s`])) buckets[t].push(...bundle.items[`${t}s`]);
+      }
+    } else if (Array.isArray(bundle)) {
+      for (const entry of bundle) {
+        const t = String(entry.type || entry.itemType || (ALL_TYPES.includes(targetType) ? targetType : 'icon')).replace(/s$/, '');
+        if (ALL_TYPES.includes(t)) buckets[t].push(entry);
+      }
+    } else if (bundle && typeof bundle === 'object') {
+      let matched = false;
+      for (const t of ALL_TYPES) {
+        if (Array.isArray(bundle[t])) { buckets[t].push(...bundle[t]); matched = true; }
+        else if (Array.isArray(bundle[`${t}s`])) { buckets[t].push(...bundle[`${t}s`]); matched = true; }
+      }
+      if (!matched) {
+        const t = String(bundle.type || bundle.itemType || (ALL_TYPES.includes(targetType) ? targetType : 'icon')).replace(/s$/, '');
+        if (ALL_TYPES.includes(t)) buckets[t].push(bundle);
+      }
+    }
+
+    return this.transaction(() => {
+      const idMap = new Map(); // `${type}:${oldId}` -> newEntity
+      const created = [];
+      const slugSuffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+      for (const t of ['path', 'icon', 'button', 'element', 'screen']) {
+        for (let i = 0; i < buckets[t].length; i++) {
+          const src = buckets[t][i];
+          const oldId = Number(src.id);
+          const itemName = (name && buckets[t].length === 1 && targetType === t) ? name : (src.name || `Imported ${t}`);
+          const baseSlug = String(src.slug || itemName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || t;
+          const remappedNodes = (src.nodes || []).map(n => {
+            const copy = structuredClone(n);
+            if (copy.kind === 'instance' && copy.refType && copy.refId) {
+              const rType = String(copy.refType).replace(/s$/, '');
+              const mapped = idMap.get(`${rType}:${Number(copy.refId)}`);
+              if (mapped) copy.refId = mapped.id;
+            }
+            return copy;
+          });
+
+          const saved = this.services[t].create({
+            name: itemName,
+            slug: `${baseSlug}-${slugSuffix}-${i}`,
+            category: src.category || category || 'imported',
+            width: src.width || (t === 'screen' ? 390 : t === 'element' ? 320 : t === 'button' ? 140 : 24),
+            height: src.height || (t === 'screen' ? 844 : t === 'element' ? 180 : t === 'button' ? 44 : 24),
+            viewBox: src.viewBox || `0 0 ${src.width || 24} ${src.height || 24}`,
+            nodes: remappedNodes,
+            events: structuredClone(src.events || []),
+            animations: structuredClone(src.animations || []),
+            meta: structuredClone(src.meta || {}),
+            projectId,
+            visibility,
+            createdBy: actor?.id ?? null
+          });
+
+          if (oldId) idMap.set(`${t}:${oldId}`, saved);
+
+          if (this.menus && Array.isArray(src.menuItems) && src.menuItems.length > 0) {
+            for (const mi of src.menuItems) {
+              const mappedPopup = mi.popupElementId ? idMap.get(`element:${Number(mi.popupElementId)}`) : null;
+              const mappedScreen = mi.targetScreenId ? idMap.get(`screen:${Number(mi.targetScreenId)}`) : null;
+              this.menus.create({
+                projectId,
+                ownerType: t,
+                ownerId: saved.id,
+                nodeId: mi.nodeId || '',
+                label: mi.label || 'Menu Item',
+                iconId: mi.iconId ?? null,
+                targetScreenId: mappedScreen ? mappedScreen.id : (mi.targetScreenId ?? null),
+                targetAction: mi.targetAction || 'navigate',
+                popupElementId: mappedPopup ? mappedPopup.id : (mi.popupElementId ?? null),
+                visible: mi.visible !== undefined ? Boolean(mi.visible) : true,
+                sortOrder: mi.sortOrder ?? 0,
+                meta: structuredClone(mi.meta || {})
+              });
+            }
+          }
+
+          created.push({ type: t, id: saved.id, name: saved.name, visibility, projectId });
+        }
+      }
+
+      for (let i = 0; i < buckets.workflow.length; i++) {
+        const wf = buckets.workflow[i];
+        const wfName = (name && buckets.workflow.length === 1 && targetType === 'workflow') ? name : (wf.name || 'Imported Workflow');
+        const baseSlug = String(wf.slug || wfName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow';
+        const remappedNodes = (wf.nodes || []).map(wn => {
+          const copy = structuredClone(wn);
+          if (copy.screenId) {
+            const mappedScreen = idMap.get(`screen:${Number(copy.screenId)}`);
+            if (mappedScreen) copy.screenId = mappedScreen.id;
+          }
+          return copy;
+        });
+
+        const savedWf = this.workflows.create({
+          name: wfName,
+          slug: `${baseSlug}-${slugSuffix}-${i}`,
+          description: wf.description || '',
+          projectId,
+          visibility,
+          nodes: remappedNodes,
+          edges: structuredClone(wf.edges || []),
+          meta: structuredClone(wf.meta || {}),
+          createdBy: actor?.id ?? null
+        });
+        created.push({ type: 'workflow', id: savedWf.id, name: savedWf.name, visibility, projectId });
+      }
+
+      return {
+        importedCount: created.length,
+        projectId,
+        visibility,
+        created
+      };
+    });
+  }
+
+  #createEntityFromSvg(type, svgText, { name, category, projectId, visibility, actor }) {
+    const parsed = this.parseSvg
+      ? this.parseSvg(svgText)
+      : { viewBox: '0 0 24 24', width: 24, height: 24, nodes: [] };
+    const slug = `${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+
+    if (type === 'workflow') {
+      return this.workflows.create({
+        name,
+        slug,
+        description: 'Imported from SVG',
+        projectId,
+        visibility,
+        nodes: [{ id: 'wn-1', title: name, x: 80, y: 80 }],
+        edges: [],
+        meta: { importedFrom: 'svg' },
+        createdBy: actor?.id ?? null
+      });
+    }
+
+    const defaultW = type === 'screen' ? 390 : type === 'element' ? 320 : type === 'button' ? 140 : (parsed.width || 24);
+    const defaultH = type === 'screen' ? 844 : type === 'element' ? 180 : type === 'button' ? 44 : (parsed.height || 24);
+    return this.services[type].create({
+      name,
+      slug,
+      category: category || 'imported',
+      width: defaultW,
+      height: defaultH,
+      viewBox: parsed.viewBox || `0 0 ${defaultW} ${defaultH}`,
+      nodes: parsed.nodes?.length ? parsed.nodes : [{ id: 'shape-1', kind: 'rect', x: 0, y: 0, width: defaultW, height: defaultH, rx: 8, fill: '#6C5CE7' }],
+      events: [],
+      animations: [],
+      meta: { importedFrom: 'svg' },
+      projectId,
+      visibility,
+      createdBy: actor?.id ?? null
+    });
+  }
+
+  #createEntityFromHtml(type, htmlText, { name, category, projectId, visibility, actor }) {
+    const slug = `${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const plainTitle = htmlText.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim()
+      || htmlText.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)?.[1]?.replace(/<[^>]+>/g, '').trim()
+      || name;
+
+    if (type === 'workflow') {
+      return this.workflows.create({
+        name: plainTitle || name,
+        slug,
+        description: 'Imported from HTML',
+        projectId,
+        visibility,
+        nodes: [{ id: 'wn-1', title: plainTitle || name, x: 80, y: 80 }],
+        edges: [],
+        meta: { importedFrom: 'html' },
+        createdBy: actor?.id ?? null
+      });
+    }
+
+    const w = type === 'screen' ? 390 : type === 'element' ? 320 : type === 'button' ? 140 : 24;
+    const h = type === 'screen' ? 844 : type === 'element' ? 180 : type === 'button' ? 44 : 24;
+    return this.services[type].create({
+      name: plainTitle || name,
+      slug,
+      category: category || 'imported',
+      width: w,
+      height: h,
+      viewBox: `0 0 ${w} ${h}`,
+      nodes: [
+        { id: 'bg-rect', kind: 'rect', x: 0, y: 0, width: w, height: h, rx: 10, fill: '#171B26', stroke: '#6C5CE7', strokeWidth: 1.5 },
+        { id: 'label-txt', kind: 'text', x: Math.round(w / 2), y: Math.round(h / 2), text: plainTitle || name, fill: '#F1F5F9', fontSize: 13, textAnchor: 'middle' }
+      ],
+      events: [],
+      animations: [],
+      meta: { importedFrom: 'html', rawHtmlSnippet: htmlText.slice(0, 4000) },
+      projectId,
+      visibility,
+      createdBy: actor?.id ?? null
     });
   }
 }
