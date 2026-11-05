@@ -6,7 +6,7 @@
 const base = (tag, kind, o, attrs) => ({ tag, kind, role: o.role ?? null, name: o.name ?? '', descriptionDev: o.dev ?? '', attrs, ...(o.anim ? { animations: o.anim } : {}) });
 
 const R = (x, y, w, h, o = {}) => base('rect', 'shape', o, { x, y, width: w, height: h, rx: o.rx ?? 0,
-  ...(o.role ? {} : { fill: o.fill ?? 'none', stroke: o.stroke ?? 'none', 'stroke-width': o.sw ?? 1 }), ...(o.op ? { opacity: o.op } : {}), ...(o.dash ? { 'stroke-dasharray': o.dash } : {}), ...(o.fo ? { 'fill-opacity': o.fo } : {}) });
+  ...(o.role ? {} : { fill: o.fill ?? 'none', stroke: o.stroke ?? 'none', 'stroke-width': o.sw ?? 1 }), ...(o.op ? { opacity: o.op } : {}), ...(o.dash ? { 'stroke-dasharray': o.dash } : {}), ...(o.fo ? { 'fill-opacity': o.fo } : {}), ...(o.extraAttrs || {}) });
 const C = (cx, cy, r, o = {}) => base('circle', 'shape', o, { cx, cy, r, ...(o.role ? {} : { fill: o.fill ?? 'none', stroke: o.stroke ?? 'none', 'stroke-width': o.sw ?? 1 }), ...(o.fo ? { 'fill-opacity': o.fo } : {}) });
 const L = (x1, y1, x2, y2, o = {}) => base('line', 'shape', o, { x1, y1, x2, y2, stroke: o.stroke ?? '{{line}}', 'stroke-width': o.sw ?? 1, 'stroke-linecap': 'round', ...(o.dash ? { 'stroke-dasharray': o.dash } : {}) });
 const P = (d, o = {}) => base('path', 'shape', o, { d, fill: o.fill ?? 'none', stroke: o.stroke ?? '{{accent}}', 'stroke-width': o.sw ?? 1.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
@@ -289,7 +289,54 @@ export const HTML_ELEMENTS = [
     T(50, 26, 'Sponsored Placement Banner', { size: 12, weight: 700, name: 'ad-title' }),
     T(50, 42, '320×50 Smart Banner Unit', { size: 10, fill: '{{muted}}', name: 'ad-sub' }),
     I('next', 288, 15, 24, { name: 'ad-cta' })
-  ], { dev: 'AdMob 320x50 banner placeholder.' })
+  ], { dev: 'AdMob 320x50 banner placeholder.' }),
+
+  /* ---- containers & carousels ---- */
+  item('html-container', 'Container (Shell Box)', 'containers', 'section', 358, 200, [
+    R(0, 0, 358, 200, {
+      role: 'container',
+      rx: 18,
+      name: 'container-shell',
+      extraAttrs: {
+        'data-container': 'container',
+        'data-size-mode': 'responsive',
+        'data-outer-margin': 16,
+        'data-inner-margin': 12
+      }
+    }),
+    R(12, 12, 334, 176, { stroke: '{{accent}}', sw: 1.2, dash: '6 4', rx: 12, op: 0.55, name: 'inner-margin-guide' }),
+    T(24, 34, 'CONTAINER SHELL', { size: 11, weight: 700, fill: '{{accent}}', name: 'container-label' }),
+    T(24, 52, 'Drop elements inside • Responsive / Fixed • Clamps child max size', { size: 11, fill: '{{muted}}', name: 'container-hint' })
+  ], { dev: 'Outer shell container box with configurable inner/outer margins, fixed or responsive sizing, and automatic child max-size clamping.' }),
+
+  item('html-carousel-container', 'Carousel Container (2D/3D Roll)', 'containers', 'section', 358, 220, [
+    R(0, 0, 358, 220, {
+      role: 'carousel-container',
+      rx: 20,
+      name: 'carousel-shell',
+      extraAttrs: {
+        'data-container': 'carousel',
+        'data-size-mode': 'responsive',
+        'data-outer-margin': 16,
+        'data-inner-margin': 12,
+        'data-carousel-dim': '3d',
+        'data-carousel-dir': 'horizontal',
+        'data-carousel-speed': 2600,
+        'data-carousel-autoroll': 'true'
+      }
+    }),
+    R(12, 12, 334, 196, { stroke: '{{accent}}', sw: 1.2, dash: '6 4', rx: 14, op: 0.5, name: 'inner-margin-guide' }),
+    R(24, 46, 76, 124, { fill: '{{paper}}', stroke: '{{line}}', rx: 12, op: 0.6, name: 'slide-prev' }),
+    R(258, 46, 76, 124, { fill: '{{paper}}', stroke: '{{line}}', rx: 12, op: 0.6, name: 'slide-next' }),
+    R(92, 34, 174, 148, { role: 'card', rx: 14, name: 'slide-active' }),
+    T(179, 98, 'Carousel Container', { size: 14, weight: 700, anchor: 'middle', name: 'carousel-title' }),
+    T(179, 118, '3D / 2D • Horizontal & Vertical Roll', { size: 11, fill: '{{muted}}', anchor: 'middle', name: 'carousel-sub' }),
+    I('previous', 28, 96, 22, { name: 'roll-prev' }),
+    I('next', 308, 96, 22, { name: 'roll-next' }),
+    C(163, 196, 4, { fill: '{{accent}}', name: 'dot-1' }),
+    C(179, 196, 3.5, { fill: '{{line}}', name: 'dot-2' }),
+    C(195, 196, 3.5, { fill: '{{line}}', name: 'dot-3' })
+  ], { dev: 'Specialized Carousel Container in which sub-elements roll with 3D perspective or 2D flat horizontal/vertical animated roll effects.' })
 ];
 
 /** Elements that contain buttons (and therefore icons): they show the whole hierarchy in use. */

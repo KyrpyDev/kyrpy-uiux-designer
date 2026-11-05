@@ -135,8 +135,10 @@ function setStatus(msg) { const s = $('#status-msg'); if (s) s.textContent = msg
 async function insertPresetElement(key) {
   const el = state.library.elements.find(e => e.key === key);
   if (!el) return toast(`Element preset "${key}" not found`, 'error');
-  if (state.mode === 'screen' && app.designer?.doc) {
-    await app.designer.addInstance('element', el.id);
+  const activeD = app.modals.length ? app.modals[app.modals.length - 1] : app.designer;
+  if (activeD?.doc && ['screen', 'element'].includes(activeD.type)) {
+    if (!app.modals.length && state.mode !== 'screen') { state.mode = 'screen'; renderMode(); }
+    await activeD.addInstance('element', el.id);
     toast(`Inserted "${el.name}" onto canvas`, 'ok');
   } else {
     await app.openDesign('element', el.id);
@@ -209,6 +211,9 @@ function menuDef() {
       ['Select all', () => d().select(d().els.filter(e => e.parentId == null && e.role !== 'bg' && e.role !== 'bg-glow').map(e => e.id)), 'Ctrl+A']
     ]],
     ['Insert', [
+      ['Container (Shell Box — Inner/Outer Margins, Clamps Children)', () => insertPresetElement('html-container')],
+      ['Carousel Container (2D/3D Horizontal & Vertical Roll)', () => insertPresetElement('html-carousel-container')],
+      '-',
       ['Flip Box (3D Interactive Card)', () => insertPresetElement('html-flip-box')],
       ['Carousel Slider', () => insertPresetElement('html-carousel')],
       ['Small Element Floating Toolbar', () => insertPresetElement('html-floating-toolbar')],
@@ -230,6 +235,8 @@ function menuDef() {
     ]],
     ['Tools', [
       ['Select / Move Tool', () => d().setTool('select'), 'V'],
+      ['Container Tool (Shell Box)', () => d().setTool('container'), 'K'],
+      ['Carousel Container Tool (2D/3D Roll)', () => d().setTool('carousel'), 'U'],
       ['Rectangle Tool', () => d().setTool('rect'), 'R'],
       ['Circle Tool', () => d().setTool('circle'), 'C'],
       ['Ellipse Tool', () => d().setTool('ellipse'), 'E'],

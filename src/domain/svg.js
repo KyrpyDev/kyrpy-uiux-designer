@@ -5,9 +5,21 @@
  */
 import { resolveTokens, roleAttrs, buildThemeDefs } from './theme.js';
 import { animationsToCss, nodeClass } from './animation.js';
-import { nodeBBox } from './geometry.js';
+import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
+
+export const CAROUSEL_CSS = [
+  '@keyframes ud-roll-2d-horizontal{0%,20%{transform:translateX(0)}33%,53%{transform:translateX(-18px)}66%,86%{transform:translateX(18px)}100%{transform:translateX(0)}}',
+  '@keyframes ud-roll-2d-vertical{0%,20%{transform:translateY(0)}33%,53%{transform:translateY(-14px)}66%,86%{transform:translateY(14px)}100%{transform:translateY(0)}}',
+  '@keyframes ud-roll-3d-horizontal{0%{transform:perspective(600px) rotateY(0deg) scale(1)}25%{transform:perspective(600px) rotateY(18deg) translateX(-10px) scale(0.95)}50%{transform:perspective(600px) rotateY(0deg) scale(1.02)}75%{transform:perspective(600px) rotateY(-18deg) translateX(10px) scale(0.95)}100%{transform:perspective(600px) rotateY(0deg) scale(1)}}',
+  '@keyframes ud-roll-3d-vertical{0%{transform:perspective(600px) rotateX(0deg) scale(1)}25%{transform:perspective(600px) rotateX(18deg) translateY(-10px) scale(0.95)}50%{transform:perspective(600px) rotateX(0deg) scale(1.02)}75%{transform:perspective(600px) rotateX(-18deg) translateY(10px) scale(0.95)}100%{transform:perspective(600px) rotateX(0deg) scale(1)}}',
+  '.ud-carousel-track{transform-box:fill-box;transform-origin:center center;will-change:transform}',
+  '.ud-carousel-2d-horizontal{animation:ud-roll-2d-horizontal var(--roll-dur,2600ms) ease-in-out infinite}',
+  '.ud-carousel-2d-vertical{animation:ud-roll-2d-vertical var(--roll-dur,2600ms) ease-in-out infinite}',
+  '.ud-carousel-3d-horizontal{animation:ud-roll-3d-horizontal var(--roll-dur,2600ms) ease-in-out infinite}',
+  '.ud-carousel-3d-vertical{animation:ud-roll-3d-vertical var(--roll-dur,2600ms) ease-in-out infinite}'
+].join('');
 
 export { esc, attrString };
 export const DEFAULT_FONT = "'Segoe UI',system-ui,-apple-system,sans-serif";
@@ -27,7 +39,7 @@ export function createContext({ theme, lib = {}, animations = [], editor = false
     anims.get(a.nodeId).push(a);
   }
   const L = { path: new Map(), icon: new Map(), button: new Map(), element: new Map(), ...lib };
-  return { theme, lib: L, anims, editor, emitIds, depth: 0, usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, inHub: false };
+  return { theme, lib: L, anims, editor, emitIds, depth: 0, usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false };
 }
 
 function childrenIndex(nodes) {
@@ -58,20 +70,52 @@ function commonAttrs(el, a, ctx, all) {
   return a;
 }
 
+function renderContainerChildren(el, ctx, idx, all) {
+  const childList = idx.get(el.id) || [];
+  const isCar = isCarouselContainerNode(el, ctx.lib.element);
+  if (!childList.length && !isCar) return '';
+  const cfg = getContainerConfig(el, ctx.lib.element);
+  const renderedKids = childList.map(k => renderNode(k, ctx, idx, all)).join('');
+  if (isCar) {
+    ctx.hasCarousel = true;
+    const rollCls = cfg.carouselAutoRoll
+      ? `ud-carousel-track ud-carousel-${cfg.carouselDim}-${cfg.carouselDir}`
+      : 'ud-carousel-track';
+    const inner = containerInnerBox(el, all, ctx.lib.element);
+    const clipId = `ud-clip-car-${el.id}`;
+    return `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="10"/></clipPath>` +
+      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-carousel-container="${el.id}" data-carousel-dim="${cfg.carouselDim}" data-carousel-dir="${cfg.carouselDir}">` +
+      `<g class="${rollCls}" style="--roll-dur:${cfg.carouselSpeed}ms">${renderedKids}</g></g>`;
+  }
+  if (isContainerNode(el, ctx.lib.element) && renderedKids) {
+    const inner = containerInnerBox(el, all, ctx.lib.element);
+    const clipId = `ud-clip-cont-${el.id}`;
+    return `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>` +
+      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}">${renderedKids}</g>`;
+  }
+  return renderedKids;
+}
+
 function renderNode(el, ctx, idx, all) {
   if (el.visible === false || el.visible === 0) return '';
   if (!SAFE_TAGS.has(el.tag)) return '';
   let a = resolvedAttrs(el, ctx);
   if (a.display === 'none' && !ctx.editor) return '';
-  if (el.kind === 'instance' || (el.tag === 'use' && el.refType)) return renderInstance(el, a, ctx, all);
+  if (el.kind === 'instance' || (el.tag === 'use' && el.refType)) {
+    const instMarkup = renderInstance(el, a, ctx, all);
+    const subMarkup = renderContainerChildren(el, ctx, idx, all);
+    return instMarkup + subMarkup;
+  }
   if (el.tag === 'use') return '';   // a bare <use> is only valid as a library instance
   a = commonAttrs(el, a, ctx, all);
   if (el.tag === 'text') return `<text${attrString(a)}>${esc(el.text)}</text>`;
   if (el.tag === 'g') {
-    const kids = (idx.get(el.id) || []).map(k => renderNode(k, ctx, idx, all)).join('');
+    const kids = renderContainerChildren(el, ctx, idx, all);
     return `<g${attrString(a)}>${kids}</g>`;
   }
-  return `<${el.tag}${attrString(a)}/>`;
+  const selfMarkup = `<${el.tag}${attrString(a)}/>`;
+  const subMarkup = renderContainerChildren(el, ctx, idx, all);
+  return selfMarkup + subMarkup;
 }
 
 function renderInstance(el, a, ctx, all) {
@@ -143,7 +187,7 @@ function usedAnimationCss(ctx) {
 /** Wraps rendered content into a complete <svg>. */
 function assemble(ctx, { width, height, viewBox, body, standalone = true, fontFamily, label, background }) {
   const symbols = collectDefs(ctx);
-  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '');
+  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '') + (ctx.hasCarousel ? CAROUSEL_CSS : '');
   const reduced = css ? '@media (prefers-reduced-motion:reduce){[class*="ud-e"]{animation:none!important}}' : '';
   const attrs = {
     xmlns: standalone ? 'http://www.w3.org/2000/svg' : null,

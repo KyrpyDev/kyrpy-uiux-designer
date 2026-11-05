@@ -2,7 +2,7 @@ import { NotFoundError, ConflictError, ValidationError, ForbiddenError } from '.
 import { normalizeDesign, normalizeNode, canContain, TYPES } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { validateAnimation } from '../domain/animation.js';
-import { scaleNodeSet } from '../domain/geometry.js';
+import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScreenBox, resizeAttrs, nodeBBox } from '../domain/geometry.js';
 
 /**
  * CRUD use cases for paths, icons, buttons, elements and screens. They share one shape: a design record + its nodes +
@@ -177,6 +177,23 @@ export class DesignService {
       if (resized && (scaleContent ?? ['button', 'element'].includes(this.ownerType))) {
         const sx = (data.width ?? d.width) / d.width, sy = (data.height ?? d.height) / d.height;
         for (const p of scaleNodeSet(this.nodes.listByOwner(this.ownerType, d.id), sx, sy)) this.nodes.update(p.id, { attrs: p.attrs });
+      } else if (resized && this.ownerType === 'screen') {
+        const nw = data.width ?? d.width;
+        const nh = data.height ?? d.height;
+        const allNodes = this.nodes.listByOwner(this.ownerType, d.id);
+        for (const n of allNodes) {
+          if (n.parentId == null && isContainerNode(n) && (n.attrs?.['data-size-mode'] || 'responsive') === 'responsive') {
+            const fitMode = n.attrs?.['data-fit-screen'] === 'full' ? 'full' : 'width';
+            const fromBox = nodeBBox(n, allNodes);
+            const toBox = fitContainerToScreenBox(n, nw, nh, { fitMode, allNodes });
+            const nextAttrs = resizeAttrs(n, fromBox, toBox);
+            const updatedContainer = this.nodes.update(n.id, { attrs: nextAttrs });
+            for (const ch of allNodes.filter(c => c.parentId === n.id)) {
+              const clampedAttrs = clampNodeToContainer(ch, updatedContainer, allNodes);
+              this.nodes.update(ch.id, { attrs: clampedAttrs });
+            }
+          }
+        }
       }
       this.designs.update(d.id, data);
       return this.get(d.id);
@@ -301,6 +318,13 @@ export class DesignService {
     const data = normalizeNode(input);
     if (input.ord === undefined) delete data.ord;
     this.#assertInstances([data], d.id);
+    if (data.parentId != null) {
+      const allNodes = this.nodes.listByOwner(this.ownerType, d.id);
+      const parent = allNodes.find(n => n.id === Number(data.parentId));
+      if (parent && isContainerNode(parent)) {
+        data.attrs = clampNodeToContainer(data, parent, allNodes);
+      }
+    }
     const e = this.nodes.create(this.ownerType, d.id, data);
     this.designs.touch(d.id);
     if (beforeDoc) this.#maybeRecordCollabChange(beforeDoc, this.get(d.id), { actorId: effActorId, action: 'node_add', summary: `Added ${e.tag} "${e.tag}"`, forceRecord: recordChange });
@@ -318,7 +342,23 @@ export class DesignService {
     const e = this.#node(nodeId);
     const beforeDoc = (effActorId || recordChange) ? this.get(e.ownerId) : null;
     const data = normalizeNode({ ...patch }, { partial: true });
+    const allNodes = this.nodes.listByOwner(this.ownerType, e.ownerId);
+    const effParentId = data.parentId !== undefined ? data.parentId : e.parentId;
+    if (effParentId != null) {
+      const parent = allNodes.find(n => n.id === Number(effParentId));
+      if (parent && isContainerNode(parent)) {
+        const merged = { ...e, ...data, attrs: { ...(e.attrs || {}), ...(data.attrs || {}) } };
+        data.attrs = clampNodeToContainer(merged, parent, allNodes);
+      }
+    }
     const saved = this.nodes.update(e.id, data);
+    if (isContainerNode(saved)) {
+      const freshNodes = this.nodes.listByOwner(this.ownerType, e.ownerId);
+      for (const ch of freshNodes.filter(c => c.parentId === saved.id)) {
+        const clampedAttrs = clampNodeToContainer(ch, saved, freshNodes);
+        this.nodes.update(ch.id, { attrs: clampedAttrs });
+      }
+    }
     this.designs.touch(e.ownerId);
     if (beforeDoc) this.#maybeRecordCollabChange(beforeDoc, this.get(e.ownerId), { actorId: effActorId, action: 'node_patch', summary: `Edited ${saved.tag} "${saved.name || saved.tag}"`, forceRecord: recordChange });
     return saved;

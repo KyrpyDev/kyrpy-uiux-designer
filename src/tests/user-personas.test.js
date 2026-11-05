@@ -1030,3 +1030,164 @@ test('Persona 9 (@kyrpy-gru & @kyrpy-testusers-team): Multi-Format (HTML, SVG, J
     assert.equal(impRawHtml.body.created[0].visibility, 'public');
   });
 });
+
+test('Persona 10 (@kyrpy-uiux-designer): Container & Carousel Container basic elements (multiple containers per screen, multiple sub-elements, inner/outer margins, fixed/responsive fit-to-screen, child max-size clamping, and 2D/3D horizontal & vertical animated roll effect)', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Verify `html-container` and `html-carousel-container` exist in the built-in elements library
+    const elementsList = (await req('GET', '/api/elements')).body;
+    const htmlContainer = elementsList.find(e => e.key === 'html-container');
+    const htmlCarousel = elementsList.find(e => e.key === 'html-carousel-container');
+    assert.ok(htmlContainer, 'html-container preset element must exist in elements catalog');
+    assert.ok(htmlCarousel, 'html-carousel-container preset element must exist in elements catalog');
+
+    // 2. Create a Screen (width 390, height 844) and add TWO containers to it:
+    //    - Container 1: Responsive Container Shell (outerMargin = 16, innerMargin = 14) fitted to device screen width (x=16, width=358, height=220)
+    //    - Container 2: Carousel Container (3D horizontal roll, outerMargin = 20, innerMargin = 12, x=20, width=350, height=240)
+    const scrRes = await req('POST', '/api/screens', {
+      name: 'Multi-Container & Carousel Screen',
+      width: 390,
+      height: 844,
+      nodes: []
+    });
+    assert.equal(scrRes.status, 200);
+    const screenId = scrRes.body.id;
+
+    const cont1Res = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'rect',
+      role: 'container',
+      name: 'hero-container',
+      attrs: {
+        x: 16,
+        y: 24,
+        width: 358,
+        height: 220,
+        rx: 18,
+        'data-container': 'container',
+        'data-size-mode': 'responsive',
+        'data-outer-margin': 16,
+        'data-inner-margin': 14,
+        'data-fit-screen': 'width'
+      }
+    });
+    assert.equal(cont1Res.status, 200);
+    const cont1 = cont1Res.body;
+
+    const cont2Res = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'use',
+      kind: 'instance',
+      refType: 'element',
+      refId: htmlCarousel.id,
+      role: 'carousel-container',
+      name: 'featured-carousel',
+      attrs: {
+        x: 20,
+        y: 280,
+        width: 350,
+        height: 240,
+        'data-container': 'carousel',
+        'data-size-mode': 'responsive',
+        'data-outer-margin': 20,
+        'data-inner-margin': 12,
+        'data-carousel-dim': '3d',
+        'data-carousel-dir': 'horizontal',
+        'data-carousel-speed': 2200,
+        'data-carousel-autoroll': 'true'
+      }
+    });
+    assert.equal(cont2Res.status, 200);
+    const cont2 = cont2Res.body;
+
+    // 3. Drop an oversized child element (width 600, height 400, x=0, y=0) into Container 1 (`parentId: cont1.id`)
+    //    Container 1 outer box is x=16, y=24, w=358, h=220, innerMargin=14 -> inner box is x=30, y=38, maxW=330, maxH=192.
+    //    Verify the child's size and position are automatically clamped to the container's inner bounds!
+    const oversizedChildRes = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'rect',
+      role: 'card',
+      parentId: cont1.id,
+      name: 'oversized-child-card',
+      attrs: { x: 0, y: 0, width: 600, height: 400, rx: 12 }
+    });
+    assert.equal(oversizedChildRes.status, 200);
+    const clampedChild1 = oversizedChildRes.body;
+    assert.equal(clampedChild1.parentId, cont1.id);
+    assert.ok(clampedChild1.attrs.width <= 330, `Child width (${clampedChild1.attrs.width}) must be clamped to container inner width (330)`);
+    assert.ok(clampedChild1.attrs.height <= 192, `Child height (${clampedChild1.attrs.height}) must be clamped to container inner height (192)`);
+    assert.ok(clampedChild1.attrs.x >= 30, `Child x (${clampedChild1.attrs.x}) must be inside container inner left bound (30)`);
+    assert.ok(clampedChild1.attrs.y >= 38, `Child y (${clampedChild1.attrs.y}) must be inside container inner top bound (38)`);
+
+    // Add a second sub-element inside Container 1 to verify a container can have many sub-elements
+    const child2Res = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'rect',
+      role: 'button',
+      parentId: cont1.id,
+      name: 'cta-inside-container',
+      attrs: { x: 40, y: 160, width: 180, height: 48, rx: 14 }
+    });
+    assert.equal(child2Res.status, 200);
+    assert.equal(child2Res.body.parentId, cont1.id);
+
+    // 4. Add multiple sub-elements inside Carousel Container (`cont2.id`)
+    const slide1 = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'rect',
+      role: 'card',
+      parentId: cont2.id,
+      name: 'carousel-slide-1',
+      attrs: { x: 40, y: 310, width: 280, height: 160, rx: 14 }
+    });
+    const slide2 = await req('POST', `/api/screens/${screenId}/nodes`, {
+      tag: 'rect',
+      role: 'card',
+      parentId: cont2.id,
+      name: 'carousel-slide-2',
+      attrs: { x: 60, y: 320, width: 450, height: 300, rx: 14 } // oversized -> clamped to 350 - 24 = 326 x 216
+    });
+    assert.equal(slide1.status, 200);
+    assert.equal(slide2.status, 200);
+    assert.ok(slide2.body.attrs.width <= 326, `Carousel child width (${slide2.body.attrs.width}) must be clamped to carousel inner width (326)`);
+    assert.ok(slide2.body.attrs.height <= 216, `Carousel child height (${slide2.body.attrs.height}) must be clamped to carousel inner height (216)`);
+
+    // 5. Increase Container 1's inner margin (`data-inner-margin` from 14 -> 30) and shrink width to 260:
+    //    Verify all children of Container 1 are automatically re-clamped to the new inner bounds (260 - 60 = 200 max width)!
+    const shrinkCont1 = await req('PATCH', `/api/screens/${screenId}/nodes/${cont1.id}`, {
+      attrs: {
+        ...cont1.attrs,
+        width: 260,
+        'data-inner-margin': 30
+      }
+    });
+    assert.equal(shrinkCont1.status, 200);
+    const updatedScreenAfterShrink = (await req('GET', `/api/screens/${screenId}`)).body;
+    const reClampedChild1 = updatedScreenAfterShrink.nodes.find(n => n.id === clampedChild1.id);
+    assert.ok(reClampedChild1.attrs.width <= 200, `After shrinking container & increasing innerMargin to 30, child width (${reClampedChild1.attrs.width}) must be <= 200`);
+
+    // 6. Test Responsive vs Fixed Container behavior when resizing the device screen (390 -> 480 width)
+    //    Set Container 1 to `fixed` and keep Container 2 as `responsive` (`outerMargin = 20`)
+    await req('PATCH', `/api/screens/${screenId}/nodes/${cont1.id}`, {
+      attrs: { ...shrinkCont1.body.attrs, 'data-size-mode': 'fixed' }
+    });
+    const resizedScreen = await req('PUT', `/api/screens/${screenId}`, { width: 480, height: 844 });
+    assert.equal(resizedScreen.status, 200);
+    const cont1AfterScreenResize = resizedScreen.body.nodes.find(n => n.id === cont1.id);
+    const cont2AfterScreenResize = resizedScreen.body.nodes.find(n => n.id === cont2.id);
+    assert.equal(cont1AfterScreenResize.attrs.width, 260, 'Fixed-size container must keep its width (260) when screen width changes');
+    assert.equal(cont2AfterScreenResize.attrs.width, 440, 'Responsive container (outerMargin=20) must fit new 480px screen width (480 - 40 = 440)');
+
+    // 7. Verify SVG rendering outputs clipped `.ud-container-children` and `.ud-carousel-track.ud-carousel-3d-horizontal` + 2D vertical roll
+    const svg3dHoriz = (await req('GET', `/api/screens/${screenId}/svg`)).body;
+    assert.ok(svg3dHoriz.includes('ud-container-children'), 'Rendered screen SVG must include .ud-container-children clip group');
+    assert.ok(svg3dHoriz.includes('ud-carousel-track ud-carousel-3d-horizontal'), 'Rendered screen SVG must include 3D horizontal carousel roll track');
+
+    // Switch Carousel Container to 2D Vertical Roll and verify SVG output
+    await req('PATCH', `/api/screens/${screenId}/nodes/${cont2.id}`, {
+      attrs: {
+        ...cont2AfterScreenResize.attrs,
+        'data-carousel-dim': '2d',
+        'data-carousel-dir': 'vertical'
+      }
+    });
+    const svg2dVert = (await req('GET', `/api/screens/${screenId}/svg`)).body;
+    assert.ok(svg2dVert.includes('ud-carousel-track ud-carousel-2d-vertical'), 'Rendered screen SVG must include 2D vertical carousel roll track');
+  });
+});

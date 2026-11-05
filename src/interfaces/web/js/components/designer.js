@@ -9,7 +9,11 @@ import { api } from '../api.js';
 import { state, renderContext, currentTheme, findDesign, libOf } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
-import { nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet } from '/domain/geometry.js';
+import {
+  nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet,
+  isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox,
+  clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox
+} from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
@@ -25,6 +29,8 @@ import { openCopyMoveToProjectsModal } from './item-browser.js';
 const TOOLS = [
   ['select', 'V', '⌖', 'Select / move'],
   ['node', 'N', '✦', 'Vertex editing of the selected path (Enter)'],
+  ['container', 'K', '▣', 'Container: shell box with inner/outer margins that limits child max size'],
+  ['carousel', 'U', '🎠', 'Carousel Container: container with 2D/3D horizontal & vertical animated roll effect'],
   ['rect', 'R', '▭', 'Rectangle'],
   ['circle', 'C', '◯', 'Circle'],
   ['ellipse', 'E', '⬭', 'Ellipse'],
@@ -318,7 +324,7 @@ export class Designer {
     clear(this.bar);
     this.buildDocBar();
     const s = state.settings;
-    const tools = TOOLS.filter(t => !(this.isGlyph && t[0] === 'text'));
+    const tools = TOOLS.filter(t => !(this.isGlyph && ['text', 'container', 'carousel'].includes(t[0])));
     const tool = ([k, key, glyph, tip]) => h('button', { class: `icon-btn${this.tool === k ? ' active' : ''}`, title: `${tip} (${key})`, dataset: { tool: k }, onclick: () => (k === 'node' ? this.vtx.enter(this.selectedNodes()[0]) : this.setTool(k)) }, glyph);
     const toggle = (label, tip, get, set) => { const b = h('button', { class: `btn small${get() ? ' active' : ''}`, title: tip, onclick: () => { set(!get()); b.classList.toggle('active', get()); } }, label); return b; };
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
@@ -470,6 +476,20 @@ export class Designer {
         style: 'cursor: move; pointer-events: stroke;'
       });
       if (e.rotation) r.setAttribute('transform', `rotate(${e.rotation} ${b.x + b.w / 2} ${b.y + b.h / 2})`);
+      if (isContainerNode(e, state.library.elements)) {
+        const ib = containerInnerBox(e, this.nodes, state.library.elements);
+        mk('rect', {
+          x: ib.x,
+          y: ib.y,
+          width: Math.max(ib.w, 0.01),
+          height: Math.max(ib.h, 0.01),
+          fill: 'none',
+          stroke: 'rgba(16,185,129,.7)',
+          'stroke-width': 1.2 / z,
+          'stroke-dasharray': `${5 / z} ${3 / z}`,
+          style: 'pointer-events: none;'
+        });
+      }
     }
     const box = this.selectionBox(sel);
     if (box && sel.length === 1 && !sel[0].rotation && !sel[0].locked && !this.vtx.active) {
@@ -632,7 +652,7 @@ export class Designer {
     const g = this.ghost, z = this.view.z;
     const st = { fill: 'rgba(46,155,255,.2)', stroke: '#2e9bff', 'stroke-width': 1.5 / z };
     const x = Math.min(g.x0, g.x1), y = Math.min(g.y0, g.y1), w = Math.abs(g.x1 - g.x0), h2 = Math.abs(g.y1 - g.y0);
-    if (g.tool === 'rect' || g.tool === 'callout') mk('rect', { x, y, width: w, height: h2, ...st });
+    if (g.tool === 'rect' || g.tool === 'callout' || g.tool === 'container' || g.tool === 'carousel') mk('rect', { x, y, width: w, height: h2, ...st });
     if (g.tool === 'circle' || g.tool === 'ellipse' || g.tool === 'polygon' || g.tool === 'star') mk('ellipse', { cx: (g.x0 + g.x1) / 2, cy: (g.y0 + g.y1) / 2, rx: w / 2, ry: h2 / 2, ...st });
     if (g.tool === 'line' || g.tool === 'arrow') mk('line', { x1: g.x0, y1: g.y0, x2: g.x1, y2: g.y1, stroke: '#2e9bff', 'stroke-width': 2 / z });
     if (g.tool === 'freehand' && g.pts?.length > 1) {
@@ -683,17 +703,40 @@ export class Designer {
   }
   clearSelection() { this.select([]); }
 
-  /** Maps an event target to the node the user means: the top-level ancestor (or the exact node with Alt). */
+  /** Maps an event target to the node the user means: the top-level ancestor (or the exact node with Alt). Sub-elements inside a Container are directly selectable. */
   hitNode(target, exact = false) {
     let n = target;
     while (n && n !== this.stage) {
       const id = n.dataset?.el ? Number(n.dataset.el) : null;
       if (id && this.byId(id)) {
         let e = this.byId(id);
-        if (!exact) while (e.parentId != null && this.byId(e.parentId)) e = this.byId(e.parentId);
+        if (!exact) {
+          while (e.parentId != null && this.byId(e.parentId) && !isContainerNode(this.byId(e.parentId), state.library.elements)) {
+            e = this.byId(e.parentId);
+          }
+        }
         return e;
       }
       n = n.parentNode;
+    }
+    return null;
+  }
+
+  /** Finds the top-most visible Container node containing world point `p` (or the selected Container if `p` is null). */
+  containerAtPoint(p, excludeId = null) {
+    if (!this.doc) return null;
+    if (p) {
+      const containers = [...this.nodes]
+        .filter(e => e.id !== excludeId && e.visible !== false && isContainerNode(e, state.library.elements))
+        .sort((a, b) => (b.ord - a.ord) || (b.id - a.id));
+      for (const c of containers) {
+        const b = nodeBBox(c, this.nodes);
+        if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return c;
+      }
+    }
+    const sel = this.selectedNodes();
+    if (sel.length === 1 && sel[0].id !== excludeId && isContainerNode(sel[0], state.library.elements)) {
+      return sel[0];
     }
     return null;
   }
@@ -918,7 +961,16 @@ export class Designer {
       if (this.doc.locked) return;
       const sel = this.selectedNodes().filter(e => !e.locked);
       if (!sel.length) return;
-      this.op = { kind: 'move', start: p, els: sel.map(e => ({ id: e.id, orig: deep(e.attrs), tag: e.tag })), box: this.selectionBox(sel), snap: this.snapshot(), moved: false };
+      const moveSet = new Map();
+      const collectWithContainerKids = node => {
+        if (!node || moveSet.has(node.id)) return;
+        moveSet.set(node.id, { id: node.id, orig: deep(node.attrs), tag: node.tag, parentId: node.parentId });
+        if (isContainerNode(node, state.library.elements) && node.tag !== 'g') {
+          for (const ch of this.nodes.filter(c => c.parentId === node.id)) collectWithContainerKids(ch);
+        }
+      };
+      for (const sNode of sel) collectWithContainerKids(sNode);
+      this.op = { kind: 'move', start: p, els: [...moveSet.values()], box: this.selectionBox(sel), snap: this.snapshot(), moved: false };
       capture(this.viewport, ev);
     } else {
       if (!ev.shiftKey) this.clearSelection();
@@ -971,7 +1023,17 @@ export class Designer {
       if (!op.moved && Math.hypot(dx, dy) * this.view.z < 3) return;
       if (!op.moved) { op.moved = true; this.dragging = true; }
       ({ dx, dy } = this.snapMove(op.box, dx, dy, ev.ctrlKey));
-      for (const o of op.els) { const e = this.byId(o.id); e.attrs = translateAttrs({ tag: o.tag, attrs: o.orig }, dx, dy); }
+      const movingIds = new Set(op.els.map(o => o.id));
+      for (const o of op.els) {
+        const e = this.byId(o.id);
+        e.attrs = translateAttrs({ tag: o.tag, attrs: o.orig }, dx, dy);
+        if (e.parentId != null && !movingIds.has(e.parentId)) {
+          const parent = this.byId(e.parentId);
+          if (parent && isContainerNode(parent, state.library.elements)) {
+            e.attrs = clampNodeToContainer(e, parent, this.nodes, state.library.elements);
+          }
+        }
+      }
       this.renderStage(); this.renderOverlay();
     } else if (op.kind === 'resize') {
       const f = op.from, s = this.snapPoint(p, ev.ctrlKey), k = op.handle;
@@ -979,7 +1041,19 @@ export class Designer {
       if (k.includes('w')) x0 = Math.min(s.x, x1 - 1); if (k.includes('e')) x1 = Math.max(s.x, x0 + 1);
       if (k.includes('n')) y0 = Math.min(s.y, y1 - 1); if (k.includes('s')) y1 = Math.max(s.y, y0 + 1);
       if (ev.shiftKey && f.w && f.h && k.length === 2) { const r = f.w / f.h; const w = x1 - x0, hh = y1 - y0; if (w / hh > r) { const nw = hh * r; if (k.includes('w')) x0 = x1 - nw; else x1 = x0 + nw; } else { const nh = w / r; if (k.includes('n')) y0 = y1 - nh; else y1 = y0 + nh; } }
-      op.el.attrs = resizeAttrs({ tag: op.el.tag, attrs: op.orig }, f, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      let targetBox = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      if (op.el.parentId != null) {
+        const parent = this.byId(op.el.parentId);
+        if (parent && isContainerNode(parent, state.library.elements)) {
+          targetBox = clampBoxToContainer(targetBox, parent, this.nodes, state.library.elements);
+        }
+      }
+      op.el.attrs = resizeAttrs({ tag: op.el.tag, attrs: op.orig }, f, targetBox);
+      if (isContainerNode(op.el, state.library.elements)) {
+        for (const ch of this.nodes.filter(c => c.parentId === op.el.id)) {
+          ch.attrs = clampNodeToContainer(ch, op.el, this.nodes, state.library.elements);
+        }
+      }
       this.dragging = true;
       this.renderStage(); this.renderOverlay();
     } else if (op.kind === 'box') {
@@ -1026,8 +1100,25 @@ export class Designer {
     }
     if (wasDragging) {
       const ids = op.kind === 'move' ? op.els.map(o => o.id) : [op.el.id];
+      const dropPt = ev ? this.worldPoint(ev) : null;
       this.pushUndo(op.snap);
-      try { await Promise.all(ids.map(id => api.patchNode(this.type, this.doc.id, id, { attrs: this.byId(id).attrs }))); }
+      try {
+        await Promise.all(ids.map(async id => {
+          const node = this.byId(id);
+          const patch = { attrs: node.attrs };
+          if (op.kind === 'move' && node.parentId == null && !isContainerNode(node, state.library.elements) && dropPt) {
+            const hitCont = this.containerAtPoint(dropPt, node.id);
+            if (hitCont) {
+              node.parentId = hitCont.id;
+              node.attrs = clampNodeToContainer(node, hitCont, this.nodes, state.library.elements);
+              patch.parentId = hitCont.id;
+              patch.attrs = node.attrs;
+            }
+          }
+          const saved = await api.patchNode(this.type, this.doc.id, id, patch);
+          Object.assign(node, saved);
+        }));
+      }
       catch (e) { toast(e.message, 'error'); await this.reload(); return; }
       this.changed();
     }
@@ -1153,9 +1244,53 @@ export class Designer {
     if (refType === this.type && id === this.doc.id) return toast(`A ${this.type} cannot contain itself`, 'error');
     const lib = libOf(refType).find(d => d.id === id);
     if (!lib) return;
-    const pl = this.placement(refType, lib, at);
-    const el = await this.addNode({ tag: 'use', kind: 'instance', refType, refId: id, name: this.uniqueName(lib.key), attrs: { x: pl.x, y: pl.y, width: pl.w, height: pl.h } });
-    if (el) toast(`added ${refType} ${lib.key}`, 'ok', 1400);
+    let pl = this.placement(refType, lib, at);
+    const isContainerItem = refType === 'element' && (lib.key === 'html-container' || lib.key === 'html-carousel-container' || lib.category === 'containers');
+    const isCarouselItem = refType === 'element' && (lib.key === 'html-carousel-container' || lib.meta?.containerType === 'carousel');
+    const targetContainer = this.containerAtPoint(at);
+    let parentId = null;
+    const extraAttrs = {};
+
+    if (isContainerItem) {
+      extraAttrs['data-container'] = isCarouselItem ? 'carousel' : 'container';
+      extraAttrs['data-size-mode'] = 'responsive';
+      extraAttrs['data-outer-margin'] = 16;
+      extraAttrs['data-inner-margin'] = 12;
+      extraAttrs['data-fit-screen'] = 'width';
+      if (isCarouselItem) {
+        extraAttrs['data-carousel-dim'] = '3d';
+        extraAttrs['data-carousel-dir'] = 'horizontal';
+        extraAttrs['data-carousel-speed'] = 2600;
+        extraAttrs['data-carousel-autoroll'] = 'true';
+        extraAttrs['data-carousel-index'] = 0;
+      }
+      if (this.type === 'screen' && !targetContainer) {
+        const om = 16;
+        pl = {
+          x: om,
+          y: Math.max(om, Math.min(pl.y, this.doc.height - lib.height - om)),
+          w: Math.max(64, this.doc.width - om * 2),
+          h: lib.height
+        };
+      }
+    }
+
+    if (targetContainer) {
+      parentId = targetContainer.id;
+      pl = clampBoxToContainer(pl, targetContainer, this.nodes, state.library.elements);
+    }
+
+    const el = await this.addNode({
+      tag: 'use',
+      kind: 'instance',
+      refType,
+      refId: id,
+      parentId,
+      role: isCarouselItem ? 'carousel-container' : isContainerItem ? 'container' : null,
+      name: this.uniqueName(lib.key),
+      attrs: { x: pl.x, y: pl.y, width: pl.w, height: pl.h, ...extraAttrs }
+    });
+    if (el) toast(parentId ? `Added ${refType} "${lib.key}" inside container "${targetContainer.name}" (clamped to inner margin)` : `added ${refType} ${lib.key}`, 'ok', 1800);
   }
 
   async createShape(g) {
@@ -1165,8 +1300,41 @@ export class Designer {
     const rw = w < 2 ? (glyph ? 8 : 80) : w;
     const rh = hh < 2 ? (glyph ? 8 : 64) : hh;
     const cx = x + rw / 2, cy = y + rh / 2;
+    const targetContainer = (g.tool !== 'container' && g.tool !== 'carousel') ? this.containerAtPoint({ x: cx, y: cy }) : null;
     let def;
-    if (g.tool === 'rect') {
+    if (g.tool === 'container' || g.tool === 'carousel') {
+      const isCarousel = g.tool === 'carousel';
+      const om = 16;
+      const box = (w < 8 || hh < 8)
+        ? {
+            x: this.type === 'screen' ? om : Math.max(0, x),
+            y: Math.max(om, Math.min(y, Math.max(om, this.doc.height - 220 - om))),
+            width: this.type === 'screen' ? Math.max(80, this.doc.width - om * 2) : Math.max(80, this.doc.width - 24),
+            height: isCarousel ? 220 : 200
+          }
+        : { x, y, width: w, height: hh };
+      def = {
+        tag: 'rect',
+        role: isCarousel ? 'carousel-container' : 'container',
+        name: this.uniqueName(isCarousel ? 'carousel-container' : 'container'),
+        attrs: {
+          ...box,
+          rx: 18,
+          'data-container': isCarousel ? 'carousel' : 'container',
+          'data-size-mode': 'responsive',
+          'data-outer-margin': om,
+          'data-inner-margin': 12,
+          'data-fit-screen': 'width',
+          ...(isCarousel ? {
+            'data-carousel-dim': '3d',
+            'data-carousel-dir': 'horizontal',
+            'data-carousel-speed': 2600,
+            'data-carousel-autoroll': 'true',
+            'data-carousel-index': 0
+          } : {})
+        }
+      };
+    } else if (g.tool === 'rect') {
       const r = (w < 1 || hh < 1) ? { x, y, width: glyph ? 6 : 96, height: glyph ? 6 : 64 } : { x, y, width: w, height: hh };
       def = { tag: 'rect', name: this.uniqueName('rect'), attrs: { ...r, rx: glyph ? 1 : 12, ...(glyph ? {} : { fill: '{{accent}}' }) } };
     } else if (g.tool === 'circle') {
@@ -1211,7 +1379,12 @@ export class Designer {
       if (!w && !hh) return;
       def = { tag: 'line', name: this.uniqueName('line'), attrs: { x1: g.x0, y1: g.y0, x2: g.x1, y2: g.y1, stroke: glyph ? undefined : '{{text}}', 'stroke-width': glyph ? undefined : 2, 'stroke-linecap': 'round' } };
     }
-    if (def) { Object.keys(def.attrs).forEach(k => def.attrs[k] === undefined && delete def.attrs[k]); await this.addNode(def); this.setTool('select'); }
+    if (def) {
+      if (targetContainer) def.parentId = targetContainer.id;
+      Object.keys(def.attrs).forEach(k => def.attrs[k] === undefined && delete def.attrs[k]);
+      await this.addNode(def);
+      this.setTool('select');
+    }
   }
 
   async createText(p) {
@@ -1242,6 +1415,11 @@ export class Designer {
     try {
       const saved = await api.patchNode(this.type, this.doc.id, id, patch);
       Object.assign(e, saved);
+      if (isContainerNode(e, state.library.elements)) {
+        for (const ch of this.nodes.filter(c => c.parentId === e.id)) {
+          ch.attrs = clampNodeToContainer(ch, e, this.nodes, state.library.elements);
+        }
+      }
       const now = Date.now();
       if (!this.lastPatch || now - this.lastPatch > 900 || this.lastPatchId !== id) this.pushUndo(snap);
       this.lastPatch = now; this.lastPatchId = id;

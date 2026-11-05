@@ -193,3 +193,134 @@ export function scaleNodeSet(nodes, sx, sy) {
   }
   return out;
 }
+
+/* ---------- Container & Carousel Container Geometry Helpers ---------- */
+
+/** Returns true if a node is a Container or Carousel Container (shell / outer box of sub-elements). */
+export function isContainerNode(el, libElements = null) {
+  if (!el) return false;
+  if (el.role === 'container' || el.role === 'carousel-container') return true;
+  const dc = el.attrs?.['data-container'];
+  if (dc === 'true' || dc === 'container' || dc === 'carousel') return true;
+  if (el.kind === 'instance' && el.refType === 'element') {
+    const name = String(el.name || '').toLowerCase();
+    if (name.startsWith('html-container') || name.startsWith('html-carousel-container') || name.startsWith('container') || name.startsWith('carousel-container')) {
+      return true;
+    }
+    if (libElements) {
+      const target = typeof libElements.get === 'function'
+        ? libElements.get(el.refId)
+        : Array.isArray(libElements) ? libElements.find(x => x.id === el.refId) : null;
+      if (target && (target.key === 'html-container' || target.key === 'html-carousel-container' || target.category === 'containers' || target.meta?.isContainer)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Returns true if a node is specifically a Carousel Container (with 2D/3D horizontal/vertical animated roll effect). */
+export function isCarouselContainerNode(el, libElements = null) {
+  if (!el) return false;
+  if (el.role === 'carousel-container' || el.attrs?.['data-container'] === 'carousel') return true;
+  if (el.kind === 'instance' && el.refType === 'element') {
+    const name = String(el.name || '').toLowerCase();
+    if (name.startsWith('html-carousel-container') || name.startsWith('carousel-container')) return true;
+    if (libElements) {
+      const target = typeof libElements.get === 'function'
+        ? libElements.get(el.refId)
+        : Array.isArray(libElements) ? libElements.find(x => x.id === el.refId) : null;
+      if (target && (target.key === 'html-carousel-container' || target.meta?.containerType === 'carousel')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Extracts normalized container & carousel configuration from a container node's `attrs`. */
+export function getContainerConfig(el, libElements = null) {
+  const a = el?.attrs || {};
+  const isCarousel = isCarouselContainerNode(el, libElements);
+  const innerMargin = Math.max(0, num(a['data-inner-margin'], 12));
+  const outerMargin = Math.max(0, num(a['data-outer-margin'], 16));
+  const sizeMode = a['data-size-mode'] === 'fixed' ? 'fixed' : 'responsive';
+  const fitScreen = a['data-fit-screen'] || 'width'; // 'none' | 'width' | 'full'
+  const carouselDim = a['data-carousel-dim'] === '2d' ? '2d' : '3d';
+  const carouselDir = a['data-carousel-dir'] === 'vertical' ? 'vertical' : 'horizontal';
+  const carouselSpeed = Math.max(300, num(a['data-carousel-speed'], 2600));
+  const carouselAutoRoll = a['data-carousel-autoroll'] !== 'false' && a['data-carousel-autoroll'] !== false;
+  const carouselIndex = Math.max(0, Math.floor(num(a['data-carousel-index'], 0)));
+  return {
+    isContainer: isContainerNode(el, libElements),
+    isCarousel,
+    innerMargin,
+    outerMargin,
+    sizeMode,
+    fitScreen,
+    carouselDim,
+    carouselDir,
+    carouselSpeed,
+    carouselAutoRoll,
+    carouselIndex
+  };
+}
+
+/** Computes the inner content box `{ x, y, w, h, innerMargin, outerMargin, outerBox }` of a container node. */
+export function containerInnerBox(containerNode, allNodes = [], libElements = null) {
+  const outerBox = nodeBBox(containerNode, allNodes);
+  const cfg = getContainerConfig(containerNode, libElements);
+  const padX = Math.min(cfg.innerMargin, Math.max(0, (outerBox.w - 8) / 2));
+  const padY = Math.min(cfg.innerMargin, Math.max(0, (outerBox.h - 8) / 2));
+  return {
+    x: round(outerBox.x + padX),
+    y: round(outerBox.y + padY),
+    w: round(Math.max(8, outerBox.w - padX * 2)),
+    h: round(Math.max(8, outerBox.h - padY * 2)),
+    innerMargin: cfg.innerMargin,
+    outerMargin: cfg.outerMargin,
+    outerBox
+  };
+}
+
+/**
+ * Clamps a child bounding box `{ x, y, w, h }` so that:
+ * 1. Its width `w` and height `h` never exceed the container's inner width/height (`outerBox - 2*innerMargin`).
+ * 2. Its position `(x, y)` stays inside the container's inner content area.
+ */
+export function clampBoxToContainer(childBox, containerNode, allNodes = [], libElements = null) {
+  const inner = containerInnerBox(containerNode, allNodes, libElements);
+  const w = round(Math.max(4, Math.min(num(childBox.w, 24), inner.w)));
+  const h = round(Math.max(4, Math.min(num(childBox.h, 24), inner.h)));
+  const x = round(Math.max(inner.x, Math.min(num(childBox.x, inner.x), inner.x + inner.w - w)));
+  const y = round(Math.max(inner.y, Math.min(num(childBox.y, inner.y), inner.y + inner.h - h)));
+  return { x, y, w, h };
+}
+
+/** Returns updated `attrs` for `childNode` clamped to fit inside `containerNode`'s inner margin box. */
+export function clampNodeToContainer(childNode, containerNode, allNodes = [], libElements = null) {
+  if (!childNode || !containerNode) return childNode?.attrs || {};
+  const from = nodeBBox(childNode, allNodes);
+  const clamped = clampBoxToContainer(from, containerNode, allNodes, libElements);
+  return resizeAttrs(childNode, from, clamped);
+}
+
+/**
+ * Computes the bounding box `{ x, y, w, h }` when a Container is fitted to a device screen
+ * using its `outerMargin` setting (`fitMode`: `'width'` fits width with outerMargin; `'full'` fits both width & height).
+ */
+export function fitContainerToScreenBox(containerNode, screenWidth, screenHeight, { fitMode = 'width', allNodes = [] } = {}) {
+  const cur = nodeBBox(containerNode, allNodes);
+  const cfg = getContainerConfig(containerNode);
+  const om = cfg.outerMargin;
+  const w = round(Math.max(32, num(screenWidth, 390) - om * 2));
+  const x = round(om);
+  if (fitMode === 'full') {
+    const h = round(Math.max(32, num(screenHeight, 844) - om * 2));
+    return { x, y: round(om), w, h };
+  }
+  const maxH = Math.max(32, num(screenHeight, 844) - om * 2);
+  const h = round(Math.min(Math.max(40, cur.h || 180), maxH));
+  const y = round(Math.max(om, Math.min(cur.y || om, num(screenHeight, 844) - om - h)));
+  return { x, y, w, h };
+}

@@ -6,7 +6,11 @@ import { menuActions } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES } from '/domain/entities.js';
 import { buildMenuTree } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
-import { nodeBBox, translateAttrs, resizeAttrs, ANCHORS } from '/domain/geometry.js';
+import {
+  nodeBBox, translateAttrs, resizeAttrs, ANCHORS,
+  isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox,
+  clampNodeToContainer, fitContainerToScreenBox
+} from '/domain/geometry.js';
 import { ANIMATION_TYPES, TRIGGERS, EASINGS } from '/domain/animation.js';
 import { SURFACE_ROLES } from '/domain/theme.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
@@ -46,6 +50,12 @@ const TAG_TYPE_NAME = {
 
 export function elementTypeTitle(e) {
   if (!e) return 'Element';
+  if (isCarouselContainerNode(e, state.library?.elements)) {
+    return `Carousel Container · ${e.name || 'carousel'}`;
+  }
+  if (isContainerNode(e, state.library?.elements)) {
+    return `Container element · ${e.name || 'container'}`;
+  }
   if (e.kind === 'instance' && e.refType) {
     const typeLabel = TYPES[e.refType]?.label || e.refType;
     const lib = findDesign(e.refType, e.refId);
@@ -285,6 +295,24 @@ export class Inspector {
       secs.push(this.menuSection(e.refId));
     }
 
+    if (isContainerNode(e, state.library.elements)) {
+      secs.push(...this.containerSections(e));
+    } else if (e.parentId != null) {
+      const parentCont = d.byId(e.parentId);
+      if (parentCont && isContainerNode(parentCont, state.library.elements)) {
+        const ib = containerInnerBox(parentCont, d.nodes, state.library.elements);
+        secs.push(this.section(`Inside Container · ${parentCont.name || parentCont.tag}`,
+          h('div', { class: 'muted', style: { fontSize: '11px' } },
+            `Max child size limited to ${Math.round(ib.w)}×${Math.round(ib.h)}px (inner margin ${getContainerConfig(parentCont, state.library.elements).innerMargin}px).`),
+          h('div', { class: 'row wrap' },
+            h('button', { class: 'btn small', onclick: () => d.select([parentCont.id]) }, '▣ Select Container'),
+            h('button', { class: 'btn small', onclick: () => patch({ attrs: clampNodeToContainer(e, parentCont, d.nodes, state.library.elements) }) }, '⤢ Fit Inside Container'),
+            h('button', { class: 'btn small', onclick: () => patch({ parentId: null }) }, '↗ Detach from Container')
+          )
+        ));
+      }
+    }
+
     // geometry
     const geo = [h('div', { class: 'grid4' },
       this.field('X', this.num('g-x', box.x, v => setBox({ x: v }))), this.field('Y', this.num('g-y', box.y, v => setBox({ y: v }))),
@@ -332,6 +360,132 @@ export class Inspector {
     // animations
     secs.push(this.animationSection(e));
     return secs;
+  }
+
+  /** Container & Carousel Container Inspector Sections (inner/outer margins, fixed/responsive, fit to device screen, sub-elements, 2D/3D roll). */
+  containerSections(e) {
+    const d = this.d;
+    const cfg = getContainerConfig(e, state.library.elements);
+    const isCarousel = cfg.isCarousel;
+    const setContainerAttrs = patchAttrs => {
+      const nextAttrs = { ...(e.attrs || {}), ...patchAttrs };
+      return d.patchNode(e.id, { attrs: nextAttrs });
+    };
+    const fitToScreen = async fitMode => {
+      const from = nodeBBox(e, d.nodes);
+      const tempNode = { ...e, attrs: { ...(e.attrs || {}), 'data-fit-screen': fitMode } };
+      const to = fitContainerToScreenBox(tempNode, d.doc.width, d.doc.height, { fitMode, allNodes: d.nodes });
+      const nextAttrs = { ...resizeAttrs(e, from, to), 'data-fit-screen': fitMode };
+      await d.patchNode(e.id, { attrs: nextAttrs });
+      toast(fitMode === 'full' ? 'Fitted container to full device screen (with outer margin)' : 'Fitted container width to device screen (with outer margin)', 'ok', 1600);
+    };
+
+    const children = d.nodes.filter(n => n.parentId === e.id);
+    const topOutside = d.nodes.filter(n => n.id !== e.id && n.parentId == null && n.role !== 'bg' && n.role !== 'bg-glow');
+    const ib = containerInnerBox(e, d.nodes, state.library.elements);
+
+    const adoptSel = h('select', { 'aria-label': 'Add existing element into container' },
+      h('option', { value: '' }, '＋ Move element into this container…'),
+      ...topOutside.map(n => h('option', { value: n.id }, `${n.name || n.tag} (#${n.id})`))
+    );
+    adoptSel.addEventListener('change', async () => {
+      const targetId = Number(adoptSel.value);
+      if (!targetId) return;
+      const ch = d.byId(targetId);
+      if (!ch) return;
+      const clamped = clampNodeToContainer(ch, e, d.nodes, state.library.elements);
+      await d.patchNode(ch.id, { parentId: e.id, attrs: clamped });
+      toast(`Moved "${ch.name || ch.tag}" into container "${e.name || 'container'}"`, 'ok', 1500);
+    });
+
+    const childRows = children.map(ch => h('div', { class: 'el-row' },
+      h('span', { class: 't' }, TAG_LABEL[ch.tag] || ch.tag),
+      h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name || ch.tag),
+      h('button', { class: 'icon-btn small', title: 'Select sub-element', onclick: () => d.select([ch.id]) }, '⌖'),
+      h('button', { class: 'icon-btn small', title: 'Detach sub-element from container', onclick: () => d.patchNode(ch.id, { parentId: null }) }, '↗')
+    ));
+
+    const out = [
+      this.section(`Container Shell · ${cfg.sizeMode.toUpperCase()}`,
+        h('div', { class: 'muted', style: { fontSize: '11px' } },
+          `Outer shell box that limits child max size to ${Math.round(ib.w)}×${Math.round(ib.h)}px. Drop any element inside this container on the canvas.`),
+        h('div', { class: 'grid2' },
+          this.field('Container mode', this.select(`ct-kind-${e.id}`, isCarousel ? 'carousel' : 'container', [
+            ['container', '▣ Standard Container'],
+            ['carousel', '🎠 Carousel Container (2D/3D Roll)']
+          ], v => d.patchNode(e.id, {
+            role: v === 'carousel' ? 'carousel-container' : 'container',
+            attrs: {
+              ...(e.attrs || {}),
+              'data-container': v,
+              ...(v === 'carousel' ? {
+                'data-carousel-dim': e.attrs?.['data-carousel-dim'] || '3d',
+                'data-carousel-dir': e.attrs?.['data-carousel-dir'] || 'horizontal',
+                'data-carousel-speed': e.attrs?.['data-carousel-speed'] || 2600,
+                'data-carousel-autoroll': e.attrs?.['data-carousel-autoroll'] ?? 'true'
+              } : {})
+            }
+          }))),
+          this.field('Size mode', this.select(`ct-size-${e.id}`, cfg.sizeMode, [
+            ['responsive', 'Responsive (scales with screen)'],
+            ['fixed', 'Fixed size']
+          ], v => setContainerAttrs({ 'data-size-mode': v })))
+        ),
+        h('div', { class: 'grid2' },
+          this.field('Outer margin (px)', this.num(`ct-om-${e.id}`, cfg.outerMargin, v => setContainerAttrs({ 'data-outer-margin': Math.max(0, v) }), { min: 0, step: 2 })),
+          this.field('Inner margin (px)', this.num(`ct-im-${e.id}`, cfg.innerMargin, v => setContainerAttrs({ 'data-inner-margin': Math.max(0, v) }), { min: 0, step: 2 }))
+        ),
+        h('div', { class: 'row wrap' },
+          h('button', { class: 'btn small primary', title: 'Fit container width to device screen respecting outer margin', onclick: () => fitToScreen('width') }, '↔ Fit Screen Width'),
+          h('button', { class: 'btn small', title: 'Fit container to full device screen respecting outer margin', onclick: () => fitToScreen('full') }, '⛶ Fit Full Screen')
+        ),
+        h('div', { class: 'el-list', style: { marginTop: '4px' } },
+          childRows.length ? childRows : h('div', { class: 'empty' }, 'No sub-elements yet. Drag & drop items onto this container.')
+        ),
+        topOutside.length ? adoptSel : null
+      )
+    ];
+
+    if (isCarousel) {
+      const stepCarousel = async delta => {
+        const nextIdx = Math.max(0, (cfg.carouselIndex + delta + Math.max(1, children.length)) % Math.max(1, children.length || 3));
+        await setContainerAttrs({ 'data-carousel-index': nextIdx });
+        toast(`Carousel roll index: ${nextIdx + 1}`, 'info', 1000);
+      };
+      out.push(
+        this.section(`Carousel Roll · ${cfg.carouselDim.toUpperCase()} ${cfg.carouselDir}`,
+          h('div', { class: 'muted', style: { fontSize: '11px' } },
+            'Animates sub-elements with a 3D perspective or 2D flat horizontal/vertical roll effect.'),
+          h('div', { class: 'grid2' },
+            this.field('Roll dimension', this.select(`cr-dim-${e.id}`, cfg.carouselDim, [
+              ['3d', '3D Perspective Roll'],
+              ['2d', '2D Flat Roll']
+            ], v => setContainerAttrs({ 'data-carousel-dim': v }))),
+            this.field('Roll direction', this.select(`cr-dir-${e.id}`, cfg.carouselDir, [
+              ['horizontal', 'Horizontal (Left ↔ Right)'],
+              ['vertical', 'Vertical (Up ↕ Down)']
+            ], v => setContainerAttrs({ 'data-carousel-dir': v })))
+          ),
+          h('div', { class: 'grid2' },
+            this.field('Roll speed (ms)', this.num(`cr-spd-${e.id}`, cfg.carouselSpeed, v => setContainerAttrs({ 'data-carousel-speed': Math.max(300, v) }), { min: 300, step: 100 })),
+            this.field('Auto-roll', h('label', { class: 'row', style: { paddingTop: '5px' } },
+              h('input', {
+                type: 'checkbox',
+                checked: cfg.carouselAutoRoll,
+                onchange: ev => setContainerAttrs({ 'data-carousel-autoroll': ev.target.checked ? 'true' : 'false' })
+              }),
+              h('span', {}, cfg.carouselAutoRoll ? 'Rolling active' : 'Paused')
+            ))
+          ),
+          h('div', { class: 'row wrap' },
+            h('button', { class: 'btn small', onclick: () => stepCarousel(-1) }, cfg.carouselDir === 'vertical' ? '▲ Roll Up' : '◀ Roll Left'),
+            h('button', { class: 'btn small', onclick: () => stepCarousel(1) }, cfg.carouselDir === 'vertical' ? '▼ Roll Down' : '▶ Roll Right')
+          )
+        )
+      );
+    }
+
+    return out;
   }
 
   /** Screens for the target picker (cached; refreshed in the background). */

@@ -8,7 +8,7 @@
  */
 
 export const THEME_KINDS = ['glass', 'glow', 'neu'];
-export const SURFACE_ROLES = ['bg', 'bg-glow', 'card', 'button', 'field', 'shine'];
+export const SURFACE_ROLES = ['bg', 'bg-glow', 'card', 'container', 'carousel-container', 'button', 'field', 'shine'];
 
 const SEMANTIC = { success: '#22C55E', warning: '#F59E0B', danger: '#EF4444', info: '#3B82F6', purple: '#A855F7', teal: '#14B8A6', onAccent: '#FFFFFF' };
 
@@ -79,7 +79,8 @@ export function resolveTokens(value, tokens) {
 
 /** Attributes contributed by the theme for a surface role (already token-resolved). */
 export function roleAttrs(theme, role) {
-  const s = role && theme?.surfaces?.[role];
+  const effectiveRole = (role === 'container' || role === 'carousel-container') ? 'card' : role;
+  const s = effectiveRole && theme?.surfaces?.[effectiveRole];
   if (!s) return {};
   const out = {};
   for (const [k, v] of Object.entries(s)) out[k] = v === null ? null : resolveTokens(v, theme.tokens);

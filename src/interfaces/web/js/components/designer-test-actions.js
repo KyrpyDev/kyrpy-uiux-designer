@@ -11,7 +11,7 @@
 import { h, clear, toast } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign } from '../state.js';
-import { nodeBBox } from '/domain/geometry.js';
+import { nodeBBox, isCarouselContainerNode, getContainerConfig } from '/domain/geometry.js';
 
 const FORM_ELEMENT_KEYS = new Set([
   'html-input',
@@ -457,6 +457,56 @@ export function installTestActions(Designer) {
         );
         this.liveLayer.append(stepper);
       }
+    }
+
+    // Mount live 2D/3D horizontal & vertical roll controls for any Carousel Container nodes on the canvas
+    for (const cNode of this.nodes.filter(n => n.visible !== false && isCarouselContainerNode(n, state.library.elements))) {
+      const cfg = getContainerConfig(cNode, state.library.elements);
+      const b = nodeBBox(cNode, this.nodes);
+      let rollDeg = 0;
+      const trackEl = this.stage.querySelector(`.ud-container-children[data-container-for="${cNode.id}"] .ud-carousel-track`)
+        || this.stage.querySelector(`[data-el="${cNode.id}"]`);
+      const applyRoll = dir => {
+        rollDeg += dir * 120;
+        if (trackEl) {
+          trackEl.style.transition = 'transform 0.55s cubic-bezier(.2,.8,.2,1)';
+          trackEl.style.transformOrigin = `${b.x + b.w / 2}px ${b.y + b.h / 2}px`;
+          if (cfg.carouselDim === '3d') {
+            trackEl.style.transform = cfg.carouselDir === 'vertical'
+              ? `perspective(600px) rotateX(${rollDeg}deg)`
+              : `perspective(600px) rotateY(${rollDeg}deg)`;
+          } else {
+            const shift = ((rollDeg / 120) % 3) * 14;
+            trackEl.style.transform = cfg.carouselDir === 'vertical'
+              ? `translateY(${shift}px)`
+              : `translateX(${shift}px)`;
+          }
+        }
+        toast(`🎠 Carousel ${cfg.carouselDim.toUpperCase()} ${cfg.carouselDir} roll`, 'info', 1100);
+      };
+      const ctrlBar = h('div', {
+        class: 'dz-live-widget dz-live-carousel-bar',
+        style: {
+          position: 'absolute',
+          left: `${Math.round(b.x + 8)}px`,
+          top: `${Math.round(b.y + b.h - 32)}px`,
+          width: `${Math.max(80, Math.round(b.w - 16))}px`,
+          height: '26px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 6px',
+          background: 'rgba(10,16,28,0.72)',
+          borderRadius: '12px',
+          pointerEvents: 'auto',
+          zIndex: 12
+        }
+      },
+        h('button', { type: 'button', class: 'btn small', style: { padding: '1px 7px', fontSize: '11px' }, onclick: ev => { ev.stopPropagation(); applyRoll(-1); } }, cfg.carouselDir === 'vertical' ? '▲ Roll' : '◀ Roll'),
+        h('span', { class: 'muted', style: { fontSize: '10px' } }, `${cfg.carouselDim.toUpperCase()} · ${cfg.carouselDir}`),
+        h('button', { type: 'button', class: 'btn small', style: { padding: '1px 7px', fontSize: '11px' }, onclick: ev => { ev.stopPropagation(); applyRoll(1); } }, cfg.carouselDir === 'vertical' ? '▼ Roll' : 'Roll ▶')
+      );
+      this.liveLayer.append(ctrlBar);
     }
   };
 
