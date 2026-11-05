@@ -1348,3 +1348,93 @@ test('Persona 11 (@kyrpy-gru & @kyrpy-testusers-team): Move Restrictions (Built-
   });
 });
 
+test('Persona 12 (@kyrpy-uiux-designer): 15 Design Styles (Glassmorphism, Brutalism/Neo-Brutalism, Minimalist, Skeuomorphism, Aurora, Gradient 3D Claymorphism, Cyberpunk, Synthwave, Pastel Minimal/Cozy UI, Cosmic/Space Adventure UI, Flat Playful, Pop & Neon Retro UI + Liquid Glass, Glow Lines, Neumorphism) and All Templates in Dark & Light Modes', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Verify all 30 built-in themes (15 design style families × Dark & Light modes) exist via GET /api/themes
+    const themesRes = await req('GET', '/api/themes');
+    assert.equal(themesRes.status, 200);
+    const themes = themesRes.body;
+    assert.equal(themes.length, 30, `Expected 30 built-in themes (15 styles × dark/light), got ${themes.length}`);
+
+    const requiredPairs = [
+      ['liquid', 'liquid-light', 'glass'],
+      ['glow', 'glow-light', 'glow'],
+      ['neu-dark', 'neu-light', 'neu'],
+      ['glassmorphism-dark', 'glassmorphism-light', 'glassmorphism'],
+      ['brutalism-dark', 'brutalism-light', 'brutalism'],
+      ['minimalist-dark', 'minimalist-light', 'minimalist'],
+      ['skeuomorphism-dark', 'skeuomorphism-light', 'skeuomorphism'],
+      ['aurora-dark', 'aurora-light', 'aurora'],
+      ['claymorphism-dark', 'claymorphism-light', 'claymorphism'],
+      ['cyberpunk-dark', 'cyberpunk-light', 'cyberpunk'],
+      ['synthwave-dark', 'synthwave-light', 'synthwave'],
+      ['pastel-dark', 'pastel-light', 'pastel'],
+      ['cosmic-dark', 'cosmic-light', 'cosmic'],
+      ['flat-dark', 'flat-light', 'flat'],
+      ['retro-dark', 'retro-light', 'retro']
+    ];
+
+    for (const [darkKey, lightKey, expectedKind] of requiredPairs) {
+      const darkTheme = themes.find(t => t.key === darkKey);
+      const lightTheme = themes.find(t => t.key === lightKey);
+      assert.ok(darkTheme, `Dark theme "${darkKey}" must exist`);
+      assert.ok(lightTheme, `Light theme "${lightKey}" must exist`);
+      assert.equal(darkTheme.kind, expectedKind);
+      assert.equal(lightTheme.kind, expectedKind);
+      assert.equal(darkTheme.tokens.mode, 'dark', `${darkKey} must have tokens.mode="dark"`);
+      assert.equal(lightTheme.tokens.mode, 'light', `${lightKey} must have tokens.mode="light"`);
+      assert.equal(darkTheme.tokens.pairKey, lightKey, `${darkKey} pairKey must point to ${lightKey}`);
+      assert.equal(lightTheme.tokens.pairKey, darkKey, `${lightKey} pairKey must point to ${darkKey}`);
+    }
+
+    // 2. Verify all existing & new Button Templates have both Dark & Light modes (`40` built-in templates = 20 pairs)
+    const btnTplsRes = await req('GET', '/api/templates/buttons');
+    assert.equal(btnTplsRes.status, 200);
+    const btnTpls = btnTplsRes.body;
+    assert.ok(btnTpls.length >= 40, `Expected at least 40 button templates (all styles in dark & light), got ${btnTpls.length}`);
+
+    const darkBtnTpls = btnTpls.filter(t => t.meta?.mode === 'dark');
+    const lightBtnTpls = btnTpls.filter(t => t.meta?.mode === 'light');
+    assert.ok(darkBtnTpls.length >= 20, 'Must have at least 20 dark mode button templates');
+    assert.ok(lightBtnTpls.length >= 20, 'Must have at least 20 light mode button templates');
+
+    for (const tpl of btnTpls.filter(t => t.builtin)) {
+      assert.ok(tpl.meta?.pairKey, `Built-in button template "${tpl.key}" must reference its dark/light pairKey`);
+      assert.ok(btnTpls.some(other => other.key === tpl.meta.pairKey), `Counterpart button template "${tpl.meta.pairKey}" must exist`);
+    }
+
+    // Instantiate a new Brutalism Light button and a Claymorphism Dark button from templates
+    const instBrutalLight = await req('POST', '/api/templates/buttons/brutalism-light-btn/instantiate', {
+      name: 'Brutalist Light CTA'
+    });
+    assert.equal(instBrutalLight.status, 200);
+    assert.equal(instBrutalLight.body.category, 'brutalism');
+
+    const instClayDark = await req('POST', '/api/templates/buttons/claymorphism-dark-btn/instantiate', {
+      name: 'Clay 3D Dark CTA'
+    });
+    assert.equal(instClayDark.status, 200);
+    assert.equal(instClayDark.body.category, 'claymorphism');
+
+    // 3. Verify all built-in Device Templates carry Dark & Light mode metadata
+    const devTplsRes = await req('GET', '/api/templates/devices');
+    assert.equal(devTplsRes.status, 200);
+    for (const dev of devTplsRes.body.filter(d => d.builtin)) {
+      assert.deepEqual(dev.meta?.modes, ['dark', 'light'], `Device template "${dev.key}" must support dark & light modes`);
+      assert.ok(dev.meta?.darkTheme && dev.meta?.lightTheme, `Device template "${dev.key}" must specify darkTheme and lightTheme`);
+    }
+
+    // 4. Verify rendering a screen across all 30 Dark & Light themes succeeds with valid SVG output
+    const screens = (await req('GET', '/api/screens')).body;
+    const sampleScreen = screens[0];
+    for (const th of themes) {
+      const svgRes = await req('GET', `/api/screens/${sampleScreen.id}/svg?theme=${th.key}`);
+      assert.equal(svgRes.status, 200, `Rendering screen in theme "${th.key}" must return 200`);
+      assert.ok(String(svgRes.body).includes('<svg'), `Rendered output for "${th.key}" must be valid SVG`);
+    }
+  });
+});
+
+

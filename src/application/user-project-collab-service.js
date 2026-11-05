@@ -629,24 +629,33 @@ export class TemplateService {
   }
 
   seedDefaults() {
-    if (this.templates.listDevices().length === 0) {
-      for (const [key, d] of Object.entries(DEVICES)) {
-        this.templates.createDevice({
-          key,
-          name: d.name,
-          category: d.category || 'mobile',
-          width: d.width,
-          height: d.height,
-          cornerRadius: d.cornerRadius ?? (key === 'web' || key === 'web-1080p' ? 8 : 44),
-          grid: 24,
-          locked: false,
-          builtin: true
-        });
+    for (const [key, d] of Object.entries(DEVICES)) {
+      const ex = this.templates.getDeviceByKey(key);
+      const payload = {
+        key,
+        name: d.name,
+        category: d.category || 'mobile',
+        width: d.width,
+        height: d.height,
+        cornerRadius: d.cornerRadius ?? (key === 'web' || key === 'web-1080p' ? 8 : 44),
+        grid: 24,
+        locked: false,
+        meta: { modes: ['dark', 'light'], defaultMode: 'dark', darkTheme: 'liquid', lightTheme: 'liquid-light', ...(d.meta || {}) },
+        builtin: true
+      };
+      if (!ex) {
+        this.templates.createDevice(payload);
+      } else if (ex.builtin) {
+        this.templates.updateDevice(ex.id, payload);
       }
     }
-    if (this.templates.listButtons().length === 0) {
-      for (const b of DEFAULT_BUTTON_TEMPLATES) {
-        this.templates.createButton({ ...b, builtin: true, nodesTemplate: this.#buildButtonNodes(b) });
+    for (const b of DEFAULT_BUTTON_TEMPLATES) {
+      const ex = this.templates.getButtonByKey(b.key);
+      const nodesTemplate = this.#buildButtonNodes(b);
+      if (!ex) {
+        this.templates.createButton({ ...b, meta: b.meta || { mode: 'dark' }, builtin: true, nodesTemplate });
+      } else if (ex.builtin) {
+        this.templates.updateButton(ex.id, { ...b, meta: b.meta || ex.meta || { mode: 'dark' }, nodesTemplate });
       }
     }
   }
@@ -695,10 +704,10 @@ export class TemplateService {
       cornerRadius: Number(input.cornerRadius ?? 32),
       grid: Math.max(1, Number(input.grid) || 24),
       locked: !!input.locked,
-      meta: input.meta || {},
+      meta: { modes: ['dark', 'light'], defaultMode: 'dark', darkTheme: 'liquid', lightTheme: 'liquid-light', ...(input.meta || {}) },
       builtin: false
     });
-    DEVICES[created.key] = { name: created.name, width: created.width, height: created.height, category: created.category, cornerRadius: created.cornerRadius };
+    DEVICES[created.key] = { name: created.name, width: created.width, height: created.height, category: created.category, cornerRadius: created.cornerRadius, meta: created.meta };
     return created;
   }
 

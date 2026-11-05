@@ -434,5 +434,22 @@ UPDATE screens SET position = 2, visibility = 'public', builtin = 1, project_id 
   /* 6: menu_items popup/modal element target & item visibility */ `
 ALTER TABLE menu_items ADD COLUMN target_element_id INTEGER REFERENCES elements(id) ON DELETE SET NULL;
 ALTER TABLE menu_items ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;
+`,
+
+  /* 7: expand themes.kind beyond ('glass','glow','neu') to support all 15 design style families in dark & light modes */ `
+CREATE TABLE themes_v2 (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  key       TEXT NOT NULL UNIQUE,
+  name      TEXT NOT NULL,
+  kind      TEXT NOT NULL CHECK (length(kind) > 0),
+  tokens    TEXT NOT NULL,
+  surfaces  TEXT NOT NULL DEFAULT '{}',
+  builtin   INTEGER NOT NULL DEFAULT 0,
+  position  INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO themes_v2 (id, key, name, kind, tokens, surfaces, builtin, position)
+  SELECT id, key, name, kind, tokens, surfaces, builtin, position FROM themes;
+DROP TABLE themes;
+ALTER TABLE themes_v2 RENAME TO themes;
 `
 ];

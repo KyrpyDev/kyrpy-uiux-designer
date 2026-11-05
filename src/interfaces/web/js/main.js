@@ -9,6 +9,7 @@ import { Inspector } from './components/inspector.js';
 import { WorkflowDesigner } from './components/workflow-designer.js';
 import { openExportDialog } from './components/export-dialog.js';
 import { openThemeEditor } from './components/theme-editor.js';
+import { pairThemeKey } from '/domain/theme.js';
 import {
   openAuthModal,
   ensureAuthGate,
@@ -338,6 +339,11 @@ function menuDef() {
       ['Toggle inspector', () => { const x = d(); x.inspectorOpen = !x.inspectorOpen; x.inspectorEl.classList.toggle('collapsed', !x.inspectorOpen); }]
     ]],
     ['Theme', [
+      ['🌙 / ☀️ Toggle Dark & Light Mode of Active Design Style', () => {
+        const pairKey = pairThemeKey(state.themeKey, state.themes);
+        if (pairKey && pairKey !== state.themeKey) setTheme(pairKey);
+      }],
+      '-',
       ...state.themes.map(t => [`${tick(t.key === state.themeKey)}|${t.name}`, () => setTheme(t.key)]), '-',
       ['Edit themes…', () => openThemeEditor()]
     ]],
@@ -555,14 +561,24 @@ function buildTopbar() {
     onclick: () => openAuthModal()
   }, `👤 @${curUser.username} (${curUser.role})`);
 
-  const themeSel = h('select', { title: 'Theme', 'aria-label': 'Theme' }, state.themes.map(t => h('option', { value: t.key, selected: t.key === state.themeKey }, t.name)));
+  const curThemeObj = state.themes.find(t => t.key === state.themeKey) || state.themes[0];
+  const isLightMode = curThemeObj?.tokens?.mode === 'light' || String(state.themeKey).endsWith('-light');
+  const modeToggleBtn = h('button', {
+    class: 'btn sm theme-mode-toggle-btn',
+    title: 'Toggle current design style between Dark Mode and Light Mode',
+    onclick: () => {
+      const targetKey = pairThemeKey(state.themeKey, state.themes);
+      if (targetKey) setTheme(targetKey);
+    }
+  }, isLightMode ? '☀️ Light' : '🌙 Dark');
+  const themeSel = h('select', { title: 'Design Style & Mode', 'aria-label': 'Theme' }, state.themes.map(t => h('option', { value: t.key, selected: t.key === state.themeKey }, t.name)));
   themeSel.addEventListener('change', () => setTheme(themeSel.value));
   const tabs = h('div', { class: 'tabs', role: 'tablist' },
     h('button', { class: state.mode === 'screen' ? 'on' : '', onclick: () => { state.mode = 'screen'; renderMode(); buildTopbar(); } }, 'Screen designer'),
     h('button', { class: state.mode === 'workflow' ? 'on' : '', onclick: async () => { const id = state.workflowId || app.library.workflows[0]?.id; if (!id) { toast('Create a workflow in the Workflows tab first'); return; } await app.openWorkflow(id); buildTopbar(); } }, 'Workflow designer'),
     h('button', { class: state.mode === 'browser' ? 'on' : '', dataset: { modeTab: 'browser' }, title: 'Center Canvas Full Item Browser with checkboxes per item', onclick: () => { state.mode = 'browser'; renderMode(); buildTopbar(); } }, '🗂 Item Browser')
   );
-  bar.append(h('div', { class: 'top-right' }, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, tabs, themeSel));
+  bar.append(h('div', { class: 'top-right' }, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, tabs, modeToggleBtn, themeSel));
 }
 const closeMenus = () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
 document.addEventListener('click', closeMenus);

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { buildContainer } from '../composition-root.js';
 import { createHttpServer } from '../interfaces/http/server.js';
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js';
+import { BUILTIN_THEMES } from '../domain/theme.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const legacy = existsSync(resolve(here, '..', '..', 'v1'))
@@ -16,7 +17,9 @@ const fresh = () => buildContainer({ dbFile: ':memory:' });
 
 test('built-in themes are seeded on an empty database', () => {
   const c = fresh();
-  assert.deepEqual(c.themes.list().map(t => t.key), ['liquid', 'glow', 'neu-light', 'neu-dark']);
+  const keys = c.themes.list().map(t => t.key);
+  assert.deepEqual(keys.slice(0, 4), ['liquid', 'glow', 'neu-light', 'neu-dark']);
+  assert.deepEqual(keys, BUILTIN_THEMES.map(t => t.key));
   c.close();
 });
 

@@ -864,6 +864,7 @@ export async function openChangesModal() {
  * ========================================================================== */
 export async function openTemplatesModal(initialTab = 'buttons') {
   let tab = initialTab;
+  let modeFilter = 'all'; // 'all' | 'dark' | 'light'
   const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '420px' } });
 
   const refresh = async () => {
@@ -876,25 +877,43 @@ export async function openTemplatesModal(initialTab = 'buttons') {
     host.replaceChildren();
 
     host.append(
-      h('div', { class: 'row' },
-        h('button', { class: `btn sm${tab === 'buttons' ? ' primary' : ''}`, onclick: () => { tab = 'buttons'; refresh(); } }, `Editable Button Templates (${btnTpls.length})`),
-        h('button', { class: `btn sm${tab === 'devices' ? ' primary' : ''}`, onclick: () => { tab = 'devices'; refresh(); } }, `Editable Device Templates (${devTpls.length})`)
+      h('div', { class: 'row spread wrap', style: { gap: '8px' } },
+        h('div', { class: 'row' },
+          h('button', { class: `btn sm${tab === 'buttons' ? ' primary' : ''}`, onclick: () => { tab = 'buttons'; refresh(); } }, `Editable Button Templates (${btnTpls.length})`),
+          h('button', { class: `btn sm${tab === 'devices' ? ' primary' : ''}`, onclick: () => { tab = 'devices'; refresh(); } }, `Editable Device Templates (${devTpls.length})`)
+        ),
+        tab === 'buttons' ? h('div', { class: 'seg' },
+          h('button', { class: modeFilter === 'all' ? 'on' : '', onclick: () => { modeFilter = 'all'; refresh(); } }, 'All Modes'),
+          h('button', { class: modeFilter === 'dark' ? 'on' : '', onclick: () => { modeFilter = 'dark'; refresh(); } }, '🌙 Dark'),
+          h('button', { class: modeFilter === 'light' ? 'on' : '', onclick: () => { modeFilter = 'light'; refresh(); } }, '☀️ Light')
+        ) : null
       )
     );
 
     if (tab === 'buttons') {
       const bName = h('input', { type: 'text', placeholder: 'e.g. Glass Pill CTA' });
       const bShape = h('select', {}, ['pill', 'rounded', 'circle', 'square', 'outline', 'split', 'fab'].map(s => h('option', { value: s }, s)));
+      const bMode = h('select', {}, [
+        h('option', { value: 'dark' }, '🌙 Dark Mode'),
+        h('option', { value: 'light' }, '☀️ Light Mode')
+      ]);
       const bW = h('input', { type: 'number', value: '160', style: { width: '75px' } });
       const bH = h('input', { type: 'number', value: '48', style: { width: '75px' } });
       const bRx = h('input', { type: 'number', value: '24', style: { width: '70px' } });
 
+      const visibleBtnTpls = btnTpls.filter(t => {
+        if (modeFilter === 'all') return true;
+        const m = t.meta?.mode || (String(t.key).includes('-light') ? 'light' : 'dark');
+        return m === modeFilter;
+      });
+
       host.append(
         h('div', { style: { padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '10px' } },
-          h('div', { style: { fontWeight: '700', marginBottom: '6px', fontSize: '12px' } }, 'New / Editable Button Template Type'),
+          h('div', { style: { fontWeight: '700', marginBottom: '6px', fontSize: '12px' } }, 'New / Editable Button Template Type (Dark & Light Modes)'),
           h('div', { class: 'row wrap' },
             h('label', { class: 'field grow' }, h('span', {}, 'Template Name'), bName),
             h('label', { class: 'field' }, h('span', {}, 'Shape'), bShape),
+            h('label', { class: 'field' }, h('span', {}, 'Mode'), bMode),
             h('label', { class: 'field' }, h('span', {}, 'Width'), bW),
             h('label', { class: 'field' }, h('span', {}, 'Height'), bH),
             h('label', { class: 'field' }, h('span', {}, 'Radius rx'), bRx),
@@ -910,6 +929,7 @@ export async function openTemplatesModal(initialTab = 'buttons') {
                     shape: bShape.value,
                     width: w,
                     height: h2,
+                    meta: { mode: bMode.value },
                     projectId: state.activeProjectId,
                     visibility: 'public',
                     nodes: [
@@ -928,13 +948,17 @@ export async function openTemplatesModal(initialTab = 'buttons') {
           )
         ),
         h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '290px', overflow: 'auto' } },
-          ...btnTpls.map(t => {
+          ...visibleBtnTpls.map(t => {
             const wIn = h('input', { type: 'number', value: t.width, style: { width: '70px' } });
             const hIn = h('input', { type: 'number', value: t.height, style: { width: '70px' } });
+            const mode = t.meta?.mode || (String(t.key).includes('-light') ? 'light' : 'dark');
             return h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', border: '1px solid var(--line)', borderRadius: '8px' } },
               h('div', { style: { flex: '1' } },
-                h('strong', {}, t.name),
-                h('div', { class: 'muted', style: { fontSize: '11px' } }, `${t.key} · shape: ${t.shape} · ${t.width}×${t.height}`)
+                h('div', { class: 'row', style: { gap: '6px' } },
+                  h('strong', {}, t.name),
+                  h('span', { class: 'badge', style: { fontSize: '10px' } }, mode === 'light' ? '☀️ LIGHT' : '🌙 DARK')
+                ),
+                h('div', { class: 'muted', style: { fontSize: '11px' } }, `${t.key} · style: ${t.meta?.styleFamily || t.category} · shape: ${t.shape} · ${t.width}×${t.height}`)
               ),
               h('label', { class: 'field', style: { margin: 0 } }, h('span', {}, 'W'), wIn),
               h('label', { class: 'field', style: { margin: 0 } }, h('span', {}, 'H'), hIn),

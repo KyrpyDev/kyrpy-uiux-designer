@@ -12,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, healForeignKeys } from '../infrastructure/sqlite/database.js';
 import { PG_SCHEMA_SQL } from '../infrastructure/postgres/pg-sync-service.js';
+import { buildContainer } from '../composition-root.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcRoot = resolve(here, '..');
@@ -31,6 +32,12 @@ function sqlLiteral(val) {
   if (typeof val === 'boolean') return val ? '1' : '0';
   return `'${String(val).replace(/'/g, "''")}'`;
 }
+
+// Ensure all built-in themes (Dark & Light) and templates are seeded into designer.db first
+const container = buildContainer({ dbFile, syncEnabled: false });
+container.themes.seedBuiltins();
+container.templates.seedDefaults();
+container.close();
 
 const db = openDatabase(dbFile);
 

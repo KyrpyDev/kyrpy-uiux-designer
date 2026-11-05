@@ -246,11 +246,11 @@ CREATE TABLE template_devices (
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE themes (
+CREATE TABLE "themes" (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   key       TEXT NOT NULL UNIQUE,
   name      TEXT NOT NULL,
-  kind      TEXT NOT NULL CHECK (kind IN ('glass','glow','neu')),
+  kind      TEXT NOT NULL CHECK (length(kind) > 0),
   tokens    TEXT NOT NULL,
   surfaces  TEXT NOT NULL DEFAULT '{}',
   builtin   INTEGER NOT NULL DEFAULT 0,

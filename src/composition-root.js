@@ -137,8 +137,8 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log });
 
-  // first run: make sure the built-in themes exist so the app is usable on an empty database
-  if (themeRepo.list().length === 0) themes.seedBuiltins();
+  // Ensure all built-in themes (all 15 design style families in dark & light modes) exist and are up to date
+  themes.seedBuiltins();
 
   return {
     db,
