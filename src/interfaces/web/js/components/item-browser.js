@@ -214,6 +214,7 @@ export function buildItemBrowserElement({
   let typeFilter = initialType || 'all';
   let visFilter = 'all'; // 'all' | 'public' | 'project'
   let sourceProjectFilter = 'all'; // 'all' | number
+  let viewSize = 'large'; // 'standard' | 'large' | 'xl'
   let query = '';
   const selectedKeys = new Set(preselectedItems.map(it => `${it.type}:${Number(it.id)}`));
   // Also pre-populate from state.libSel if no explicit preselectedItems were passed
@@ -246,6 +247,7 @@ export function buildItemBrowserElement({
 
   const typeTabsBar = h('div', { class: 'seg ib-type-tabs', style: { flexWrap: 'wrap' } });
   const visBar = h('div', { class: 'seg ib-vis-tabs' });
+  const viewSizeBar = h('div', { class: 'seg ib-size-tabs', title: 'Card & thumbnail preview size' });
   const sourceProjSelect = h('select', {
     class: 'ib-src-proj-select',
     title: 'Filter by source project',
@@ -273,9 +275,9 @@ export function buildItemBrowserElement({
       flex: '1',
       overflowY: 'auto',
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
-      gap: '10px',
-      padding: '6px 2px',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(265px, 1fr))',
+      gap: '14px',
+      padding: '8px 4px',
       alignContent: 'start'
     }
   });
@@ -353,6 +355,23 @@ export function buildItemBrowserElement({
     }
   }
 
+  function renderViewSizeTabs() {
+    clear(viewSizeBar);
+    for (const [k, label] of [['standard', '⊞ Standard'], ['large', '▣ Large View'], ['xl', '⛶ XL View']]) {
+      viewSizeBar.append(
+        h('button', {
+          class: viewSize === k ? 'on' : '',
+          dataset: { ibSize: k },
+          onclick: () => {
+            viewSize = k;
+            renderViewSizeTabs();
+            renderGrid();
+          }
+        }, label)
+      );
+    }
+  }
+
   function renderProjectControls() {
     clear(sourceProjSelect);
     sourceProjSelect.append(h('option', { value: 'all', selected: sourceProjectFilter === 'all' }, 'Source: All Projects'));
@@ -414,7 +433,34 @@ export function buildItemBrowserElement({
     );
   }
 
-  function renderCardThumb(type, item) {
+  function getThumbHeight(type) {
+    if (viewSize === 'xl') {
+      return type === 'screen' ? '390px' : (type === 'element' || type === 'workflow') ? '270px' : '200px';
+    }
+    if (viewSize === 'standard') {
+      return type === 'screen' ? '185px' : '140px';
+    }
+    // default 'large'
+    return type === 'screen' ? '280px' : (type === 'element' || type === 'workflow') ? '200px' : '155px';
+  }
+
+  function openQuickPreviewModal(type, item) {
+    const thumbEl = renderCardThumb(type, item, '70vh');
+    modal({
+      title: `🔍 Preview ${type.toUpperCase()} — ${item.name || item.key} (${item.key})`,
+      wide: true,
+      content: h('div', { class: 'stack', style: { gap: '10px' } },
+        thumbEl,
+        h('div', { class: 'row spread muted', style: { fontSize: '12px' } },
+          h('span', {}, `Key: ${item.key} · Category: ${item.category || 'general'}`),
+          h('span', {}, (item.visibility || 'public') === 'project' ? `📁 Project #${item.projectId || 1}` : '🌐 Public')
+        )
+      )
+    });
+  }
+
+  function renderCardThumb(type, item, overrideHeight = null) {
+    const thumbH = overrideHeight || getThumbHeight(type);
     if (type === 'workflow') {
       return h('div', {
         class: 'thumb wf-thumb',
@@ -423,34 +469,44 @@ export function buildItemBrowserElement({
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '4px',
-          height: '92px',
-          background: 'rgba(15,23,42,0.55)',
-          borderRadius: '6px',
+          gap: '8px',
+          height: thumbH,
+          background: 'rgba(15,23,42,0.75)',
+          borderRadius: '9px',
           color: '#7dd3fc',
-          fontSize: '12px'
+          fontSize: '13px'
         }
       },
-      h('div', { style: { fontSize: '22px' } }, '⇄'),
-      h('div', {}, `${item.screenCount ?? item.nodes?.length ?? 0} screens · ${item.linkCount ?? item.links?.length ?? 0} links`)
+      h('div', { style: { fontSize: '34px' } }, '⇄'),
+      h('div', { style: { fontWeight: '600' } }, `${item.screenCount ?? item.nodes?.length ?? 0} screens · ${item.linkCount ?? item.links?.length ?? 0} links`)
       );
     }
     const ctx = renderContext({ interactive: false });
     const libItem = state.library[type + 's']?.find(x => x.id === item.id) || item;
     if (libItem && Array.isArray(libItem.nodes)) {
       const svg = (type === 'path' || type === 'icon')
-        ? renderIconDocument({ icon: libItem, nodes: libItem.nodes, ctx, size: 72, frame: false })
+        ? renderIconDocument({ icon: libItem, nodes: libItem.nodes, ctx, size: 128, frame: false })
         : renderDocument({ owner: libItem, nodes: libItem.nodes, ctx, background: type === 'screen', standalone: true });
-      return h('div', { class: 'thumb', style: { height: '92px' }, html: svg });
+      return h('div', { class: 'thumb', style: { height: thumbH }, html: svg });
     }
-    return h('div', { class: 'thumb', style: { height: '92px', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
-      h('img', { src: api.svgUrl(type, item.id, { theme: state.themeKey, size: 96 }), style: { maxHeight: '84px', maxWidth: '100%' } })
+    return h('div', { class: 'thumb', style: { height: thumbH, display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+      h('img', {
+        src: api.svgUrl(type, item.id, { theme: state.themeKey, size: 420 }),
+        alt: item.name || item.key,
+        style: { height: '100%', width: '100%', maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }
+      })
     );
   }
 
   function renderGrid() {
     syncSelectionToState();
     clear(gridEl);
+    const minColW = viewSize === 'xl'
+      ? (typeFilter === 'screen' ? 350 : 320)
+      : viewSize === 'standard'
+        ? 205
+        : (typeFilter === 'screen' ? 285 : 255);
+    gridEl.style.gridTemplateColumns = `repeat(auto-fill, minmax(${minColW}px, 1fr))`;
     const list = visibleItems();
     if (!list.length) {
       gridEl.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, 'No items match the current filter.'));
@@ -478,6 +534,10 @@ export function buildItemBrowserElement({
       });
 
       const tb = h('div', { class: 'tb', onclick: e => e.stopPropagation() },
+        h('button', {
+          title: 'Large Zoom Preview',
+          onclick: () => openQuickPreviewModal(type, item)
+        }, '🔍'),
         h('button', {
           title: 'Edit in designer',
           onclick: () => {
@@ -707,6 +767,7 @@ export function buildItemBrowserElement({
     h('div', { class: 'row spread', style: { gap: '8px', flexWrap: 'wrap' } },
       typeTabsBar,
       visBar,
+      viewSizeBar,
       sourceProjSelect,
       searchInput
     ),
@@ -731,6 +792,7 @@ export function buildItemBrowserElement({
     };
     renderTypeTabs();
     renderVisTabs();
+    renderViewSizeTabs();
     renderProjectControls();
     renderGrid();
   }
