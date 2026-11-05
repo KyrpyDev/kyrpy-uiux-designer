@@ -900,6 +900,22 @@ test('Persona 9 (@kyrpy-gru & @kyrpy-testusers-team): Multi-Format (HTML, SVG, J
     assert.equal(domJs.status, 200);
     assert.ok(String(domJs.body).includes('ensureFormFieldIdentity'), 'dom.js must auto-assign id and name attributes to all form fields');
 
+    // 1b. Verify default startup installer account (`admin` / `admin`) & Dev/Release auth config
+    const adminLogin = await req('POST', '/api/auth/login', { username: 'admin', password: 'admin' });
+    assert.equal(adminLogin.status, 200, 'Default startup account admin/admin must sign in');
+    assert.equal(adminLogin.body.user.username, 'admin');
+    assert.ok(adminLogin.body.token, 'admin/admin login must return a valid session token');
+
+    const authCfg = await req('GET', '/api/auth/config');
+    assert.equal(authCfg.status, 200);
+    assert.equal(authCfg.body.defaultUsername, 'admin');
+    assert.equal(authCfg.body.appMode, 'dev');
+    assert.equal(authCfg.body.bypassLogin, true);
+
+    const bypassRes = await req('POST', '/api/auth/dev-bypass', {});
+    assert.equal(bypassRes.status, 200);
+    assert.equal(bypassRes.body.bypassed, true);
+
     // 2. Create a target project for private library imports
     const projRes = await req('POST', '/api/projects', { name: 'MultiFormat Import Project', visibility: 'private' });
     assert.equal(projRes.status, 200);

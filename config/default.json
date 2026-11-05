@@ -1,0 +1,23 @@
+{
+  "appName": "Kyrpy UI/UX App Designer",
+  "version": "2.0.0",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 5180
+  },
+  "auth": {
+    "appMode": "dev",
+    "bypassLoginInDev": true,
+    "protectPageInRelease": true,
+    "defaultStartupAccount": {
+      "username": "admin",
+      "password": "admin",
+      "role": "superadmin"
+    }
+  },
+  "storage": {
+    "sqlitePath": "./src/data/designer.db",
+    "postgresSyncEnabled": false,
+    "postgresSchema": "uiux_designer"
+  }
+}

@@ -38,10 +38,11 @@ import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
 
-export function buildContainer({ dbFile, syncEnabled, log = () => {} } = {}) {
-  const db = openDatabase(dbFile);
+export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } = {}) {
+  const resolvedDbFile = dbFile || dbPath || './data/designer.db';
+  const db = openDatabase(resolvedDbFile);
   const transaction = fn => inTransaction(db, fn);
-  const isMemory = dbFile === ':memory:';
+  const isMemory = resolvedDbFile === ':memory:';
   const pgSync = new PostgresSyncService({
     db,
     log,

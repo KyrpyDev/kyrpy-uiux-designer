@@ -223,6 +223,8 @@ export const api = {
   exportFolder: b => api.post('/api/export/folder', b),
 
   // ---- Auth & Users ----
+  authConfig: () => api.get('/api/auth/config'),
+  devBypassLogin: () => api.post('/api/auth/dev-bypass', {}),
   login: body => api.post('/api/auth/login', body),
   register: body => api.post('/api/auth/register', body),
   logout: () => api.post('/api/auth/logout', {}),

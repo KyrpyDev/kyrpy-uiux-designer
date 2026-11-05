@@ -114,12 +114,13 @@ export function designRoutes(router, c) {
     return Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].list({ q, projectId })]));
   });
 
-  router.get('/api/bootstrap', ({ actor, projectId }) => {
+  router.get('/api/bootstrap', ({ actor, token, projectId }) => {
     const activeProjId = projectId || 1;
     const customDevices = c.templates ? c.templates.listDevices({ projectId: activeProjId }) : DEVICES;
     const buttonTemplates = c.templates ? c.templates.listButtonTemplates({ projectId: activeProjId }) : [];
     const projects = c.projects ? c.projects.list({ userId: actor?.id }) : [];
     const pendingChangesCount = c.collaboration ? c.collaboration.pendingCount(null) : 0;
+    const authConfig = c.auth ? c.auth.getAuthConfig() : { appMode: 'dev', bypassLogin: true, requireAuth: false };
     return {
       settings: c.settings.get(),
       themes: c.themes.list(),
@@ -130,6 +131,8 @@ export function designRoutes(router, c) {
       menu: { defaults: DEFAULT_MENU, layouts: MENU_LAYOUTS, kinds: MENU_KINDS },
       user: actor,
       currentUser: actor,
+      authenticated: Boolean(token && actor),
+      authConfig,
       projects,
       activeProjectId: activeProjId,
       pendingChangesCount,

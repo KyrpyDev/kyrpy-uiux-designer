@@ -7,11 +7,15 @@ import { USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS, EVENT_TRIGGERS, CLICK_ACT
 
 export function collabRoutes(router, c) {
   // ---- Auth & Session ----
+  router.get('/api/auth/config', () => c.auth.getAuthConfig());
+  router.post('/api/auth/dev-bypass', () => c.auth.devBypassLogin());
   router.post('/api/auth/login', ({ body }) => c.auth.login(body));
   router.post('/api/auth/register', ({ body }) => c.auth.register(body));
   router.post('/api/auth/logout', ({ token, body }) => c.auth.logout(token || body?.token));
-  router.get('/api/auth/me', ({ actor }) => ({
+  router.get('/api/auth/me', ({ actor, token }) => ({
     user: actor,
+    authenticated: Boolean(token && actor),
+    authConfig: c.auth.getAuthConfig(),
     roles: USER_ROLES,
     projectRoles: PROJECT_ROLES,
     visibilityLevels: VISIBILITY_LEVELS

@@ -11,6 +11,7 @@ import { openExportDialog } from './components/export-dialog.js';
 import { openThemeEditor } from './components/theme-editor.js';
 import {
   openAuthModal,
+  ensureAuthGate,
   openAdminUsersModal,
   openProjectsModal,
   openChangesModal,
@@ -606,9 +607,11 @@ function renderMode() {
 async function boot() {
   const b = await api.bootstrap();
   state.settings = b.settings; state.themes = b.themes; state.devices = b.devices; state.counts = b.counts; state.themeKey = b.settings.theme;
+  state.authConfig = b.authConfig || { appMode: 'dev', bypassLogin: true, requireAuth: false };
   state.trashCount = b.trashCount ?? b.counts?.trash ?? 0;
   if (!state.themes.find(t => t.key === state.themeKey)) state.themeKey = state.themes[0].key;
   applyThemeChrome();
+  await ensureAuthGate({ authConfig: state.authConfig, authenticated: Boolean(b.authenticated) });
   $('#left').style.width = `${state.settings.leftPanelWidth || 360}px`;
   const right = $('#right');
   right.append(

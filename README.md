@@ -61,31 +61,78 @@ flowchart LR
 
 ---
 
-## 🚀 One-Click Quick Start (`./install.sh`)
+## 🚀 One-Click Installer & Runner (`installer.sh` / `installer.ps1` & `runner.sh` / `runner.ps1`)
 
 ### Prerequisites
-- **Node.js v22.5+** (uses Node's built-in `node:sqlite` — **zero** `npm install` packages required!)
-- Optional: `psql` client if you want to connect to a remote PostgreSQL server.
+- **Node.js v22.5+** (uses Node's built-in `node:sqlite` — **zero** external `npm install` packages required!)
+- Optional: PostgreSQL server if you want multi-device cloud synchronization.
 
-### 1. Clone & Run the One-Click Installer
+### 🔑 Default Startup Installer Credentials
+On first boot or installation, the installer automatically seeds a default administrator account:
+- **Username**: `admin`
+- **Password**: `admin`
+- **Role**: `superadmin` (full system & public library permissions)
 
+---
+
+### 1. Run the One-Click Installer
+
+**Linux & macOS (`installer.sh`)**:
 ```bash
 git clone https://github.com/KyrpyDev/kyrpy-uiux-designer.git
 cd kyrpy-uiux-designer
-./install.sh
+./installer.sh
 ```
 
-### What `./install.sh` Does Automatically:
-1. **Verifies Node.js v22+**.
-2. **Prompts for `.env` Configuration**:
-   - Asks for your preferred local HTTP port (default: `5180`).
-   - Asks for optional server-side PostgreSQL credentials (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`).
-   - **Automatic Local-Only Fallback**: If you press `Enter` to skip PostgreSQL—or if the PostgreSQL server is unreachable—the installer automatically configures **`PG_SYNC_ENABLED=false` (`LOCAL_ONLY=true`)** so the application runs **100% locally on SQLite** without any connection errors.
-3. **Verifies Sample Data**: Ensures `src/data/designer.db` is loaded with the complete sample design system (`211 paths`, `206 icons`, `211 buttons`, `112 elements`, `24 screens`, `3 workflows`, `4 themes`)—or seeds it from `sql/sample_data_sqlite.sql` if missing.
-4. **Launches the Server** at **`http://127.0.0.1:5180`**.
+**Windows PowerShell (`installer.ps1`)**:
+```powershell
+git clone https://github.com/KyrpyDev/kyrpy-uiux-designer.git
+cd kyrpy-uiux-designer
+.\installer.ps1
+```
 
-> **Non-Interactive Local Install**:
-> Run `./install.sh --local-only` to skip prompts and start immediately in local SQLite mode.
+#### What the One-Click Installer Does Automatically:
+1. **Verifies Node.js v22+**.
+2. **Prompts for Runtime Mode (`dev` vs `release`)**:
+   - **`dev` mode (`APP_MODE=dev`, `BYPASS_AUTH=true`)**: Bypasses the Login/Register gate so you land directly inside the studio canvas for rapid local development.
+   - **`release` mode (`APP_MODE=release`, `BYPASS_AUTH=false`)**: Protects the studio page with a full-screen **Login / Register** gate requiring authentication (e.g. `admin` / `admin` or a newly registered user account).
+3. **Prompts for Optional `.env` PostgreSQL Credentials**:
+   - Asks for your preferred local HTTP port (default: `5180`).
+   - Asks if you want to configure a server-side PostgreSQL connection (`PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_SCHEMA`).
+   - **Automatic Local-Only Fallback**: If you skip PostgreSQL or if the server is unreachable, it automatically sets `PG_SYNC_ENABLED=false` so the studio runs **100% locally on SQLite (`src/data/designer.db`)**.
+4. **Seeds Default `admin` / `admin` Account & Sample Data**: Ensures `src/data/designer.db` is loaded with the sample design system (`211 paths`, `206 icons`, `211 buttons`, `112 elements`, `24 screens`, `3 workflows`, `4 themes`) and the `admin` / `admin` account.
+5. **Runs Automated Verification Tests & Starts the Server** at **`http://127.0.0.1:5180`**.
+
+> **Non-Interactive Install**:
+> - Linux/macOS: `./installer.sh --non-interactive`
+> - Windows PowerShell: `.\installer.ps1 -NonInteractive`
+
+---
+
+### 2. Using the One-Click Runner (`runner.sh` & `runner.ps1`)
+
+After installation, use `runner.sh` (Linux/macOS) or `runner.ps1` (Windows PowerShell) to start, stop, or switch between **Dev Mode** (login bypass) and **Release Mode** (login/register protected):
+
+**Linux & macOS (`./runner.sh`)**:
+```bash
+./runner.sh start     # Start studio server using mode from .env
+./runner.sh dev       # Start in Dev Mode (bypasses Login/Register page)
+./runner.sh release   # Start in Release Mode (protects studio with Login/Register page)
+./runner.sh stop      # Stop background server
+./runner.sh restart   # Restart server
+./runner.sh status    # Check running PID, port, and mode
+./runner.sh logs      # Stream server logs
+```
+
+**Windows PowerShell (`.\runner.ps1`)**:
+```powershell
+.\runner.ps1 start    # Start studio server using mode from .env
+.\runner.ps1 dev      # Start in Dev Mode (bypasses Login/Register page)
+.\runner.ps1 release  # Start in Release Mode (protects studio with Login/Register page)
+.\runner.ps1 stop     # Stop background server
+.\runner.ps1 restart  # Restart server
+.\runner.ps1 status   # Check running PID and port
+```
 
 ---
 
@@ -208,13 +255,14 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
 # Run the full 68-test automated suite (unit + integration + 9 adversarial user personas)
 cd src && npm test
 
-# Service management via run.sh
-./run.sh start      # Start server in background on port 5180
-./run.sh stop       # Stop server
-./run.sh restart    # Restart server
-./run.sh status     # Check PID and listening port
-./run.sh health     # TCP health probe
-./run.sh logs       # Stream server logs
+# Service management via runner.sh (Linux/macOS) or runner.ps1 (Windows PowerShell)
+./runner.sh start     # Start server in background on port 5180
+./runner.sh dev       # Start in Dev Mode (bypasses Login/Register page)
+./runner.sh release   # Start in Release Mode (protects page with Login/Register)
+./runner.sh stop      # Stop server
+./runner.sh restart   # Restart server
+./runner.sh status    # Check PID and listening port
+./runner.sh logs      # Stream server logs
 ```
 
 ---

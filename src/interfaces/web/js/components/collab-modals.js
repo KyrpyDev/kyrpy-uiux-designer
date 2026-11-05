@@ -43,10 +43,10 @@ export async function openAuthModal() {
   }
 
   let mode = 'login'; // 'login' | 'register'
-  const usernameInput = h('input', { type: 'text', placeholder: 'Username or email (e.g. kyrpy)', value: '' });
+  const usernameInput = h('input', { type: 'text', placeholder: 'Username or email (default: admin)', value: '' });
   const emailInput = h('input', { type: 'email', placeholder: 'email@example.com' });
   const displayInput = h('input', { type: 'text', placeholder: 'Display Name' });
-  const passwordInput = h('input', { type: 'password', placeholder: 'Password (default for kyrpy: kyrpy123)' });
+  const passwordInput = h('input', { type: 'password', placeholder: 'Password (default for admin: admin)' });
   const roleSelect = h('select', {}, [
     h('option', { value: 'designer' }, 'Designer'),
     h('option', { value: 'reviewer' }, 'Reviewer'),
@@ -159,12 +159,200 @@ export async function openAuthModal() {
     actions: close => [
       h('button', {
         class: 'btn',
+        onclick: async () => {
+          await api.logout().catch(() => {});
+          api.setSession({ token: null, userId: null });
+          close();
+          await ensureAuthGate({ authConfig: state.authConfig || { appMode: 'release', bypassLogin: false, requireAuth: true }, forceGate: true });
+        }
+      }, '🔒 Lock / Sign Out'),
+      h('button', {
+        class: 'btn',
         onclick: () => { close(); openAdminUsersModal(); }
       }, 'Admin & Users Panel…'),
       h('button', { class: 'btn', onclick: close }, 'Close')
     ]
   });
   renderForm(m.close);
+}
+
+/**
+ * Full-screen Login / Register Protection Page for Release Mode (`APP_MODE=release` / `BYPASS_AUTH=false`),
+ * with automatic or one-click bypass in Dev Mode (`APP_MODE=dev` / `BYPASS_AUTH=true`).
+ */
+export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: true, requireAuth: false }, authenticated = false, forceGate = false } = {}) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const queryWantsLogin = urlParams.get('login') === '1';
+  const hasStoredToken = Boolean(api.getSession()?.token);
+
+  // In Dev mode, bypass the login/register page automatically unless explicitly forced (?login=1 or Sign Out)
+  if (!forceGate && !queryWantsLogin && (authConfig.bypassLogin || authenticated || hasStoredToken)) {
+    return Promise.resolve(state.user);
+  }
+
+  return new Promise(resolve => {
+    const existingGate = document.getElementById('ud-auth-gate');
+    if (existingGate) existingGate.remove();
+
+    let tab = 'login';
+    const userInp = h('input', { type: 'text', placeholder: 'Username or email (default: admin)', value: 'admin' });
+    const emailInp = h('input', { type: 'email', placeholder: 'you@example.com' });
+    const displayInp = h('input', { type: 'text', placeholder: 'Full Name / Display Name' });
+    const passInp = h('input', { type: 'password', placeholder: 'Password (default: admin)', value: '' });
+    const errBox = h('div', { class: 'muted', style: { color: '#ef4444', fontSize: '12px', minHeight: '16px' } });
+    const bodyBox = h('div', { class: 'stack', style: { gap: '12px' } });
+
+    const finishAuth = async res => {
+      if (res?.token && res?.user) {
+        api.setSession({ token: res.token, userId: res.user.id });
+        state.user = res.user;
+      }
+      gateOverlay.remove();
+      await reloadLibrary({ silent: true }).catch(() => {});
+      emit('auth:changed', state.user);
+      resolve(state.user);
+    };
+
+    const renderGateCard = () => {
+      bodyBox.replaceChildren();
+      errBox.textContent = '';
+
+      bodyBox.append(
+        h('div', { class: 'seg', style: { width: '100%' } },
+          h('button', {
+            class: tab === 'login' ? 'on' : '',
+            style: { flex: '1' },
+            onclick: () => { tab = 'login'; renderGateCard(); }
+          }, '🔐 Sign In'),
+          h('button', {
+            class: tab === 'register' ? 'on' : '',
+            style: { flex: '1' },
+            onclick: () => { tab = 'register'; renderGateCard(); }
+          }, '✨ Register Account')
+        )
+      );
+
+      if (tab === 'login') {
+        bodyBox.append(
+          h('label', { class: 'field' }, h('span', {}, 'Username or Email'), userInp),
+          h('label', { class: 'field' }, h('span', {}, 'Password'), passInp),
+          errBox,
+          h('button', {
+            class: 'btn primary ud-gate-login-btn',
+            style: { width: '100%', padding: '10px', fontWeight: '700' },
+            onclick: async () => {
+              try {
+                const res = await api.login({
+                  usernameOrEmail: userInp.value.trim(),
+                  password: passInp.value
+                });
+                toast(`Signed in as @${res.user.username}`, 'ok');
+                await finishAuth(res);
+              } catch (e) {
+                errBox.textContent = e.message || 'Sign in failed';
+              }
+            }
+          }, 'Sign In to Studio')
+        );
+      } else {
+        bodyBox.append(
+          h('label', { class: 'field' }, h('span', {}, 'Username'), userInp),
+          h('label', { class: 'field' }, h('span', {}, 'Email'), emailInp),
+          h('label', { class: 'field' }, h('span', {}, 'Display Name'), displayInp),
+          h('label', { class: 'field' }, h('span', {}, 'Password (min 4 chars)'), passInp),
+          errBox,
+          h('button', {
+            class: 'btn primary ud-gate-register-btn',
+            style: { width: '100%', padding: '10px', fontWeight: '700' },
+            onclick: async () => {
+              try {
+                const res = await api.register({
+                  username: userInp.value.trim(),
+                  email: emailInp.value.trim(),
+                  displayName: displayInp.value.trim() || userInp.value.trim(),
+                  password: passInp.value,
+                  role: 'designer'
+                });
+                toast(`Registered & signed in as @${res.user.username}`, 'ok');
+                await finishAuth(res);
+              } catch (e) {
+                errBox.textContent = e.message || 'Registration failed';
+              }
+            }
+          }, 'Create Account & Enter Studio')
+        );
+      }
+
+      if (authConfig.bypassLogin) {
+        bodyBox.append(
+          h('button', {
+            class: 'btn ud-gate-dev-bypass-btn',
+            style: { width: '100%', marginTop: '4px' },
+            onclick: async () => {
+              try {
+                const res = await api.devBypassLogin();
+                toast('Dev Mode: Bypassed login as Administrator', 'ok');
+                await finishAuth(res);
+              } catch {
+                gateOverlay.remove();
+                resolve(state.user);
+              }
+            }
+          }, '⚡ Bypass Login (Dev Mode)')
+        );
+      }
+    };
+
+    const gateOverlay = h('div', {
+      id: 'ud-auth-gate',
+      style: {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '99999',
+        background: 'radial-gradient(circle at 50% 20%, #172036 0%, #090c14 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px'
+      }
+    },
+    h('div', {
+      style: {
+        width: '100%',
+        maxWidth: '420px',
+        background: 'var(--bg-1, #131824)',
+        border: '1px solid var(--line, rgba(255,255,255,0.12))',
+        borderRadius: '16px',
+        padding: '28px',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.65)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px'
+      }
+    },
+      h('div', { style: { textAlign: 'center' } },
+        h('div', { style: { fontSize: '20px', fontWeight: '800', letterSpacing: '-0.02em' } }, '◈ Kyrpy UI/UX App Designer'),
+        h('div', { class: 'muted', style: { fontSize: '12px', marginTop: '4px' } },
+          authConfig.appMode === 'release'
+            ? 'Release Mode — Sign in or create an account to access the studio'
+            : 'Development Mode — Sign in or use Dev Bypass'
+        )
+      ),
+      bodyBox,
+      h('div', {
+        class: 'muted',
+        style: {
+          fontSize: '11px',
+          textAlign: 'center',
+          paddingTop: '8px',
+          borderTop: '1px solid var(--line, rgba(255,255,255,0.08))'
+        }
+      }, 'Default startup installer account: username "admin" / password "admin"')
+    ));
+
+    renderGateCard();
+    document.body.appendChild(gateOverlay);
+  });
 }
 
 /* ============================================================================

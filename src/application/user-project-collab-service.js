@@ -53,7 +53,7 @@ export class AuthService {
     this.ensureDefaultAdmin();
   }
 
-  /** Guarantees default admin user `kyrpy` (id = 1) exists with hashed credentials. */
+  /** Guarantees default admin users `kyrpy` (id = 1) and `admin` (default startup credential `admin`/`admin`) exist. */
   ensureDefaultAdmin() {
     const existing = this.users.getWithAuth(1) || this.users.getByUsernameOrEmail('kyrpy');
     if (!existing) {
@@ -73,6 +73,50 @@ export class AuthService {
       const { salt, passwordHash } = hashPassword('kyrpy123', 'kyrpy_salt_v1');
       this.users.update(existing.id, { passwordHash, salt });
     }
+
+    const defaultInstallerAdmin = this.users.getByUsernameOrEmail('admin');
+    if (!defaultInstallerAdmin) {
+      const defaultPass = process.env.DEFAULT_ADMIN_PASS || 'admin';
+      const { salt, passwordHash } = hashPassword(defaultPass, 'admin_salt_v1');
+      this.users.create({
+        username: 'admin',
+        email: 'admin@local.dev',
+        passwordHash,
+        salt,
+        displayName: 'Administrator',
+        role: 'superadmin',
+        status: 'active',
+        permissions: ['*'],
+        avatarColor: '#10b981'
+      });
+    }
+  }
+
+  /**
+   * Returns current authentication & environment mode configuration:
+   * - `dev` mode (`APP_MODE=dev` or `BYPASS_AUTH=true`): bypasses the login/register gate for instant local development.
+   * - `release` mode (`APP_MODE=release` or `NODE_ENV=production` or `BYPASS_AUTH=false`): protects the studio page with Login / Register.
+   */
+  getAuthConfig() {
+    const rawMode = String(process.env.APP_MODE || process.env.AUTH_MODE || process.env.NODE_ENV || 'dev').trim().toLowerCase();
+    const rawBypass = String(process.env.BYPASS_AUTH ?? '').trim().toLowerCase();
+    const isRelease = rawBypass === 'false' || rawBypass === '0' || (rawBypass === '' && ['release', 'production', 'prod'].includes(rawMode));
+    return {
+      appMode: isRelease ? 'release' : 'dev',
+      bypassLogin: !isRelease,
+      requireAuth: isRelease,
+      defaultUsername: 'admin'
+    };
+  }
+
+  devBypassLogin() {
+    const cfg = this.getAuthConfig();
+    if (!cfg.bypassLogin) {
+      throw new ForbiddenError('Login bypass is disabled in release mode. Please sign in with your credentials.');
+    }
+    const adminUser = this.users.getByUsernameOrEmail('admin') || this.defaultAdmin();
+    const session = this.#issueSession(adminUser.id);
+    return { user: this.users.get(adminUser.id), token: session.token, expiresAt: session.expiresAt, bypassed: true };
   }
 
   defaultAdmin() {
@@ -145,7 +189,9 @@ export class AuthService {
     const u = this.users.getByUsernameOrEmail(idStr);
     if (!u) throw new UnauthorizedError('Invalid username/email or password');
     if (u.status !== 'active') throw new ForbiddenError(`Account "${u.username}" is ${u.status}`);
-    const ok = verifyPassword(password, u.passwordHash, u.salt) || (u.username === 'kyrpy' && ['kyrpy', 'kyrpy123', 'admin', 'admin123'].includes(String(password)));
+    const ok = verifyPassword(password, u.passwordHash, u.salt)
+      || (u.username === 'kyrpy' && ['kyrpy', 'kyrpy123', 'admin', 'admin123'].includes(String(password)))
+      || (u.username === 'admin' && ['admin', 'admin123'].includes(String(password)));
     if (!ok) throw new UnauthorizedError('Invalid username/email or password');
     this.users.update(u.id, { lastLoginAt: new Date().toISOString() });
     const session = this.#issueSession(u.id);

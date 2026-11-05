@@ -1,6 +1,0 @@
-{
-  "artifactType": "ARTIFACT_TYPE_TASK",
-  "summary": "Todo list for workflow visibility filters, copy/move to multiple projects with cascading sub-items, empty private library (immutable default libraries), 90% wide modal & center-canvas item browser with selection tools, topbar multi-project dropdown with create project, undo/redo/delete on edit pages, Scan list public default restoration, Trash management with admin/superadmin guard on public items, drop-at-top z-order, and element boundary move cursor.",
-  "updatedAt": "2026-11-05T05:56:00+03:00",
-  "status": "IN_PROGRESS"
-}

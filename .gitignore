@@ -1,22 +1,47 @@
-# Secrets & local environment overrides (NEVER COMMIT)
+# ==============================================================================
+# Kyrpy UI/UX Designer — Strict Repository Whitelist (.gitignore)
+# ==============================================================================
+# Ignore everything by default except the explicitly whitelisted public files:
+#   - src/
+#   - sql/
+#   - config/
+#   - README.md, CONTRIBUTING.md, LICENSE
+#   - .env.example
+#   - installer.sh, installer.ps1, runner.sh, runner.ps1
+# ==============================================================================
+
+/*
+!/.gitignore
+!/.env.example
+!/credentials.env.example
+!/README.md
+!/CONTRIBUTING.md
+!/LICENSE
+!/installer.sh
+!/installer.ps1
+!/runner.sh
+!/runner.ps1
+!/config/
+!/sql/
+!/src/
+
+# Private VM / Local Scripts & Credentials (NEVER pushed)
+run.sh
+install.sh
 .env
 .env.*
 !.env.example
 credentials.env
-credentials.env.*
-!credentials.env.example
+*.pem
+*.key
 
-# Runtime logs, PIDs & SQLite WAL/SHM journal files
-logs/
+# Node / Runtime / Temporary Artifacts inside whitelisted folders
+node_modules/
+src/node_modules/
+src/data/*.db-shm
+src/data/*.db-wal
+src/data/*.db-journal
 *.log
 *.pid
-*.db-wal
-*.db-shm
-
-# Dependencies & Playwright/agent scratch artifacts
-node_modules/
-.playwright-mcp/
-.agents/
-.claude/
-.shared/
-.archive/
+.designer-runner.pid
+.DS_Store
