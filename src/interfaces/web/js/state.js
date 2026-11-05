@@ -30,7 +30,9 @@ export const state = {
   projects: [],
   activeProjectId: 1,
   selectedProjectIds: new Set(),  // multi-selected project IDs in topbar dropdown (empty = activeProjectId or all)
-  visibilityFilter: 'all',        // 'all' | 'public' | 'project'
+  saveTargetProjectIds: new Set(), // multi-target project IDs selected next to "Save as…" in Designer
+  saveToUserPrivateLibrary: false, // whether Save / Save as… also saves to user's Global Private Library
+  visibilityFilter: 'all',        // 'all' | 'public' | 'private' | 'project'
   trashCount: 0,
   templateDevices: [],
   templateButtons: [],
@@ -38,7 +40,7 @@ export const state = {
   syncStatus: { enabled: true, pendingCount: 0 },
   userRoles: {},
   projectRoles: {},
-  visibilityLevels: ['public', 'project'],
+  visibilityLevels: ['public', 'private', 'project'],
   eventTriggers: [],
   eventActions: [],
   toolbarPositions: ['top', 'bottom', 'left', 'right', 'center'],

@@ -1191,3 +1191,160 @@ test('Persona 10 (@kyrpy-uiux-designer): Container & Carousel Container basic el
     assert.ok(svg2dVert.includes('ud-carousel-track ud-carousel-2d-vertical'), 'Rendered screen SVG must include 2D vertical carousel roll track');
   });
 });
+
+test('Persona 11 (@kyrpy-gru & @kyrpy-testusers-team): Move Restrictions (Built-in & Other-User Items Copy-Only, Owned Projects Only), Recursive Sub-Item Cascade on Copy/Move, Multi-Target Save-As, and 3-Tier Visibility (public, private user global, project)', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Register two users: Alice and Bob
+    const aliceReg = await req('POST', '/api/auth/register', {
+      username: 'alice_designer',
+      email: 'alice@kyrpy.com',
+      password: 'Password123!',
+      displayName: 'Alice'
+    });
+    assert.equal(aliceReg.status, 200);
+    const aliceToken = aliceReg.body.token;
+    const aliceId = aliceReg.body.user.id;
+    const aliceAuth = { Authorization: `Bearer ${aliceToken}` };
+
+    const bobReg = await req('POST', '/api/auth/register', {
+      username: 'bob_designer',
+      email: 'bob@kyrpy.com',
+      password: 'Password123!',
+      displayName: 'Bob'
+    });
+    assert.equal(bobReg.status, 200);
+    const bobToken = bobReg.body.token;
+    const bobId = bobReg.body.user.id;
+    const bobAuth = { Authorization: `Bearer ${bobToken}` };
+
+    // 2. Alice creates two projects she owns (`aliceProjA`, `aliceProjB`); Bob creates `bobProj`
+    const aliceProjA = (await req('POST', '/api/projects', { name: 'Alice Project A', visibility: 'private' }, aliceAuth)).body;
+    const aliceProjB = (await req('POST', '/api/projects', { name: 'Alice Project B', visibility: 'private' }, aliceAuth)).body;
+    const bobProj = (await req('POST', '/api/projects', { name: 'Bob Project', visibility: 'private' }, bobAuth)).body;
+    assert.equal(aliceProjA.ownerId, aliceId);
+    assert.equal(aliceProjB.ownerId, aliceId);
+    assert.equal(bobProj.ownerId, bobId);
+
+    // 3. Default basic (builtin) items CANNOT be moved (403 FORBIDDEN), only copied
+    const builtinScreens = (await req('GET', '/api/screens')).body;
+    const builtinScreen = builtinScreens.find(s => s.builtin);
+    assert.ok(builtinScreen, 'Must have a default basic builtin screen');
+
+    const moveBuiltinRes = await req('POST', '/api/library/move-to-projects', {
+      items: [{ type: 'screen', id: builtinScreen.id }],
+      projectIds: [aliceProjA.id]
+    }, aliceAuth);
+    assert.equal(moveBuiltinRes.status, 403, 'Default basic (builtin) items cannot be moved');
+
+    const copyBuiltinRes = await req('POST', '/api/library/copy-to-projects', {
+      items: [{ type: 'screen', id: builtinScreen.id }],
+      projectIds: [aliceProjA.id]
+    }, aliceAuth);
+    assert.equal(copyBuiltinRes.status, 200, 'Default basic (builtin) items can be copied with sub-items');
+    assert.equal(copyBuiltinRes.body.copiedCount, 1);
+    assert.ok(copyBuiltinRes.body.subItemsCount >= 1, 'Copying builtin screen must cascade its sub-items to target project');
+
+    // 4. Alice builds a hierarchy of items in `aliceProjA`: path -> icon -> button -> element -> screen
+    const aPath = (await req('POST', '/api/paths', {
+      name: 'Alice Custom Path',
+      projectId: aliceProjA.id,
+      visibility: 'project',
+      nodes: [{ tag: 'path', name: 'p1', attrs: { d: 'M2 2 L22 22' } }]
+    }, aliceAuth)).body;
+
+    const aIcon = (await req('POST', '/api/icons', {
+      name: 'Alice Custom Icon',
+      projectId: aliceProjA.id,
+      visibility: 'project',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'path', refId: aPath.id, name: 'u-path', attrs: { x: 0, y: 0, width: 24, height: 24 } }]
+    }, aliceAuth)).body;
+
+    const aBtn = (await req('POST', '/api/buttons', {
+      name: 'Alice Custom Button',
+      projectId: aliceProjA.id,
+      visibility: 'project',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'icon', refId: aIcon.id, name: 'u-icon', attrs: { x: 8, y: 8, width: 24, height: 24 } }]
+    }, aliceAuth)).body;
+
+    const aEl = (await req('POST', '/api/elements', {
+      name: 'Alice Custom Card Element',
+      projectId: aliceProjA.id,
+      visibility: 'project',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'button', refId: aBtn.id, name: 'u-btn', attrs: { x: 12, y: 12, width: 64, height: 48 } }]
+    }, aliceAuth)).body;
+
+    const aScreen = (await req('POST', '/api/screens', {
+      name: 'Alice Composite Screen',
+      projectId: aliceProjA.id,
+      visibility: 'project',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'element', refId: aEl.id, name: 'u-el', attrs: { x: 20, y: 40, width: 240, height: 80 } }]
+    }, aliceAuth)).body;
+
+    // 5. Items owned by OTHER users cannot be moved (403 FORBIDDEN)
+    const bobMoveAliceItem = await req('POST', '/api/library/move-to-projects', {
+      items: [{ type: 'screen', id: aScreen.id }],
+      projectIds: [bobProj.id]
+    }, bobAuth);
+    assert.equal(bobMoveAliceItem.status, 403, 'Items owned by other users cannot be moved');
+
+    // 6. Alice cannot move her item into Bob's project (403 FORBIDDEN — move only works with user's owned projects)
+    const aliceMoveToBobProj = await req('POST', '/api/library/move-to-projects', {
+      items: [{ type: 'screen', id: aScreen.id }],
+      projectIds: [bobProj.id]
+    }, aliceAuth);
+    assert.equal(aliceMoveToBobProj.status, 403, 'Move items only works with user owned target projects');
+
+    // 7. Alice moves her screen from `aliceProjA` to `aliceProjB` (both owned by Alice) -> succeeds and cascades all 4 sub-items!
+    const aliceMoveRes = await req('POST', '/api/library/move-to-projects', {
+      items: [{ type: 'screen', id: aScreen.id }],
+      projectIds: [aliceProjB.id]
+    }, aliceAuth);
+    assert.equal(aliceMoveRes.status, 200);
+    assert.equal(aliceMoveRes.body.movedCount, 1);
+    assert.equal(aliceMoveRes.body.moved[0].projectId, aliceProjB.id);
+    assert.ok(aliceMoveRes.body.subItemsCount >= 4, `Moving screen must cascade all 4 sub-items (element, button, icon, path), got ${aliceMoveRes.body.subItemsCount}`);
+
+    // 8. Multi-Target `Save as…` (`/api/library/save-to-targets`) + Global Private Library (`includeUserPrivate: true`)
+    //    Bob edits Alice's screen (or saves it via Save As to `bobProj` + Bob's Global Private Library)
+    const bobProj2 = (await req('POST', '/api/projects', { name: 'Bob Project 2', visibility: 'private' }, bobAuth)).body;
+    const movedScreenId = aliceMoveRes.body.moved[0].id;
+    const multiSaveRes = await req('POST', '/api/library/save-to-targets', {
+      type: 'screen',
+      id: movedScreenId,
+      name: 'Bob Remixed Screen',
+      projectIds: [bobProj.id, bobProj2.id],
+      includeUserPrivate: true
+    }, bobAuth);
+    assert.equal(multiSaveRes.status, 200);
+    assert.equal(multiSaveRes.body.copiedCount, 3, 'Must save to bobProj, bobProj2, AND Bob Global Private Library');
+    assert.ok(multiSaveRes.body.subItemsCount >= 12, 'Must cascade all sub-items to each target project and global private library');
+
+    const bobGlobalScreen = multiSaveRes.body.copied.find(c => c.visibility === 'private');
+    assert.ok(bobGlobalScreen, 'One saved copy must have visibility="private" (Bob Global Private Library)');
+    assert.equal(bobGlobalScreen.creatorId, bobId);
+
+    // 9. Verify 3-tier visibility filtering (`public`, `private` user global library, `project` scope):
+    //    - Bob querying `visibility=private` sees his global private items across any of his projects
+    const bobPrivateScreens = (await req('GET', `/api/screens?visibility=private&projectIds=${bobProj.id}`, undefined, bobAuth)).body;
+    assert.ok(bobPrivateScreens.some(s => s.id === bobGlobalScreen.id), 'Bob must see his private global screen across his projects');
+    assert.ok(bobPrivateScreens.every(s => s.visibility === 'private' && s.creatorId === bobId), 'visibility=private must only return Bob own private items');
+
+    //    - Alice querying `visibility=private` does NOT see Bob's private global items
+    const alicePrivateScreens = (await req('GET', `/api/screens?visibility=private&projectIds=${aliceProjB.id}`, undefined, aliceAuth)).body;
+    assert.ok(!alicePrivateScreens.some(s => s.id === bobGlobalScreen.id), 'Alice must never see Bob private global items');
+
+    //    - Bob querying `visibility=project&projectIds=${bobProj.id}` sees only `bobProj` project-scoped items
+    const bobProjScreens = (await req('GET', `/api/screens?visibility=project&projectIds=${bobProj.id}`, undefined, bobAuth)).body;
+    assert.ok(bobProjScreens.length >= 1);
+    assert.ok(bobProjScreens.every(s => s.visibility === 'project' && s.projectId === bobProj.id));
+
+    // 10. Verify frontend Designer & Workflow Designer enforce Save disable on other-user items & provide Multi-Target Save selector
+    const designerJs = String((await req('GET', '/js/components/designer.js')).body);
+    assert.ok(designerJs.includes('isOwnedByCurrentUser'), 'designer.js must check isOwnedByCurrentUser to disable Save on items owned by other users');
+    assert.ok(designerJs.includes('buildSaveTargetsDropdown'), 'designer.js must include multi-target project selector after Save as button');
+    assert.ok(designerJs.includes('saveToTargets'), 'designer.js must invoke api.saveToTargets when multiple targets are configured');
+  });
+});
+

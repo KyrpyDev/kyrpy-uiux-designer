@@ -73,11 +73,21 @@ async function req(method, url, body) {
   if (body !== undefined) headers['content-type'] = 'application/json';
 
   try {
-    const r = await fetch(url, {
+    let r = await fetch(url, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
+    if (r.status === 401 && token && !url.startsWith('/api/auth/login')) {
+      setAuthSession({ token: '' });
+      const retryHeaders = { ...headers };
+      delete retryHeaders.authorization;
+      r = await fetch(url, {
+        method,
+        headers: retryHeaders,
+        body: body !== undefined ? JSON.stringify(body) : undefined
+      });
+    }
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
     if (!r.ok) throw new ApiError(data?.error?.message || r.statusText, data?.error);
@@ -311,9 +321,10 @@ export const api = {
     return api.del(`/api/trash${s ? `?${s}` : ''}`);
   },
 
-  // ---- Copy / Move to Projects & Empty Private Library ----
+  // ---- Copy / Move / Multi-Target Save to Projects & Empty Private Library ----
   copyToProjects: body => api.post('/api/library/copy-to-projects', body),
   moveToProjects: body => api.post('/api/library/move-to-projects', body),
+  saveToTargets: body => api.post('/api/library/save-to-targets', body),
   emptyProjectLibrary: (projectId, body = {}) =>
     projectId
       ? api.post(`/api/projects/${projectId}/empty-library`, body)

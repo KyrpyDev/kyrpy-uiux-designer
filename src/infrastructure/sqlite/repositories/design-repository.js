@@ -22,7 +22,7 @@ export class DesignRepository {
     if (!this.table) throw new Error('unknown owner type ' + ownerType);
   }
 
-  list({ q = '', category = '', projectId = null, projectIds = null, visibility = '', creatorId = null, includePublic = true } = {}) {
+  list({ q = '', category = '', projectId = null, projectIds = null, visibility = '', creatorId = null, actorId = null, includePublic = true, includePrivate = true } = {}) {
     const where = [], args = [];
     const pIds = Array.isArray(projectIds) && projectIds.length
       ? projectIds.map(Number).filter(n => n > 0)
@@ -31,20 +31,45 @@ export class DesignRepository {
         : projectId != null && projectId !== ''
           ? [Number(projectId)]
           : [];
+    const effUserId = creatorId != null && creatorId !== ''
+      ? Number(creatorId)
+      : (actorId != null && actorId !== '' ? Number(actorId) : null);
     if (q) { where.push('(key LIKE ? OR name LIKE ? OR label LIKE ? OR tags LIKE ? OR description_dev LIKE ?)'); const l = `%${q}%`; args.push(l, l, l, l, l); }
     if (category) { where.push('category = ?'); args.push(category); }
-    if (visibility) {
-      where.push('visibility = ?'); args.push(visibility);
-      if (visibility === 'project' && pIds.length) {
+    const vis = visibility === 'all' ? '' : visibility;
+    if (vis) {
+      where.push('visibility = ?'); args.push(vis);
+      if (vis === 'project' && pIds.length) {
         where.push(`project_id IN (${pIds.map(() => '?').join(',')})`);
         args.push(...pIds);
+      } else if (vis === 'private' && effUserId) {
+        where.push('creator_id = ?');
+        args.push(effUserId);
       }
     } else if (pIds.length) {
       const ph = pIds.map(() => '?').join(',');
-      if (includePublic !== false) { where.push(`(visibility = 'public' OR project_id IN (${ph}))`); args.push(...pIds); }
-      else { where.push(`project_id IN (${ph})`); args.push(...pIds); }
+      const clauses = [`(visibility = 'project' AND project_id IN (${ph}))`];
+      args.push(...pIds);
+      if (includePublic !== false) {
+        clauses.push(`visibility = 'public'`);
+      }
+      if (includePrivate !== false) {
+        if (effUserId) {
+          clauses.push(`(visibility = 'private' AND creator_id = ?)`);
+          args.push(effUserId);
+        } else {
+          clauses.push(`visibility = 'private'`);
+        }
+      }
+      where.push(`(${clauses.join(' OR ')})`);
+    } else if (actorId != null && actorId !== '' && (creatorId == null || creatorId === '')) {
+      where.push(`(visibility != 'private' OR creator_id = ?)`);
+      args.push(Number(actorId));
     }
-    if (creatorId != null && creatorId !== '') { where.push('creator_id = ?'); args.push(Number(creatorId)); }
+    if (creatorId != null && creatorId !== '' && vis !== 'private') {
+      where.push('creator_id = ?');
+      args.push(Number(creatorId));
+    }
     const sql = `SELECT * FROM ${this.table} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY position, name`;
     return this.db.prepare(sql).all(...args).map(toDesign);
   }

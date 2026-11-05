@@ -147,27 +147,192 @@ export class Designer {
     this.dirty = dirty; this.updateDocBar(); this.emit('dirty', dirty);
   }
 
+  isOwnedByCurrentUser(rec = this.doc) {
+    if (!rec) return true;
+    const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
+    const curUserId = Number(state.user?.id || 1);
+    return ownerId === curUserId;
+  }
+
+  canMoveRecord(rec = this.doc) {
+    if (!rec) return false;
+    return !rec.builtin && this.isOwnedByCurrentUser(rec);
+  }
+
+  buildSaveTargetsDropdown() {
+    const projects = state.projects?.length
+      ? state.projects
+      : [{ id: 1, name: 'Default Public Project', ownerId: 1, visibility: 'public' }];
+    const selSet = state.saveTargetProjectIds || (state.saveTargetProjectIds = new Set());
+    const count = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
+    const labelText = count > 0
+      ? `🎯 Targets (${count})`
+      : '🎯 Targets…';
+
+    const panel = h('div', {
+      class: 'menu-panel save-targets-panel',
+      role: 'menu',
+      style: { minWidth: '295px', padding: '8px', zIndex: '1200' },
+      onclick: e => e.stopPropagation()
+    });
+    const wrap = h('div', { class: 'menu save-targets-dd', style: { position: 'relative', display: 'inline-flex' } });
+    const triggerBtn = h('button', {
+      class: `btn small save-targets-trigger${count > 0 ? ' active' : ''}`,
+      title: 'Multi-target Save Option: select multiple projects and/or your Global Private Library to save this item (and all sub-items) into all selected targets',
+      onclick: e => {
+        e.stopPropagation();
+        const isOpen = wrap.classList.contains('open');
+        document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+        if (!isOpen) {
+          wrap.classList.add('open');
+          rebuildPanel();
+        }
+      }
+    }, `${labelText} ▾`);
+
+    const updateTriggerText = () => {
+      const c = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
+      triggerBtn.textContent = `${c > 0 ? `🎯 Targets (${c})` : '🎯 Targets…'} ▾`;
+      triggerBtn.classList.toggle('active', c > 0);
+    };
+
+    const rebuildPanel = () => {
+      clear(panel);
+      panel.append(
+        h('div', { class: 'row spread', style: { padding: '2px 4px 6px', borderBottom: '1px solid var(--line)', marginBottom: '6px' } },
+          h('span', { class: 'muted', style: { fontSize: '11px', fontWeight: '700' } }, 'MULTI-TARGET SAVE OPTIONS'),
+          h('div', { class: 'row', style: { gap: '4px' } },
+            h('button', {
+              class: 'btn small',
+              onclick: () => {
+                projects.forEach(p => selSet.add(Number(p.id)));
+                updateTriggerText();
+                rebuildPanel();
+              }
+            }, 'All'),
+            h('button', {
+              class: 'btn small',
+              onclick: () => {
+                selSet.clear();
+                state.saveToUserPrivateLibrary = false;
+                updateTriggerText();
+                rebuildPanel();
+              }
+            }, 'Clear')
+          )
+        )
+      );
+
+      // User's own Global Private Library option
+      const privChk = h('input', {
+        type: 'checkbox',
+        class: 'save-target-private-chk',
+        checked: Boolean(state.saveToUserPrivateLibrary),
+        onchange: () => {
+          state.saveToUserPrivateLibrary = privChk.checked;
+          updateTriggerText();
+        }
+      });
+      panel.append(
+        h('label', {
+          class: 'row save-target-row',
+          style: {
+            padding: '6px 8px',
+            borderRadius: '6px',
+            background: state.saveToUserPrivateLibrary ? 'rgba(16,185,129,0.16)' : 'rgba(255,255,255,0.03)',
+            marginBottom: '6px',
+            cursor: 'pointer',
+            gap: '8px',
+            fontSize: '12px',
+            fontWeight: '600'
+          }
+        },
+        privChk,
+        h('span', {}, '👤 My Global Private Library (All My Projects)')
+        )
+      );
+
+      for (const p of projects) {
+        const pid = Number(p.id);
+        const checked = selSet.has(pid);
+        const chk = h('input', {
+          type: 'checkbox',
+          class: 'save-target-proj-chk',
+          dataset: { targetProjectId: String(pid) },
+          checked,
+          onchange: () => {
+            if (chk.checked) selSet.add(pid);
+            else selSet.delete(pid);
+            updateTriggerText();
+            rebuildPanel();
+          }
+        });
+        panel.append(
+          h('label', {
+            class: 'row spread save-target-row',
+            style: {
+              padding: '5px 8px',
+              borderRadius: '6px',
+              background: checked ? 'rgba(46,155,255,0.14)' : 'transparent',
+              cursor: 'pointer',
+              gap: '6px',
+              fontSize: '12px'
+            }
+          },
+          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${p.name}`),
+          h('span', { class: 'muted', style: { fontSize: '10px' } }, `#${pid}`)
+          )
+        );
+      }
+    };
+
+    wrap.append(triggerBtn, panel);
+    return wrap;
+  }
+
   buildDocBar() {
     clear(this.docbar);
     const o = this.opts;
     const d = this.doc || {};
+    const ownedByMe = this.isOwnedByCurrentUser(d);
+    const canMove = this.canMoveRecord(d);
     this.backBtn = o.onBack ? h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => o.onBack() }, '← Back') : null;
-    this.saveBtn = h('button', { class: 'btn small save', title: 'Save (Ctrl+S): keep the current version. The button blinks while there are unsaved changes.', onclick: () => this.save() }, '💾 Save');
-    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name (tracks root owner lineage). This one goes back to its last saved version.', onclick: () => this.saveAs() }, 'Save as…');
+    this.saveBtn = h('button', {
+      class: 'btn small save',
+      disabled: !ownedByMe,
+      title: ownedByMe
+        ? 'Save (Ctrl+S): keep the current version (and save to any selected Multi-Targets).'
+        : `Save is disabled because this item is owned by @${d.creatorUsername || 'another user'}. Use "Save as…" to save a copy to your project(s) or Global Private Library.`,
+      onclick: () => this.save()
+    }, '💾 Save');
+    this.saveAsBtn = h('button', {
+      class: 'btn small',
+      title: 'Save a copy (with all cascading sub-items) to the active project or all selected Multi-Target projects.',
+      onclick: () => this.saveAs()
+    }, 'Save as…');
+    this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
     this.docState = h('span', { class: 'doc-state', role: 'status' });
 
+    const visOrder = ['public', 'private', 'project'];
+    const visLabel = d.visibility === 'project'
+      ? '📁 Project-Only'
+      : d.visibility === 'private'
+        ? '👤 Private (My Global)'
+        : '🌐 Public';
     const visBtn = h('button', {
       class: 'btn small',
-      title: 'Toggle visibility between Public (shared across all projects) and Project-Specific',
+      dataset: { act: 'cycle-visibility' },
+      title: 'Cycle visibility: Public (all users) → Private (all my projects / global library) → Project-Only (active project scope)',
       onclick: async () => {
         if (!this.doc) return;
-        const next = this.doc.visibility === 'project' ? 'public' : 'project';
+        const curIdx = visOrder.indexOf(this.doc.visibility || 'public');
+        const next = visOrder[(curIdx + 1) % visOrder.length];
         await this.updateDoc({ visibility: next, projectId: state.activeProjectId || this.doc.projectId || 1 });
         this.buildDocBar();
         toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
       }
-    }, d.visibility === 'project' ? '📁 Project-Only' : '🌐 Public');
+    }, visLabel);
 
     const lockDocBtn = h('button', {
       class: `btn small${d.locked ? ' active' : ''}`,
@@ -188,18 +353,21 @@ export class Designer {
 
     const copyToProjBtn = h('button', {
       class: 'btn small',
-      title: 'Copy this item (and its sub-items) to one or multiple projects as private item',
+      title: 'Copy this item (and all its sub-items) to one or multiple projects',
       onclick: () => this.doc && openCopyMoveToProjectsModal({
-        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key }],
+        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
         mode: 'copy'
       })
     }, '📥 Copy to…');
 
     const moveToProjBtn = h('button', {
       class: 'btn small',
-      title: 'Move this item (and its sub-items) to one or multiple projects as private item',
-      onclick: () => this.doc && openCopyMoveToProjectsModal({
-        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key }],
+      disabled: !canMove,
+      title: canMove
+        ? 'Move this item (and all its sub-items) to one or multiple of your own projects'
+        : (d.builtin ? 'Default basic items cannot be moved (only copied)' : 'Items owned by other users cannot be moved (only copied)'),
+      onclick: () => this.doc && canMove && openCopyMoveToProjectsModal({
+        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
         mode: 'move'
       })
     }, '📤 Move to…');
@@ -209,6 +377,7 @@ export class Designer {
       this.backBtn ? h('span', { class: 'sep-v' }) : null,
       this.saveBtn,
       this.saveAsBtn,
+      this.saveTargetsDropdown,
       this.resetBtn,
       h('span', { class: 'sep-v' }),
       visBtn,
@@ -228,10 +397,16 @@ export class Designer {
 
   updateDocBar() {
     if (!this.saveBtn) return;
-    this.saveBtn.classList.toggle('dirty', this.dirty);
+    const ownedByMe = this.isOwnedByCurrentUser(this.doc);
+    this.saveBtn.disabled = !ownedByMe;
+    this.saveBtn.classList.toggle('dirty', this.dirty && ownedByMe);
     this.resetBtn.disabled = !this.dirty;
     this.docState.classList.toggle('dirty', this.dirty);
-    this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    if (!ownedByMe) {
+      this.docState.textContent = `🔒 Owned by @${this.doc?.creatorUsername || 'other user'} — use Save as…`;
+    } else {
+      this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    }
     this.refreshBack();
   }
 
@@ -252,15 +427,36 @@ export class Designer {
 
   async save() {
     if (!this.doc) return false;
+    if (!this.isOwnedByCurrentUser(this.doc)) {
+      toast('This item is owned by another user — Save is disabled. Please use "Save as…".', 'error');
+      return false;
+    }
     await this.settle();
     try {
       await this.reload();
       const had = designFingerprint(this.doc) !== this.baselineFp;
       this.markBaseline();
+      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const includePriv = Boolean(state.saveToUserPrivateLibrary);
+      let multiRes = null;
+      if (targetPids.length > 0 || includePriv) {
+        multiRes = await api.saveToTargets({
+          type: this.type,
+          id: this.doc.id,
+          name: this.doc.name,
+          projectIds: targetPids,
+          visibility: 'project',
+          includeUserPrivate: includePriv
+        });
+      }
       await reloadLibrary({ silent: true });
       this.renderStage();
       this.emit('saved', this.doc);
-      toast(had ? `Saved "${this.doc.name}"` : `"${this.doc.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      if (multiRes?.savedCount) {
+        toast(`Saved "${this.doc.name}" + ${multiRes.savedCount} target copy(s) (+${multiRes.subItemsCount || 0} sub-items)`, 'ok', 2800);
+      } else {
+        toast(had ? `Saved "${this.doc.name}"` : `"${this.doc.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      }
       return true;
     } catch (e) { toast(e.message, 'error'); return false; }
   }
@@ -289,15 +485,35 @@ export class Designer {
     if (!name?.trim()) return false;
     await this.settle();
     try {
-      const copy = await api.cloneDesign(this.type, this.doc.id, name.trim());
+      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const includePriv = Boolean(state.saveToUserPrivateLibrary);
       const reverted = this.dirty;
-      if (reverted) await api.restoreDesign(this.type, this.doc.id, restoreBody(this.baseline));
+      let copy;
+      if (targetPids.length > 0 || includePriv) {
+        const res = await api.saveToTargets({
+          type: this.type,
+          id: this.doc.id,
+          name: name.trim(),
+          projectIds: targetPids,
+          visibility: targetPids.length ? 'project' : 'private',
+          includeUserPrivate: includePriv,
+          restoreBaseline: reverted ? restoreBody(this.baseline) : null
+        });
+        copy = res.primaryCopy || res.copied?.[0]?.item;
+        toast(`Saved "${name.trim()}" to ${res.savedCount} target(s) (+${res.subItemsCount || 0} sub-items)`, 'ok', 4200);
+      } else {
+        copy = await api.cloneDesign(this.type, this.doc.id, {
+          name: name.trim(),
+          projectId: state.activeProjectId || this.doc.projectId || 1
+        });
+        if (reverted) await api.restoreDesign(this.type, this.doc.id, restoreBody(this.baseline));
+        toast(`Saved as "${copy.name}"${reverted ? `; "${this.doc.name}" is back to its last saved version` : ''}`, 'ok', 4200);
+      }
       this.undoStack = []; this.redoStack = []; this.vtx.exit();
       await this.reload(false);
       this.changed();
       await reloadLibrary({ silent: true });
-      toast(`Saved as "${copy.name}"${reverted ? `; "${this.doc.name}" is back to its last saved version` : ''}`, 'ok', 4200);
-      if (!this.opts.modal) this.opts.openDesign?.(this.type, copy.id);
+      if (!this.opts.modal && copy?.id) this.opts.openDesign?.(this.type, copy.id);
       return copy;
     } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }
   }
@@ -613,26 +829,39 @@ export class Designer {
         }, target.locked ? '🔒' : '🔓'),
         h('button', {
           class: 'hb-btn',
-          title: 'Copy item to project(s) as private item',
+          title: 'Copy item (and sub-items) to project(s)',
           onclick: e => {
             e.stopPropagation();
+            const refItem = (target.kind === 'instance' && target.refType && target.refId)
+              ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name })
+              : this.doc;
             const itemRef = (target.kind === 'instance' && target.refType && target.refId)
-              ? { type: target.refType, id: target.refId, name: target.name }
-              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key };
+              ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
+              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
             openCopyMoveToProjectsModal({ items: [itemRef], mode: 'copy' });
           }
         }, '📥 Copy to…'),
-        h('button', {
-          class: 'hb-btn',
-          title: 'Move item to project(s) as private item',
-          onclick: e => {
-            e.stopPropagation();
-            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
-              ? { type: target.refType, id: target.refId, name: target.name }
-              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key };
-            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
-          }
-        }, '📤 Move to…'),
+        (() => {
+          const refItem = (target.kind === 'instance' && target.refType && target.refId)
+            ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name, creatorId: this.doc.creatorId })
+            : this.doc;
+          const canMoveRef = this.canMoveRecord(refItem);
+          return h('button', {
+            class: 'hb-btn',
+            disabled: !canMoveRef,
+            title: canMoveRef
+              ? 'Move item (and sub-items) to your project(s)'
+              : 'Default basic items and items owned by other users cannot be moved (only copied)',
+            onclick: e => {
+              e.stopPropagation();
+              if (!canMoveRef) return;
+              const itemRef = (target.kind === 'instance' && target.refType && target.refId)
+                ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
+                : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
+              openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
+            }
+          }, '📤 Move to…');
+        })(),
         h('button', {
           class: 'hb-btn',
           title: 'Duplicate element (Ctrl+D)',

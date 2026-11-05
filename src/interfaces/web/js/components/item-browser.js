@@ -42,22 +42,30 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
   if (!state.projects || !state.projects.length) {
     state.projects = await api.projects();
   }
+  const curUserId = Number(state.user?.id || 1);
+  const anyCannotMove = items.some(it => Boolean(it.builtin) || (it.creatorId != null && Number(it.creatorId) !== curUserId));
+  let activeMode = mode === 'move' && !anyCannotMove ? 'move' : 'copy';
+  let includeUserPrivate = false;
+
   const selectedProjects = new Set(
     state.selectedProjectIds?.size
       ? [...state.selectedProjectIds]
       : [state.activeProjectId || 1]
   );
-  let activeMode = mode === 'move' ? 'move' : 'copy';
 
   const projListWrap = h('div', { class: 'ib-proj-Checks', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '8px', marginTop: '8px' } });
 
   const renderProjectChecks = () => {
     clear(projListWrap);
     for (const p of state.projects) {
+      const ownedProj = Number(p.ownerId || 1) === curUserId;
+      const disabledInMove = activeMode === 'move' && !ownedProj;
+      if (disabledInMove) selectedProjects.delete(p.id);
       const checked = selectedProjects.has(p.id);
       const chk = h('input', {
         type: 'checkbox',
         checked,
+        disabled: disabledInMove,
         onchange: () => {
           if (chk.checked) selectedProjects.add(p.id);
           else selectedProjects.delete(p.id);
@@ -66,6 +74,7 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
       projListWrap.append(
         h('label', {
           class: `ib-proj-chip${checked ? ' on' : ''}`,
+          title: disabledInMove ? 'Move only works with your own projects' : `Target project: ${p.name}`,
           style: {
             display: 'flex',
             alignItems: 'center',
@@ -74,12 +83,13 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
             borderRadius: '8px',
             border: '1px solid var(--line)',
             background: checked ? 'rgba(46,155,255,0.12)' : 'var(--bg-2)',
-            cursor: 'pointer'
+            opacity: disabledInMove ? 0.45 : 1,
+            cursor: disabledInMove ? 'not-allowed' : 'pointer'
           }
         },
         chk,
         h('span', { style: { fontWeight: '600', fontSize: '12px' } }, `📁 ${p.name}`),
-        h('span', { class: 'muted', style: { fontSize: '11px', marginLeft: 'auto' } }, `#${p.id}`)
+        h('span', { class: 'muted', style: { fontSize: '11px', marginLeft: 'auto' } }, `#${p.id}${ownedProj ? '' : ' (other owner)'}`)
         )
       );
     }
@@ -104,24 +114,37 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
     }
   }, '+ Create New Project');
 
-  const modeToggle = h('div', { class: 'seg', style: { width: '240px' } },
+  const modeToggle = h('div', { class: 'seg', style: { width: '250px' } },
     h('button', {
       class: activeMode === 'copy' ? 'on' : '',
       onclick: e => {
         activeMode = 'copy';
         [...e.currentTarget.parentElement.children].forEach(b => b.classList.remove('on'));
         e.currentTarget.classList.add('on');
+        renderProjectChecks();
       }
     }, '📥 Copy to Projects'),
     h('button', {
       class: activeMode === 'move' ? 'on' : '',
+      disabled: anyCannotMove,
+      title: anyCannotMove
+        ? 'Default basic items or items owned by other users cannot be moved (only copied)'
+        : 'Move items to your owned projects',
       onclick: e => {
+        if (anyCannotMove) return;
         activeMode = 'move';
         [...e.currentTarget.parentElement.children].forEach(b => b.classList.remove('on'));
         e.currentTarget.classList.add('on');
+        renderProjectChecks();
       }
     }, '📤 Move to Projects')
   );
+
+  const privGlobalChk = h('input', {
+    type: 'checkbox',
+    checked: includeUserPrivate,
+    onchange: () => { includeUserPrivate = privGlobalChk.checked; }
+  });
 
   const content = h('div', { class: 'stack' },
     h('div', { class: 'row spread' },
@@ -141,11 +164,24 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
         border: '1px solid rgba(46,155,255,0.25)',
         fontSize: '12px'
       }
-    }, 'ℹ Items are copied/moved into each selected project as private (project-specific) items. When a screen, workflow, element, or button is copied/moved, all referenced sub-items (elements → buttons → icons → paths) are automatically copied to the target project’s private sub-item libraries.'),
+    }, 'ℹ When an item is copied or moved, all referenced sub-items (workflows → screens → elements → buttons → icons → paths) are automatically copied to the target project(s). Default basic items and items owned by other users can only be copied; move only works with your own projects.'),
+    h('label', {
+      class: 'row',
+      style: {
+        padding: '8px 10px',
+        borderRadius: '8px',
+        background: 'rgba(16,185,129,0.1)',
+        border: '1px solid rgba(16,185,129,0.28)',
+        cursor: 'pointer',
+        gap: '8px',
+        fontSize: '12px',
+        fontWeight: '600'
+      }
+    }, privGlobalChk, h('span', {}, '👤 Also save to My Global Private Item Library (available across all my projects)')),
     h('div', { class: 'row spread', style: { marginTop: '6px' } },
       h('span', { style: { fontWeight: '600', fontSize: '12px' } }, 'Select Target Project(s):'),
       h('div', { class: 'row', style: { gap: '6px' } },
-        h('button', { class: 'btn sm', onclick: () => { state.projects.forEach(p => selectedProjects.add(p.id)); renderProjectChecks(); } }, 'Select All Projects'),
+        h('button', { class: 'btn sm', onclick: () => { state.projects.forEach(p => { if (activeMode !== 'move' || Number(p.ownerId || 1) === curUserId) selectedProjects.add(p.id); }); renderProjectChecks(); } }, 'Select All Projects'),
         h('button', { class: 'btn sm', onclick: () => { selectedProjects.clear(); renderProjectChecks(); } }, 'Clear'),
         createNewProjBtn
       )
@@ -175,18 +211,18 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
         class: 'btn primary',
         onclick: async () => {
           const projectIds = [...selectedProjects];
-          if (!projectIds.length) {
-            toast('Select at least one target project', 'err');
+          if (!projectIds.length && !(activeMode === 'copy' && includeUserPrivate)) {
+            toast('Select at least one target project (or your Global Private Library)', 'err');
             return;
           }
           try {
-            const payload = { items: items.map(x => ({ type: x.type, id: x.id })), projectIds };
+            const payload = { items: items.map(x => ({ type: x.type, id: x.id })), projectIds, includeUserPrivate };
             const res = activeMode === 'move'
               ? await api.moveToProjects(payload)
               : await api.copyToProjects(payload);
             await refreshGlobalLibraryAndCounts();
             toast(
-              `${activeMode === 'move' ? 'Moved' : 'Copied'} ${res.copiedCount} item(s) (+${res.subItemsCount || 0} sub-items) into ${projectIds.length} project(s)`,
+              `${activeMode === 'move' ? 'Moved' : 'Copied'} ${res.copiedCount} item(s) (+${res.subItemsCount || 0} sub-items) into ${projectIds.length || 1} target(s)`,
               'ok'
             );
             close();
@@ -295,17 +331,20 @@ export function buildItemBrowserElement({
 
   function visibleItems() {
     const types = typeFilter === 'all' ? ALL_ITEM_TYPES : [typeFilter];
+    const curUserId = Number(state.user?.id || 1);
     const out = [];
     for (const t of types) {
       for (const item of allRecords[t] || []) {
         const itemVis = item.visibility || 'public';
         if (visFilter === 'public' && itemVis !== 'public') continue;
+        if (visFilter === 'private' && (itemVis !== 'private' || Number(item.creatorId || 1) !== curUserId)) continue;
         if (visFilter === 'project' && itemVis !== 'project') continue;
+        if (itemVis === 'private' && Number(item.creatorId || 1) !== curUserId) continue;
         if (sourceProjectFilter !== 'all') {
           const pid = Number(sourceProjectFilter);
           if ((item.projectId || 1) !== pid) continue;
         } else if (state.selectedProjectIds?.size > 0) {
-          // If topbar multi-project filter is active, show public items + items in selected projects
+          // If topbar multi-project filter is active, show public items + private user items + items in selected projects
           if (itemVis === 'project' && !state.selectedProjectIds.has(item.projectId || 1)) continue;
         }
         if (query) {
@@ -340,7 +379,7 @@ export function buildItemBrowserElement({
 
   function renderVisTabs() {
     clear(visBar);
-    for (const [k, label] of [['all', 'All items'], ['public', '🌐 Public'], ['project', '📁 Project-only']]) {
+    for (const [k, label] of [['all', 'All items'], ['public', '🌐 Public'], ['private', '👤 Private'], ['project', '📁 Project-only']]) {
       visBar.append(
         h('button', {
           class: visFilter === k ? 'on' : '',
@@ -516,9 +555,10 @@ export function buildItemBrowserElement({
     for (const { type, item } of list) {
       const k = `${type}:${item.id}`;
       const isChecked = selectedKeys.has(k);
+      const canMoveItem = !item.builtin && Number(item.creatorId || 1) === Number(state.user?.id || 1);
       const visBadge = (item.visibility || 'public') === 'project'
         ? `📁 Proj #${item.projectId || 1}`
-        : '🌐 Public';
+        : (item.visibility === 'private' ? '👤 Private' : '🌐 Public');
       const chk = h('input', {
         type: 'checkbox',
         class: 'chk ib-item-chk',
@@ -555,15 +595,18 @@ export function buildItemBrowserElement({
         h('button', {
           title: 'Copy to projects…',
           onclick: () => openCopyMoveToProjectsModal({
-            items: [{ type, id: item.id, name: item.name, key: item.key }],
+            items: [{ type, id: item.id, name: item.name, key: item.key, builtin: item.builtin, creatorId: item.creatorId }],
             mode: 'copy',
             onDone: () => loadAllItems()
           })
         }, '📥'),
         h('button', {
-          title: 'Move to projects…',
-          onclick: () => openCopyMoveToProjectsModal({
-            items: [{ type, id: item.id, name: item.name, key: item.key }],
+          disabled: !canMoveItem,
+          title: canMoveItem
+            ? 'Move to your projects…'
+            : 'Default basic items and items owned by other users cannot be moved (only copied)',
+          onclick: () => canMoveItem && openCopyMoveToProjectsModal({
+            items: [{ type, id: item.id, name: item.name, key: item.key, builtin: item.builtin, creatorId: item.creatorId }],
             mode: 'move',
             onDone: () => loadAllItems()
           })

@@ -80,32 +80,176 @@ export class WorkflowDesigner {
   computeDirty() { this.dirty = !!this.wf && !!this.baseline && workflowFingerprint(this.wf) !== this.baselineFp; }
   checkDirty() { const before = this.dirty; this.computeDirty(); if (before !== this.dirty) this.updateDocBar(); }
 
+  isOwnedByCurrentUser(rec = this.wf) {
+    if (!rec) return true;
+    const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
+    const curUserId = Number(state.user?.id || 1);
+    return ownerId === curUserId;
+  }
+
+  buildSaveTargetsDropdown() {
+    const projects = state.projects?.length
+      ? state.projects
+      : [{ id: 1, name: 'Default Public Project', ownerId: 1, visibility: 'public' }];
+    const selSet = state.saveTargetProjectIds || (state.saveTargetProjectIds = new Set());
+    const count = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
+    const labelText = count > 0 ? `🎯 Targets (${count})` : '🎯 Targets…';
+
+    const panel = h('div', {
+      class: 'menu-panel save-targets-panel',
+      role: 'menu',
+      style: { minWidth: '295px', padding: '8px', zIndex: '1200' },
+      onclick: e => e.stopPropagation()
+    });
+    const wrap = h('div', { class: 'menu save-targets-dd', style: { position: 'relative', display: 'inline-flex' } });
+    const triggerBtn = h('button', {
+      class: `btn small save-targets-trigger${count > 0 ? ' active' : ''}`,
+      title: 'Multi-target Save Option: select multiple projects and/or your Global Private Library to save this workflow (and all sub-items) into all selected targets',
+      onclick: e => {
+        e.stopPropagation();
+        const isOpen = wrap.classList.contains('open');
+        document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+        if (!isOpen) {
+          wrap.classList.add('open');
+          rebuildPanel();
+        }
+      }
+    }, `${labelText} ▾`);
+
+    const updateTriggerText = () => {
+      const c = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
+      triggerBtn.textContent = `${c > 0 ? `🎯 Targets (${c})` : '🎯 Targets…'} ▾`;
+      triggerBtn.classList.toggle('active', c > 0);
+    };
+
+    const rebuildPanel = () => {
+      clear(panel);
+      panel.append(
+        h('div', { class: 'row spread', style: { padding: '2px 4px 6px', borderBottom: '1px solid var(--line)', marginBottom: '6px' } },
+          h('span', { class: 'muted', style: { fontSize: '11px', fontWeight: '700' } }, 'MULTI-TARGET SAVE OPTIONS'),
+          h('div', { class: 'row', style: { gap: '4px' } },
+            h('button', {
+              class: 'btn small',
+              onclick: () => {
+                projects.forEach(p => selSet.add(Number(p.id)));
+                updateTriggerText();
+                rebuildPanel();
+              }
+            }, 'All'),
+            h('button', {
+              class: 'btn small',
+              onclick: () => {
+                selSet.clear();
+                state.saveToUserPrivateLibrary = false;
+                updateTriggerText();
+                rebuildPanel();
+              }
+            }, 'Clear')
+          )
+        )
+      );
+
+      const privChk = h('input', {
+        type: 'checkbox',
+        class: 'save-target-private-chk',
+        checked: Boolean(state.saveToUserPrivateLibrary),
+        onchange: () => {
+          state.saveToUserPrivateLibrary = privChk.checked;
+          updateTriggerText();
+        }
+      });
+      panel.append(
+        h('label', {
+          class: 'row save-target-row',
+          style: {
+            padding: '6px 8px',
+            borderRadius: '6px',
+            background: state.saveToUserPrivateLibrary ? 'rgba(16,185,129,0.16)' : 'rgba(255,255,255,0.03)',
+            marginBottom: '6px',
+            cursor: 'pointer',
+            gap: '8px',
+            fontSize: '12px',
+            fontWeight: '600'
+          }
+        }, privChk, h('span', {}, '👤 My Global Private Library (All My Projects)'))
+      );
+
+      for (const p of projects) {
+        const pid = Number(p.id);
+        const checked = selSet.has(pid);
+        const chk = h('input', {
+          type: 'checkbox',
+          class: 'save-target-proj-chk',
+          dataset: { targetProjectId: String(pid) },
+          checked,
+          onchange: () => {
+            if (chk.checked) selSet.add(pid);
+            else selSet.delete(pid);
+            updateTriggerText();
+            rebuildPanel();
+          }
+        });
+        panel.append(
+          h('label', {
+            class: 'row spread save-target-row',
+            style: {
+              padding: '5px 8px',
+              borderRadius: '6px',
+              background: checked ? 'rgba(46,155,255,0.14)' : 'transparent',
+              cursor: 'pointer',
+              gap: '6px',
+              fontSize: '12px'
+            }
+          },
+          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${p.name}`),
+          h('span', { class: 'muted', style: { fontSize: '10px' } }, `#${pid}`)
+          )
+        );
+      }
+    };
+
+    wrap.append(triggerBtn, panel);
+    return wrap;
+  }
+
   buildDocBar() {
     const app = this.app;
+    const ownedByMe = this.isOwnedByCurrentUser(this.wf);
     this.backBtn = h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => app.back() }, '← Back');
-    this.saveBtn = h('button', { class: 'btn small save', title: 'Save (Ctrl+S): keep the current version. The button blinks while there are unsaved changes.', onclick: () => this.save() }, '💾 Save');
-    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name. This one goes back to its last saved version.', onclick: () => this.saveAs() }, 'Save as…');
+    this.saveBtn = h('button', {
+      class: 'btn small save',
+      disabled: !ownedByMe,
+      title: ownedByMe
+        ? 'Save (Ctrl+S): keep the current version (and save to any selected Multi-Targets).'
+        : `Save is disabled because this workflow is owned by @${this.wf?.creatorUsername || 'another user'}. Use "Save as…" to save a copy.`,
+      onclick: () => this.save()
+    }, '💾 Save');
+    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name (into active project or all selected Multi-Targets).', onclick: () => this.saveAs() }, 'Save as…');
+    this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
     const copyToBtn = h('button', {
       class: 'btn small',
-      title: 'Copy this workflow (and its screens + sub-items) to project(s) as private item',
+      title: 'Copy this workflow (and its screens + sub-items) to project(s)',
       onclick: () => this.wf && openCopyMoveToProjectsModal({
-        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key }],
+        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key, creatorId: this.wf.creatorId }],
         mode: 'copy'
       })
     }, '📥 Copy to…');
     const moveToBtn = h('button', {
       class: 'btn small',
-      title: 'Move this workflow (and its screens + sub-items) to project(s) as private item',
-      onclick: () => this.wf && openCopyMoveToProjectsModal({
-        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key }],
+      disabled: !ownedByMe,
+      title: ownedByMe
+        ? 'Move this workflow (and its screens + sub-items) to your project(s)'
+        : 'Workflows owned by other users cannot be moved (only copied)',
+      onclick: () => this.wf && ownedByMe && openCopyMoveToProjectsModal({
+        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key, creatorId: this.wf.creatorId }],
         mode: 'move'
       })
     }, '📤 Move to…');
     this.docState = h('span', { class: 'doc-state', role: 'status' });
     this.docbar = h('div', { class: 'dz-docbar', role: 'toolbar', 'aria-label': 'Document' },
       this.backBtn, h('span', { class: 'sep-v' }),
-      this.saveBtn, this.saveAsBtn, this.resetBtn,
+      this.saveBtn, this.saveAsBtn, this.saveTargetsDropdown, this.resetBtn,
       h('span', { class: 'sep-v' }),
       copyToBtn, moveToBtn,
       h('span', { class: 'sep-v' }),
@@ -117,10 +261,16 @@ export class WorkflowDesigner {
 
   updateDocBar() {
     if (!this.saveBtn) return;
-    this.saveBtn.classList.toggle('dirty', this.dirty);
+    const ownedByMe = this.isOwnedByCurrentUser(this.wf);
+    this.saveBtn.disabled = !ownedByMe;
+    this.saveBtn.classList.toggle('dirty', this.dirty && ownedByMe);
     this.resetBtn.disabled = !this.dirty;
     this.docState.classList.toggle('dirty', this.dirty);
-    this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    if (!ownedByMe) {
+      this.docState.textContent = `🔒 Owned by @${this.wf?.creatorUsername || 'other user'} — use Save as…`;
+    } else {
+      this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    }
     this.refreshBack();
   }
 
@@ -139,12 +289,30 @@ export class WorkflowDesigner {
 
   async save() {
     if (!this.wf) return false;
+    if (!this.isOwnedByCurrentUser(this.wf)) {
+      toast('This workflow is owned by another user — Save is disabled. Please use "Save as…".', 'error');
+      return false;
+    }
     await this.settle();
     try {
       await this.refresh();
       const had = this.dirty;
       this.markBaseline();
-      toast(had ? `Saved "${this.wf.name}"` : `"${this.wf.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const includePriv = Boolean(state.saveToUserPrivateLibrary);
+      if (targetPids.length > 0 || includePriv) {
+        const multiRes = await api.saveToTargets({
+          type: 'workflow',
+          id: this.wf.id,
+          name: this.wf.name,
+          projectIds: targetPids,
+          visibility: 'project',
+          includeUserPrivate: includePriv
+        });
+        toast(`Saved "${this.wf.name}" + ${multiRes.savedCount} target copy(s) (+${multiRes.subItemsCount || 0} sub-items)`, 'ok', 2800);
+      } else {
+        toast(had ? `Saved "${this.wf.name}"` : `"${this.wf.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      }
       return true;
     } catch (e) { toast(e.message, 'error'); return false; }
   }
@@ -170,13 +338,33 @@ export class WorkflowDesigner {
     if (!name?.trim()) return false;
     await this.settle();
     try {
-      const copy = await api.cloneWorkflow(this.wf.id, name.trim());
+      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const includePriv = Boolean(state.saveToUserPrivateLibrary);
       const reverted = this.dirty;
-      if (reverted) await api.restoreWorkflow(this.wf.id, workflowRestoreBody(this.baseline));
+      let copy;
+      if (targetPids.length > 0 || includePriv) {
+        const res = await api.saveToTargets({
+          type: 'workflow',
+          id: this.wf.id,
+          name: name.trim(),
+          projectIds: targetPids,
+          visibility: targetPids.length ? 'project' : 'private',
+          includeUserPrivate: includePriv,
+          restoreBaseline: reverted ? workflowRestoreBody(this.baseline) : null
+        });
+        copy = res.primaryCopy || res.copied?.[0]?.item;
+        toast(`Saved "${name.trim()}" to ${res.savedCount} target(s) (+${res.subItemsCount || 0} sub-items)`, 'ok', 4200);
+      } else {
+        copy = await api.cloneWorkflow(this.wf.id, {
+          name: name.trim(),
+          projectId: state.activeProjectId || this.wf.projectId || 1
+        });
+        if (reverted) await api.restoreWorkflow(this.wf.id, workflowRestoreBody(this.baseline));
+        toast(`Saved as "${copy.name}"${reverted ? `; "${this.wf.name}" is back to its last saved version` : ''}`, 'ok', 4200);
+      }
       this.sel = null;
       await this.refresh();
-      toast(`Saved as "${copy.name}"${reverted ? `; "${this.wf.name}" is back to its last saved version` : ''}`, 'ok', 4200);
-      await this.app.openWorkflow(copy.id);
+      if (copy?.id) await this.app.openWorkflow(copy.id);
       return copy;
     } catch (e) { toast(e.message, 'error'); await this.refresh(); return false; }
   }

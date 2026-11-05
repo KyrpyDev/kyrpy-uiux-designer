@@ -12,13 +12,16 @@ export function miscRoutes(router, c) {
   router.delete('/api/themes/:id', ({ params }) => c.themes.remove(params.id));
   router.post('/api/themes/:id/clone', ({ params, body }) => c.themes.clone(params.id, body?.name));
 
-  router.get('/api/workflows', ({ query }) =>
+  router.get('/api/workflows', ({ query, actor }) =>
     c.workflows.list({
       q: query.get('q') || '',
       projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
       projectIds: query.get('projectIds') || null,
       visibility: query.get('visibility') || '',
-      includePublic: query.get('includePublic') !== '0'
+      creatorId: query.get('creatorId') ? Number(query.get('creatorId')) : null,
+      actorId: actor?.id ?? null,
+      includePublic: query.get('includePublic') !== '0',
+      includePrivate: query.get('includePrivate') !== '0'
     })
   );
   router.post('/api/workflows', ({ body, actor, projectId }) =>

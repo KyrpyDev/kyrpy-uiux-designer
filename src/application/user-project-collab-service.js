@@ -1072,12 +1072,12 @@ export class LibraryTransferService {
     Object.assign(this, { services, workflows, menus, projects, auth, transaction, render, parseSvg });
   }
 
-  #normalizeTargetProjects(projectIds) {
+  #normalizeTargetProjects(projectIds, { allowEmpty = false } = {}) {
     const raw = Array.isArray(projectIds)
       ? projectIds
       : String(projectIds || '').split(',').map(x => x.trim()).filter(Boolean);
     const ids = [...new Set(raw.map(Number).filter(n => Number.isFinite(n) && n > 0))];
-    if (!ids.length) throw new ValidationError('At least one target projectId is required');
+    if (!ids.length && !allowEmpty) throw new ValidationError('At least one target projectId is required');
     for (const pid of ids) this.projects.get(pid);
     return ids;
   }
@@ -1096,8 +1096,9 @@ export class LibraryTransferService {
     });
   }
 
-  #copySingleWithCascade(type, id, targetProjectId, memo, subItemsCreated, actor) {
-    const cacheKey = `${type}:${Number(id)}`;
+  #copySingleWithCascade(type, id, targetProjectId, memo, subItemsCreated, actor, { visibility = 'project', overrideName = null } = {}) {
+    const effVis = VISIBILITY_LEVELS.includes(visibility) ? visibility : 'project';
+    const cacheKey = `${type}:${Number(id)}:${effVis}:${overrideName || ''}`;
     if (memo.has(cacheKey)) return memo.get(cacheKey);
 
     if (type === 'workflow') {
@@ -1106,27 +1107,38 @@ export class LibraryTransferService {
       const screenMap = new Map();
       for (const n of src.nodes || []) {
         if (n.screenId) {
-          const copiedScreen = this.#copySingleWithCascade('screen', n.screenId, targetProjectId, memo, subItemsCreated, actor);
-          if (copiedScreen?.id) screenMap.set(Number(n.screenId), copiedScreen.id);
+          const copiedScreen = this.#copySingleWithCascade('screen', n.screenId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
+          if (copiedScreen?.id) {
+            screenMap.set(Number(n.screenId), copiedScreen.id);
+            subItemsCreated.push({ type: 'screen', sourceId: Number(n.screenId), id: copiedScreen.id, key: copiedScreen.key, projectId: targetProjectId, visibility: effVis });
+          }
         }
       }
       for (const l of src.links || []) {
         if (l.fromScreenId && !screenMap.has(Number(l.fromScreenId))) {
-          const cs = this.#copySingleWithCascade('screen', l.fromScreenId, targetProjectId, memo, subItemsCreated, actor);
-          if (cs?.id) screenMap.set(Number(l.fromScreenId), cs.id);
+          const cs = this.#copySingleWithCascade('screen', l.fromScreenId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
+          if (cs?.id) {
+            screenMap.set(Number(l.fromScreenId), cs.id);
+            subItemsCreated.push({ type: 'screen', sourceId: Number(l.fromScreenId), id: cs.id, key: cs.key, projectId: targetProjectId, visibility: effVis });
+          }
         }
         if (l.toScreenId && !screenMap.has(Number(l.toScreenId))) {
-          const cs = this.#copySingleWithCascade('screen', l.toScreenId, targetProjectId, memo, subItemsCreated, actor);
-          if (cs?.id) screenMap.set(Number(l.toScreenId), cs.id);
+          const cs = this.#copySingleWithCascade('screen', l.toScreenId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
+          if (cs?.id) {
+            screenMap.set(Number(l.toScreenId), cs.id);
+            subItemsCreated.push({ type: 'screen', sourceId: Number(l.toScreenId), id: cs.id, key: cs.key, projectId: targetProjectId, visibility: effVis });
+          }
         }
       }
-      const wfKey = uniqueKey(slugify(`${src.key}-p${targetProjectId}`), k => wfRepo.keyExists(k));
+      const wfName = overrideName || src.name;
+      const wfKey = uniqueKey(slugify(`${overrideName || src.key}-p${targetProjectId}`), k => wfRepo.keyExists(k));
       const createdWf = wfRepo.create({
         key: wfKey,
-        name: src.name,
+        name: wfName,
+        label: wfName,
         description: src.description || '',
         projectId: targetProjectId,
-        visibility: 'project',
+        visibility: effVis,
         creatorId: actor?.id ?? src.creatorId ?? 1,
         rootOwnerId: src.rootOwnerId || src.creatorId || 1,
         clonedFromId: src.id
@@ -1134,13 +1146,13 @@ export class LibraryTransferService {
       for (const n of src.nodes || []) {
         const newSid = screenMap.get(Number(n.screenId)) || n.screenId;
         try {
-          wfRepo.placeScreen({
+          wfRepo.upsertNode({
             workflowId: createdWf.id,
             screenId: newSid,
             x: n.x ?? 0,
             y: n.y ?? 0,
-            zoom: n.zoom ?? 1,
-            collapsed: Boolean(n.collapsed)
+            collapsed: Boolean(n.collapsed),
+            locked: Boolean(n.locked)
           });
         } catch { /* ignore */ }
       }
@@ -1148,15 +1160,14 @@ export class LibraryTransferService {
         const fromSid = screenMap.get(Number(l.fromScreenId)) || l.fromScreenId;
         const toSid = screenMap.get(Number(l.toScreenId)) || l.toScreenId;
         try {
-          wfRepo.addLink({
-            workflowId: createdWf.id,
+          wfRepo.createLink(createdWf.id, {
             fromScreenId: fromSid,
             toScreenId: toSid,
-            triggerNodeId: null,
-            triggerLabel: l.triggerLabel ?? '',
-            kind: l.kind ?? 'navigate',
-            color: l.color ?? '#2e9bff',
-            waypoints: l.waypoints ?? []
+            fromNodeId: null,
+            name: l.name ?? l.triggerLabel ?? '',
+            descriptionDev: l.descriptionDev ?? '',
+            style: l.style ?? 'curved',
+            trigger: l.trigger ?? 'tap'
           });
         } catch { /* ignore */ }
       }
@@ -1175,20 +1186,30 @@ export class LibraryTransferService {
       if (n.kind === 'instance' && n.refType && n.refId && this.services[n.refType]) {
         const origRefId = Number(n.refId);
         try {
-          const subCopy = this.#copySingleWithCascade(n.refType, origRefId, targetProjectId, memo, subItemsCreated, actor);
+          const subCopy = this.#copySingleWithCascade(n.refType, origRefId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
           if (subCopy?.id) {
             n.refId = subCopy.id;
-            subItemsCreated.push({ type: n.refType, sourceId: origRefId, id: subCopy.id, key: subCopy.key, projectId: targetProjectId });
+            subItemsCreated.push({ type: n.refType, sourceId: origRefId, id: subCopy.id, key: subCopy.key, projectId: targetProjectId, visibility: effVis });
           }
         } catch { /* ignore missing sub-item */ }
       }
       if (n.onClick?.elementId && this.services.element) {
         const origElId = Number(n.onClick.elementId);
         try {
-          const elCopy = this.#copySingleWithCascade('element', origElId, targetProjectId, memo, subItemsCreated, actor);
+          const elCopy = this.#copySingleWithCascade('element', origElId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
           if (elCopy?.id) {
             n.onClick.elementId = elCopy.id;
-            subItemsCreated.push({ type: 'element', sourceId: origElId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId });
+            subItemsCreated.push({ type: 'element', sourceId: origElId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId, visibility: effVis });
+          }
+        } catch { /* ignore */ }
+      }
+      if (n.onClick?.targetId && ['element', 'popup', 'drawer', 'toolbar'].includes(n.onClick.type) && this.services.element) {
+        const origTargetId = Number(n.onClick.targetId);
+        try {
+          const elCopy = this.#copySingleWithCascade('element', origTargetId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
+          if (elCopy?.id) {
+            n.onClick.targetId = elCopy.id;
+            subItemsCreated.push({ type: 'element', sourceId: origTargetId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId, visibility: effVis });
           }
         } catch { /* ignore */ }
       }
@@ -1197,10 +1218,20 @@ export class LibraryTransferService {
           if (ev?.elementId && this.services.element) {
             const origEvElId = Number(ev.elementId);
             try {
-              const elCopy = this.#copySingleWithCascade('element', origEvElId, targetProjectId, memo, subItemsCreated, actor);
+              const elCopy = this.#copySingleWithCascade('element', origEvElId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
               if (elCopy?.id) {
                 ev.elementId = elCopy.id;
-                subItemsCreated.push({ type: 'element', sourceId: origEvElId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId });
+                subItemsCreated.push({ type: 'element', sourceId: origEvElId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId, visibility: effVis });
+              }
+            } catch { /* ignore */ }
+          }
+          if (ev?.targetId && ['element', 'popup', 'drawer', 'toolbar'].includes(ev.type) && this.services.element) {
+            const origEvTargetId = Number(ev.targetId);
+            try {
+              const elCopy = this.#copySingleWithCascade('element', origEvTargetId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
+              if (elCopy?.id) {
+                ev.targetId = elCopy.id;
+                subItemsCreated.push({ type: 'element', sourceId: origEvTargetId, id: elCopy.id, key: elCopy.key, projectId: targetProjectId, visibility: effVis });
               }
             } catch { /* ignore */ }
           }
@@ -1208,7 +1239,8 @@ export class LibraryTransferService {
       }
     }
 
-    const baseKey = slugify(`${src.key}-p${targetProjectId}`);
+    const finalName = overrideName || src.name;
+    const baseKey = slugify(`${overrideName || src.key}-p${targetProjectId}`);
     const newKey = uniqueKey(baseKey, k => svc.designs.keyExists(k));
     const rootItemId = src.rootItemId || src.id;
     const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
@@ -1216,13 +1248,13 @@ export class LibraryTransferService {
 
     const copyRec = svc.designs.create({
       ...src,
-      name: src.name,
-      label: src.label || src.name,
+      name: finalName,
+      label: overrideName || src.label || src.name,
       key: newKey,
       builtin: false,
       position: undefined,
       projectId: targetProjectId,
-      visibility: 'project',
+      visibility: effVis,
       creatorId: effCreatorId,
       clonedFromId: src.id,
       rootItemId,
@@ -1251,20 +1283,20 @@ export class LibraryTransferService {
         let iconId = mi.iconId;
         if (iconId && this.services.icon) {
           try {
-            const icCopy = this.#copySingleWithCascade('icon', iconId, targetProjectId, memo, subItemsCreated, actor);
+            const icCopy = this.#copySingleWithCascade('icon', iconId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
             if (icCopy?.id) {
               iconId = icCopy.id;
-              subItemsCreated.push({ type: 'icon', sourceId: Number(mi.iconId), id: icCopy.id, key: icCopy.key, projectId: targetProjectId });
+              subItemsCreated.push({ type: 'icon', sourceId: Number(mi.iconId), id: icCopy.id, key: icCopy.key, projectId: targetProjectId, visibility: effVis });
             }
           } catch { /* ignore */ }
         }
         let targetElementId = mi.targetElementId ?? null;
         if (targetElementId && this.services.element) {
           try {
-            const elCopy = this.#copySingleWithCascade('element', targetElementId, targetProjectId, memo, subItemsCreated, actor);
+            const elCopy = this.#copySingleWithCascade('element', targetElementId, targetProjectId, memo, subItemsCreated, actor, { visibility: effVis });
             if (elCopy?.id) {
               targetElementId = elCopy.id;
-              subItemsCreated.push({ type: 'element', sourceId: Number(mi.targetElementId), id: elCopy.id, key: elCopy.key, projectId: targetProjectId });
+              subItemsCreated.push({ type: 'element', sourceId: Number(mi.targetElementId), id: elCopy.id, key: elCopy.key, projectId: targetProjectId, visibility: effVis });
             }
           } catch { /* ignore */ }
         }
@@ -1281,16 +1313,20 @@ export class LibraryTransferService {
     return fullCopy;
   }
 
-  copyToProjects({ items, projectIds, actor = null } = {}) {
-    const targetProjectIds = this.#normalizeTargetProjects(projectIds);
+  copyToProjects({ items, projectIds = [], visibility = 'project', includeUserPrivate = false, overrideName = null, actor = null } = {}) {
+    const targetProjectIds = this.#normalizeTargetProjects(projectIds, { allowEmpty: Boolean(includeUserPrivate || visibility === 'private') });
     const cleanItems = this.#normalizeItems(items);
+    const effVis = VISIBILITY_LEVELS.includes(visibility) ? visibility : 'project';
     return this.transaction(() => {
       const copied = [];
       const subItems = [];
       for (const pid of targetProjectIds) {
         const memo = new Map();
         for (const it of cleanItems) {
-          const created = this.#copySingleWithCascade(it.type, it.id, pid, memo, subItems, actor);
+          const created = this.#copySingleWithCascade(it.type, it.id, pid, memo, subItems, actor, {
+            visibility: effVis,
+            overrideName
+          });
           copied.push({
             type: it.type,
             sourceId: it.id,
@@ -1299,6 +1335,28 @@ export class LibraryTransferService {
             key: created.key,
             name: created.name,
             visibility: created.visibility,
+            creatorId: created.creatorId,
+            item: created
+          });
+        }
+      }
+      if (includeUserPrivate || (!targetProjectIds.length && effVis === 'private')) {
+        const privPid = targetProjectIds[0] || 1;
+        const memo = new Map();
+        for (const it of cleanItems) {
+          const created = this.#copySingleWithCascade(it.type, it.id, privPid, memo, subItems, actor, {
+            visibility: 'private',
+            overrideName
+          });
+          copied.push({
+            type: it.type,
+            sourceId: it.id,
+            projectId: privPid,
+            id: created.id,
+            key: created.key,
+            name: created.name,
+            visibility: 'private',
+            creatorId: created.creatorId,
             item: created
           });
         }
@@ -1313,28 +1371,81 @@ export class LibraryTransferService {
     });
   }
 
-  moveToProjects({ items, projectIds, actor = null } = {}) {
+  /**
+   * Saves / clones an item (and all its cascading sub-items) into multiple target projects and/or the user's
+   * global private item library (`visibility = 'private'`), optionally restoring the source item's baseline.
+   */
+  saveAsToTargets({
+    type,
+    id,
+    name = '',
+    projectIds = [],
+    visibility = 'project',
+    includeUserPrivate = false,
+    restoreBaseline = null,
+    actor = null
+  } = {}) {
+    const cleanType = String(type || '').trim().replace(/s$/, '');
+    const cleanId = Number(id);
+    if (!['path', 'icon', 'button', 'element', 'screen', 'workflow'].includes(cleanType) || !cleanId) {
+      throw new ValidationError('Valid item type and id are required for saveAsToTargets');
+    }
+    return this.transaction(() => {
+      const res = this.copyToProjects({
+        items: [{ type: cleanType, id: cleanId }],
+        projectIds,
+        visibility,
+        includeUserPrivate,
+        overrideName: name ? String(name).trim() : null,
+        actor
+      });
+      if (restoreBaseline && typeof restoreBaseline === 'object') {
+        if (cleanType === 'workflow') {
+          this.workflows.restore(cleanId, restoreBaseline);
+        } else if (this.services[cleanType]) {
+          this.services[cleanType].restore(cleanId, restoreBaseline);
+        }
+      }
+      return {
+        ...res,
+        savedCount: res.copiedCount,
+        primaryCopy: res.copied[0]?.item || null
+      };
+    });
+  }
+
+  moveToProjects({ items, projectIds, actor = null, actorId = null } = {}) {
+    const effActorId = Number(actorId ?? actor?.id ?? 1);
     const targetProjectIds = this.#normalizeTargetProjects(projectIds);
     const cleanItems = this.#normalizeItems(items);
 
-    // Pre-validate source items and permissions before mutating
+    // Move items ONLY works with the acting user's owned projects
+    for (const pid of targetProjectIds) {
+      const proj = this.projects.get(pid);
+      if (Number(proj.ownerId || 1) !== effActorId) {
+        throw new ForbiddenError(`Move items only works with your own projects (project "${proj.name}" is owned by another user)`);
+      }
+    }
+
+    // Pre-validate source items: default basic items (`builtin`) or items owned by other users cannot be moved (only copied)
     const sources = cleanItems.map(it => {
       const record = it.type === 'workflow'
         ? this.workflows.get(it.id)
         : this.services[it.type].get(it.id);
-      const isPublic = (record.visibility || 'public') === 'public' || Boolean(record.builtin);
-      if (isPublic && actor && !this.auth.isAdmin(actor)) {
-        throw new ForbiddenError('Only admin or superadmin can move or trash public items');
+      if (record.builtin) {
+        throw new ForbiddenError(`Default basic item "${record.name || record.key}" cannot be moved; it can only be copied`);
       }
-      return { ...it, record, isPublic };
+      const ownerId = Number(record.creatorId || record.rootOwnerId || 1);
+      if (ownerId !== effActorId) {
+        throw new ForbiddenError(`Item "${record.name || record.key}" is owned by another user and cannot be moved; it can only be copied`);
+      }
+      return { ...it, record };
     });
 
     return this.transaction(() => {
-      const copyResult = this.copyToProjects({ items: cleanItems, projectIds: targetProjectIds, actor });
+      const copyResult = this.copyToProjects({ items: cleanItems, projectIds: targetProjectIds, actor: actor || { id: effActorId } });
       const removedSourceIds = [];
       for (const src of sources) {
-        // Built-in default public items are immutable; keep the default public copy while creating the project copies
-        if (src.record.builtin) continue;
         if (src.type === 'workflow') {
           this.workflows.remove(src.id, { actor, permanent: true });
         } else {
@@ -1345,6 +1456,7 @@ export class LibraryTransferService {
       return {
         ...copyResult,
         movedCount: copyResult.copiedCount,
+        moved: copyResult.copied,
         removedSourceIds
       };
     });
@@ -1508,6 +1620,7 @@ export class LibraryTransferService {
           : this.services[t].list({ projectId: pid, includePublic: true });
         for (const row of list) {
           if (visFilter === 'public' && row.visibility !== 'public') continue;
+          if (visFilter === 'private' && row.visibility !== 'private') continue;
           if (visFilter === 'project' && row.visibility !== 'project') continue;
           if (pid && visFilter === 'project' && Number(row.projectId) !== pid) continue;
           collectEntity(t, row.id);
@@ -1711,7 +1824,7 @@ export class LibraryTransferService {
 
     const pid = Number(projectId) || 1;
     this.projects.get(pid);
-    const targetVis = visibility === 'public' ? 'public' : 'project';
+    const targetVis = VISIBILITY_LEVELS.includes(visibility) ? visibility : 'project';
 
     const ALL_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
     const normTargetType = String(targetType || 'auto').trim().toLowerCase().replace(/s$/, '');

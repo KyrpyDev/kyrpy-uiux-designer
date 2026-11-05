@@ -12,6 +12,9 @@ export async function reloadLibrary({ silent = false } = {}) {
   if (state.activeProjectId) libParams.projectId = state.activeProjectId;
   if (state.visibilityFilter === 'public') {
     libParams.visibility = 'public';
+  } else if (state.visibilityFilter === 'private') {
+    libParams.visibility = 'private';
+    libParams.includePublic = false;
   } else if (state.visibilityFilter === 'project') {
     libParams.visibility = 'project';
     libParams.includePublic = false;
@@ -135,8 +138,9 @@ function screenDialog(defaultVis = 'public') {
     const devList = state.templateDevices?.length ? state.templateDevices : Object.entries(DEVICES).map(([k, d]) => ({ key: k, ...d }));
     const dev = h('select', {}, devList.map(d => h('option', { value: d.key, selected: d.key === state.settings.device }, `${d.name} (${d.width}×${d.height})`)));
     const vis = h('select', {}, [
-      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (shared across projects)'),
-      h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific (private to project)')
+      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects — global library)'),
+      h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific (active project only)')
     ]);
     modal({ title: 'New screen', onClose: () => fin(null),
       content: h('div', { class: 'row wrap' },
@@ -161,7 +165,8 @@ function buttonDialog(defaultVis = 'public') {
       ...tplList.map(t => h('option', { value: t.key }, `${t.name} (${t.width}×${t.height} · ${t.shape})`))
     ]);
     const vis = h('select', {}, [
-      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (shared across projects)'),
+      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects — global library)'),
       h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific')
     ]);
     modal({ title: 'New button from template', onClose: () => fin(null),
@@ -183,7 +188,8 @@ function elementDialog(defaultVis = 'public') {
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const name = h('input', { type: 'text', placeholder: 'Name of the new element' });
     const vis = h('select', {}, [
-      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public'),
+      h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects)'),
       h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific')
     ]);
     const presets = state.library.elements.filter(e => e.meta?.preset);
@@ -248,7 +254,8 @@ export async function importSvgDialog(asType = 'icon') {
   const name = h('input', { type: 'text', placeholder: 'name (default: file name)' });
   const category = h('input', { type: 'text', value: 'imported', placeholder: 'category' });
   const vis = h('select', {}, [
-    h('option', { value: 'public' }, 'Public (shared)'),
+    h('option', { value: 'public' }, 'Public (all users)'),
+    h('option', { value: 'private' }, 'Private (all my projects)'),
     h('option', { value: 'project' }, 'Project-specific')
   ]);
   file.addEventListener('change', async () => {
@@ -330,7 +337,8 @@ export async function importFolderOrFontDialog(asType = null, initialTab = 'fold
   ].map(([v, l]) => h('option', { value: v, selected: v === curTab }, l)));
   const categoryInput = h('input', { type: 'text', value: mode === 'font' ? 'font-icons' : 'folder-import', placeholder: 'Category' });
   const visSel = h('select', {}, [
-    h('option', { value: 'public' }, 'Public (shared across projects)'),
+    h('option', { value: 'public' }, 'Public (all users)'),
+    h('option', { value: 'private' }, 'Private (all my projects — global library)'),
     h('option', { value: 'project' }, 'Project-specific (active project only)')
   ]);
   const limitInput = h('input', { type: 'number', value: '60', min: '1', max: '500', style: { width: '80px' } });

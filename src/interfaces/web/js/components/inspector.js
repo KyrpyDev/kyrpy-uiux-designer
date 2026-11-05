@@ -172,7 +172,11 @@ export class Inspector {
     if (type === 'element') kids.push(this.field('HTML element', this.text('doc-tag', doc.meta?.htmlTag, v => d.updateDoc({ meta: { ...doc.meta, htmlTag: v.trim() } }), { placeholder: 'button, input, div…' })));
     kids.push(
       h('div', { class: 'grid2' },
-        this.field('Visibility', this.select('doc-vis', doc.visibility || 'public', [['public', '🌐 Public (all projects)'], ['project', '📁 Project-only']], v => d.updateDoc({ visibility: v, projectId: state.currentProjectId || doc.projectId || 1 }))),
+        this.field('Visibility', this.select('doc-vis', doc.visibility || 'public', [
+          ['public', '🌐 Public (all users)'],
+          ['private', '👤 Private (all my projects)'],
+          ['project', '📁 Project-only']
+        ], v => d.updateDoc({ visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 }))),
         this.field('Lock design', h('label', { class: 'row', style: { paddingTop: '5px' } }, h('input', { type: 'checkbox', checked: !!doc.locked, onchange: e => d.updateDoc({ locked: e.target.checked }) }), h('span', {}, doc.locked ? '🔒 Locked' : '🔓 Editable')))
       ),
       h('div', { class: 'row wrap', style: { fontSize: '11px' } },

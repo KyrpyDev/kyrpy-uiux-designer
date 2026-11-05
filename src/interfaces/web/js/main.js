@@ -157,10 +157,15 @@ function menuDef() {
       '-',
       ...(state.projects || []).map(p => [`${tick(p.id === state.activeProjectId)}|Project: ${p.name} (${p.visibility})`, () => setActiveProject(p.id)]),
       '-',
-      ['Set Open Design to Public', async () => {
+      ['Set Open Design to Public (All Users)', async () => {
         if (!curDoc) return toast('Open a design first', 'error');
         await d().patchRecord({ visibility: 'public' });
         toast(`"${curDoc.name}" is now PUBLIC`, 'ok');
+      }],
+      ['Set Open Design to Private (My Global Library — All My Projects)', async () => {
+        if (!curDoc) return toast('Open a design first', 'error');
+        await d().patchRecord({ visibility: 'private' });
+        toast(`"${curDoc.name}" is now PRIVATE (Global Library)`, 'ok');
       }],
       ['Set Open Design to Project-Specific', async () => {
         if (!curDoc) return toast('Open a design first', 'error');
@@ -613,6 +618,10 @@ function renderMode() {
 
 async function boot() {
   const b = await api.bootstrap();
+  if (!b.authenticated && api.getSession()?.token) {
+    api.setSession({ token: null, userId: b.user?.id || 1 });
+  }
+  if (b.user) state.user = b.user;
   state.settings = b.settings; state.themes = b.themes; state.devices = b.devices; state.counts = b.counts; state.themeKey = b.settings.theme;
   state.authConfig = b.authConfig || { appMode: 'dev', bypassLogin: true, requireAuth: false };
   state.trashCount = b.trashCount ?? b.counts?.trash ?? 0;

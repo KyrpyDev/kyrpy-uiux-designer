@@ -44,7 +44,7 @@ const toLink = r => r && ({ id: r.id, workflowId: r.workflow_id, fromScreenId: r
 
 export class WorkflowRepository {
   constructor(db, sync = null) { this.db = db; this.sync = sync; }
-  list({ q = '', projectId = null, projectIds = null, visibility = '', includePublic = true } = {}) {
+  list({ q = '', projectId = null, projectIds = null, visibility = '', creatorId = null, actorId = null, includePublic = true, includePrivate = true } = {}) {
     const where = [], args = [];
     const pIds = Array.isArray(projectIds) && projectIds.length
       ? projectIds.map(Number).filter(n => n > 0)
@@ -53,17 +53,43 @@ export class WorkflowRepository {
         : projectId != null && projectId !== ''
           ? [Number(projectId)]
           : [];
+    const effUserId = creatorId != null && creatorId !== ''
+      ? Number(creatorId)
+      : (actorId != null && actorId !== '' ? Number(actorId) : null);
     if (q) { where.push('(w.key LIKE ? OR w.name LIKE ? OR w.label LIKE ? OR w.description_dev LIKE ?)'); const l = `%${q}%`; args.push(l, l, l, l); }
-    if (visibility) {
-      where.push('w.visibility = ?'); args.push(visibility);
-      if (visibility === 'project' && pIds.length) {
+    const vis = visibility === 'all' ? '' : visibility;
+    if (vis) {
+      where.push('w.visibility = ?'); args.push(vis);
+      if (vis === 'project' && pIds.length) {
         where.push(`w.project_id IN (${pIds.map(() => '?').join(',')})`);
         args.push(...pIds);
+      } else if (vis === 'private' && effUserId) {
+        where.push('w.creator_id = ?');
+        args.push(effUserId);
       }
     } else if (pIds.length) {
       const ph = pIds.map(() => '?').join(',');
-      if (includePublic !== false) { where.push(`(w.visibility = 'public' OR w.project_id IN (${ph}))`); args.push(...pIds); }
-      else { where.push(`w.project_id IN (${ph})`); args.push(...pIds); }
+      const clauses = [`(w.visibility = 'project' AND w.project_id IN (${ph}))`];
+      args.push(...pIds);
+      if (includePublic !== false) {
+        clauses.push(`w.visibility = 'public'`);
+      }
+      if (includePrivate !== false) {
+        if (effUserId) {
+          clauses.push(`(w.visibility = 'private' AND w.creator_id = ?)`);
+          args.push(effUserId);
+        } else {
+          clauses.push(`w.visibility = 'private'`);
+        }
+      }
+      where.push(`(${clauses.join(' OR ')})`);
+    } else if (actorId != null && actorId !== '' && (creatorId == null || creatorId === '')) {
+      where.push(`(w.visibility != 'private' OR w.creator_id = ?)`);
+      args.push(Number(actorId));
+    }
+    if (creatorId != null && creatorId !== '' && vis !== 'private') {
+      where.push('w.creator_id = ?');
+      args.push(Number(creatorId));
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db.prepare(`SELECT w.*, (SELECT COUNT(*) FROM workflow_screens s WHERE s.workflow_id = w.id) AS screen_count,

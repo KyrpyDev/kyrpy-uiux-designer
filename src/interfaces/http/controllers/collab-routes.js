@@ -144,12 +144,15 @@ export function collabRoutes(router, c) {
     })
   );
 
-  // ---- Copy / Move to Projects (with Cascading Sub-Items) & Empty Project Private Library ----
+  // ---- Copy / Move / Multi-Target Save to Projects (with Cascading Sub-Items) & Empty Project Private Library ----
   router.post('/api/library/copy-to-projects', ({ body, actor }) =>
     c.libraryTransfer.copyToProjects({ ...(body || {}), actor })
   );
   router.post('/api/library/move-to-projects', ({ body, actor }) =>
     c.libraryTransfer.moveToProjects({ ...(body || {}), actor })
+  );
+  router.post('/api/library/save-to-targets', ({ body, actor }) =>
+    c.libraryTransfer.saveAsToTargets({ ...(body || {}), actor })
   );
   router.post('/api/projects/:id/empty-library', ({ params, body, actor }) =>
     c.libraryTransfer.emptyProjectLibrary({

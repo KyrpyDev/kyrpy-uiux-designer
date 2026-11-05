@@ -19,14 +19,17 @@ const T = ':types(paths|icons|buttons|elements|screens)';
 export function designRoutes(router, c) {
   const svc = p => c.services[PLURAL_TO_TYPE[p.types]];
 
-  router.get(`/api/${T}`, ({ params, query }) =>
+  router.get(`/api/${T}`, ({ params, query, actor }) =>
     svc(params).list({
       q: query.get('q') || '',
       category: query.get('category') || '',
       projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
       projectIds: query.get('projectIds') || null,
       visibility: query.get('visibility') || '',
-      includePublic: query.get('includePublic') !== '0'
+      creatorId: query.get('creatorId') ? Number(query.get('creatorId')) : null,
+      actorId: actor?.id ?? null,
+      includePublic: query.get('includePublic') !== '0',
+      includePrivate: query.get('includePrivate') !== '0'
     })
   );
   router.get(`/api/${T}/categories`, ({ params }) => svc(params).categories());
@@ -81,12 +84,15 @@ export function designRoutes(router, c) {
   router.put('/api/buttons/:id/menu/items/:iid', ({ params, body }) => c.menus.updateItem(params.iid, body));
   router.delete('/api/buttons/:id/menu/items/:iid', ({ params }) => c.menus.removeItem(params.iid));
 
-  router.get('/api/library', ({ query }) => {
+  router.get('/api/library', ({ query, actor }) => {
     const filter = {
       projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
       projectIds: query.get('projectIds') || null,
       visibility: query.get('visibility') || '',
-      includePublic: query.get('includePublic') !== '0'
+      creatorId: query.get('creatorId') ? Number(query.get('creatorId')) : null,
+      actorId: actor?.id ?? null,
+      includePublic: query.get('includePublic') !== '0',
+      includePrivate: query.get('includePrivate') !== '0'
     };
     return {
       paths: c.services.path.listFull(filter),

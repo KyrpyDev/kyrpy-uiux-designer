@@ -58,7 +58,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
         const headerProjectId = req.headers['x-project-id'] ? Number(req.headers['x-project-id']) : null;
         let actor;
         if (container.auth) {
-          if (token && !url.pathname.startsWith('/api/auth/')) {
+          if (token && !url.pathname.startsWith('/api/auth/') && url.pathname !== '/api/bootstrap') {
             actor = container.auth.resolveActor({ token, allowDefault: false });
             if (!actor) throw new DomainError('Invalid or expired session token', 'UNAUTHORIZED', 401);
           } else {

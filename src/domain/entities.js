@@ -30,7 +30,7 @@ export const PLURAL_TO_TYPE = Object.fromEntries(Object.entries(TYPES).map(([k, 
 export const NODE_TAGS = ['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon', 'text', 'g', 'use'];
 export const NODE_KINDS = ['shape', 'text', 'group', 'instance'];
 
-export const VISIBILITY_LEVELS = ['public', 'project'];
+export const VISIBILITY_LEVELS = ['public', 'private', 'project'];
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];
 export const PROJECT_ROLES = ['owner', 'admin', 'editor', 'contributor', 'viewer'];
 

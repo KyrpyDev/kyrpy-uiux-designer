@@ -103,10 +103,13 @@ export class LibraryPanel {
     const vf = state.visibilityFilter || 'all';
     const selProjects = state.selectedProjectIds;
     const activePid = Number(state.activeProjectId || state.currentProjectId || 1);
+    const curUserId = Number(state.user?.id || 1);
     return (list || []).filter(d => {
       const vis = d.visibility || 'public';
       if (vf === 'public' && vis !== 'public') return false;
+      if (vf === 'private' && (vis !== 'private' || Number(d.creatorId || 1) !== curUserId)) return false;
       if (vf === 'project' && vis !== 'project') return false;
+      if (vis === 'private' && Number(d.creatorId || 1) !== curUserId) return false;
       if (vis === 'project' && d.projectId) {
         if (selProjects && selProjects.size > 0) {
           if (!selProjects.has(Number(d.projectId))) return false;
@@ -121,8 +124,8 @@ export class LibraryPanel {
   visBar(onChange) {
     const cur = state.visibilityFilter || 'all';
     const set = v => { state.visibilityFilter = v; onChange(); };
-    return h('div', { class: 'cats lib-vis-filter', title: 'Filter by public or project-specific visibility' },
-      [['all', 'All items'], ['public', '🌐 Public'], ['project', '📁 Project-only']].map(([k, lbl]) =>
+    return h('div', { class: 'cats lib-vis-filter', title: 'Filter by public, private (user global library), or project-specific visibility' },
+      [['all', 'All items'], ['public', '🌐 Public'], ['private', '👤 Private'], ['project', '📁 Project-only']].map(([k, lbl]) =>
         h('button', { class: `cat${cur === k ? ' on' : ''}`, dataset: { visFilter: k }, onclick: () => set(k) }, lbl)
       )
     );
@@ -232,25 +235,30 @@ export class LibraryPanel {
   }
 
   toolbar(type, rec) {
+    const canMove = !rec.builtin && Number(rec.creatorId || 1) === Number(state.user?.id || 1);
     return h('div', { class: 'tb' },
       h('button', { title: 'Open in its designer', onclick: e => { e.stopPropagation(); this.app.openDesign(type, rec.id); } }, '✎'),
       h('button', {
-        title: 'Copy to projects… (as private item, cascades sub-items)',
+        title: 'Copy to projects… (cascades sub-items)',
         onclick: e => {
           e.stopPropagation();
           openCopyMoveToProjectsModal({
-            items: [{ type, id: rec.id, name: rec.name, key: rec.key }],
+            items: [{ type, id: rec.id, name: rec.name, key: rec.key, builtin: rec.builtin, creatorId: rec.creatorId }],
             mode: 'copy',
             onDone: () => { if (type === 'screen') this.screensList = null; this.renderBody(); }
           });
         }
       }, '📥'),
       h('button', {
-        title: 'Move to projects… (as private item, cascades sub-items)',
+        disabled: !canMove,
+        title: canMove
+          ? 'Move to your projects… (cascades sub-items)'
+          : 'Default basic items and items owned by other users cannot be moved (only copied)',
         onclick: e => {
           e.stopPropagation();
+          if (!canMove) return;
           openCopyMoveToProjectsModal({
-            items: [{ type, id: rec.id, name: rec.name, key: rec.key }],
+            items: [{ type, id: rec.id, name: rec.name, key: rec.key, builtin: rec.builtin, creatorId: rec.creatorId }],
             mode: 'move',
             onDone: () => { if (type === 'screen') this.screensList = null; this.renderBody(); }
           });
@@ -511,7 +519,7 @@ export class LibraryPanel {
         h('div', { class: 'grow' },
           h('div', { class: 'row' },
             h('b', {}, w.name),
-            h('span', { class: 'badge' }, w.visibility === 'project' ? '📁 Project' : '🌐 Public')
+            h('span', { class: 'badge' }, w.visibility === 'project' ? '📁 Project' : w.visibility === 'private' ? '👤 Private' : '🌐 Public')
           ),
           h('div', { class: 'dim' }, `${w.screenCount} screens · ${w.linkCount} links · ${w.key}`)
         ),
@@ -521,7 +529,7 @@ export class LibraryPanel {
           onclick: e => {
             e.stopPropagation();
             openCopyMoveToProjectsModal({
-              items: [{ type: 'workflow', id: w.id, name: w.name, key: w.key }],
+              items: [{ type: 'workflow', id: w.id, name: w.name, key: w.key, creatorId: w.creatorId }],
               mode: 'copy',
               onDone: () => this.loadWorkflows()
             });
@@ -529,11 +537,15 @@ export class LibraryPanel {
         }, '📥'),
         h('button', {
           class: 'icon-btn',
-          title: 'Move workflow (and its screens + sub-items) to projects…',
+          disabled: Number(w.creatorId || 1) !== Number(state.user?.id || 1),
+          title: Number(w.creatorId || 1) === Number(state.user?.id || 1)
+            ? 'Move workflow (and its screens + sub-items) to your projects…'
+            : 'Workflows owned by other users cannot be moved (only copied)',
           onclick: e => {
             e.stopPropagation();
+            if (Number(w.creatorId || 1) !== Number(state.user?.id || 1)) return;
             openCopyMoveToProjectsModal({
-              items: [{ type: 'workflow', id: w.id, name: w.name, key: w.key }],
+              items: [{ type: 'workflow', id: w.id, name: w.name, key: w.key, creatorId: w.creatorId }],
               mode: 'move',
               onDone: () => this.loadWorkflows()
             });
