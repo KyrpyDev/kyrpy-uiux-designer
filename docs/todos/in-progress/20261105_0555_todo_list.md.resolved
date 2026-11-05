@@ -1,0 +1,16 @@
+# user-prompt
+
+```
+update to add filter for workflow public / project specific buttons
+add copy to, move to projects (user can select items to be move/copy into several projects as private item) tool for all type of items at mouse over toolbar, this is needed for moving items. add empty item library tool for project's private library, default libraries cannot be emtied they are immutable. add select non select reverse selection tools for libraries to select one or more items to copy/move to (popsup a new modal window with %90 wide of screen includes item browser only) any projects. at top bar projects multi selection dropdown with create new project button. center canvas full item browser wsith selection check box per item (path,icon,button,element,screen,workflow)
+add undo redo delete tools on edit pages if not exists
+i've accidentally removed scan list screen from the main database, recreate it as public default, all deleted items will goes to trash first, add a new feature such as trash management un top bar menu
+all new elements dropped into edit canvas should go at top, also when mouse over the elements boundary lines show move mouse icon
+if a screen is moved or copied to a project all sub items also copied to project's sub items. only admin or superadmin can trash and purge  public items.
+```
+
+## 2. Orchestration Plan (`@kyrpy-gru` -> `@kyrpy-dev-team` -> `@kyrpy-testusers-team`)
+
+- [ ] **Task 1: Database Schema & Backend Services (`Trash`, `Copy/Move to Projects` with Cascading Sub-Items, `Empty Private Library`, Public Item Admin Guard, & `Scan list` Public Default Restoration)**
+- [ ] **Task 2: Frontend UI — Workflow Filters, Mouse-Over Copy/Move Tools, Selection Bars, 90%-Wide Item Browser Modal, Center Canvas Item Browser, Topbar Multi-Project Dropdown, Trash Modal, Undo/Redo/Delete on Workflow Designer, & Drop-at-Top / Boundary Move Cursor**
+- [ ] **Task 3: Automated Tests (`npm test`) & Live Playwright Verification**

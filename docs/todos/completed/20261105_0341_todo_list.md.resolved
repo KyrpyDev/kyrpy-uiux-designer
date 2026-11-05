@@ -1,0 +1,11 @@
+# user-prompt
+
+```
+kyrpy-gru continue for user yests
+```
+
+## 2. Orchestration Plan (`@kyrpy-gru` -> `@kyrpy-testusers-team` -> `@kyrpy-dev-team`)
+
+- [x] **Task 1: Dispatch `@kyrpy-testusers-team` Multi-Persona Live Runtime & Browser/API Stress Testing**
+- [x] **Task 2: Fix All Discovered Findings & Edge-Case Defects via `@kyrpy-dev-team`**
+- [x] **Task 3: Synthesize Multi-Persona Evaluation Report (`docs/tests/persona_evaluation_report.md`) & Final Verification**

@@ -1,0 +1,319 @@
+/**
+ * HTTP client for the designer API with:
+ *  - Session token & active user/project headers (`Authorization: Bearer`, `x-user-id`, `x-project-id`)
+ *  - Offline-first browser `localStorage` read cache & mutation outbox replay
+ *  - Full endpoints for Auth, User/ACL management, Projects, Collaborators, Change Requests,
+ *    Lineage, Editable Templates (Devices & Buttons), Translations, and PostgreSQL Sync.
+ */
+export class ApiError extends Error {
+  constructor(message, info) {
+    super(message);
+    this.info = info;
+  }
+}
+
+const STORAGE_TOKEN = 'ud_auth_token';
+const STORAGE_USER_ID = 'ud_user_id';
+const STORAGE_PROJECT_ID = 'ud_active_project_id';
+const STORAGE_CACHE_PREFIX = 'ud_cache_v2:';
+const STORAGE_OUTBOX = 'ud_offline_outbox_v2';
+
+function safeStorageGet(key) {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key, val) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (val === null || val === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, val);
+  } catch {
+    // quota or storage disabled
+  }
+}
+
+export function getAuthSession() {
+  return {
+    token: safeStorageGet(STORAGE_TOKEN),
+    userId: Number(safeStorageGet(STORAGE_USER_ID)) || 1,
+    projectId: Number(safeStorageGet(STORAGE_PROJECT_ID)) || 1
+  };
+}
+
+export function setAuthSession({ token, userId, projectId } = {}) {
+  if (token !== undefined) safeStorageSet(STORAGE_TOKEN, token || null);
+  if (userId !== undefined) safeStorageSet(STORAGE_USER_ID, userId ? String(userId) : '1');
+  if (projectId !== undefined) safeStorageSet(STORAGE_PROJECT_ID, projectId ? String(projectId) : '1');
+}
+
+export function getOfflineOutbox() {
+  try {
+    const raw = safeStorageGet(STORAGE_OUTBOX);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOfflineOutbox(items) {
+  safeStorageSet(STORAGE_OUTBOX, JSON.stringify(items.slice(-200)));
+}
+
+async function req(method, url, body) {
+  const { token, userId, projectId } = getAuthSession();
+  const headers = {
+    'x-user-id': String(userId || 1),
+    'x-project-id': String(projectId || 1)
+  };
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (body !== undefined) headers['content-type'] = 'application/json';
+
+  try {
+    const r = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    const ct = r.headers.get('content-type') || '';
+    const data = ct.includes('json') ? await r.json() : await r.text();
+    if (!r.ok) throw new ApiError(data?.error?.message || r.statusText, data?.error);
+
+    if (method === 'GET' && ct.includes('json')) {
+      safeStorageSet(STORAGE_CACHE_PREFIX + url, JSON.stringify(data));
+    }
+    return data;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    // Network / offline fallback
+    if (method === 'GET') {
+      const cached = safeStorageGet(STORAGE_CACHE_PREFIX + url);
+      if (cached) {
+        try {
+          return JSON.parse(cached);
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      const box = getOfflineOutbox();
+      box.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), method, url, body, queuedAt: new Date().toISOString() });
+      saveOfflineOutbox(box);
+    }
+    throw err;
+  }
+}
+
+const PLURAL = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens' };
+
+export const api = {
+  get: u => req('GET', u),
+  post: (u, b = {}) => req('POST', u, b),
+  put: (u, b = {}) => req('PUT', u, b),
+  patch: (u, b = {}) => req('PATCH', u, b),
+  del: u => req('DELETE', u),
+
+  getSession: getAuthSession,
+  setSession: setAuthSession,
+  outbox: getOfflineOutbox,
+  flushOutbox: async () => {
+    const queue = getOfflineOutbox();
+    if (!queue.length) return { flushed: 0, remaining: 0 };
+    const remaining = [];
+    let flushed = 0;
+    for (const item of queue) {
+      try {
+        await req(item.method, item.url, item.body);
+        flushed++;
+      } catch {
+        remaining.push(item);
+      }
+    }
+    saveOfflineOutbox(remaining);
+    return { flushed, remaining: remaining.length };
+  },
+
+  bootstrap: () => api.get('/api/bootstrap'),
+  library: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.projectId) qs.set('projectId', String(params.projectId));
+    if (params.projectIds && params.projectIds.length) qs.set('projectIds', Array.isArray(params.projectIds) ? params.projectIds.join(',') : String(params.projectIds));
+    if (params.visibility) qs.set('visibility', params.visibility);
+    if (params.includePublic !== undefined) qs.set('includePublic', params.includePublic ? '1' : '0');
+    const s = qs.toString();
+    return api.get(`/api/library${s ? `?${s}` : ''}`);
+  },
+  settings: patch => api.put('/api/settings', patch),
+
+  list: (type, q = '', opts = {}) => {
+    const qs = new URLSearchParams();
+    if (q) qs.set('q', q);
+    if (opts.projectId) qs.set('projectId', String(opts.projectId));
+    if (opts.projectIds && opts.projectIds.length) qs.set('projectIds', Array.isArray(opts.projectIds) ? opts.projectIds.join(',') : String(opts.projectIds));
+    if (opts.visibility) qs.set('visibility', opts.visibility);
+    if (opts.includePublic !== undefined) qs.set('includePublic', opts.includePublic ? '1' : '0');
+    const s = qs.toString();
+    return api.get(`/api/${PLURAL[type]}${s ? `?${s}` : ''}`);
+  },
+  getDesign: (type, id) => api.get(`/api/${PLURAL[type]}/${id}`),
+  getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
+  createDesign: (type, body) => api.post(`/api/${PLURAL[type]}`, body),
+  updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body),
+  deleteDesign: (type, id) => api.del(`/api/${PLURAL[type]}/${id}`),
+  cloneDesign: (type, id, nameOrBody) =>
+    api.post(
+      `/api/${PLURAL[type]}/${id}/clone`,
+      typeof nameOrBody === 'string' ? { name: nameOrBody } : nameOrBody || {}
+    ),
+  restoreDesign: (type, id, snap) => api.post(`/api/${PLURAL[type]}/${id}/restore`, snap),
+  restoreWorkflow: (id, snap) => api.post(`/api/workflows/${id}/restore`, snap),
+  replaceNodes: (type, id, nodes) => api.put(`/api/${PLURAL[type]}/${id}/nodes`, { nodes }),
+  addNode: (type, id, el) => api.post(`/api/${PLURAL[type]}/${id}/nodes`, el),
+  patchNode: (type, id, eid, patch) => api.patch(`/api/${PLURAL[type]}/${id}/nodes/${eid}`, patch),
+  deleteNode: (type, id, eid) => api.del(`/api/${PLURAL[type]}/${id}/nodes/${eid}`),
+  duplicateNode: (type, id, eid) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/duplicate`, {}),
+  addAnimation: (type, id, eid, a) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/animations`, a),
+  updateAnimation: (type, id, aid, a) => api.put(`/api/${PLURAL[type]}/${id}/animations/${aid}`, a),
+  deleteAnimation: (type, id, aid) => api.del(`/api/${PLURAL[type]}/${id}/animations/${aid}`),
+  svgUrl: (type, id, params = {}) => `/api/${PLURAL[type]}/${id}/svg?${new URLSearchParams(params)}`,
+  importSvg: body => api.post('/api/import/svg', body),
+  importFolders: () => api.get('/api/import/folders'),
+  importFolder: body => api.post('/api/import/folder', body),
+  importFont: body => api.post('/api/import/font', body),
+
+  // button menus (popup / rotating): nested items + settings
+  menu: id => api.get(`/api/buttons/${id}/menu`),
+  menuConfig: (id, cfg) => api.put(`/api/buttons/${id}/menu/config`, cfg),
+  addMenuItem: (id, item) => api.post(`/api/buttons/${id}/menu/items`, item),
+  updateMenuItem: (id, iid, patch) => api.put(`/api/buttons/${id}/menu/items/${iid}`, patch),
+  deleteMenuItem: (id, iid) => api.del(`/api/buttons/${id}/menu/items/${iid}`),
+
+  themes: () => api.get('/api/themes'),
+  saveTheme: (id, body) => api.put(`/api/themes/${id}`, body),
+  createTheme: body => api.post('/api/themes', body),
+  cloneTheme: (id, name) => api.post(`/api/themes/${id}/clone`, { name }),
+  deleteTheme: id => api.del(`/api/themes/${id}`),
+
+  workflows: (opts = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.q) qs.set('q', opts.q);
+    if (opts.projectId) qs.set('projectId', String(opts.projectId));
+    if (opts.projectIds && opts.projectIds.length) qs.set('projectIds', Array.isArray(opts.projectIds) ? opts.projectIds.join(',') : String(opts.projectIds));
+    if (opts.visibility) qs.set('visibility', opts.visibility);
+    if (opts.includePublic !== undefined) qs.set('includePublic', opts.includePublic ? '1' : '0');
+    const s = qs.toString();
+    return api.get(`/api/workflows${s ? `?${s}` : ''}`);
+  },
+  workflow: id => api.get(`/api/workflows/${id}`),
+  createWorkflow: b => api.post('/api/workflows', b),
+  updateWorkflow: (id, b) => api.put(`/api/workflows/${id}`, b),
+  deleteWorkflow: id => api.del(`/api/workflows/${id}`),
+  cloneWorkflow: (id, nameOrBody) =>
+    api.post(`/api/workflows/${id}/clone`, typeof nameOrBody === 'string' ? { name: nameOrBody } : nameOrBody || {}),
+  placeScreen: (id, b) => api.put(`/api/workflows/${id}/screens`, b),
+  removeWfScreen: (id, sid) => api.del(`/api/workflows/${id}/screens/${sid}`),
+  addLink: (id, b) => api.post(`/api/workflows/${id}/links`, b),
+  updateLink: (id, lid, b) => api.put(`/api/workflows/${id}/links/${lid}`, b),
+  deleteLink: (id, lid) => api.del(`/api/workflows/${id}/links/${lid}`),
+
+  exportBundle: b => api.post('/api/export/bundle', b),
+  exportFolder: b => api.post('/api/export/folder', b),
+
+  // ---- Auth & Users ----
+  login: body => api.post('/api/auth/login', body),
+  register: body => api.post('/api/auth/register', body),
+  logout: () => api.post('/api/auth/logout', {}),
+  me: () => api.get('/api/auth/me'),
+  users: () => api.get('/api/users'),
+  createUser: body => api.post('/api/users', body),
+  updateUser: (id, body) => api.put(`/api/users/${id}`, body),
+  deleteUser: id => api.del(`/api/users/${id}`),
+  aclMatrix: () => api.get('/api/acl/matrix'),
+
+  // ---- Projects & Collaborators ----
+  projects: (q = '') => api.get(`/api/projects${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  project: id => api.get(`/api/projects/${id}`),
+  createProject: body => api.post('/api/projects', body),
+  updateProject: (id, body) => api.put(`/api/projects/${id}`, body),
+  deleteProject: id => api.del(`/api/projects/${id}`),
+  setProjectItemsVisibility: (id, visibility) => api.post(`/api/projects/${id}/visibility`, { visibility }),
+  inviteProjectMember: (id, body) => api.post(`/api/projects/${id}/members`, body),
+  updateProjectMember: (id, uid, role) => api.put(`/api/projects/${id}/members/${uid}`, { role }),
+  removeProjectMember: (id, uid) => api.del(`/api/projects/${id}/members/${uid}`),
+
+  // ---- Collaborative Change List (Approve / Reject) ----
+  changes: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/changes${s ? `?${s}` : ''}`);
+  },
+  change: id => api.get(`/api/changes/${id}`),
+  createChange: body => api.post('/api/changes', body),
+  approveChange: (id, comment = '') => api.post(`/api/changes/${id}/approve`, { comment }),
+  rejectChange: (id, comment = '') => api.post(`/api/changes/${id}/reject`, { comment }),
+
+  // ---- Editable Templates (Devices & Buttons) ----
+  templateDevices: (projectId = null) =>
+    api.get(`/api/templates/devices${projectId ? `?projectId=${projectId}` : ''}`),
+  saveTemplateDevice: body => (body.id ? api.put(`/api/templates/devices/${body.id}`, body) : api.post('/api/templates/devices', body)),
+  deleteTemplateDevice: id => api.del(`/api/templates/devices/${id}`),
+
+  templateButtons: (projectId = null) =>
+    api.get(`/api/templates/buttons${projectId ? `?projectId=${projectId}` : ''}`),
+  saveTemplateButton: body => (body.id ? api.put(`/api/templates/buttons/${body.id}`, body) : api.post('/api/templates/buttons', body)),
+  deleteTemplateButton: id => api.del(`/api/templates/buttons/${id}`),
+  instantiateTemplateButton: (id, body = {}) => api.post(`/api/templates/buttons/${id}/instantiate`, body),
+
+  // ---- Translations ----
+  translations: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/translations${s ? `?${s}` : ''}`);
+  },
+  saveTranslation: body => api.post('/api/translations', body),
+  deleteTranslation: id => api.del(`/api/translations/${id}`),
+  languages: () => api.get('/api/translations/languages'),
+
+  // ---- PostgreSQL Sync ----
+  syncStatus: () => api.get('/api/sync/status'),
+  syncNow: (body = {}) => api.post('/api/sync/now', body),
+  syncPush: (body = {}) => api.post('/api/sync/push', body),
+  syncPull: () => api.post('/api/sync/pull', {}),
+
+  // ---- Trash Management ----
+  trashList: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/trash${s ? `?${s}` : ''}`);
+  },
+  trashRestore: id => api.post(`/api/trash/${id}/restore`, {}),
+  trashPurge: id => api.del(`/api/trash/${id}`),
+  trashEmpty: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.del(`/api/trash${s ? `?${s}` : ''}`);
+  },
+
+  // ---- Copy / Move to Projects & Empty Private Library ----
+  copyToProjects: body => api.post('/api/library/copy-to-projects', body),
+  moveToProjects: body => api.post('/api/library/move-to-projects', body),
+  emptyProjectLibrary: (projectId, body = {}) =>
+    projectId
+      ? api.post(`/api/projects/${projectId}/empty-library`, body)
+      : api.post('/api/library/empty', body)
+};

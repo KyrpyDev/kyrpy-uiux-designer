@@ -1,0 +1,1350 @@
+/**
+ * Canvas editor used by every designer: path, icon, button, element and screen.
+ * Renders with the shared domain renderer, edits through the API, saves on every change.
+ * Interactions: infinite pan/zoom, drag from the library (hierarchy rules apply), move/resize with grid + 9-point snapping,
+ * bounding box that scales its contents, marquee select, vertex editing of paths, live button menus, undo/redo.
+ */
+import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
+import { api } from '../api.js';
+import { state, renderContext, currentTheme, findDesign, libOf } from '../state.js';
+import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
+import { renderDocument, renderIconDocument } from '/domain/svg.js';
+import { nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet } from '/domain/geometry.js';
+import { defaultAnimation } from '/domain/animation.js';
+import { DEVICES, TYPES, canContain } from '/domain/entities.js';
+import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
+import { updateSettings, openGuide, reloadLibrary } from '../actions.js';
+import { VertexEditor } from './vertex-editor.js';
+import { MenuEditor, menuActions } from './menu-editor.js';
+import { PenTool } from './pen-tool.js';
+import { installPathTools } from './designer-pathtools.js';
+import { installTestActions } from './designer-test-actions.js';
+import { openEventsModal, openLineageModal } from './collab-modals.js';
+import { openCopyMoveToProjectsModal } from './item-browser.js';
+
+const TOOLS = [
+  ['select', 'V', '⌖', 'Select / move'],
+  ['node', 'N', '✦', 'Vertex editing of the selected path (Enter)'],
+  ['rect', 'R', '▭', 'Rectangle'],
+  ['circle', 'C', '◯', 'Circle'],
+  ['ellipse', 'E', '⬭', 'Ellipse'],
+  ['polygon', 'G', '⬡', 'Polygon / Hexagon'],
+  ['star', 'W', '★', 'Star (5-point)'],
+  ['arrow', 'A', '➔', 'Arrow shape'],
+  ['callout', 'Q', '💬', 'Callout bubble'],
+  ['freehand', 'F', '✍', 'Freehand draw'],
+  ['line', 'L', '╱', 'Line'],
+  ['pen', 'B', '🖊', 'Pen: click for corners, click-drag for curves, click the first point to close, Enter or right-click to finish'],
+  ['text', 'T', 'T', 'Text'],
+  ['crop', 'X', '⛶', 'Crop: drag a rectangle, the selected shapes keep only what is inside it'],
+  ['path', 'P', '✎', 'New path (enter the d attribute)']
+];
+const MIN_Z = 0.04, MAX_Z = 80;
+const GLYPH = new Set(['path', 'icon']);
+const deep = o => JSON.parse(JSON.stringify(o));
+const NAMES = { path: 'Path designer', icon: 'Icon designer', button: 'Button designer', element: 'Element designer', screen: 'Screen designer' };
+
+export class Designer {
+  /**
+   * @param {HTMLElement} root
+   * @param {{onClose?:Function, openDesign?:(type,id)=>void, onBack?:Function, canBack?:()=>boolean, modal?:boolean}} opts
+   *   onBack/canBack show the Back button; modal = inside a dialog (Save as stays in the library instead of opening the copy)
+   */
+  constructor(root, opts = {}) {
+    this.root = root; this.opts = opts; this.api = api;
+    this.type = null; this.doc = null;
+    this.baseline = null; this.baselineFp = ''; this.dirty = false;   // last saved version of the open design
+    this.selected = new Set();
+    this.hoveredNodeId = null;
+    this.tool = 'select';
+    this.view = { tx: 0, ty: 0, z: 1 };
+    this.undoStack = []; this.redoStack = [];
+    this.listeners = new Map();
+    this.guides = []; this.marquee = null; this.ghost = null;
+    this.dragging = false; this.inspectorOpen = true; this.scaleContent = true; this.menuLive = false; this.actionsLive = false; this.pv = null; this.tbPv = null;
+    this.build();
+    this.vtx = new VertexEditor(this);
+    this.menu = new MenuEditor(this);
+    this.pen = new PenTool(this);
+  }
+
+  on(evt, fn) { if (!this.listeners.has(evt)) this.listeners.set(evt, new Set()); this.listeners.get(evt).add(fn); }
+  emit(evt, data) {
+    if (evt === 'doc' || evt === 'changed' || evt === 'record') this.checkDirty();   // every edit announces itself this way
+    for (const fn of this.listeners.get(evt) || []) fn(data);
+  }
+
+  /* ================= structure ================= */
+  build() {
+    clear(this.root);
+    this.root.classList.add('dz');
+    this.docbar = h('div', { class: 'dz-docbar', role: 'toolbar', 'aria-label': 'Document' });
+    this.bar = h('div', { class: 'dz-bar', role: 'toolbar' });
+    this.viewport = h('div', { class: 'dz-viewport', tabindex: '0', 'aria-label': 'Design canvas' });
+    this.world = h('div', { class: 'dz-world' });
+    this.frame = h('div', { class: 'dz-device-frame' });
+    this.stage = h('div', { class: 'dz-stage' });
+    this.liveLayer = h('div', { class: 'dz-live-layer', hidden: true });
+    this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.overlay.setAttribute('class', 'dz-overlay');
+    this.world.append(this.frame, this.stage, this.liveLayer, this.overlay);
+    this.liveHud = h('div', { class: 'dz-live-hud', hidden: true });
+    this.hoverBar = h('div', { class: 'el-hover-toolbar', hidden: true });
+    this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Hover/right-click element: quick toolbar & events · Del: delete · Enter: edit vertices');
+    this.viewport.append(this.world, this.hoverBar, this.hint);
+    this.inspectorEl = h('aside', { class: 'dz-inspector' });
+    this.body = h('div', { class: 'dz-body' }, this.viewport, this.inspectorEl);
+    this.pathBar = h('div', { class: 'dz-bar dz-pathbar', role: 'toolbar', 'aria-label': 'Path tools' });
+    this.root.append(this.docbar, this.bar, this.pathBar, this.liveHud, this.body);
+    this.bindViewport();
+    new ResizeObserver(() => { if (this.doc && !this.fitted) this.fit(); }).observe(this.viewport);
+  }
+
+  async load(type, id) {
+    const rec = await api.getDesign(type, id);
+    this.vtx?.exit();
+    const keepLive = Boolean((this._keepActionsLive || this.actionsLive) && ['button', 'element', 'screen'].includes(type));
+    this._keepActionsLive = false;
+    this.type = type; this.doc = rec;
+    this.selected = new Set(); this.undoStack = []; this.redoStack = []; this.fitted = false;
+    this.scaleContent = ['button', 'element'].includes(type);
+    this.menuLive = false;
+    this.actionsLive = keepLive;
+    this.root.classList.toggle('actions-live', this.actionsLive);
+    this.closePreview();
+    this.menu.menuState = { open: true, path: [] };
+    this.markBaseline();
+    this.buildBar();
+    this.renderAll();
+    requestAnimationFrame(() => { this.fit(); this.fitted = true; });
+    this.emit('loaded', rec);
+  }
+
+  async reload(keepSelection = true) {
+    const sel = keepSelection ? [...this.selected] : [];
+    this.doc = await api.getDesign(this.type, this.doc.id);
+    this.selected = new Set(sel.filter(i => this.doc.nodes.some(e => e.id === i)));
+    this.renderAll();
+    this.emit('doc', this.doc);
+  }
+
+  /* ================= save / save as / reset =================
+   * Every edit is stored in the database at once (a draft). "Saved" is a bookmark on top of that: the baseline is the version at the
+   * last Save (or when the design was opened). Reset puts the baseline back, Save as copies the current state and puts the original
+   * back to its baseline, and the Save button blinks while the design differs from the baseline. */
+  markBaseline() { this.baseline = deep(this.doc); this.baselineFp = designFingerprint(this.doc); this.dirty = false; this.updateDocBar(); }
+
+  checkDirty() {
+    if (!this.doc || !this.baseline) return;
+    const dirty = designFingerprint(this.doc) !== this.baselineFp;
+    if (dirty === this.dirty) return;
+    this.dirty = dirty; this.updateDocBar(); this.emit('dirty', dirty);
+  }
+
+  buildDocBar() {
+    clear(this.docbar);
+    const o = this.opts;
+    const d = this.doc || {};
+    this.backBtn = o.onBack ? h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => o.onBack() }, '← Back') : null;
+    this.saveBtn = h('button', { class: 'btn small save', title: 'Save (Ctrl+S): keep the current version. The button blinks while there are unsaved changes.', onclick: () => this.save() }, '💾 Save');
+    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name (tracks root owner lineage). This one goes back to its last saved version.', onclick: () => this.saveAs() }, 'Save as…');
+    this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
+    this.docState = h('span', { class: 'doc-state', role: 'status' });
+
+    const visBtn = h('button', {
+      class: 'btn small',
+      title: 'Toggle visibility between Public (shared across all projects) and Project-Specific',
+      onclick: async () => {
+        if (!this.doc) return;
+        const next = this.doc.visibility === 'project' ? 'public' : 'project';
+        await this.updateDoc({ visibility: next, projectId: state.activeProjectId || this.doc.projectId || 1 });
+        this.buildDocBar();
+        toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
+      }
+    }, d.visibility === 'project' ? '📁 Project-Only' : '🌐 Public');
+
+    const lockDocBtn = h('button', {
+      class: `btn small${d.locked ? ' active' : ''}`,
+      title: 'Lock / Unlock positions on this design',
+      onclick: async () => {
+        if (!this.doc) return;
+        await this.updateDoc({ locked: !this.doc.locked });
+        this.buildDocBar();
+        toast(this.doc.locked ? '🔒 Design positions locked' : '🔓 Design positions unlocked', 'ok');
+      }
+    }, d.locked ? '🔒 Locked' : '🔓 Unlocked');
+
+    const lineageBtn = h('button', {
+      class: 'btn small',
+      title: 'View creator & root owner lineage chain',
+      onclick: () => this.doc && openLineageModal(this.type, this.doc.id)
+    }, `🧬 Root: @${d.rootOwnerUsername || d.creatorUsername || 'kyrpy'}${d.clonedFromId ? ` (cloned #${d.clonedFromId})` : ''}`);
+
+    const copyToProjBtn = h('button', {
+      class: 'btn small',
+      title: 'Copy this item (and its sub-items) to one or multiple projects as private item',
+      onclick: () => this.doc && openCopyMoveToProjectsModal({
+        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key }],
+        mode: 'copy'
+      })
+    }, '📥 Copy to…');
+
+    const moveToProjBtn = h('button', {
+      class: 'btn small',
+      title: 'Move this item (and its sub-items) to one or multiple projects as private item',
+      onclick: () => this.doc && openCopyMoveToProjectsModal({
+        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key }],
+        mode: 'move'
+      })
+    }, '📤 Move to…');
+
+    this.docbar.append(...[
+      this.backBtn,
+      this.backBtn ? h('span', { class: 'sep-v' }) : null,
+      this.saveBtn,
+      this.saveAsBtn,
+      this.resetBtn,
+      h('span', { class: 'sep-v' }),
+      visBtn,
+      lockDocBtn,
+      copyToProjBtn,
+      moveToProjBtn,
+      lineageBtn,
+      h('span', { class: 'sep-v' }),
+      this.docState
+    ]);
+    this.updateDocBar();
+  }
+
+  async patchRecord(patch) {
+    return this.updateDoc(patch);
+  }
+
+  updateDocBar() {
+    if (!this.saveBtn) return;
+    this.saveBtn.classList.toggle('dirty', this.dirty);
+    this.resetBtn.disabled = !this.dirty;
+    this.docState.classList.toggle('dirty', this.dirty);
+    this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    this.refreshBack();
+  }
+
+  /** Enables/disables Back and says where it goes (the app calls this whenever the page history changes). */
+  refreshBack() {
+    if (!this.backBtn) return;
+    const target = this.opts.backTarget?.();
+    this.backBtn.disabled = !(this.opts.canBack?.() ?? false);
+    this.backBtn.title = target ? `Back to ${target} (Alt+←)` : 'Back to the previous page (Alt+←)';
+  }
+
+  /** Lets a text field that is still being edited commit its change before we look at the stored design. */
+  async settle() {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && this.docbar.parentElement?.contains(a)) a.blur();
+    await new Promise(r => setTimeout(r, 80));
+  }
+
+  async save() {
+    if (!this.doc) return false;
+    await this.settle();
+    try {
+      await this.reload();
+      const had = designFingerprint(this.doc) !== this.baselineFp;
+      this.markBaseline();
+      await reloadLibrary({ silent: true });
+      this.renderStage();
+      this.emit('saved', this.doc);
+      toast(had ? `Saved "${this.doc.name}"` : `"${this.doc.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+  }
+
+  async reset({ confirm = true } = {}) {
+    if (!this.doc || !this.baseline) return false;
+    if (!this.dirty) { toast('Nothing to reset: no changes since the last save'); return false; }
+    if (confirm && !(await confirmBox(`Throw away every change to "${this.doc.name}" since the last save?`, { okLabel: 'Reset' }))) return false;
+    await this.settle();
+    try {
+      this.vtx.exit(); this.pen.cancel?.();
+      await api.restoreDesign(this.type, this.doc.id, restoreBody(this.baseline));
+      this.undoStack = []; this.redoStack = [];
+      this.menu.menuState = this.menuLive ? { open: false, path: [] } : { open: true, path: [] };
+      await this.reload(false);
+      this.changed();
+      toast('Back to the last saved version', 'ok', 2200);
+      return true;
+    } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }
+  }
+
+  /** The copy gets the current state (unsaved edits included); the original goes back to its last saved version. */
+  async saveAs() {
+    if (!this.doc) return false;
+    const name = await promptBox('Save as', { value: `${this.doc.name} copy`, label: `Name of the new ${TYPES[this.type].label.toLowerCase()}`, okLabel: 'Save as' });
+    if (!name?.trim()) return false;
+    await this.settle();
+    try {
+      const copy = await api.cloneDesign(this.type, this.doc.id, name.trim());
+      const reverted = this.dirty;
+      if (reverted) await api.restoreDesign(this.type, this.doc.id, restoreBody(this.baseline));
+      this.undoStack = []; this.redoStack = []; this.vtx.exit();
+      await this.reload(false);
+      this.changed();
+      await reloadLibrary({ silent: true });
+      toast(`Saved as "${copy.name}"${reverted ? `; "${this.doc.name}" is back to its last saved version` : ''}`, 'ok', 4200);
+      if (!this.opts.modal) this.opts.openDesign?.(this.type, copy.id);
+      return copy;
+    } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }
+  }
+
+  /** Called before the design is replaced or its dialog closes. Resolves true when it is fine to go on. */
+  async confirmLeave() {
+    if (!this.doc || !this.dirty) return true;
+    const c = await choiceBox('Unsaved changes', `"${this.doc.name}" has changes that were not saved. Save them, or go back to the last saved version?`,
+      [{ label: 'Cancel', value: 'cancel' }, { label: 'Discard changes', value: 'discard', kind: 'danger' }, { label: 'Save', value: 'save', kind: 'primary' }]);
+    if (c === 'save') return this.save();
+    if (c === 'discard') return this.reset({ confirm: false });
+    return false;
+  }
+
+  get gridSize() { return TYPES[this.type]?.grid ?? 1; }
+  get nodes() { return this.doc?.nodes || []; }
+  get els() { return this.nodes; }
+  byId(id) { return this.nodes.find(e => e.id === id); }
+  get isGlyph() { return GLYPH.has(this.type); }
+  get boxResizable() { return !TYPES[this.type]?.fixedSize && this.type !== 'screen'; }
+
+  /* ================= toolbar ================= */
+  buildBar() {
+    clear(this.bar);
+    this.buildDocBar();
+    const s = state.settings;
+    const tools = TOOLS.filter(t => !(this.isGlyph && t[0] === 'text'));
+    const tool = ([k, key, glyph, tip]) => h('button', { class: `icon-btn${this.tool === k ? ' active' : ''}`, title: `${tip} (${key})`, dataset: { tool: k }, onclick: () => (k === 'node' ? this.vtx.enter(this.selectedNodes()[0]) : this.setTool(k)) }, glyph);
+    const toggle = (label, tip, get, set) => { const b = h('button', { class: `btn small${get() ? ' active' : ''}`, title: tip, onclick: () => { set(!get()); b.classList.toggle('active', get()); } }, label); return b; };
+    this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
+    const kids = [
+      h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
+      h('b', { style: { padding: '0 8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: this.doc.key }, this.doc.name),
+      h('span', { class: 'sep-v' }), ...tools.map(tool), h('span', { class: 'sep-v' }),
+      h('button', { class: 'icon-btn', title: 'Undo (Ctrl+Z)', onclick: () => this.undo() }, '↶'),
+      h('button', { class: 'icon-btn', title: 'Redo (Ctrl+Y)', onclick: () => this.redo() }, '↷'),
+      h('button', { class: 'icon-btn', title: 'Duplicate (Ctrl+D)', onclick: () => this.duplicateSelected() }, '⧉'),
+      h('button', { class: 'icon-btn', title: 'Delete (Del)', onclick: () => this.deleteSelected() }, '🗑'),
+      h('button', { class: 'icon-btn', title: 'Bring to front', onclick: () => this.reorder('front') }, '⤒'),
+      h('button', { class: 'icon-btn', title: 'Send to back', onclick: () => this.reorder('back') }, '⤓'),
+      h('span', { class: 'sep-v' }),
+      h('button', { class: 'icon-btn', title: 'Zoom out (-)', onclick: () => this.zoomBy(1 / 1.25) }, '−'), this.zoomLabel,
+      h('button', { class: 'icon-btn', title: 'Zoom in (+)', onclick: () => this.zoomBy(1.25) }, '+'),
+      h('button', { class: 'btn small', title: 'Fit (0)', onclick: () => this.fit() }, 'Fit'),
+      h('button', { class: 'btn small', title: 'Actual size', onclick: () => this.setZoom(1) }, '100%'),
+      h('span', { class: 'sep-v' }),
+      toggle('Grid', 'Show grid', () => s.showGrid, v => { updateSettings({ showGrid: v }); this.renderOverlay(); }),
+      toggle('Snap grid', 'Snap to grid', () => s.snapToGrid, v => updateSettings({ snapToGrid: v })),
+      toggle('Snap 9-pt', 'Snap to the 9 reference points (corners, edges, centre)', () => s.snapToAnchors, v => { updateSettings({ snapToAnchors: v }); this.renderOverlay(); }),
+      toggle('Animate', 'Play animations on the canvas', () => state.playAnimations, v => { state.playAnimations = v; this.renderStage(); })
+    ];
+    if (this.boxResizable) kids.push(toggle('Scale contents', 'Resizing the bounding box scales everything inside it', () => this.scaleContent, v => { this.scaleContent = v; }));
+    if (this.type === 'button') kids.push(toggle('Test menu', 'Click the button and its items like in the finished app (off = edit mode, the menu stays open)', () => this.menuLive, v => {
+      this.menuLive = v; this.stage.classList.toggle('menu-live', v || this.actionsLive);
+      this.menu.menuState = v ? { open: false, path: [] } : { open: true, path: [] }; this.renderStage();
+    }));
+    if (['button', 'element', 'screen'].includes(this.type)) {
+      kids.push(
+        h('button', {
+          class: `btn small${this.actionsLive ? ' active' : ''}`,
+          dataset: { act: 'test-actions' },
+          title: 'Interactive Test Actions Mode: test buttons, animations, edit forms, popups/drawers/toolbars, and workflow screen routing (off = edit mode)',
+          onclick: () => this.setTestActions(!this.actionsLive)
+        }, this.actionsLive ? '🟢 Testing Actions' : '▶ Test actions')
+      );
+    }
+    kids.push(h('span', { class: 'grow' }), h('button', { class: 'btn small', title: `How to use the ${NAMES[this.type].toLowerCase()} (F1)`, onclick: () => openGuide(this.type) }, '? Guide'), h('button', { class: 'btn small', title: 'Show/hide the inspector', onclick: () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; } }, 'Inspector'),
+      ...(this.opts.onClose ? [h('button', { class: 'btn small', onclick: () => this.opts.onClose() }, 'Close')] : []));
+    this.bar.append(...kids);
+    this.buildPathBar();
+  }
+
+  setTool(t) {
+    if (this.tool === 'pen' && t !== 'pen') this.pen.cancel();
+    if (t === 'pen' || t === 'crop') this.vtx.exit();
+    this.tool = t;
+    this.bar.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+    this.viewport.style.cursor = t === 'select' ? 'default' : 'crosshair';
+  }
+
+  /* ================= rendering ================= */
+  renderAll() { this.renderStage(); this.renderOverlay(); this.applyView(); this.emit('selection', this.selectedNodes()); }
+
+  animationsForRender() {
+    if (this.dragging) return [];
+    const own = new Set(this.nodes.map(e => e.id));
+    return state.library.animations.filter(a => !own.has(a.nodeId)).concat(this.doc.animations || []);
+  }
+
+  /** Menu rows of the open button with the target screen keys the renderer expects. */
+  menuRows() { return (this.doc.menuItems || []).map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '' })); }
+
+  renderStage() {
+    if (!this.doc) return;
+    const d = this.doc, ctx = renderContext({ editor: true, animations: this.animationsForRender() });
+    const theme = currentTheme();
+    let svg;
+    if (this.isGlyph) svg = renderIconDocument({ icon: d, nodes: d.nodes, ctx, size: 24 });
+    else if (this.type === 'button') {
+      // the live button: its own nodes plus its menu, exactly as it appears when placed on a screen
+      const rows = this.menuRows();
+      ctx.lib.button.set(d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, menu: rows.length ? { cfg: menuConfig(d.meta), items: rows } : null });
+      const inst = [{ id: -1, kind: 'instance', tag: 'use', refType: 'button', refId: d.id, parentId: null, ord: 0, visible: true, attrs: { x: 0, y: 0, width: d.width, height: d.height } }];
+      svg = renderDocument({ owner: d, nodes: inst, ctx, background: false });
+    } else svg = renderDocument({ owner: d, nodes: d.nodes, ctx, background: false });
+    this.stage.innerHTML = svg;      // markup comes from the domain renderer: tags/attributes are whitelisted and escaped
+    this.stage.style.width = `${d.width}px`; this.stage.style.height = `${d.height}px`;
+    this.stage.style.background = 'transparent';
+    this.viewport.style.background = this.type === 'screen' ? '#03050a' : String(theme.tokens.bg);
+    const dev = DEVICES[d.meta?.device];
+    const radius = this.type !== 'screen' ? 0 : (dev && d.meta.device === 'web') ? 8 : 44;
+    Object.assign(this.frame.style, { left: '-14px', top: '-14px', width: `${d.width + 28}px`, height: `${d.height + 28}px`, borderRadius: `${radius + 14}px`,
+      background: '#000', display: this.type === 'screen' ? 'block' : 'none' });
+    this.stage.style.borderRadius = `${radius}px`; this.stage.style.overflow = this.type === 'button' ? 'visible' : 'hidden';
+    this.stage.classList.toggle('menu-live', !!(this.menuLive || this.actionsLive));
+    this.menu.afterRender();
+    this.renderLiveTestLayer?.();
+  }
+
+  worldPoint(ev) {
+    const r = this.viewport.getBoundingClientRect();
+    return { x: (ev.clientX - r.left - this.view.tx) / this.view.z, y: (ev.clientY - r.top - this.view.ty) / this.view.z };
+  }
+
+  selectedNodes() { return this.nodes.filter(e => this.selected.has(e.id)); }
+
+  selectionBox(sel = this.selectedNodes()) {
+    if (!sel.length) return null;
+    const bs = sel.map(e => nodeBBox(e, this.nodes));
+    const x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y));
+    const x1 = Math.max(...bs.map(b => b.x + b.w)), y1 = Math.max(...bs.map(b => b.y + b.h));
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
+  renderOverlay() {
+    if (!this.doc) return;
+    const { z } = this.view, W = this.doc.width, H = this.doc.height;
+    const ns = 'http://www.w3.org/2000/svg';
+    const o = this.overlay; clear(o);
+    o.setAttribute('width', W); o.setAttribute('height', H); o.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const mk = (tag, attrs, parent = o) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); parent.appendChild(n); return n; };
+    const g = this.gridSize;
+    if (state.settings.showGrid && g * z >= 4) {
+      const defs = mk('defs', {});
+      const p = mk('pattern', { id: 'dzgrid', width: g, height: g, patternUnits: 'userSpaceOnUse' }, defs);
+      mk('path', { d: `M ${g} 0 H 0 V ${g}`, fill: 'none', stroke: 'rgba(140,190,255,.16)', 'stroke-width': 1 / z }, p);
+      mk('rect', { width: W, height: H, fill: 'url(#dzgrid)' });
+    }
+    // the bounding box: every element/button/path starts as a box, everything inside is placed within it
+    if (this.type !== 'screen') mk('rect', { width: W, height: H, fill: 'none', stroke: 'rgba(140,190,255,.45)', 'stroke-width': 1 / z, 'stroke-dasharray': `${6 / z} ${4 / z}` });
+    if (state.settings.snapToAnchors && !this.isGlyph) for (const pt of Object.values(anchorPoints(W, H))) mk('circle', { cx: pt.x, cy: pt.y, r: 4 / z, class: 'anchor' });
+    for (const gd of this.guides) mk('line', { x1: gd.x1, y1: gd.y1, x2: gd.x2, y2: gd.y2, class: 'guide' });
+    // selection & hovered boundary lines
+    const sel = this.selectedNodes();
+    const hovNode = this.hoveredNodeId && !this.selected.has(this.hoveredNodeId) ? this.byId(this.hoveredNodeId) : null;
+    if (hovNode && hovNode.role !== 'bg' && hovNode.role !== 'bg-glow') {
+      const hb = nodeBBox(hovNode, this.nodes);
+      const hr = mk('rect', {
+        x: hb.x,
+        y: hb.y,
+        width: Math.max(hb.w, 0.01),
+        height: Math.max(hb.h, 0.01),
+        class: 'selbox hover-boundary',
+        style: 'cursor: move; pointer-events: stroke;'
+      });
+      if (hovNode.rotation) hr.setAttribute('transform', `rotate(${hovNode.rotation} ${hb.x + hb.w / 2} ${hb.y + hb.h / 2})`);
+    }
+    for (const e of sel) {
+      const b = nodeBBox(e, this.nodes);
+      const r = mk('rect', {
+        x: b.x,
+        y: b.y,
+        width: Math.max(b.w, 0.01),
+        height: Math.max(b.h, 0.01),
+        class: 'selbox el-boundary',
+        style: 'cursor: move; pointer-events: stroke;'
+      });
+      if (e.rotation) r.setAttribute('transform', `rotate(${e.rotation} ${b.x + b.w / 2} ${b.y + b.h / 2})`);
+    }
+    const box = this.selectionBox(sel);
+    if (box && sel.length === 1 && !sel[0].rotation && !sel[0].locked && !this.vtx.active) {
+      const s = 8 / z, pts = [['nw', box.x, box.y], ['n', box.x + box.w / 2, box.y], ['ne', box.x + box.w, box.y], ['e', box.x + box.w, box.y + box.h / 2],
+        ['se', box.x + box.w, box.y + box.h], ['s', box.x + box.w / 2, box.y + box.h], ['sw', box.x, box.y + box.h], ['w', box.x, box.y + box.h / 2]];
+      for (const [k, x, y] of pts) mk('rect', { x: x - s / 2, y: y - s / 2, width: s, height: s, class: 'handle', 'data-h': k }).style.cursor = `${k}-resize`;
+    } else if (!sel.length && this.boxResizable) {
+      // no selection: the handles resize the bounding box and scale the contents with it
+      const s = 9 / z;
+      for (const [k, x, y, cur] of [['e', W, H / 2, 'e-resize'], ['s', W / 2, H, 's-resize'], ['se', W, H, 'se-resize']])
+        mk('rect', { x: x - s / 2, y: y - s / 2, width: s, height: s, class: 'handle box-handle', 'data-b': k }).style.cursor = cur;
+    }
+    this.vtx.renderOverlay(mk);
+    this.pen.renderOverlay(mk);
+    if (this.ghost) this.drawGhost(mk);
+    if (this.marquee) { const m = this.marquee; mk('rect', { x: Math.min(m.x0, m.x1), y: Math.min(m.y0, m.y1), width: Math.abs(m.x1 - m.x0), height: Math.abs(m.y1 - m.y0), fill: 'rgba(46,155,255,.12)', stroke: '#2e9bff', 'stroke-width': 1 / z }); }
+    this.world.style.setProperty('--z', z);
+    this.updateHoverToolbar();
+  }
+
+  /** Renders the floating mouse-over / selection toolbar above the active element on the canvas. */
+  updateHoverToolbar() {
+    if (!this.hoverBar || !this.doc || this.dragging || this.vtx?.active || this.actionsLive) {
+      if (this.hoverBar) this.hoverBar.hidden = true;
+      return;
+    }
+    const target = (this.hoveredNodeId && this.byId(this.hoveredNodeId)) || (this.selected.size === 1 ? this.selectedNodes()[0] : null);
+    if (!target || target.role === 'bg' || target.role === 'bg-glow') {
+      this.hoverBar.hidden = true;
+      return;
+    }
+    const b = nodeBBox(target, this.nodes);
+    const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
+    const sy = Math.max(8, this.view.ty + b.y * this.view.z - 38);
+    this.hoverBar.style.left = `${Math.round(sx)}px`;
+    this.hoverBar.style.top = `${Math.round(sy)}px`;
+
+    if (this.hoverBar.dataset.nodeId !== `${target.id}-${target.locked}-${(target.events || []).length}`) {
+      this.hoverBar.dataset.nodeId = `${target.id}-${target.locked}-${(target.events || []).length}`;
+      clear(this.hoverBar);
+      const evCount = (target.events?.length || (target.onClick ? 1 : 0));
+      const isMenuButton = (target.kind === 'instance' && target.refType === 'button' && target.refId) || this.type === 'button';
+      const menuBtnId = (target.kind === 'instance' && target.refType === 'button') ? target.refId : (this.type === 'button' ? this.doc.id : null);
+      const menuBtnItems = menuBtnId
+        ? (this.type === 'button' && this.doc.id === menuBtnId ? (this.doc.menuItems || []) : (findDesign('button', menuBtnId)?.menuItems || []))
+        : [];
+      const isMenuItemRole = target.role === 'menu-item' || /menu/i.test(target.name || '') || isMenuButton;
+
+      this.hoverBar.append(
+        h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
+        h('button', { class: 'hb-btn', title: 'Open Editor (Double-click)', onclick: e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); } }, '✎ Edit'),
+        isMenuItemRole ? h('button', {
+          class: `hb-btn${menuBtnItems.length ? ' active' : ''}`,
+          title: menuBtnItems.length ? `Edit menu item (${menuBtnItems.length} item(s))` : 'Add / Edit menu item',
+          onclick: async e => {
+            e.stopPropagation();
+            this.select([target.id]);
+            if (menuBtnId) {
+              if (menuBtnItems.length === 1) {
+                await menuActions.edit(this, menuBtnItems[0].id, menuBtnId);
+              } else if (menuBtnItems.length > 1) {
+                const picked = await choiceBox(
+                  'Edit Menu Item',
+                  'Select a menu item to edit, or add a new menu item:',
+                  [
+                    ...menuBtnItems.map(mi => ({ value: `edit:${mi.id}`, label: `✎ ${mi.label || mi.name}${mi.visible === false ? ' (hidden)' : ''}`, primary: true })),
+                    { value: 'add', label: '＋ Add new menu item' }
+                  ]
+                );
+                if (picked === 'add') await menuActions.add(this, null, menuBtnId);
+                else if (picked && picked.startsWith('edit:')) await menuActions.edit(this, Number(picked.slice(5)), menuBtnId);
+              } else {
+                await menuActions.add(this, null, menuBtnId);
+              }
+            } else {
+              openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
+            }
+          }
+        }, `☰ Edit menu item${menuBtnItems.length ? ` (${menuBtnItems.length})` : ''}`) : null,
+        h('button', {
+          class: `hb-btn${evCount ? ' active' : ''}`,
+          title: 'Configure Events (click, mouseover, release, drag&drop -> open element, popup, toolbar, route)',
+          onclick: e => {
+            e.stopPropagation();
+            this.select([target.id]);
+            openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
+          }
+        }, `⚡ Events${evCount ? ` (${evCount})` : ''}`),
+        h('button', {
+          class: 'hb-btn',
+          title: 'Preview or attach Small Element Floating Toolbar',
+          onclick: async e => {
+            e.stopPropagation();
+            this.select([target.id]);
+            const tbEl = state.library.elements.find(x => x.key === 'html-floating-toolbar');
+            const evs = [...(target.events || []).filter(x => !(x.trigger === 'click' && x.type === 'toolbar')), { trigger: 'click', type: 'toolbar', ...(tbEl ? { targetId: tbEl.id } : {}), position: 'top' }];
+            await this.patchNode(target.id, { events: evs });
+            this.showToolbarPreview(target, { type: 'toolbar', targetId: tbEl?.id, position: 'top' });
+          }
+        }, '🧰 Toolbar'),
+        h('button', {
+          class: 'hb-btn',
+          title: 'Add Pulse / Flip Animation',
+          onclick: async e => {
+            e.stopPropagation();
+            this.select([target.id]);
+            await this.addAnimation(target.id, 'pulse');
+            toast('Added animation to element', 'ok', 1400);
+          }
+        }, '✨ Anim'),
+        h('button', {
+          class: `hb-btn${target.locked ? ' active' : ''}`,
+          title: target.locked ? 'Unlock element position (Ctrl+L)' : 'Lock element position on screen (Ctrl+L)',
+          onclick: async e => {
+            e.stopPropagation();
+            await this.patchNode(target.id, { locked: !target.locked });
+            this.hoverBar.dataset.nodeId = '';
+            this.updateHoverToolbar();
+            toast(target.locked ? '🔒 Position locked' : '🔓 Position unlocked', 'ok', 1200);
+          }
+        }, target.locked ? '🔒' : '🔓'),
+        h('button', {
+          class: 'hb-btn',
+          title: 'Copy item to project(s) as private item',
+          onclick: e => {
+            e.stopPropagation();
+            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
+              ? { type: target.refType, id: target.refId, name: target.name }
+              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key };
+            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'copy' });
+          }
+        }, '📥 Copy to…'),
+        h('button', {
+          class: 'hb-btn',
+          title: 'Move item to project(s) as private item',
+          onclick: e => {
+            e.stopPropagation();
+            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
+              ? { type: target.refType, id: target.refId, name: target.name }
+              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key };
+            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
+          }
+        }, '📤 Move to…'),
+        h('button', {
+          class: 'hb-btn',
+          title: 'Duplicate element (Ctrl+D)',
+          onclick: async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }
+        }, '⧉'),
+        h('button', {
+          class: 'hb-btn danger',
+          title: 'Delete element (Del)',
+          onclick: async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }
+        }, '🗑')
+      );
+    }
+    this.hoverBar.hidden = false;
+  }
+
+  drawGhost(mk) {
+    const g = this.ghost, z = this.view.z;
+    const st = { fill: 'rgba(46,155,255,.2)', stroke: '#2e9bff', 'stroke-width': 1.5 / z };
+    const x = Math.min(g.x0, g.x1), y = Math.min(g.y0, g.y1), w = Math.abs(g.x1 - g.x0), h2 = Math.abs(g.y1 - g.y0);
+    if (g.tool === 'rect' || g.tool === 'callout') mk('rect', { x, y, width: w, height: h2, ...st });
+    if (g.tool === 'circle' || g.tool === 'ellipse' || g.tool === 'polygon' || g.tool === 'star') mk('ellipse', { cx: (g.x0 + g.x1) / 2, cy: (g.y0 + g.y1) / 2, rx: w / 2, ry: h2 / 2, ...st });
+    if (g.tool === 'line' || g.tool === 'arrow') mk('line', { x1: g.x0, y1: g.y0, x2: g.x1, y2: g.y1, stroke: '#2e9bff', 'stroke-width': 2 / z });
+    if (g.tool === 'freehand' && g.pts?.length > 1) {
+      const d = g.pts.map((pt, idx) => `${idx === 0 ? 'M' : 'L'}${Math.round(pt.x * 10) / 10} ${Math.round(pt.y * 10) / 10}`).join(' ');
+      mk('path', { d, fill: 'none', stroke: '#2e9bff', 'stroke-width': 2 / z });
+    }
+    if (g.tool === 'crop') mk('rect', { x, y, width: w, height: h2, fill: 'rgba(255,213,74,.12)', stroke: '#ffd54a', 'stroke-width': 1.5 / z, 'stroke-dasharray': `${6 / z} ${4 / z}` });
+  }
+
+  /* ================= view ================= */
+  applyView() {
+    const { tx, ty, z } = this.view;
+    this.world.style.transform = `translate(${tx}px, ${ty}px) scale(${z})`;
+    if (this.zoomLabel) this.zoomLabel.textContent = `${Math.round(z * 100)}%`;
+  }
+  /** Area to bring into view: the box, plus the menu ring of a button. */
+  focusRect() {
+    const d = this.doc;
+    if (this.type === 'button' && d.menuItems?.length) { const e = menuExtent(d, menuConfig(d.meta), buildMenuTree(d.menuItems)); return { x: e.x, y: e.y, w: e.w, h: e.h }; }
+    return { x: 0, y: 0, w: d.width, h: d.height };
+  }
+  fit() {
+    if (!this.doc) return;
+    const r = this.viewport.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const f = this.focusRect(), pad = this.isGlyph ? 40 : 56;
+    const z = Math.min((r.width - pad * 2) / f.w, (r.height - pad * 2) / f.h, 40);
+    this.view = { z: Math.max(MIN_Z, z), tx: (r.width - f.w * z) / 2 - f.x * z, ty: (r.height - f.h * z) / 2 - f.y * z };
+    this.applyView(); this.renderOverlay();
+  }
+  setZoom(z, cx, cy) {
+    const r = this.viewport.getBoundingClientRect();
+    cx = cx ?? r.width / 2; cy = cy ?? r.height / 2;
+    z = Math.min(MAX_Z, Math.max(MIN_Z, z));
+    const k = z / this.view.z;
+    this.view = { z, tx: cx - (cx - this.view.tx) * k, ty: cy - (cy - this.view.ty) * k };
+    this.applyView(); this.renderOverlay();
+  }
+  zoomBy(f, cx, cy) { this.setZoom(this.view.z * f, cx, cy); }
+
+  /* ================= selection ================= */
+  select(ids, { add = false } = {}) {
+    if (!add) this.selected = new Set();
+    for (const id of ids) this.selected.add(id);
+    if (this.vtx.active && !(ids.length === 1 && ids[0] === this.vtx.node?.id)) this.vtx.exit();
+    this.renderOverlay();
+    this.emit('selection', this.selectedNodes());
+  }
+  clearSelection() { this.select([]); }
+
+  /** Maps an event target to the node the user means: the top-level ancestor (or the exact node with Alt). */
+  hitNode(target, exact = false) {
+    let n = target;
+    while (n && n !== this.stage) {
+      const id = n.dataset?.el ? Number(n.dataset.el) : null;
+      if (id && this.byId(id)) {
+        let e = this.byId(id);
+        if (!exact) while (e.parentId != null && this.byId(e.parentId)) e = this.byId(e.parentId);
+        return e;
+      }
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  /** Detects if world point `p` is hovering over the boundary lines of any visible top-level element (top-most first). */
+  hitBoundaryNode(p) {
+    if (!this.doc || !p) return null;
+    const tol = Math.max(2, 6 / (this.view.z || 1));
+    const topDown = [...this.nodes]
+      .filter(e => e.parentId == null && e.role !== 'bg' && e.role !== 'bg-glow' && e.visible !== false)
+      .sort((a, b) => (b.ord - a.ord) || (b.id - a.id));
+    for (const e of topDown) {
+      const b = nodeBBox(e, this.nodes);
+      const inX = p.x >= b.x - tol && p.x <= b.x + b.w + tol;
+      const inY = p.y >= b.y - tol && p.y <= b.y + b.h + tol;
+      if (!inX || !inY) continue;
+      const nearLeft = Math.abs(p.x - b.x) <= tol;
+      const nearRight = Math.abs(p.x - (b.x + b.w)) <= tol;
+      const nearTop = Math.abs(p.y - b.y) <= tol;
+      const nearBottom = Math.abs(p.y - (b.y + b.h)) <= tol;
+      if (nearLeft || nearRight || nearTop || nearBottom) return e;
+    }
+    return null;
+  }
+
+  /* ================= pointer interaction ================= */
+  bindViewport() {
+    const vp = this.viewport;
+    vp.addEventListener('wheel', ev => {
+      ev.preventDefault();
+      const r = vp.getBoundingClientRect();
+      this.zoomBy(Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0016)), ev.clientX - r.left, ev.clientY - r.top);
+    }, { passive: false });
+    vp.addEventListener('pointerdown', ev => this.onPointerDown(ev));
+    vp.addEventListener('pointermove', ev => this.onPointerMove(ev));
+    vp.addEventListener('pointerup', ev => this.onPointerUp(ev));
+    vp.addEventListener('pointercancel', ev => this.onPointerUp(ev));
+    vp.addEventListener('dragover', ev => { if (ev.dataTransfer.types.includes('application/x-ud')) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+    vp.addEventListener('drop', ev => {
+      const raw = ev.dataTransfer.getData('application/x-ud');
+      if (!raw) return;
+      ev.preventDefault();
+      const { type, id } = JSON.parse(raw);
+      this.addInstance(type, id, this.worldPoint(ev));
+    });
+    vp.addEventListener('keydown', ev => this.onKey(ev));
+    vp.addEventListener('keyup', ev => { if (ev.code === 'Space') this.spaceDown = false; });
+    vp.addEventListener('dblclick', ev => this.onDblClick(ev));
+    vp.addEventListener('contextmenu', ev => this.onContext(ev));
+  }
+
+  async onDblClick(ev) {
+    if (this.tool === 'pen') { if (this.pen.pts.length) await this.pen.finish(false); return; }
+    if (this.vtx.active) { await this.vtx.insertAt(this.worldPoint(ev)); return; }
+    const e = this.hitNode(ev.target, true) || this.hitNode(ev.target);
+    if (!e) return;
+    this.select([e.id]);
+    return this.openEditor(e);
+  }
+
+  /**
+   * "Open editor" for any element: what it is and what opening it does. Used by double-click, the inspector button and the right-click menu.
+   * text → edit the words · placed library design → its own designer · group → select what is inside · shape / path → vertex editor
+   */
+  editorFor(e) {
+    if (!e) return null;
+    if (e.tag === 'text') return { label: 'Edit text', hint: 'change the words', run: () => this.editText(e) };
+    if (e.kind === 'instance') {
+      const lib = findDesign(e.refType, e.refId), what = (TYPES[e.refType]?.label || e.refType).toLowerCase();
+      return { label: `Open ${what} designer`, hint: lib ? `${lib.label} (${lib.key}) in its own designer` : 'this design no longer exists', disabled: !lib || !this.opts.openDesign, run: () => this.opts.openDesign(e.refType, e.refId) };
+    }
+    if (e.tag === 'g') return { label: 'Enter group', hint: 'select the items inside the group', run: () => { const kids = this.nodes.filter(n => n.parentId === e.id); if (kids.length) this.select(kids.map(k => k.id)); else toast('This group is empty'); } };
+    if (this.vtx.canEdit(e)) return { label: 'Edit vertices', hint: 'drag the points and bezier handles (Enter)', run: () => this.vtx.enter(e) };
+    return { label: 'Open editor', hint: 'this element has no editor', disabled: true, run: () => {} };
+  }
+
+  openEditor(e = this.selectedNodes()[0]) {
+    const ed = this.editorFor(e);
+    if (!ed || ed.disabled) return toast(ed?.hint || 'Select an element first');
+    return ed.run();
+  }
+
+  /* ================= multi-event & click actions ================= */
+  /** Finds the node (or ancestor group) carrying an event for `trigger` (click, mouseover, release, drag, drop, dblclick, etc.). */
+  eventNodeFor(e, trigger = 'click') {
+    for (let n = e; n; n = n.parentId != null ? this.byId(n.parentId) : null) {
+      if (Array.isArray(n.events)) {
+        const hitEv = n.events.find(ev => ev.trigger === trigger);
+        if (hitEv) return { node: n, ev: hitEv };
+      }
+      if (trigger === 'click' && n.onClick) return { node: n, ev: { trigger: 'click', ...n.onClick } };
+    }
+    return null;
+  }
+
+  actionNode(e) {
+    const found = this.eventNodeFor(e, 'click');
+    return found ? found.node : null;
+  }
+
+  async runAction(n, evOverride = null) {
+    const c = evOverride || (Array.isArray(n.events) && n.events.find(x => x.trigger === 'click')) || n.onClick;
+    if (!c) return;
+    if (c.type === 'back') { if (this.opts.onBack) return this.opts.onBack(); return toast('Go back (in the finished app this is history.back())'); }
+    if (c.type === 'screen') {
+      return this.navigateLiveToScreen(c.targetId);
+    }
+    if (c.type === 'animate' || c.type === 'toggle') {
+      const domEl = this.stage.querySelector(`[data-el="${n.id}"]`);
+      if (domEl) domEl.classList.toggle('ud-on');
+      toast(`Triggered ${c.type} on "${n.name || n.tag}"`, 'info', 1200);
+      return;
+    }
+    if (c.type === 'toolbar') {
+      const el = c.targetId ? findDesign('element', c.targetId) : state.library.elements.find(x => x.key === 'html-floating-toolbar');
+      this.showToolbarPreview(n, c, el);
+      return;
+    }
+    const el = findDesign('element', c.targetId);
+    if (!el) return toast('The element to open no longer exists', 'error');
+    this.showPreview(c.type, c.side || c.position, el);
+  }
+
+  /** Renders a small element floating toolbar near the target node on the canvas. */
+  showToolbarPreview(node, evBinding, el = null) {
+    this.tbPv?.remove();
+    const b = nodeBBox(node, this.nodes);
+    const pos = evBinding?.position || 'top';
+    const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
+    const sy = pos === 'bottom'
+      ? this.view.ty + (b.y + b.h) * this.view.z + 10
+      : this.view.ty + b.y * this.view.z - 54;
+
+    const content = h('div', { class: 'dz-mini-toolbar-inner' });
+    if (el) {
+      const svg = renderDocument({ owner: el, nodes: el.nodes, ctx: renderContext({}), background: false });
+      const svgWrap = h('div', { style: { width: `${Math.min(260, el.width)}px` } });
+      svgWrap.innerHTML = svg;
+      content.append(svgWrap);
+    } else {
+      content.append(
+        h('button', { class: 'hb-btn', onclick: () => { toast('Action: Edit', 'info'); this.tbPv?.remove(); } }, '✎ Edit'),
+        h('button', { class: 'hb-btn', onclick: () => { toast('Action: Copy', 'info'); this.tbPv?.remove(); } }, '⧉ Copy'),
+        h('button', { class: 'hb-btn', onclick: () => { toast('Action: Share', 'info'); this.tbPv?.remove(); } }, '↗ Share'),
+        h('button', { class: 'hb-btn', onclick: () => { this.tbPv?.remove(); } }, '✕')
+      );
+    }
+    this.tbPv = h('div', {
+      class: 'dz-mini-toolbar',
+      style: { left: `${Math.round(sx)}px`, top: `${Math.round(Math.max(8, sy))}px` }
+    }, content);
+    this.viewport.append(this.tbPv);
+  }
+
+  /** A popup, drawer, or inline element drawn over the canvas, like the finished app shows it. */
+  showPreview(kind, side, el) {
+    this.closePreview();
+    const svg = renderDocument({ owner: el, nodes: el.nodes, ctx: renderContext({}), background: false });
+    const panel = h('div', { class: 'dz-pv-panel' });
+    panel.innerHTML = svg;      // markup comes from the domain renderer: tags/attributes are whitelisted and escaped
+    const w = Math.min(this.viewport.clientWidth * 0.94, Math.max(160, el.width * this.view.z));
+    const box = h('div', { class: 'dz-pv-box', style: { width: `${w}px` } }, h('button', { class: 'icon-btn dz-pv-x', title: 'Close (Esc)', onclick: () => this.closePreview() }, '✕'), panel);
+    this.pv = h('div', { class: `dz-pv ${kind}${kind === 'drawer' ? ` from-${side || 'right'}` : ''}` }, h('div', { class: 'dz-pv-scrim', onclick: () => this.closePreview() }), box);
+    this.viewport.append(this.pv);
+  }
+
+  closePreview() { this.pv?.remove(); this.pv = null; this.tbPv?.remove(); this.tbPv = null; }
+
+  onPointerDown(ev) {
+    if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar')) return;
+    this.viewport.focus({ preventScroll: true });
+    if (!this.doc) return;
+    const p = this.worldPoint(ev);
+    if (ev.button === 1 || (ev.button === 0 && this.spaceDown)) {
+      this.pan = { x: ev.clientX, y: ev.clientY, tx: this.view.tx, ty: this.view.ty };
+      capture(this.viewport, ev); ev.preventDefault(); return;
+    }
+    if (ev.button !== 0) return;
+    if (ev.target.closest?.('.rm-item, [data-rm="center"]')) return;   // radial/popup menu items handle their own clicks
+    if (this.actionsLive) {        // test mode: events do what they do in the finished app
+      const rawHit = this.hitNode(ev.target, true) || this.hitNode(ev.target);
+      const clickHit = this.eventNodeFor(rawHit, 'click') || this.eventNodeFor(rawHit, 'mousedown');
+      if (clickHit) { ev.preventDefault(); this.runAction(clickHit.node, clickHit.ev); return; }
+      if (rawHit && this.type === 'screen' && Array.isArray(this.doc.links)) {
+        const directLink = this.doc.links.find(l => l.fromNodeId === rawHit.id);
+        if (directLink) { ev.preventDefault(); this.navigateLiveToScreen(directLink.toScreenId, directLink.name); return; }
+      }
+      return;
+    }
+    if (this.vtx.active) {
+      if (this.vtx.pointerDown(ev)) { capture(this.viewport, ev); return; }
+      const hit = this.hitNode(ev.target);
+      if (hit?.id === this.vtx.node?.id) return;       // clicking the edited path itself keeps vertex mode
+      this.vtx.exit();
+    }
+    if (this.type === 'button' && ev.target.closest?.('.rm-item, [data-rm="center"]')) return;   // menu items handle their own clicks
+    if (this.tool === 'pen') { this.pen.pointerDown(ev, p); capture(this.viewport, ev); return; }
+    const boxH = ev.target.dataset?.b;
+    if (boxH && !this.doc.locked) {
+      this.op = { kind: 'box', handle: boxH, start: p, w: this.doc.width, h: this.doc.height, nodes0: deep(this.nodes), snap: this.snapshot() };
+      capture(this.viewport, ev); return;
+    }
+    const handle = ev.target.dataset?.h;
+    if (handle && !this.doc.locked) {
+      const e = this.selectedNodes()[0];
+      this.op = { kind: 'resize', handle, el: e, from: nodeBBox(e, this.nodes), start: p, orig: deep(e.attrs), snap: this.snapshot() };
+      capture(this.viewport, ev); return;
+    }
+    if (this.tool !== 'select') {
+      const q = this.snapPoint(p);
+      this.ghost = { tool: this.tool, x0: q.x, y0: q.y, x1: q.x, y1: q.y, pts: [q] };
+      capture(this.viewport, ev);
+      if (this.tool === 'text') { this.ghost = null; this.createText(q); }
+      else if (this.tool === 'path') { this.ghost = null; this.createPath(q); }
+      return;
+    }
+    const hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
+    const isBg = hit && (hit.role === 'bg' || hit.role === 'bg-glow');
+    if (hit && !isBg) {
+      if (ev.shiftKey) { this.selected.has(hit.id) ? this.selected.delete(hit.id) : this.selected.add(hit.id); this.select([...this.selected]); }
+      else if (!this.selected.has(hit.id)) this.select([hit.id]);
+      if (this.doc.locked) return;
+      const sel = this.selectedNodes().filter(e => !e.locked);
+      if (!sel.length) return;
+      this.op = { kind: 'move', start: p, els: sel.map(e => ({ id: e.id, orig: deep(e.attrs), tag: e.tag })), box: this.selectionBox(sel), snap: this.snapshot(), moved: false };
+      capture(this.viewport, ev);
+    } else {
+      if (!ev.shiftKey) this.clearSelection();
+      this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: ev.shiftKey };
+      capture(this.viewport, ev);
+    }
+  }
+
+  onPointerMove(ev) {
+    if (this.pan) {
+      this.view.tx = this.pan.tx + ev.clientX - this.pan.x; this.view.ty = this.pan.ty + ev.clientY - this.pan.y;
+      this.applyView(); this.updateHoverToolbar(); return;
+    }
+    const p = this.worldPoint(ev);
+    const sb = document.getElementById('statusbar-xy'); if (sb) sb.textContent = `x ${Math.round(p.x * 10) / 10}  y ${Math.round(p.y * 10) / 10}`;
+    if (this.vtx.pointerMove(ev, p)) return;
+    if (this.tool === 'pen' && this.pen.pointerMove(ev, p)) return;
+    if (this.type === 'button') this.menu.onMove(ev, p);
+    if (this.ghost) {
+      const q = this.snapPoint(p);
+      this.ghost.x1 = q.x; this.ghost.y1 = q.y;
+      if (this.ghost.tool === 'freehand') this.ghost.pts.push(p);
+      this.renderOverlay();
+      return;
+    }
+    if (this.marquee) { this.marquee.x1 = p.x; this.marquee.y1 = p.y; this.renderOverlay(); return; }
+    const op = this.op;
+    if (!op) {
+      // Track hovered node & boundary lines for mouse-over floating toolbar, move cursor, and live mouseover events
+      if (!ev.target.closest?.('.el-hover-toolbar, .dz-mini-toolbar, .dz-pv')) {
+        const bHit = (this.tool === 'select' && !this.actionsLive) ? this.hitBoundaryNode(p) : null;
+        const hNode = this.hitNode(ev.target) || bHit;
+        const hId = hNode && hNode.role !== 'bg' && hNode.role !== 'bg-glow' ? hNode.id : null;
+        if (this.tool === 'select' && !this.actionsLive && !ev.target.dataset?.h && !ev.target.dataset?.b) {
+          this.viewport.style.cursor = (bHit || hId) ? 'move' : 'default';
+        }
+        if (hId !== this.hoveredNodeId) {
+          this.hoveredNodeId = hId;
+          this.renderOverlay();
+          if (this.actionsLive && hNode) {
+            const overHit = this.eventNodeFor(hNode, 'mouseover');
+            if (overHit) this.runAction(overHit.node, overHit.ev);
+          }
+        }
+      }
+      return;
+    }
+    if (op.kind === 'move') {
+      let dx = p.x - op.start.x, dy = p.y - op.start.y;
+      if (!op.moved && Math.hypot(dx, dy) * this.view.z < 3) return;
+      if (!op.moved) { op.moved = true; this.dragging = true; }
+      ({ dx, dy } = this.snapMove(op.box, dx, dy, ev.ctrlKey));
+      for (const o of op.els) { const e = this.byId(o.id); e.attrs = translateAttrs({ tag: o.tag, attrs: o.orig }, dx, dy); }
+      this.renderStage(); this.renderOverlay();
+    } else if (op.kind === 'resize') {
+      const f = op.from, s = this.snapPoint(p, ev.ctrlKey), k = op.handle;
+      let x0 = f.x, y0 = f.y, x1 = f.x + f.w, y1 = f.y + f.h;
+      if (k.includes('w')) x0 = Math.min(s.x, x1 - 1); if (k.includes('e')) x1 = Math.max(s.x, x0 + 1);
+      if (k.includes('n')) y0 = Math.min(s.y, y1 - 1); if (k.includes('s')) y1 = Math.max(s.y, y0 + 1);
+      if (ev.shiftKey && f.w && f.h && k.length === 2) { const r = f.w / f.h; const w = x1 - x0, hh = y1 - y0; if (w / hh > r) { const nw = hh * r; if (k.includes('w')) x0 = x1 - nw; else x1 = x0 + nw; } else { const nh = w / r; if (k.includes('n')) y0 = y1 - nh; else y1 = y0 + nh; } }
+      op.el.attrs = resizeAttrs({ tag: op.el.tag, attrs: op.orig }, f, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      this.dragging = true;
+      this.renderStage(); this.renderOverlay();
+    } else if (op.kind === 'box') {
+      const q = this.snapPoint(p, ev.ctrlKey);
+      const w = op.handle.includes('e') ? Math.max(8, q.x) : op.w, hh = op.handle.includes('s') ? Math.max(8, q.y) : op.h;
+      this.dragging = true;
+      this.doc.width = w; this.doc.height = hh;
+      if (this.scaleContent) {                                   // live preview of the contents scaling with the box
+        for (const pch of scaleNodeSet(op.nodes0, w / op.w, hh / op.h)) this.byId(pch.id).attrs = pch.attrs;
+      }
+      this.renderStage(); this.renderOverlay();
+    }
+  }
+
+  async onPointerUp(ev) {
+    if (this.pan) { this.pan = null; return; }
+    if (this.actionsLive) {
+      const rawHit = this.hitNode(ev.target, true);
+      const relHit = this.eventNodeFor(rawHit, 'release') || this.eventNodeFor(rawHit, 'drop');
+      if (relHit) this.runAction(relHit.node, relHit.ev);
+      return;
+    }
+    if (await this.vtx.pointerUp()) return;
+    if (this.tool === 'pen' && this.pen.drag) { this.pen.pointerUp(); return; }
+    if (this.ghost) { const g = this.ghost; this.ghost = null; this.renderOverlay(); await this.createShape(g); return; }
+    if (this.marquee) {
+      const m = this.marquee; this.marquee = null;
+      const x0 = Math.min(m.x0, m.x1), x1 = Math.max(m.x0, m.x1), y0 = Math.min(m.y0, m.y1), y1 = Math.max(m.y0, m.y1);
+      if (x1 - x0 > 2 && y1 - y0 > 2) {
+        const hits = this.nodes.filter(e => e.parentId == null && e.role !== 'bg' && e.role !== 'bg-glow' && e.visible).filter(e => { const b = nodeBBox(e, this.nodes); return b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0; }).map(e => e.id);
+        this.select(hits, { add: m.add });
+      } else this.renderOverlay();
+      return;
+    }
+    const op = this.op; this.op = null; this.guides = [];
+    if (!op) return;
+    const wasDragging = this.dragging; this.dragging = false;
+    if (op.kind === 'move' && !op.moved) { this.renderOverlay(); return; }
+    if (op.kind === 'box') {
+      const w = this.doc.width, hh = this.doc.height;
+      this.doc.width = op.w; this.doc.height = op.h; this.nodes.splice(0, this.nodes.length, ...op.nodes0);
+      await this.updateDoc({ width: w, height: hh }, { undo: op.snap });
+      return;
+    }
+    if (wasDragging) {
+      const ids = op.kind === 'move' ? op.els.map(o => o.id) : [op.el.id];
+      this.pushUndo(op.snap);
+      try { await Promise.all(ids.map(id => api.patchNode(this.type, this.doc.id, id, { attrs: this.byId(id).attrs }))); }
+      catch (e) { toast(e.message, 'error'); await this.reload(); return; }
+      this.changed();
+    }
+    this.renderStage(); this.renderOverlay();
+  }
+
+  /* ================= snapping ================= */
+  snapPoint(p, bypass = false) {
+    if (!state.settings.snapToGrid || bypass) return p;
+    const g = this.gridSize;
+    return { x: snap(p.x, g), y: snap(p.y, g) };
+  }
+
+  /** Snaps a moving box (grid, then the 9 reference lines of the design); fills this.guides. */
+  snapMove(box, dx, dy, bypass) {
+    this.guides = [];
+    if (bypass) return { dx, dy };
+    const W = this.doc.width, H = this.doc.height, th = 8 / this.view.z;
+    let nx = box.x + dx, ny = box.y + dy, sx = false, sy = false;
+    if (state.settings.snapToAnchors && !this.isGlyph) {
+      const xs = [0, W / 2, W], ys = [0, H / 2, H];
+      const cand = (pos, size, lines) => { let best = null; for (const off of [0, size / 2, size]) for (const l of lines) { const d = l - (pos + off); if (Math.abs(d) <= th && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, line: l }; } return best; };
+      const bx = cand(nx, box.w, xs), by = cand(ny, box.h, ys);
+      if (bx) { nx += bx.d; sx = true; this.guides.push({ x1: bx.line, y1: 0, x2: bx.line, y2: H }); }
+      if (by) { ny += by.d; sy = true; this.guides.push({ x1: 0, y1: by.line, x2: W, y2: by.line }); }
+    }
+    if (state.settings.snapToGrid) { const g = this.gridSize; if (!sx) nx = snap(nx, g); if (!sy) ny = snap(ny, g); }
+    return { dx: nx - box.x, dy: ny - box.y };
+  }
+
+  /* ================= keyboard ================= */
+  onKey(ev) {
+    if (ev.target !== this.viewport) return;
+    if (this.vtx.active && this.vtx.key(ev)) { ev.preventDefault(); return; }
+    if (this.tool === 'pen' && this.pen.key(ev)) { ev.preventDefault(); return; }
+    const k = ev.key.toLowerCase(), ctrl = ev.ctrlKey || ev.metaKey;
+    if (k === 'escape' && (this.pv || this.tbPv)) { this.closePreview(); return; }
+    if (ctrl && k === 'g') { ev.preventDefault(); ev.shiftKey ? this.ungroupSelected() : this.groupSelected(); return; }
+    if (ctrl && k === 'l') { ev.preventDefault(); this.toggleLockSelected?.(); return; }
+    if (ev.code === 'Space') { this.spaceDown = true; ev.preventDefault(); return; }
+    if (ctrl && k === 'z') { ev.preventDefault(); ev.shiftKey ? this.redo() : this.undo(); return; }
+    if (ctrl && k === 'y') { ev.preventDefault(); this.redo(); return; }
+    if (ctrl && k === 'd') { ev.preventDefault(); this.duplicateSelected(); return; }
+    if (ctrl && k === 'a') { ev.preventDefault(); this.select(this.nodes.filter(e => e.parentId == null && e.role !== 'bg' && e.role !== 'bg-glow').map(e => e.id)); return; }
+    if (k === 'enter' && this.selected.size === 1) { ev.preventDefault(); this.vtx.enter(this.selectedNodes()[0]); return; }
+    if (k === 'delete' || k === 'backspace') { ev.preventDefault(); this.deleteSelected(); return; }
+    if (k === 'escape') { this.clearSelection(); this.setTool('select'); return; }
+    if (k.startsWith('arrow') && this.selected.size) {
+      ev.preventDefault();
+      const step = ev.shiftKey ? this.gridSize : (this.isGlyph ? 0.5 : 1);
+      this.nudge(k === 'arrowleft' ? -step : k === 'arrowright' ? step : 0, k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0);
+      return;
+    }
+    if (k === '+' || k === '=') return this.zoomBy(1.25);
+    if (k === '-') return this.zoomBy(1 / 1.25);
+    if (k === '0') return this.fit();
+    if (!ctrl) {
+      if (k === 'n') return this.selected.size === 1 ? this.vtx.enter(this.selectedNodes()[0]) : toast('Select one path (or shape) first');
+      const t = TOOLS.find(t => t[1].toLowerCase() === k && t[0] !== 'node'); if (t) this.setTool(t[0]);
+    }
+  }
+
+  /* ================= history ================= */
+  snapshot() { return { nodes: deep(this.nodes), animations: deep(this.doc.animations || []), width: this.doc.width, height: this.doc.height }; }
+  pushUndo(snap) { this.undoStack.push(snap); if (this.undoStack.length > 60) this.undoStack.shift(); this.redoStack = []; }
+
+  async restore(snap) {
+    const withAnims = snap.nodes.map(e => ({ ...e, animations: snap.animations.filter(a => a.nodeId === e.id).map(({ id, nodeId, ...a }) => a) }));
+    if (snap.width !== this.doc.width || snap.height !== this.doc.height) await api.updateDesign(this.type, this.doc.id, { width: snap.width, height: snap.height, scaleContent: false });
+    await api.replaceNodes(this.type, this.doc.id, withAnims);
+    await this.reload(false);
+    this.changed();
+  }
+  async undo() { const s = this.undoStack.pop(); if (!s) return toast('nothing to undo'); this.vtx.exit(); this.redoStack.push(this.snapshot()); await this.restore(s); }
+  async redo() { const s = this.redoStack.pop(); if (!s) return toast('nothing to redo'); this.vtx.exit(); this.undoStack.push(this.snapshot()); await this.restore(s); }
+
+  changed() { this.emit('doc', this.doc); this.emit('changed', this.doc); }
+
+  /* ================= edit operations ================= */
+  async mutate(fn) {
+    const snap = this.snapshot();
+    try { const r = await fn(); this.pushUndo(snap); this.renderAll(); this.changed(); return r; }
+    catch (e) { toast(e.message, 'error'); await this.reload(); return null; }
+  }
+
+  uniqueName(base) {
+    const names = new Set(this.nodes.map(e => e.name));
+    if (!names.has(base)) return base;
+    let n = 2; while (names.has(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  }
+
+  async addNode(def, { select = true } = {}) {
+    return this.mutate(async () => {
+      const maxOrd = this.nodes.reduce((m, n) => Math.max(m, Number(n.ord) || 0), 0);
+      const el = await api.addNode(this.type, this.doc.id, { ...def, ord: maxOrd + 1 });
+      this.doc.nodes.push(el);
+      if (select) this.selected = new Set([el.id]);
+      return el;
+    });
+  }
+
+  /** Default size and position of a placed design, by what is placed where. */
+  placement(refType, lib, at) {
+    const D = this.doc;
+    if (refType === 'path') return { x: 0, y: 0, w: 24, h: 24 };                       // a path group fills its 24 grid
+    let w, hh;
+    if (refType === 'icon') w = hh = this.type === 'button' ? Math.round(Math.min(D.width, D.height) * 0.625) : this.type === 'screen' ? 48 : 24;
+    else { w = lib.width; hh = lib.height; }
+    if (refType === 'icon' && this.type === 'button' && !at) return { x: Math.round((D.width - w) / 2), y: Math.round((D.height - hh) / 2), w, h: hh };
+    const r = this.viewport.getBoundingClientRect();
+    const c = at || this.worldPoint({ clientX: r.left + this.viewport.clientWidth / 2, clientY: r.top + this.viewport.clientHeight / 2 });
+    const q = this.snapPoint({ x: c.x - w / 2, y: c.y - hh / 2 });
+    return { x: q.x, y: q.y, w, h: hh };
+  }
+
+  async addInstance(refType, id, at) {
+    if (!this.doc) return toast('Open a design first', 'error');
+    if (!canContain(this.type, refType)) {
+      const ok = TYPES[this.type].accepts.join(', ') || 'only its own vector shapes';
+      return toast(`A ${this.type} can contain ${ok} (hierarchy: path → icon → button → element → screen)`, 'error');
+    }
+    if (refType === this.type && id === this.doc.id) return toast(`A ${this.type} cannot contain itself`, 'error');
+    const lib = libOf(refType).find(d => d.id === id);
+    if (!lib) return;
+    const pl = this.placement(refType, lib, at);
+    const el = await this.addNode({ tag: 'use', kind: 'instance', refType, refId: id, name: this.uniqueName(lib.key), attrs: { x: pl.x, y: pl.y, width: pl.w, height: pl.h } });
+    if (el) toast(`added ${refType} ${lib.key}`, 'ok', 1400);
+  }
+
+  async createShape(g) {
+    const x = Math.min(g.x0, g.x1), y = Math.min(g.y0, g.y1), w = Math.abs(g.x1 - g.x0), hh = Math.abs(g.y1 - g.y0);
+    if (g.tool === 'crop') { this.setTool('select'); if (w < 2 || hh < 2) return toast('Drag a rectangle over the shapes to crop'); return this.cropSelection({ x, y, w, h: hh }); }
+    const glyph = this.isGlyph;
+    const rw = w < 2 ? (glyph ? 8 : 80) : w;
+    const rh = hh < 2 ? (glyph ? 8 : 64) : hh;
+    const cx = x + rw / 2, cy = y + rh / 2;
+    let def;
+    if (g.tool === 'rect') {
+      const r = (w < 1 || hh < 1) ? { x, y, width: glyph ? 6 : 96, height: glyph ? 6 : 64 } : { x, y, width: w, height: hh };
+      def = { tag: 'rect', name: this.uniqueName('rect'), attrs: { ...r, rx: glyph ? 1 : 12, ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'circle') {
+      const r = Math.max(w, hh) / 2 || (glyph ? 3 : 32);
+      def = { tag: 'circle', name: this.uniqueName('circle'), attrs: { cx: x + (w ? w / 2 : r), cy: y + (hh ? hh / 2 : r), r, ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'ellipse') {
+      def = { tag: 'ellipse', name: this.uniqueName('ellipse'), attrs: { cx, cy, rx: Math.round(rw / 2), ry: Math.round(rh / 2), ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'polygon') {
+      const sides = 6, rx = rw / 2, ry = rh / 2;
+      const pts = Array.from({ length: sides }, (_, i) => {
+        const ang = (i * 2 * Math.PI) / sides - Math.PI / 2;
+        return `${Math.round((cx + rx * Math.cos(ang)) * 10) / 10} ${Math.round((cy + ry * Math.sin(ang)) * 10) / 10}`;
+      });
+      def = { tag: 'path', name: this.uniqueName('polygon'), attrs: { d: `M ${pts[0]} L ${pts.slice(1).join(' L ')} Z`, ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'star') {
+      const spikes = 5, outerX = rw / 2, outerY = rh / 2, innerX = outerX * 0.42, innerY = outerY * 0.42;
+      const pts = [];
+      for (let i = 0; i < spikes * 2; i++) {
+        const rx = i % 2 === 0 ? outerX : innerX;
+        const ry = i % 2 === 0 ? outerY : innerY;
+        const ang = (i * Math.PI) / spikes - Math.PI / 2;
+        pts.push(`${Math.round((cx + rx * Math.cos(ang)) * 10) / 10} ${Math.round((cy + ry * Math.sin(ang)) * 10) / 10}`);
+      }
+      def = { tag: 'path', name: this.uniqueName('star'), attrs: { d: `M ${pts[0]} L ${pts.slice(1).join(' L ')} Z`, ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'arrow') {
+      const x0 = g.x0, y0 = g.y0, x1 = w < 2 && hh < 2 ? x0 + (glyph ? 12 : 96) : g.x1, y1 = w < 2 && hh < 2 ? y0 : g.y1;
+      const ang = Math.atan2(y1 - y0, x1 - x0), head = glyph ? 3.5 : 14;
+      const hx1 = Math.round((x1 - head * Math.cos(ang - Math.PI / 6)) * 10) / 10;
+      const hy1 = Math.round((y1 - head * Math.sin(ang - Math.PI / 6)) * 10) / 10;
+      const hx2 = Math.round((x1 - head * Math.cos(ang + Math.PI / 6)) * 10) / 10;
+      const hy2 = Math.round((y1 - head * Math.sin(ang + Math.PI / 6)) * 10) / 10;
+      def = { tag: 'path', name: this.uniqueName('arrow'), attrs: { d: `M ${x0} ${y0} L ${x1} ${y1} M ${hx1} ${hy1} L ${x1} ${y1} L ${hx2} ${hy2}`, fill: 'none', stroke: glyph ? undefined : '{{accent}}', 'stroke-width': glyph ? undefined : 2.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } };
+    } else if (g.tool === 'callout') {
+      const bh = Math.round(rh * 0.78), tx = Math.round(x + rw * 0.28);
+      const d = `M ${x} ${y} H ${x + rw} V ${y + bh} H ${tx + 16} L ${tx} ${y + rh} L ${tx + 4} ${y + bh} H ${x} Z`;
+      def = { tag: 'path', name: this.uniqueName('callout'), attrs: { d, ...(glyph ? {} : { fill: '{{accent}}' }) } };
+    } else if (g.tool === 'freehand') {
+      const pts = g.pts?.length > 1 ? g.pts : [{ x, y }, { x: x + rw, y: y + rh }];
+      const d = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${Math.round(pt.x * 10) / 10} ${Math.round(pt.y * 10) / 10}`).join(' ');
+      def = { tag: 'path', name: this.uniqueName('freehand'), attrs: { d, fill: 'none', stroke: glyph ? undefined : '{{accent}}', 'stroke-width': glyph ? undefined : 2.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } };
+    } else if (g.tool === 'line') {
+      if (!w && !hh) return;
+      def = { tag: 'line', name: this.uniqueName('line'), attrs: { x1: g.x0, y1: g.y0, x2: g.x1, y2: g.y1, stroke: glyph ? undefined : '{{text}}', 'stroke-width': glyph ? undefined : 2, 'stroke-linecap': 'round' } };
+    }
+    if (def) { Object.keys(def.attrs).forEach(k => def.attrs[k] === undefined && delete def.attrs[k]); await this.addNode(def); this.setTool('select'); }
+  }
+
+  async createText(p) {
+    const text = await promptBox('New text', { label: 'Text', value: 'Text', okLabel: 'Add' });
+    if (!text) return;
+    await this.addNode({ tag: 'text', kind: 'text', text, name: this.uniqueName('text'), attrs: { x: p.x, y: p.y + 16, 'font-size': 16, 'font-weight': 600, 'text-anchor': 'start', fill: '{{text}}' } });
+    this.setTool('select');
+  }
+
+  async createPath(p) {
+    const d = await promptBox('New path', { label: 'Path data (d attribute) — you can edit the vertices visually afterwards', value: 'M4 12h16M12 4v16', okLabel: 'Add', multiline: true });
+    if (!d?.trim()) return;
+    const glyph = this.isGlyph;
+    await this.addNode({ tag: 'path', name: this.uniqueName('path'), attrs: { d: d.trim(), ...(glyph ? {} : { fill: 'none', stroke: '{{accent}}', 'stroke-width': '{{sw}}', 'stroke-linecap': 'round', transform: `translate(${p.x} ${p.y})` }) } });
+    this.setTool('select');
+  }
+
+  async editText(e) {
+    const t = await promptBox('Edit text', { label: 'Text', value: e.text, okLabel: 'Apply' });
+    if (t !== null) await this.patchNode(e.id, { text: t });
+  }
+
+  /** Patch one node (used by the inspector and the vertex editor). */
+  async patchNode(id, patch, { quiet = false } = {}) {
+    const e = this.byId(id);
+    if (!e) return;
+    const snap = this.snapshot();
+    try {
+      const saved = await api.patchNode(this.type, this.doc.id, id, patch);
+      Object.assign(e, saved);
+      const now = Date.now();
+      if (!this.lastPatch || now - this.lastPatch > 900 || this.lastPatchId !== id) this.pushUndo(snap);
+      this.lastPatch = now; this.lastPatchId = id;
+      this.renderStage(); this.renderOverlay(); if (!quiet) this.emit('selection', this.selectedNodes());
+      this.changed();
+    } catch (err) { toast(err.message, 'error'); await this.reload(); }
+  }
+
+  async nudge(dx, dy) {
+    const sel = this.selectedNodes().filter(e => !e.locked);
+    if (!sel.length) return;
+    const snapshot = this.snapshot();
+    for (const e of sel) e.attrs = translateAttrs(e, dx, dy);
+    this.renderStage(); this.renderOverlay(); this.checkDirty();   // the edit counts at once, it is stored a moment later
+    clearTimeout(this.nudgeT);
+    this.nudgeT = setTimeout(async () => {
+      this.pushUndo(snapshot);
+      try { await Promise.all(sel.map(e => api.patchNode(this.type, this.doc.id, e.id, { attrs: e.attrs }))); this.changed(); } catch (err) { toast(err.message, 'error'); await this.reload(); }
+    }, 350);
+  }
+
+  /** Moves the selection onto one of the 9 reference points of the design's bounding box. */
+  async placeSelected(anchor, margin = 0) {
+    const sel = this.selectedNodes().filter(e => !e.locked);
+    if (!sel.length) return toast('Select something first');
+    const box = this.selectionBox(sel), at = placeAtAnchor({ w: box.w, h: box.h }, { w: this.doc.width, h: this.doc.height }, anchor, margin);
+    const dx = at.x - box.x, dy = at.y - box.y;
+    await this.mutate(async () => {
+      await Promise.all(sel.map(async e => { const a = translateAttrs(e, dx, dy); const saved = await api.patchNode(this.type, this.doc.id, e.id, { attrs: a }); Object.assign(e, saved); }));
+    });
+  }
+
+  async deleteSelected() {
+    const sel = this.selectedNodes();
+    if (!sel.length) return;
+    this.vtx.exit();
+    await this.mutate(async () => {
+      for (const e of sel) await api.deleteNode(this.type, this.doc.id, e.id);
+      await this.reload(false);
+    });
+  }
+
+  async duplicateSelected() {
+    const sel = this.selectedNodes();
+    if (!sel.length) return;
+    await this.mutate(async () => {
+      const ids = [];
+      for (const e of sel) ids.push((await api.duplicateNode(this.type, this.doc.id, e.id)).id);
+      await this.reload(false);
+      this.selected = new Set(ids);
+    });
+    this.renderOverlay(); this.emit('selection', this.selectedNodes());
+  }
+
+  /** z-order: 'front' | 'back' | 'up' | 'down' among siblings. */
+  async reorder(where) {
+    const sel = this.selectedNodes();
+    if (!sel.length) return;
+    const list = [...this.nodes].sort((a, b) => a.ord - b.ord || a.id - b.id);
+    const ids = new Set(sel.map(e => e.id));
+    let out;
+    if (where === 'front') out = [...list.filter(e => !ids.has(e.id)), ...list.filter(e => ids.has(e.id))];
+    else if (where === 'back') out = [...list.filter(e => ids.has(e.id)), ...list.filter(e => !ids.has(e.id))];
+    else { out = [...list]; const dir = where === 'up' ? 1 : -1; const order = dir > 0 ? [...out.keys()].reverse() : [...out.keys()]; for (const i of order) { const j = i + dir; if (ids.has(out[i].id) && out[j] && !ids.has(out[j].id)) [out[i], out[j]] = [out[j], out[i]]; } }
+    await this.mutate(async () => {
+      this.doc = { ...(await api.replaceNodes(this.type, this.doc.id, out.map(e => ({ ...e })))) };
+    });
+  }
+
+  /* ================= animations (used by the inspector) ================= */
+  animationsOf(nodeId) { return (this.doc.animations || []).filter(a => a.nodeId === nodeId); }
+
+  async addAnimation(nodeId, type) {
+    await this.mutate(async () => { const a = await api.addAnimation(this.type, this.doc.id, nodeId, defaultAnimation(type)); this.doc.animations.push(a); });
+  }
+  async updateAnimation(anim, patch) {
+    try { const saved = await api.updateAnimation(this.type, this.doc.id, anim.id, patch); Object.assign(anim, saved); this.renderStage(); this.changed(); }
+    catch (e) { toast(e.message, 'error'); }
+  }
+  async removeAnimation(anim) {
+    await this.mutate(async () => { await api.deleteAnimation(this.type, this.doc.id, anim.id); this.doc.animations = this.doc.animations.filter(a => a.id !== anim.id); });
+  }
+
+  /**
+   * Updates the design record (name, key, label, description-dev, size ...). A size change scales the contents with the
+   * bounding box (unless "Scale contents" is off): the server scales every sub node and we reload them.
+   */
+  async updateDoc(patch, { undo = null } = {}) {
+    const sizing = patch.width !== undefined || patch.height !== undefined;
+    const snap = undo || (sizing ? this.snapshot() : null);
+    try {
+      const body = sizing && this.boxResizable ? { scaleContent: this.scaleContent, ...patch } : patch;
+      const saved = await api.updateDesign(this.type, this.doc.id, body);
+      if (sizing && snap) this.pushUndo(snap);
+      this.doc = { ...saved };
+      this.renderAll();
+      this.changed(); this.emit('record', this.doc);
+    } catch (e) { toast(e.message, 'error'); await this.reload(); }
+  }
+}
+
+/** Pointer capture keeps drags alive outside the canvas; it throws for synthetic events, which is harmless. */
+function capture(el, ev) { try { el.setPointerCapture(ev.pointerId); } catch { /* no active pointer */ } }
+
+installPathTools(Designer);
+installTestActions(Designer);

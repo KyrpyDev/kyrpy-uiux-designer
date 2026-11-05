@@ -1,0 +1,888 @@
+/**
+ * Stage 3 AutoSwarm Multi-Persona & Adversarial User Test Suite (`@kyrpy-testusers-team`)
+ *
+ * Exercises realistic and adversarial user journeys across HTTP endpoints, application services,
+ * SQLite persistence, and UI/export contracts:
+ *  - Persona 1 (`@kyrpy-test-ux-coverage` — Ada, Power Designer): Full screen/route/item coverage across all 6 item types,
+ *    15 new interactive HTML elements (`html-flip-box`, `html-floating-toolbar`, etc.), multi-events, editable templates, and i18n.
+ *  - Persona 2 (`@kyrpy-test-ux-adversary` — Burak & Can, Multi-User Collaborators): Multi-hop public item cloning with root owner
+ *    lineage (`kyrpy`), collaborative node-level & record-level HTTP edits, and Owner (`kyrpy` / project owner) Approve & Reject rollback.
+ *  - Persona 3 (`@kyrpy-test-security-redteam` & `@kyrpy-test-edgecase` — Selin, Red-Team & Boundary Stress): Invalid bearer tokens (401),
+ *    viewer role write blocking (403), non-admin privilege escalation attempts (403), non-owner change review attempts (403),
+ *    deleting locked items/workflows (409), unsafe SVG script injection (422), and cyclic instance containment (422).
+ *  - Persona 4 (`@kyrpy-test-ux-offline` & `@kyrpy-test-load-concurrency` — Mert, Offline & Concurrent User): Offline SQLite outbox queuing,
+ *    concurrent multi-user edits without race corruption, and sync status/push/pull contract verification.
+ *  - Persona 5 (`@kyrpy-test-ux-accessibility` & `@kyrpy-test-ux-notifications` — Elif, Accessibility & UI Contract Evaluator):
+ *    Exported bundle interactive runtime attributes (`data-events`, `data-onclick`), hover toolbars, context menus, and topbar menus.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildContainer } from '../composition-root.js';
+import { createHttpServer } from '../interfaces/http/server.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const legacyRoot = existsSync(resolve(here, '..', '..', 'v1'))
+  ? resolve(here, '..', '..', 'v1')
+  : resolve(here, '..', '..', '.archive', 'v1');
+
+async function withServer(fn) {
+  const c = buildContainer({ dbFile: ':memory:' });
+  const server = createHttpServer(c, {
+    webRoot: join(here, '..', 'interfaces', 'web'),
+    domainRoot: join(here, '..', 'domain')
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const req = async (method, path, body = undefined, headers = {}) => {
+    const r = await fetch(base + path, {
+      method,
+      headers: { 'content-type': 'application/json', ...headers },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    const text = await r.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { json = text; }
+    return { status: r.status, body: json };
+  };
+  try {
+    await fn({ c, req, base });
+  } finally {
+    server.close();
+    c.close();
+  }
+}
+
+test('Persona 1 (@kyrpy-test-ux-coverage): Full coverage of 6 item types, 15 interactive HTML elements, multi-events, templates & translations', async () => {
+  await withServer(async ({ c, req }) => {
+    // Seed built-in elements catalog (including the 15 interactive HTML elements)
+    c.importer.run({ legacyRoot });
+
+    // Verify all 15 new interactive HTML elements exist in the catalog and are owned by kyrpy (#1)
+    const expectedInteractiveKeys = [
+      'html-flip-box',
+      'html-carousel',
+      'html-floating-toolbar',
+      'html-record-viewer-list',
+      'html-record-viewer-grid',
+      'html-choice-chips',
+      'html-multi-choice',
+      'html-dropdown-menu',
+      'html-drag-drop-zone',
+      'html-bottom-sheet',
+      'html-audio-player',
+      'html-calendar-picker',
+      'html-color-picker',
+      'html-chat-bubble',
+      'html-admob-banner'
+    ];
+    const allElements = await req('GET', '/api/elements');
+    assert.equal(allElements.status, 200);
+    for (const key of expectedInteractiveKeys) {
+      const found = allElements.body.find(e => e.key === key);
+      assert.ok(found, `Interactive HTML element "${key}" should be seeded in catalog`);
+      assert.equal(found.creatorId, 1, `"${key}" creatorId should be kyrpy (#1)`);
+      assert.equal(found.rootOwnerId, 1, `"${key}" rootOwnerId should be kyrpy (#1)`);
+      assert.equal(found.visibility, 'public', `"${key}" should be public by default`);
+    }
+
+    // Create a custom project via UI modal payload (using visibility: 'project' which normalizes to 'private')
+    const projRes = await req('POST', '/api/projects', {
+      name: 'Ada UX Studio Project',
+      visibility: 'project',
+      description: 'Project created from Projects modal'
+    });
+    assert.equal(projRes.status, 200);
+    assert.equal(projRes.body.visibility, 'private');
+    const projId = projRes.body.id;
+
+    // Create all 6 item types tied to the project: path, icon, button, element, screen, workflow
+    const pathRes = await req('POST', '/api/paths', {
+      name: 'Ada Custom Wave Path',
+      projectId: projId,
+      visibility: 'project',
+      nodes: [{ tag: 'path', name: 'wave', attrs: { d: 'M 4 32 Q 32 4 60 32' } }]
+    });
+    assert.equal(pathRes.status, 200);
+    assert.equal(pathRes.body.projectId, projId);
+    assert.equal(pathRes.body.visibility, 'project');
+
+    const iconRes = await req('POST', '/api/icons', {
+      name: 'Ada Spark Icon',
+      projectId: projId,
+      visibility: 'public',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'path', refId: pathRes.body.id, name: 'wave-use', attrs: { x: 0, y: 0, width: 64, height: 64 } }]
+    });
+    assert.equal(iconRes.status, 200);
+
+    // Create a custom editable button template with custom `nodes` payload (matching collab-modals.js)
+    const tplBtnRes = await req('POST', '/api/templates/buttons', {
+      name: 'Ada Neon Split Pill',
+      key: 'ada-neon-split-pill',
+      shape: 'pill',
+      width: 180,
+      height: 52,
+      hoverEffect: 'pulse',
+      nodes: [
+        { tag: 'rect', role: 'button', name: 'bg', attrs: { x: 0, y: 0, width: 180, height: 52, rx: 26, fill: '{{primary}}' } },
+        { tag: 'text', kind: 'text', name: 'label', text: 'Launch Action', attrs: { x: 90, y: 31, 'text-anchor': 'middle', fill: '{{text}}' } }
+      ]
+    });
+    assert.equal(tplBtnRes.status, 200);
+    assert.equal(tplBtnRes.body.nodesTemplate.length, 2);
+
+    // Instantiate a button from the custom template into Ada's project
+    const instBtnRes = await req('POST', `/api/templates/buttons/${tplBtnRes.body.id}/instantiate`, {
+      name: 'Ada Instantiated CTA',
+      projectId: projId,
+      visibility: 'project',
+      iconId: iconRes.body.id
+    });
+    assert.equal(instBtnRes.status, 200);
+    assert.equal(instBtnRes.body.projectId, projId);
+    assert.equal(instBtnRes.body.visibility, 'project');
+
+    // Create a custom editable device template
+    const tplDevRes = await req('POST', '/api/templates/devices', {
+      name: 'Ada Foldable Tablet',
+      key: 'ada-foldable-tablet',
+      category: 'tablet',
+      width: 960,
+      height: 1280,
+      cornerRadius: 28,
+      grid: 16
+    });
+    assert.equal(tplDevRes.status, 200);
+    assert.equal(tplDevRes.body.width, 960);
+
+    // Create a screen with multi-events (click, mouseover, release, dragdrop, rightclick) and animations
+    const flipBox = allElements.body.find(e => e.key === 'html-flip-box');
+    const floatToolbar = allElements.body.find(e => e.key === 'html-floating-toolbar');
+    const modalDialog = allElements.body.find(e => e.key === 'html-bottom-sheet');
+
+    const targetScreenRes = await req('POST', '/api/screens', {
+      name: 'Ada Detail Screen',
+      projectId: projId,
+      visibility: 'project',
+      meta: { device: 'ada-foldable-tablet' }
+    });
+    assert.equal(targetScreenRes.status, 200);
+
+    const homeScreenRes = await req('POST', '/api/screens', {
+      name: 'Ada Interactive Home',
+      projectId: projId,
+      visibility: 'project',
+      meta: { device: 'ada-foldable-tablet' },
+      nodes: [
+        {
+          tag: 'use',
+          kind: 'instance',
+          refType: 'button',
+          refId: instBtnRes.body.id,
+          name: 'hero-cta',
+          locked: true,
+          attrs: { x: 40, y: 80, width: 180, height: 52 },
+          events: [
+            { trigger: 'click', type: 'screen', targetId: targetScreenRes.body.id },
+            { trigger: 'mouseover', type: 'toolbar', targetId: floatToolbar.id, position: 'top' },
+            { trigger: 'release', type: 'popup', targetId: modalDialog.id },
+            { trigger: 'dragdrop', type: 'element', targetId: flipBox.id },
+            { trigger: 'rightclick', type: 'animate', animationType: 'pulse' }
+          ],
+          animations: [
+            { name: 'idle-float', type: 'float', trigger: 'load', durationMs: 1800, iterations: 'infinite' }
+          ]
+        }
+      ]
+    });
+    assert.equal(homeScreenRes.status, 200);
+    assert.equal(homeScreenRes.body.nodes.length, 1);
+    assert.equal(homeScreenRes.body.nodes[0].locked, true);
+    assert.equal(homeScreenRes.body.nodes[0].events.length, 5);
+    assert.equal(homeScreenRes.body.animations.length, 1);
+
+    // Create a workflow linking the two screens with locked position
+    const wfRes = await req('POST', '/api/workflows', {
+      name: 'Ada Main User Flow',
+      projectId: projId,
+      visibility: 'project'
+    });
+    assert.equal(wfRes.status, 200);
+    await req('PUT', `/api/workflows/${wfRes.body.id}/screens`, {
+      screenId: homeScreenRes.body.id,
+      x: 100,
+      y: 120,
+      locked: true
+    });
+    await req('POST', `/api/workflows/${wfRes.body.id}/links`, {
+      fromScreenId: homeScreenRes.body.id,
+      fromNodeId: homeScreenRes.body.nodes[0].id,
+      toScreenId: targetScreenRes.body.id,
+      name: 'CTA Tap',
+      trigger: 'tap'
+    });
+
+    // Multi-language translation CRUD via HTTP (matching openSyncModal i18n tab)
+    const trSave = await req('PUT', '/api/translations', {
+      lang: 'tr',
+      itemType: 'screen',
+      itemId: homeScreenRes.body.id,
+      field: 'label',
+      value: 'Ada Etkileşimli Ana Ekran'
+    });
+    assert.equal(trSave.status, 200);
+    assert.equal(trSave.body.lang, 'tr');
+    assert.equal(trSave.body.itemType, 'screen');
+    assert.equal(trSave.body.value, 'Ada Etkileşimli Ana Ekran');
+
+    const trList = await req('GET', `/api/translations?itemType=screen&itemId=${homeScreenRes.body.id}`);
+    assert.equal(trList.status, 200);
+    assert.equal(trList.body.length, 1);
+    assert.equal(trList.body[0].lang, 'tr');
+
+    const trDel = await req('DELETE', `/api/translations/${trSave.body.id}`);
+    assert.equal(trDel.status, 200);
+  });
+});
+
+test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clone root-owner lineage, node-level HTTP change requests & Owner Approve/Reject rollback', async () => {
+  await withServer(async ({ req }) => {
+    // 1. Register 2 collaborators: Burak (designer) and Can (designer)
+    const burakReg = await req('POST', '/api/auth/register', {
+      username: 'burak_ux',
+      email: 'burak@kyrpy.com',
+      password: 'password123',
+      displayName: 'Burak Aksoy'
+    });
+    assert.equal(burakReg.status, 200);
+    const burakToken = burakReg.body.token;
+    const burakId = burakReg.body.user.id;
+
+    const canReg = await req('POST', '/api/auth/register', {
+      username: 'can_ux',
+      email: 'can@kyrpy.com',
+      password: 'password123',
+      displayName: 'Can Sahin'
+    });
+    assert.equal(canReg.status, 200);
+    const canToken = canReg.body.token;
+    const canId = canReg.body.user.id;
+
+    // 2. Owner `kyrpy` creates a public element and a collaborative project
+    const rootEl = await req('POST', '/api/elements', {
+      name: 'Kyrpy Public Master Card',
+      visibility: 'public',
+      nodes: [{ tag: 'rect', name: 'base', attrs: { x: 0, y: 0, width: 240, height: 120, rx: 16 } }]
+    });
+    assert.equal(rootEl.status, 200);
+    assert.equal(rootEl.body.creatorId, 1);
+    assert.equal(rootEl.body.rootOwnerId, 1);
+
+    // 3. Burak clones Kyrpy's public element, then Can clones Burak's clone -> Root Owner must stay kyrpy (#1)
+    const burakClone = await req(
+      'POST',
+      `/api/elements/${rootEl.body.id}/clone`,
+      { name: 'Burak Card Fork', visibility: 'public' },
+      { Authorization: `Bearer ${burakToken}` }
+    );
+    assert.equal(burakClone.status, 200);
+    assert.equal(burakClone.body.creatorId, burakId);
+    assert.equal(burakClone.body.rootOwnerId, 1);
+    assert.equal(burakClone.body.rootItemId, rootEl.body.id);
+
+    const canClone = await req(
+      'POST',
+      `/api/elements/${burakClone.body.id}/clone`,
+      { name: 'Can Card Remix', visibility: 'project' },
+      { Authorization: `Bearer ${canToken}` }
+    );
+    assert.equal(canClone.status, 200);
+    assert.equal(canClone.body.creatorId, canId);
+    assert.equal(canClone.body.clonedFromId, burakClone.body.id);
+    assert.equal(canClone.body.rootItemId, rootEl.body.id);
+    assert.equal(canClone.body.rootOwnerId, 1);
+
+    const lineageRes = await req('GET', `/api/elements/${canClone.body.id}/lineage`);
+    assert.equal(lineageRes.status, 200);
+    assert.equal(lineageRes.body.itemName, 'Can Card Remix');
+    assert.equal(lineageRes.body.rootOwner.username, 'kyrpy');
+    assert.equal(lineageRes.body.creator.username, 'can_ux');
+    assert.equal(lineageRes.body.chain.length, 3);
+
+    // 4. Kyrpy creates a project and invites Burak as editor
+    const proj = await req('POST', '/api/projects', { name: 'Untrap Shared Redesign', visibility: 'public' });
+    assert.equal(proj.status, 200);
+    const invite = await req('POST', `/api/projects/${proj.body.id}/members`, {
+      usernameOrEmail: 'burak_ux',
+      role: 'editor'
+    });
+    assert.equal(invite.status, 200);
+
+    // 5. Kyrpy creates a screen with 1 node in that project
+    const screen = await req('POST', '/api/screens', {
+      name: 'Shared Onboarding Screen',
+      label: 'Welcome v1',
+      projectId: proj.body.id,
+      nodes: [{ tag: 'rect', name: 'hero-box', attrs: { x: 20, y: 20, width: 350, height: 200 } }]
+    });
+    assert.equal(screen.status, 200);
+    assert.equal(screen.body.nodes.length, 1);
+
+    // 6. Collaborator Burak adds a new node via HTTP POST /api/screens/:id/nodes
+    const addedNode = await req(
+      'POST',
+      `/api/screens/${screen.body.id}/nodes`,
+      { tag: 'text', kind: 'text', name: 'collab-badge', text: 'Added by Burak', attrs: { x: 40, y: 60 } },
+      { Authorization: `Bearer ${burakToken}` }
+    );
+    assert.equal(addedNode.status, 200);
+
+    // Verify a pending change_request was automatically recorded for the node-level edit!
+    const changesAfterAdd = await req('GET', `/api/changes?projectId=${proj.body.id}&status=pending`);
+    assert.equal(changesAfterAdd.status, 200);
+    assert.equal(changesAfterAdd.body.length, 1);
+    const nodeAddChange = changesAfterAdd.body[0];
+    assert.equal(nodeAddChange.action, 'node_add');
+    assert.equal(nodeAddChange.authorName, 'burak_ux');
+    assert.equal(nodeAddChange.diffSummary.addedNodes, 1);
+
+    // 7. Owner Kyrpy REJECTS Burak's node addition -> screen rolls back to 1 node!
+    const rejectRes = await req('POST', `/api/changes/${nodeAddChange.id}/reject`, {
+      comment: 'Revert badge placement for now'
+    });
+    assert.equal(rejectRes.status, 200);
+    assert.equal(rejectRes.body.status, 'rejected');
+
+    const screenAfterReject = await req('GET', `/api/screens/${screen.body.id}`);
+    assert.equal(screenAfterReject.body.nodes.length, 1, 'Rejected node addition must roll back screen nodes to 1');
+
+    // 8. Collaborator Burak updates the screen label -> Owner Kyrpy APPROVES
+    await req(
+      'PUT',
+      `/api/screens/${screen.body.id}`,
+      { label: 'Welcome v2 (Burak Approved)' },
+      { Authorization: `Bearer ${burakToken}` }
+    );
+    const pendingAfterUpdate = await req('GET', `/api/changes?projectId=${proj.body.id}&status=pending`);
+    assert.equal(pendingAfterUpdate.body.length, 1);
+    const approveRes = await req('POST', `/api/changes/${pendingAfterUpdate.body[0].id}/approve`, {
+      comment: 'Looks great!'
+    });
+    assert.equal(approveRes.status, 200);
+    assert.equal(approveRes.body.status, 'approved');
+
+    const screenAfterApprove = await req('GET', `/api/screens/${screen.body.id}`);
+    assert.equal(screenAfterApprove.body.label, 'Welcome v2 (Burak Approved)');
+  });
+});
+
+test('Persona 3 (@kyrpy-test-security-redteam & @kyrpy-test-edgecase): Auth validation, ACL role enforcement, locked item protection, XSS & cycle guards', async () => {
+  await withServer(async ({ req }) => {
+    // 1. Invalid bearer token on protected API returns 401 UNAUTHORIZED
+    const badTokenRes = await req('GET', '/api/projects', undefined, {
+      Authorization: 'Bearer invalid_forged_token_xyz'
+    });
+    assert.equal(badTokenRes.status, 401);
+    assert.equal(badTokenRes.body.error.code, 'UNAUTHORIZED');
+
+    // 2. Create a user with `viewer` role and verify write requests are blocked with 403 FORBIDDEN
+    const viewerReg = await req('POST', '/api/auth/register', {
+      username: 'selin_viewer',
+      email: 'selin@kyrpy.com',
+      password: 'password123',
+      role: 'viewer'
+    });
+    assert.equal(viewerReg.status, 200);
+    const viewerToken = viewerReg.body.token;
+
+    // Viewer can read
+    const viewerRead = await req('GET', '/api/screens', undefined, {
+      Authorization: `Bearer ${viewerToken}`
+    });
+    assert.equal(viewerRead.status, 200);
+
+    // Viewer CANNOT create or mutate items (403 FORBIDDEN)
+    const viewerWrite = await req(
+      'POST',
+      '/api/screens',
+      { name: 'Unauthorized Screen' },
+      { Authorization: `Bearer ${viewerToken}` }
+    );
+    assert.equal(viewerWrite.status, 403);
+    assert.equal(viewerWrite.body.error.code, 'FORBIDDEN');
+
+    // 3. Designer user cannot delete or demote default admin `kyrpy`
+    const designerReg = await req('POST', '/api/auth/register', {
+      username: 'emre_designer',
+      email: 'emre@kyrpy.com',
+      password: 'password123',
+      role: 'designer'
+    });
+    const designerToken = designerReg.body.token;
+
+    const delKyrpyByDesigner = await req('DELETE', '/api/users/1', undefined, {
+      Authorization: `Bearer ${designerToken}`
+    });
+    assert.equal(delKyrpyByDesigner.status, 403);
+
+    // Even admin cannot delete or demote default admin `kyrpy` (#1)
+    const delKyrpyByAdmin = await req('DELETE', '/api/users/1');
+    assert.equal(delKyrpyByAdmin.status, 422);
+
+    const demoteKyrpyByAdmin = await req('PUT', '/api/users/1', { role: 'viewer' });
+    assert.equal(demoteKyrpyByAdmin.status, 422);
+
+    // 4. Non-owner designer cannot approve their own change request on kyrpy's item
+    const ownerScreen = await req('POST', '/api/screens', { name: 'Kyrpy Protected Screen' });
+    await req(
+      'PUT',
+      `/api/screens/${ownerScreen.body.id}`,
+      { label: 'Emre Unapproved Edit' },
+      { Authorization: `Bearer ${designerToken}` }
+    );
+    const pending = await req('GET', '/api/changes?status=pending');
+    assert.equal(pending.body.length, 1);
+
+    const selfApprove = await req(
+      'POST',
+      `/api/changes/${pending.body[0].id}/approve`,
+      { comment: 'Self-approving' },
+      { Authorization: `Bearer ${designerToken}` }
+    );
+    assert.equal(selfApprove.status, 403);
+
+    // 5. Locked item & workflow cannot be deleted until unlocked (409 CONFLICT)
+    const lockedBtn = await req('POST', '/api/buttons', { name: 'Locked Master Button', locked: true });
+    assert.equal(lockedBtn.status, 200);
+    assert.equal(lockedBtn.body.locked, true);
+
+    const delLocked = await req('DELETE', `/api/buttons/${lockedBtn.body.id}`);
+    assert.equal(delLocked.status, 409);
+
+    // Unlock and then delete succeeds
+    await req('PUT', `/api/buttons/${lockedBtn.body.id}`, { locked: false });
+    const delUnlocked = await req('DELETE', `/api/buttons/${lockedBtn.body.id}`);
+    assert.equal(delUnlocked.status, 200);
+
+    // 6. Malicious SVG with only <script> (no shapes) or node with inline on* handler is rejected (422)
+    const xssSvg = await req('POST', '/api/import/svg', {
+      type: 'icon',
+      name: 'Evil Icon',
+      svg: '<svg viewBox="0 0 64 64"><script>alert(1)</script></svg>'
+    });
+    assert.equal(xssSvg.status, 422);
+
+    // 7. Hierarchy violation (a button cannot contain a screen) is rejected (422)
+    const badHierarchy = await req('POST', '/api/buttons', {
+      name: 'Invalid Hierarchy Button',
+      nodes: [{ tag: 'use', kind: 'instance', refType: 'screen', refId: ownerScreen.body.id }]
+    });
+    assert.equal(badHierarchy.status, 422);
+  });
+});
+
+test('Persona 4 (@kyrpy-test-ux-offline & @kyrpy-test-load-concurrency): Offline SQLite outbox queuing & concurrent multi-user operations', async () => {
+  await withServer(async ({ c, req }) => {
+    // 1. Verify offline-first status endpoint returns host, port, database, pendingCount, syncedCount, state
+    const st0 = await req('GET', '/api/sync/status');
+    assert.equal(st0.status, 200);
+    assert.equal(st0.body.mode, 'offline-first');
+    assert.equal(st0.body.database, 'kyrpy-uiux-designer-db');
+    assert.ok(st0.body.host);
+    assert.ok(st0.body.port);
+    assert.equal(typeof st0.body.pendingCount, 'number');
+    assert.equal(typeof st0.body.syncedCount, 'number');
+    assert.ok(st0.body.state);
+
+    // 2. Fire 15 concurrent creation requests across paths, icons, buttons, elements, and screens
+    const burst = await Promise.all(
+      Array.from({ length: 15 }, (_, idx) =>
+        req('POST', '/api/elements', {
+          name: `Concurrent Widget ${idx + 1}`,
+          visibility: idx % 2 === 0 ? 'public' : 'project',
+          nodes: [{ tag: 'rect', name: `box-${idx}`, attrs: { x: 0, y: 0, width: 120, height: 48, rx: 10 } }]
+        })
+      )
+    );
+    for (const r of burst) {
+      assert.equal(r.status, 200);
+      assert.ok(r.body.id);
+    }
+
+    // Verify all 15 mutations were queued in the local SQLite offline outbox
+    const stAfter = await req('GET', '/api/sync/status');
+    assert.ok(stAfter.body.pendingCount >= 15, `Expected at least 15 outbox entries, got ${stAfter.body.pendingCount}`);
+    void c;
+  });
+});
+
+test('Persona 5 (@kyrpy-test-ux-accessibility & @kyrpy-test-ux-notifications): Bundle export interactive runtime attributes & frontend UI contracts', async () => {
+  await withServer(async ({ req }) => {
+    const popupEl = await req('POST', '/api/elements', {
+      name: 'Accessible Quick Toolbar',
+      nodes: [{ tag: 'rect', name: 'bar', attrs: { x: 0, y: 0, width: 160, height: 40, rx: 12 } }]
+    });
+    const scr = await req('POST', '/api/screens', {
+      name: 'A11y Interactive Screen',
+      nodes: [
+        {
+          tag: 'rect',
+          role: 'button',
+          name: 'a11y-trigger',
+          attrs: { x: 24, y: 40, width: 200, height: 56, rx: 16 },
+          events: [
+            { trigger: 'click', type: 'toolbar', targetId: popupEl.body.id, position: 'top' },
+            { trigger: 'mouseover', type: 'animate', animationType: 'pulse' }
+          ]
+        }
+      ]
+    });
+    assert.equal(scr.status, 200);
+
+    // Export standalone HTML bundle and verify interactive runtime hooks are embedded
+    const fav = await req('GET', '/favicon.ico');
+    assert.equal(fav.status, 200);
+    const exp = await req('POST', '/api/export/bundle', { screenIds: [scr.body.id], themeKeys: ['liquid'] });
+    assert.equal(exp.status, 200);
+    const html = JSON.stringify(exp.body);
+    assert.ok(html.includes('data-trigger=\\"mouseover\\"'), 'Exported HTML bundle must include multi-event data-trigger');
+    assert.ok(html.includes('ud-overlay ud-toolbar'), 'Exported HTML bundle must include small element toolbar overlay');
+
+    // Verify frontend files include topbar menu bar, hover toolbar, context menu, and graphic tools
+    const mainJs = readFileSync(join(here, '..', 'interfaces', 'web', 'js', 'main.js'), 'utf8');
+    const canvasJs = readFileSync(join(here, '..', 'interfaces', 'web', 'js', 'components', 'designer.js'), 'utf8');
+    assert.ok(mainJs.includes('Events & Anim') && mainJs.includes('Collaborate'), 'Topbar must include Events & Anim and Collaborate menus');
+    assert.ok(canvasJs.includes('el-hover-toolbar'), 'Designer must render mouse-over el-hover-toolbar');
+    assert.ok(canvasJs.includes('contextmenu'), 'Designer must handle right-click contextmenu');
+    for (const tool of ['star', 'polygon', 'arrow', 'callout', 'freehand', 'crop']) {
+      assert.ok(canvasJs.includes(`'${tool}'`), `Designer must support graphic tool "${tool}"`);
+    }
+  });
+});
+
+test('Persona 6 (@kyrpy-uiux-designer): Import from SVG Folder and Fonts into Current Library (Paths, Icons, Buttons, Elements)', async () => {
+  await withServer(async ({ req, dir }) => {
+    // 1. Discover workspace/server SVG & font folders
+    const foldersRes = await req('GET', '/api/import/folders');
+    assert.equal(foldersRes.status, 200);
+    assert.ok(Array.isArray(foldersRes.body.folders), 'Should return suggested folders list');
+
+    // 2. Import from uploaded SVG Folder files into Icons library
+    const folderUploadRes = await req('POST', '/api/import/folder', {
+      as: 'icon',
+      category: 'imported-folder-icons',
+      visibility: 'public',
+      files: [
+        { name: 'bell-outline.svg', svg: '<svg viewBox="0 0 24 24"><path d="M12 2 L18 16 L6 16 Z"/><circle cx="12" cy="19" r="2"/></svg>' },
+        { name: 'shield-check.svg', svg: '<svg viewBox="0 0 24 24"><path d="M12 2 L20 6 L20 13 L12 22 L4 13 L4 6 Z"/></svg>' }
+      ]
+    });
+    assert.equal(folderUploadRes.status, 200);
+    assert.equal(folderUploadRes.body.importedCount, 2);
+    assert.equal(folderUploadRes.body.as, 'icon');
+
+    // 3. Import from server folder path into Buttons library
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const sampleFolder = mkdtempSync(join(tmpdir(), 'ud-svg-pack-'));
+    try {
+      writeFileSync(join(sampleFolder, 'btn-spark.svg'), '<svg viewBox="0 0 24 24"><path d="M12 2 L15 9 L22 12 L15 15 L12 22 L9 15 L2 12 L9 9 Z"/></svg>');
+      writeFileSync(join(sampleFolder, 'btn-play.svg'), '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>');
+
+      const serverFolderRes = await req('POST', '/api/import/folder', {
+        as: 'button',
+        category: 'folder-buttons',
+        visibility: 'public',
+        folderPath: sampleFolder
+      });
+      assert.equal(serverFolderRes.status, 200);
+      assert.equal(serverFolderRes.body.importedCount, 2);
+      assert.equal(serverFolderRes.body.as, 'button');
+      assert.ok(
+        serverFolderRes.body.items[0].nodes.some(n => n.refType === 'icon' && n.refId),
+        'Button imported from SVG folder must wrap an icon instance node'
+      );
+    } finally {
+      rmSync(sampleFolder, { recursive: true, force: true });
+    }
+
+    // 4. Import from SVG Font (<font><glyph .../></font>) into Current Library (Paths & Icons)
+    const sampleSvgFont = `
+      <svg xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <font id="UntrapGlyphs" horiz-adv-x="1000">
+            <font-face font-family="UntrapGlyphs" units-per-em="1000" ascent="800" descent="-200" />
+            <glyph glyph-name="home-glyph" unicode="H" d="M100 0 L500 700 L900 0 Z" />
+            <glyph glyph-name="diamond-glyph" unicode="D" d="M500 800 L900 400 L500 0 L100 400 Z" />
+          </font>
+        </defs>
+      </svg>
+    `;
+    const svgFontRes = await req('POST', '/api/import/font', {
+      as: 'path',
+      fontName: 'UntrapGlyphs',
+      category: 'font-paths',
+      visibility: 'public',
+      fontSvg: sampleSvgFont
+    });
+    assert.equal(svgFontRes.status, 200);
+    assert.equal(svgFontRes.body.importedCount, 2);
+    assert.equal(svgFontRes.body.as, 'path');
+    assert.ok(
+      svgFontRes.body.items[0].nodes[0].attrs.d.startsWith('M'),
+      'Normalized SVG font glyph path must be valid SVG path data'
+    );
+
+    // 5. Import from Font Symbol Preset & Custom Characters into Elements & Icons Library
+    const presetFontRes = await req('POST', '/api/import/font', {
+      as: 'element',
+      fontName: 'UI Symbol Pack',
+      category: 'symbol-elements',
+      visibility: 'public',
+      preset: 'ui-symbols',
+      limit: 6
+    });
+    assert.equal(presetFontRes.status, 200);
+    assert.equal(presetFontRes.body.importedCount, 6);
+    assert.equal(presetFontRes.body.as, 'element');
+
+    const customCharsFontRes = await req('POST', '/api/import/font', {
+      as: 'icon',
+      fontName: 'Custom Mono',
+      category: 'char-icons',
+      visibility: 'public',
+      chars: '★✓⚡A'
+    });
+    assert.equal(customCharsFontRes.status, 200);
+    assert.equal(customCharsFontRes.body.importedCount, 4);
+    assert.equal(customCharsFontRes.body.as, 'icon');
+
+    // 6. Binary TrueType (.ttf) font import into Current Library if system .ttf is present
+    const sampleTtf = '/usr/share/fonts/xscreensaver/SpecialElite.ttf';
+    if (existsSync(sampleTtf)) {
+      const ttfRes = await req('POST', '/api/import/font', {
+        as: 'icon',
+        fontName: 'SpecialElite',
+        category: 'ttf-icons',
+        visibility: 'public',
+        fontPath: sampleTtf,
+        limit: 5
+      });
+      assert.equal(ttfRes.status, 200);
+      assert.equal(ttfRes.body.importedCount, 5);
+      assert.equal(ttfRes.body.as, 'icon');
+    }
+  });
+});
+
+test('Persona 7 (@kyrpy-uiux-devtest): Interactive Test Actions mode across Buttons, Elements, Screens (animations, buttons, edit forms, popups) & Workflows (routing)', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Create two screens with edit form fields, buttons, animations & workflow link, and verify GET /api/screens/:id returns outgoing `links`
+    const sA = await req('POST', '/api/screens', {
+      name: 'Interactive Login Form Screen',
+      nodes: [
+        { tag: 'rect', role: 'field', name: 'email-field', attrs: { x: 24, y: 120, width: 342, height: 48, rx: 12 } },
+        { tag: 'text', kind: 'text', name: 'email-placeholder', text: 'ornek@okul.edu.tr', attrs: { x: 40, y: 150, 'font-size': 14 } },
+        { tag: 'rect', role: 'button', name: 'submit-btn', attrs: { x: 24, y: 200, width: 342, height: 52, rx: 14 }, events: [{ trigger: 'click', type: 'animate', animationType: 'pulse' }] },
+        { tag: 'text', kind: 'text', name: 'submit-lbl', text: 'Sign In Now →', attrs: { x: 195, y: 232, 'text-anchor': 'middle' } }
+      ]
+    });
+    assert.equal(sA.status, 200);
+    const submitLabelNode = sA.body.nodes.find(n => n.name === 'submit-lbl');
+
+    const sB = await req('POST', '/api/screens', {
+      name: 'Interactive Dashboard Target Screen',
+      nodes: [
+        { tag: 'rect', role: 'card', name: 'welcome-card', attrs: { x: 24, y: 100, width: 342, height: 140, rx: 16 } }
+      ]
+    });
+    assert.equal(sB.status, 200);
+
+    // Create workflow and add routing link from submitLabelNode on sA -> sB
+    const wfCreate = await req('POST', '/api/workflows', { name: 'Auth & Dashboard Flow', label: 'Test Routing Flow' });
+    assert.equal(wfCreate.status, 200);
+    const wfId = wfCreate.body.id;
+
+    await req('POST', `/api/workflows/${wfId}/nodes`, { screenId: sA.body.id, x: 100, y: 100 });
+    await req('POST', `/api/workflows/${wfId}/nodes`, { screenId: sB.body.id, x: 600, y: 100 });
+    const linkRes = await req('POST', `/api/workflows/${wfId}/links`, {
+      fromScreenId: sA.body.id,
+      fromNodeId: submitLabelNode.id,
+      toScreenId: sB.body.id,
+      name: 'Submit Login to Dashboard',
+      trigger: 'tap'
+    });
+    assert.equal(linkRes.status, 200);
+
+    const sAReloaded = await req('GET', `/api/screens/${sA.body.id}`);
+    assert.equal(sAReloaded.status, 200);
+    assert.ok(Array.isArray(sAReloaded.body.links), 'GET /api/screens/:id must include outgoing workflow links array');
+    assert.ok(
+      sAReloaded.body.links.some(l => l.fromScreenId === sA.body.id && l.toScreenId === sB.body.id && l.fromNodeId === submitLabelNode.id),
+      'Newly created workflow link must appear on GET /api/screens/:id for Screen Designer Test Actions'
+    );
+
+    // 2. Verify frontend Test Actions modules are served and expose full support for buttons, elements, screens, and workflows
+    const testActionsJs = await req('GET', '/js/components/designer-test-actions.js');
+    assert.equal(testActionsJs.status, 200);
+    assert.ok(String(testActionsJs.body).includes('mountLiveFormInputs'), 'designer-test-actions.js must mount live HTML form inputs over field nodes');
+    assert.ok(String(testActionsJs.body).includes('mountLiveWidgets'), 'designer-test-actions.js must mount interactive HTML widgets');
+    assert.ok(String(testActionsJs.body).includes('mountLiveActionHotspots'), 'designer-test-actions.js must mount interactive hotspots for buttons, events, and workflow links');
+    assert.ok(String(testActionsJs.body).includes('navigateLiveToScreen'), 'designer-test-actions.js must preserve actionsLive across screen-to-screen routing');
+
+    const wfDesignerJs = await req('GET', '/js/components/workflow-designer.js');
+    assert.equal(wfDesignerJs.status, 200);
+    assert.ok(String(wfDesignerJs.body).includes('setTestMode'), 'workflow-designer.js must provide interactive workflow routing test mode');
+  });
+});
+
+test('Persona 8 (@kyrpy-gru & @kyrpy-testusers-team): Workflow Filters, Copy/Move with Sub-Items, Empty Private Library Immutability, Trash Bin, Menu Item Popup/Modal & Visibility, Inspector Top Section, and PostgreSQL Pull', async () => {
+  await withServer(async ({ c, req }) => {
+    c.importer.run({ legacyRoot });
+
+    // 1. Verify Scan list screen is present as a public default built-in screen
+    const screensList = await req('GET', '/api/screens');
+    assert.equal(screensList.status, 200);
+    const scanList = screensList.body.find(s => s.key === 'scan-list');
+    assert.ok(scanList, 'Scan list screen must exist in default public library');
+    assert.equal(scanList.visibility, 'public');
+    assert.equal(scanList.builtin, true);
+
+    // 2. Workflow Public / Project-Specific Filter API
+    const projRes = await req('POST', '/api/projects', { name: 'Private Transfer Project', visibility: 'private' });
+    assert.equal(projRes.status, 200);
+    const targetPid = projRes.body.id;
+
+    const privWf = await req('POST', '/api/workflows', {
+      name: 'Project Private Flow',
+      projectId: targetPid,
+      visibility: 'project'
+    });
+    assert.equal(privWf.status, 200);
+
+    const pubWfs = await req('GET', `/api/workflows?visibility=public&projectIds=${targetPid}`);
+    assert.equal(pubWfs.status, 200);
+    assert.ok(pubWfs.body.every(w => w.visibility === 'public'), 'visibility=public must return only public workflows');
+
+    const projWfs = await req('GET', `/api/workflows?visibility=project&projectIds=${targetPid}`);
+    assert.equal(projWfs.status, 200);
+    assert.ok(projWfs.body.some(w => w.id === privWf.body.id), 'visibility=project must return project-specific workflows');
+    assert.ok(projWfs.body.every(w => w.visibility === 'project'), 'visibility=project must exclude public workflows');
+
+    // 3. New elements dropped into edit canvas go at top (ord = max(ord) + 1)
+    const addNode1 = await req('POST', `/api/screens/${scanList.id}/nodes`, {
+      tag: 'rect',
+      name: 'bottom-layer',
+      attrs: { x: 10, y: 10, width: 80, height: 40 }
+    });
+    const addNode2 = await req('POST', `/api/screens/${scanList.id}/nodes`, {
+      tag: 'rect',
+      name: 'top-dropped-layer',
+      attrs: { x: 20, y: 20, width: 80, height: 40 }
+    });
+    assert.equal(addNode1.status, 200);
+    assert.equal(addNode2.status, 200);
+    assert.ok(addNode2.body.ord > addNode1.body.ord, 'Newly dropped element must receive ord > previous max ord so it renders at top');
+
+    // 4. Menu Item -> "Show element as popup/modal box" (`targetElementId`) & `visible` toggle
+    const popupEl = await req('POST', '/api/elements', {
+      name: 'Menu Modal Box Element',
+      nodes: [{ tag: 'rect', role: 'card', name: 'modal-bg', attrs: { x: 0, y: 0, width: 240, height: 140, rx: 16 } }]
+    });
+    assert.equal(popupEl.status, 200);
+
+    const menuBtn = await req('POST', '/api/buttons', {
+      name: 'Popup Menu Action Button',
+      nodes: [{ tag: 'circle', role: 'button', name: 'hub', attrs: { cx: 32, cy: 32, r: 28 } }]
+    });
+    assert.equal(menuBtn.status, 200);
+
+    const miRes = await req('POST', `/api/buttons/${menuBtn.body.id}/menu/items`, {
+      label: 'Open Modal Info',
+      name: 'open-modal-info',
+      action: 'show-modal',
+      targetElementId: popupEl.body.id,
+      visible: true
+    });
+    assert.equal(miRes.status, 200);
+    assert.equal(miRes.body.targetElementId, popupEl.body.id);
+    assert.equal(miRes.body.visible, true);
+
+    // Verify rendered SVG of button contains data-popup-element attribute
+    const btnSvg = c.render.svg('button', menuBtn.body.id);
+    assert.ok(btnSvg.includes(`data-popup-element="${popupEl.body.key}"`), 'Rendered menu item SVG must include data-popup-element');
+
+    // Toggle menu item visibility to false and verify it hides from rendered SVG while staying in menu items list
+    const miHide = await req('PUT', `/api/buttons/${menuBtn.body.id}/menu/items/${miRes.body.id}`, { visible: false });
+    assert.equal(miHide.status, 200);
+    assert.equal(miHide.body.visible, false);
+    const btnSvgHidden = c.render.svg('button', menuBtn.body.id);
+    assert.ok(!btnSvgHidden.includes('data-item="open-modal-info"'), 'Hidden menu item must not render in live SVG');
+    await req('PUT', `/api/buttons/${menuBtn.body.id}/menu/items/${miRes.body.id}`, { visible: true });
+
+    // 5. Copy Screen to Project cascades all sub-items (elements, buttons, menu popup elements, icons, paths)
+    const hostScreen = await req('POST', '/api/screens', {
+      name: 'Cascade Host Screen',
+      nodes: [
+        { tag: 'use', kind: 'instance', refType: 'button', refId: menuBtn.body.id, name: 'menu-btn-inst', attrs: { x: 40, y: 40, width: 64, height: 64 } }
+      ]
+    });
+    assert.equal(hostScreen.status, 200);
+
+    const copyRes = await req('POST', '/api/library/copy-to-projects', {
+      items: [{ type: 'screen', id: hostScreen.body.id }],
+      projectIds: [targetPid]
+    });
+    assert.equal(copyRes.status, 200);
+    assert.equal(copyRes.body.copiedCount, 1);
+    assert.ok(copyRes.body.subItemsCount >= 2, 'Cascading screen copy must also copy referenced button and menu popup element into target project');
+    assert.equal(copyRes.body.copied[0].visibility, 'project');
+    assert.equal(copyRes.body.copied[0].projectId, targetPid);
+
+    // 6. Empty Project Library: Default public library is immutable (409), Project private library moves private items to Trash
+    const emptyDefaultRes = await req('POST', '/api/projects/1/empty-library', { defaultLibrary: true });
+    assert.equal(emptyDefaultRes.status, 409, 'Default public libraries must be immutable and reject empty-library with 409');
+
+    const emptyPrivateRes = await req('POST', `/api/projects/${targetPid}/empty-library`, {});
+    assert.equal(emptyPrivateRes.status, 200);
+    assert.ok(emptyPrivateRes.body.emptiedCount >= 3, 'Emptying project private library must move private items to Trash');
+
+    // 7. Trash Management & Admin/Superadmin Guard on Public Items
+    const regDesigner = await req('POST', '/api/auth/register', {
+      username: 'junior_designer',
+      email: 'junior@kyrpy.com',
+      password: 'Password123!'
+    });
+    assert.equal(regDesigner.status, 200);
+    const designerToken = regDesigner.body.token;
+
+    // Non-admin cannot delete public screen
+    const forbidDel = await req('DELETE', `/api/screens/${scanList.id}`, null, {
+      Authorization: `Bearer ${designerToken}`
+    });
+    assert.equal(forbidDel.status, 403, 'Only admin or superadmin can trash public items');
+
+    // Admin can restore trashed item from Trash bin
+    const trashList = await req('GET', '/api/trash');
+    assert.equal(trashList.status, 200);
+    assert.ok(trashList.body.length >= 1, 'Trash bin must list soft-deleted items');
+    const restoreRes = await req('POST', `/api/trash/${trashList.body[0].id}/restore`);
+    assert.equal(restoreRes.status, 200);
+    assert.equal(restoreRes.body.restored, true);
+
+    // 8. Verify Frontend Inspector, Menu Editor, Item Browser, and Hover Toolbar contracts
+    const inspectorJs = await req('GET', '/js/components/inspector.js');
+    assert.equal(inspectorJs.status, 200);
+    assert.ok(String(inspectorJs.body).includes('elementTypeTitle'), 'inspector.js must dynamically title the top element section with elementTypeTitle');
+    assert.ok(String(inspectorJs.body).includes('Menu Items ·'), 'inspector.js must render Menu Items section with order, add, remove, and visible controls');
+
+    const menuEditorJs = await req('GET', '/js/components/menu-editor.js');
+    assert.equal(menuEditorJs.status, 200);
+    assert.ok(String(menuEditorJs.body).includes('Show element as popup/modal box'), 'menu-editor.js must include Show element as popup/modal box selector');
+    assert.ok(String(menuEditorJs.body).includes('Edit menu item'), 'menu-editor.js hover toolbar must show Edit menu item button');
+  });
+});

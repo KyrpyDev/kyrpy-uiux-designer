@@ -1,0 +1,16 @@
+{
+  "name": "kyrpy-uiux-designer",
+  "version": "2.0.0",
+  "private": true,
+  "description": "SQLite-backed UI/UX app designer: icon, item, screen and workflow libraries with themeable, animatable SVG and HTML/CSS/TS/JS export.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning main.js serve",
+    "import": "node --disable-warning=ExperimentalWarning main.js import",
+    "reset": "node --disable-warning=ExperimentalWarning main.js import --reset",
+    "export": "node --disable-warning=ExperimentalWarning main.js export",
+    "guide": "node --disable-warning=ExperimentalWarning main.js guide",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js"
+  }
+}

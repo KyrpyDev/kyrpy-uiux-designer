@@ -1,0 +1,690 @@
+/**
+ * Workflow designer: screens on an infinite canvas (move, collapse, expand, edit in a modal) and named links
+ * between them (curved or cornered; cornered lines hop over each other with a small "U" at intersections).
+ */
+import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom.js';
+import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprint.js';
+import { api } from '../api.js';
+import { state, emit } from '../state.js';
+import { nodeBBox } from '/domain/geometry.js';
+import { openExportDialog } from './export-dialog.js';
+import { openGuide } from '../actions.js';
+import { openLineageModal } from './collab-modals.js';
+import { openCopyMoveToProjectsModal } from './item-browser.js';
+
+const HEAD = 44, NS = 'http://www.w3.org/2000/svg', HOP = 9;
+const TRIGGERS = ['tap', 'long-press', 'swipe', 'timeout', 'back', 'menu-item'];
+
+export class WorkflowDesigner {
+  constructor(root, app) {
+    this.root = root; this.app = app;
+    this.wf = null; this.screens = new Map(); this.full = new Map();
+    this.view = { tx: 40, ty: 40, z: 0.35 };
+    this.sel = null;                    // {kind:'node'|'link', id}
+    this.linkTool = false; this.linkStyle = 'curved';
+    this.testMode = false; this.activeTestScreenId = null; this.testHistory = [];
+    this.undoStack = []; this.redoStack = [];
+    this.nodeEls = new Map();
+    this.baseline = null; this.baselineFp = ''; this.dirty = false;   // last saved version of the open workflow
+  }
+
+  snapshot() {
+    return this.wf ? workflowRestoreBody(JSON.parse(JSON.stringify(this.wf))) : null;
+  }
+
+  pushUndo(snap = this.snapshot()) {
+    if (!snap) return;
+    this.undoStack.push(snap);
+    if (this.undoStack.length > 50) this.undoStack.shift();
+    this.redoStack = [];
+  }
+
+  async undo() {
+    const snap = this.undoStack.pop();
+    if (!snap || !this.wf) return toast('nothing to undo');
+    this.redoStack.push(this.snapshot());
+    await api.restoreWorkflow(this.wf.id, snap);
+    this.sel = null;
+    await this.refresh();
+  }
+
+  async redo() {
+    const snap = this.redoStack.pop();
+    if (!snap || !this.wf) return toast('nothing to redo');
+    this.undoStack.push(this.snapshot());
+    await api.restoreWorkflow(this.wf.id, snap);
+    this.sel = null;
+    await this.refresh();
+  }
+
+  async deleteSelected() {
+    if (!this.wf || !this.sel) return toast('Select a workflow link or screen node to delete');
+    if (this.sel.kind === 'link') {
+      this.pushUndo();
+      await this.deleteLink(this.sel.id);
+      return;
+    }
+    if (this.sel.kind === 'node') {
+      const s = this.screens.get(this.sel.id);
+      if (await confirmBox(`Remove "${s?.name || '#' + this.sel.id}" and its links from this workflow?`, { okLabel: 'Remove' })) {
+        this.pushUndo();
+        await api.removeWfScreen(this.wf.id, this.sel.id);
+        this.sel = null;
+        await this.refresh();
+      }
+    }
+  }
+
+  /* ---------- save / save as / reset (same model as the designers: edits are stored at once, "saved" is a bookmark on top) ---------- */
+  markBaseline() { this.baseline = JSON.parse(JSON.stringify(this.wf)); this.baselineFp = workflowFingerprint(this.wf); this.dirty = false; this.updateDocBar(); }
+  computeDirty() { this.dirty = !!this.wf && !!this.baseline && workflowFingerprint(this.wf) !== this.baselineFp; }
+  checkDirty() { const before = this.dirty; this.computeDirty(); if (before !== this.dirty) this.updateDocBar(); }
+
+  buildDocBar() {
+    const app = this.app;
+    this.backBtn = h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => app.back() }, '← Back');
+    this.saveBtn = h('button', { class: 'btn small save', title: 'Save (Ctrl+S): keep the current version. The button blinks while there are unsaved changes.', onclick: () => this.save() }, '💾 Save');
+    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name. This one goes back to its last saved version.', onclick: () => this.saveAs() }, 'Save as…');
+    this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
+    const copyToBtn = h('button', {
+      class: 'btn small',
+      title: 'Copy this workflow (and its screens + sub-items) to project(s) as private item',
+      onclick: () => this.wf && openCopyMoveToProjectsModal({
+        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key }],
+        mode: 'copy'
+      })
+    }, '📥 Copy to…');
+    const moveToBtn = h('button', {
+      class: 'btn small',
+      title: 'Move this workflow (and its screens + sub-items) to project(s) as private item',
+      onclick: () => this.wf && openCopyMoveToProjectsModal({
+        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key }],
+        mode: 'move'
+      })
+    }, '📤 Move to…');
+    this.docState = h('span', { class: 'doc-state', role: 'status' });
+    this.docbar = h('div', { class: 'dz-docbar', role: 'toolbar', 'aria-label': 'Document' },
+      this.backBtn, h('span', { class: 'sep-v' }),
+      this.saveBtn, this.saveAsBtn, this.resetBtn,
+      h('span', { class: 'sep-v' }),
+      copyToBtn, moveToBtn,
+      h('span', { class: 'sep-v' }),
+      this.docState
+    );
+    this.updateDocBar();
+    return this.docbar;
+  }
+
+  updateDocBar() {
+    if (!this.saveBtn) return;
+    this.saveBtn.classList.toggle('dirty', this.dirty);
+    this.resetBtn.disabled = !this.dirty;
+    this.docState.classList.toggle('dirty', this.dirty);
+    this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    this.refreshBack();
+  }
+
+  refreshBack() {
+    if (!this.backBtn) return;
+    const target = this.app.backTarget?.();
+    this.backBtn.disabled = !this.app.canBack?.();
+    this.backBtn.title = target ? `Back to ${target} (Alt+←)` : 'Back to the previous page (Alt+←)';
+  }
+
+  async settle() {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && this.root.contains(a)) a.blur();
+    await new Promise(r => setTimeout(r, 80));
+  }
+
+  async save() {
+    if (!this.wf) return false;
+    await this.settle();
+    try {
+      await this.refresh();
+      const had = this.dirty;
+      this.markBaseline();
+      toast(had ? `Saved "${this.wf.name}"` : `"${this.wf.name}" has no unsaved changes`, had ? 'ok' : 'info', 2200);
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+  }
+
+  async reset({ confirm = true } = {}) {
+    if (!this.wf || !this.baseline) return false;
+    if (!this.dirty) { toast('Nothing to reset: no changes since the last save'); return false; }
+    if (confirm && !(await confirmBox(`Throw away every change to the workflow "${this.wf.name}" since the last save?`, { okLabel: 'Reset' }))) return false;
+    await this.settle();
+    try {
+      await api.restoreWorkflow(this.wf.id, workflowRestoreBody(this.baseline));
+      this.sel = null;
+      await this.refresh();
+      toast('Back to the last saved version', 'ok', 2200);
+      return true;
+    } catch (e) { toast(e.message, 'error'); await this.refresh(); return false; }
+  }
+
+  /** The copy gets the current state (unsaved edits included); the original goes back to its last saved version. */
+  async saveAs() {
+    if (!this.wf) return false;
+    const name = await promptBox('Save as', { value: `${this.wf.name} copy`, label: 'Name of the new workflow', okLabel: 'Save as' });
+    if (!name?.trim()) return false;
+    await this.settle();
+    try {
+      const copy = await api.cloneWorkflow(this.wf.id, name.trim());
+      const reverted = this.dirty;
+      if (reverted) await api.restoreWorkflow(this.wf.id, workflowRestoreBody(this.baseline));
+      this.sel = null;
+      await this.refresh();
+      toast(`Saved as "${copy.name}"${reverted ? `; "${this.wf.name}" is back to its last saved version` : ''}`, 'ok', 4200);
+      await this.app.openWorkflow(copy.id);
+      return copy;
+    } catch (e) { toast(e.message, 'error'); await this.refresh(); return false; }
+  }
+
+  /** Called before another workflow replaces this one. Resolves true when it is fine to go on. */
+  async confirmLeave() {
+    if (!this.wf || !this.dirty) return true;
+    const c = await choiceBox('Unsaved changes', `The workflow "${this.wf.name}" has changes that were not saved. Save them, or go back to the last saved version?`,
+      [{ label: 'Cancel', value: 'cancel' }, { label: 'Discard changes', value: 'discard', kind: 'danger' }, { label: 'Save', value: 'save', kind: 'primary' }]);
+    if (c === 'save') return this.save();
+    if (c === 'discard') return this.reset({ confirm: false });
+    return false;
+  }
+
+  async load(id) {
+    const [wf, screens] = await Promise.all([api.workflow(id), api.list('screen')]);
+    this.wf = wf; this.screens = new Map(screens.map(s => [s.id, s]));
+    this.sel = null; this.baseline = null;
+    this.markBaseline();
+    await this.loadFulls();
+    this.render();
+    requestAnimationFrame(() => this.fit());
+  }
+
+  async loadFulls() {
+    const ids = new Set(this.wf.links.map(l => l.fromScreenId));
+    await Promise.all([...ids].filter(i => !this.full.has(i)).map(async i => { try { this.full.set(i, await api.getDesign('screen', i)); } catch { /* screen removed */ } }));
+  }
+
+  async refresh() { const keep = this.view; this.wf = await api.workflow(this.wf.id); this.computeDirty(); this.screens = new Map((await api.list('screen')).map(s => [s.id, s])); this.full.clear(); await this.loadFulls(); this.render(); this.view = keep; this.applyView(); emit('workflows:changed'); }
+
+  /* ---------- layout of the chrome ---------- */
+  render() {
+    clear(this.root); this.root.classList.add('wf');
+    const wf = this.wf;
+    const addSel = h('select', { 'aria-label': 'Add a screen to this workflow' }, h('option', { value: '' }, '+ Add screen…'),
+      [...this.screens.values()].filter(s => !wf.nodes.some(n => n.screenId === s.id)).map(s => h('option', { value: s.id }, s.name)));
+    addSel.addEventListener('change', async () => { if (addSel.value) { this.pushUndo(); const c = this.centerWorld(); await api.placeScreen(wf.id, { screenId: Number(addSel.value), x: Math.round(c.x - 195), y: Math.round(c.y - 300) }); await this.refresh(); } });
+    this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '');
+    const styleSel = h('select', { title: 'Style of new links' }, h('option', { value: 'curved' }, 'curved links'), h('option', { value: 'cornered' }, 'cornered links'));
+    styleSel.value = this.linkStyle; styleSel.addEventListener('change', () => { this.linkStyle = styleSel.value; });
+    this.linkBtn = h('button', { class: `btn small${this.linkTool ? ' active' : ''}`, title: 'Draw links: drag from a button on one screen to another screen', onclick: () => { this.linkTool = !this.linkTool; this.linkBtn.classList.toggle('active', this.linkTool); this.viewport.style.cursor = this.linkTool ? 'crosshair' : 'default'; } }, '🔗 Link tool');
+    this.testBtn = h('button', {
+      class: `btn small${this.testMode ? ' active' : ''}`,
+      dataset: { act: 'test-actions' },
+      title: 'Test actions & workflow routing interactively: click links or buttons on screens to follow routes',
+      onclick: () => this.setTestMode(!this.testMode)
+    }, '▶ Test actions');
+    const bar = h('div', { class: 'dz-bar' },
+      h('b', { style: { padding: '0 8px' } }, `Workflow: ${wf.name}`),
+      h('span', { class: 'sep-v' }),
+      h('button', { class: 'icon-btn', title: 'Undo (Ctrl+Z)', onclick: () => this.undo() }, '↶'),
+      h('button', { class: 'icon-btn', title: 'Redo (Ctrl+Y)', onclick: () => this.redo() }, '↷'),
+      h('button', { class: 'icon-btn', title: 'Delete selected link or screen node (Del)', onclick: () => this.deleteSelected() }, '🗑'),
+      h('span', { class: 'sep-v' }),
+      addSel,
+      h('button', { class: 'btn small', onclick: () => this.addAll() }, 'Add all screens'), h('span', { class: 'sep-v' }), this.linkBtn, styleSel,
+      h('button', { class: 'btn small', title: 'Arrange screens left→right following the links', onclick: () => this.autoLayout() }, 'Auto layout'),
+      this.testBtn,
+      h('span', { class: 'sep-v' }),
+      h('button', { class: 'icon-btn', onclick: () => this.zoomBy(1 / 1.25) }, '−'), this.zoomLabel, h('button', { class: 'icon-btn', onclick: () => this.zoomBy(1.25) }, '+'),
+      h('button', { class: 'btn small', onclick: () => this.fit() }, 'Fit'), h('span', { class: 'grow' }),
+      h('button', { class: 'btn small', title: 'Collapse every screen', onclick: () => this.collapseAll(true) }, 'Collapse all'), h('button', { class: 'btn small', onclick: () => this.collapseAll(false) }, 'Expand all'),
+      h('button', { class: 'btn small', title: 'How to use the workflow designer (F1)', onclick: () => openGuide('workflow') }, '? Guide'),
+      h('button', { class: 'btn small primary', onclick: () => openExportDialog({ screenIds: wf.nodes.map(n => n.screenId) }) }, 'Export workflow screens…'));
+    this.world = h('div', { class: 'wf-world' });
+    this.linkSvg = document.createElementNS(NS, 'svg'); this.linkSvg.setAttribute('class', 'wf-svg');
+    this.linkSvg.innerHTML = '<defs><marker id="wf-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 0L12 6L0 12z" fill="#6aa7ff"/></marker><marker id="wf-arrow-sel" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 0L12 6L0 12z" fill="#ffd54a"/></marker></defs>';
+    this.testHud = h('div', { class: 'dz-live-hud wf-test-hud', hidden: !this.testMode });
+    this.viewport = h('div', { class: 'wf-viewport', tabindex: '0', 'aria-label': 'Workflow canvas' }, this.world);
+    this.inspector = h('aside', { class: 'dz-inspector' });
+    this.root.append(this.buildDocBar(), bar, this.testHud, h('div', { class: 'dz-body' }, this.viewport, this.inspector));
+    this.buildNodes();
+    this.world.append(this.linkSvg);
+    this.drawLinks(); this.applyView(); this.renderInspector(); this.renderTestHud(); this.bind();
+  }
+
+  buildNodes() {
+    this.nodeEls.clear();
+    for (const n of this.wf.nodes) {
+      const s = this.screens.get(n.screenId);
+      if (!s) continue;
+      const isActiveRoute = this.testMode && this.activeTestScreenId === s.id;
+      const el = h('div', { class: `wf-node${n.collapsed ? ' collapsed' : ''}${n.locked ? ' locked' : ''}${isActiveRoute ? ' active-route' : ''}`, style: { left: `${n.x}px`, top: `${n.y}px`, width: `${s.width}px` }, dataset: { screen: s.id } },
+        h('header', { dataset: { drag: s.id } },
+          h('b', { title: s.key }, s.name),
+          h('button', { title: 'Test this screen interactively (animations, buttons, edit forms, routing)', onclick: e => { e.stopPropagation(); this.app.openScreenModal(s.id, () => this.refresh(), { testActions: true }); } }, '▶'),
+          h('button', { title: n.locked ? 'Unlock position' : 'Lock position', onclick: async e => { e.stopPropagation(); n.locked = !n.locked; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed, locked: n.locked }); await this.refresh(); } }, n.locked ? '🔒' : '🔓'),
+          h('button', { title: n.collapsed ? 'Expand' : 'Collapse', onclick: e => { e.stopPropagation(); this.toggleCollapse(n); } }, n.collapsed ? '▸' : '▾'),
+          h('button', { title: 'Edit this screen (opens the screen designer)', onclick: e => { e.stopPropagation(); this.app.openScreenModal(s.id, () => this.refresh()); } }, '✎'),
+          h('button', { title: 'Remove from this workflow', onclick: async e => { e.stopPropagation(); if (await confirmBox(`Remove "${s.name}" and its links from this workflow?`, { okLabel: 'Remove' })) { await api.removeWfScreen(this.wf.id, s.id); await this.refresh(); } } }, '✕')),
+        h('img', { class: 'shot', alt: s.label, draggable: 'false', src: api.svgUrl('screen', s.id, { theme: state.themeKey, animated: this.testMode ? 1 : 0, v: s.updatedAt }) }));
+      this.nodeEls.set(s.id, el);
+      this.world.append(el);
+    }
+  }
+
+  setTestMode(v) {
+    this.testMode = Boolean(v);
+    this.testBtn?.classList.toggle('active', this.testMode);
+    this.root.classList.toggle('actions-live', this.testMode);
+    if (this.testMode) {
+      this.linkTool = false;
+      this.linkBtn?.classList.remove('active');
+      const incoming = new Set((this.wf?.links || []).map(l => l.toScreenId));
+      const startNode = (this.sel?.kind === 'node' && this.sel.id)
+        || this.wf?.nodes?.find(n => !incoming.has(n.screenId))?.screenId
+        || this.wf?.nodes?.[0]?.screenId
+        || null;
+      this.testHistory = [];
+      this.setActiveTestScreen(startNode, false);
+      toast('Test actions ON — click any route pill, link arrow, or screen element to test workflow routing', 'ok', 2800);
+    } else {
+      this.activeTestScreenId = null;
+      this.testHistory = [];
+      this.nodeEls.forEach(el => el.classList.remove('active-route'));
+      this.renderTestHud();
+    }
+  }
+
+  setActiveTestScreen(screenId, pushHistory = true) {
+    if (!screenId) return;
+    if (pushHistory && this.activeTestScreenId && this.activeTestScreenId !== screenId) {
+      this.testHistory.push(this.activeTestScreenId);
+    }
+    this.activeTestScreenId = Number(screenId);
+    this.nodeEls.forEach((el, id) => el.classList.toggle('active-route', id === this.activeTestScreenId));
+    this.select({ kind: 'node', id: this.activeTestScreenId });
+    this.renderTestHud();
+  }
+
+  stepBackTest() {
+    if (!this.testHistory.length) return;
+    const prev = this.testHistory.pop();
+    this.setActiveTestScreen(prev, false);
+  }
+
+  renderTestHud() {
+    if (!this.testHud) return;
+    clear(this.testHud);
+    if (!this.testMode || !this.wf) {
+      this.testHud.hidden = true;
+      return;
+    }
+    this.testHud.hidden = false;
+    const curScreen = this.screens.get(this.activeTestScreenId);
+    const outgoing = (this.wf.links || []).filter(l => l.fromScreenId === this.activeTestScreenId);
+    this.testHud.append(
+      h('span', { class: 'dz-live-badge' }, `🟢 WORKFLOW TEST · ${curScreen ? curScreen.name : 'Select screen'}`),
+      this.testHistory.length > 0 ? h('button', {
+        class: 'btn small',
+        onclick: e => { e.stopPropagation(); this.stepBackTest(); }
+      }, '← Back') : null,
+      curScreen ? h('button', {
+        class: 'btn small primary',
+        title: 'Open this screen in interactive Test Actions mode (test buttons, animations, edit forms, and routing)',
+        onclick: e => { e.stopPropagation(); this.app.openScreenModal(curScreen.id, () => this.refresh(), { testActions: true }); }
+      }, `📱 Test "${curScreen.name}" Screen Interactive`) : null,
+      ...outgoing.map(l => {
+        const dest = this.screens.get(l.toScreenId);
+        return h('button', {
+          class: 'btn small dz-route-pill',
+          title: `Trigger "${l.name || 'route'}" (${l.trigger || 'tap'}) → ${dest?.name || `#${l.toScreenId}`}`,
+          onclick: e => {
+            e.stopPropagation();
+            toast(`Route: ${l.name || 'Link'} → ${dest?.name || `#${l.toScreenId}`}`, 'ok', 1800);
+            this.setActiveTestScreen(l.toScreenId, true);
+          }
+        }, `🔗 ${l.name || 'Route'} → ${dest?.name || `#${l.toScreenId}`} →`);
+      }),
+      h('button', {
+        class: 'btn small danger',
+        onclick: e => { e.stopPropagation(); this.setTestMode(false); }
+      }, '✕ Exit Test')
+    );
+  }
+
+  /* ---------- geometry ---------- */
+  nodeRect(screenId) {
+    const n = this.wf.nodes.find(x => x.screenId === screenId), s = this.screens.get(screenId);
+    if (!n || !s) return null;
+    return { x: n.x, y: n.y, w: s.width, h: n.collapsed ? HEAD : HEAD + s.height, node: n, screen: s };
+  }
+
+  linkEnds(l) {
+    const a = this.nodeRect(l.fromScreenId), b = this.nodeRect(l.toScreenId);
+    if (!a || !b) return null;
+    let p0, dir0;
+    const el = l.fromNodeId && !a.node.collapsed ? this.full.get(l.fromScreenId)?.nodes.find(e => e.id === l.fromNodeId) : null;
+    const right = b.x + b.w / 2 >= a.x + a.w / 2;
+    if (el) { const bb = nodeBBox(el, this.full.get(l.fromScreenId).nodes); p0 = { x: a.x + bb.x + bb.w / 2, y: a.y + HEAD + bb.y + bb.h / 2, dot: true }; dir0 = right ? 1 : -1; }
+    else { p0 = { x: right ? a.x + a.w : a.x, y: a.y + a.h / 2 }; dir0 = right ? 1 : -1; }
+    const toLeft = b.x >= a.x + a.w - 1 || (b.x + b.w / 2 >= a.x + a.w / 2 && b.x > a.x);
+    const p1 = { x: toLeft ? b.x : b.x + b.w, y: b.node.collapsed ? b.y + HEAD / 2 : b.y + b.h / 2 };
+    return { p0, p1, dir0, toLeft };
+  }
+
+  /** Path for a link; `vSegs` holds vertical segments of earlier cornered links (for hops). */
+  pathFor(l, vSegs) {
+    const e = this.linkEnds(l);
+    if (!e) return null;
+    const { p0, p1 } = e;
+    if (l.style === 'cornered') {
+      const sx = p1.x >= p0.x ? 1 : -1;
+      const midX = (p0.x + p1.x) / 2 + (p0.dot ? sx * 60 : 0);
+      const pts = [[p0.x, p0.y], [midX, p0.y], [midX, p1.y], [p1.x, p1.y]];
+      let d = `M ${pts[0][0]} ${pts[0][1]}`;
+      for (let i = 1; i < pts.length; i++) {
+        const [xa, ya] = pts[i - 1], [xb, yb] = pts[i];
+        if (ya === yb && xa !== xb) {                      // horizontal: hop over earlier vertical segments
+          const dir = xb > xa ? 1 : -1;
+          const hits = vSegs.filter(v => v.x > Math.min(xa, xb) + HOP && v.x < Math.max(xa, xb) - HOP && ya > v.y0 && ya < v.y1).sort((m, n) => dir * (m.x - n.x));
+          for (const v of hits) d += ` L ${v.x - dir * HOP} ${ya} A ${HOP} ${HOP} 0 0 ${dir > 0 ? 1 : 0} ${v.x + dir * HOP} ${ya}`;
+        }
+        d += ` L ${xb} ${yb}`;
+      }
+      vSegs.push({ x: midX, y0: Math.min(p0.y, p1.y), y1: Math.max(p0.y, p1.y) });
+      return { d, label: { x: midX, y: (p0.y + p1.y) / 2 }, p0 };
+    }
+    const sx = p1.x >= p0.x ? 1 : -1, c = Math.max(80, Math.abs(p1.x - p0.x) / 2);
+    const c1 = { x: p0.x + sx * c, y: p0.y }, c2 = { x: p1.x - (e.toLeft ? 1 : -1) * c, y: p1.y };
+    const d = `M ${p0.x} ${p0.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p1.x} ${p1.y}`;
+    const t = 0.5, mx = (1 - t) ** 3 * p0.x + 3 * (1 - t) ** 2 * t * c1.x + 3 * (1 - t) * t * t * c2.x + t ** 3 * p1.x;
+    const my = (1 - t) ** 3 * p0.y + 3 * (1 - t) ** 2 * t * c1.y + 3 * (1 - t) * t * t * c2.y + t ** 3 * p1.y;
+    return { d, label: { x: mx, y: my }, p0 };
+  }
+
+  drawLinks() {
+    [...this.linkSvg.querySelectorAll('.lk')].forEach(n => n.remove());
+    const vSegs = [];
+    let minX = 0, minY = 0, maxX = 4000, maxY = 4000;
+    for (const n of this.wf.nodes) { const r = this.nodeRect(n.screenId); if (r) { maxX = Math.max(maxX, r.x + r.w + 400); maxY = Math.max(maxY, r.y + r.h + 400); minX = Math.min(minX, r.x - 400); minY = Math.min(minY, r.y - 400); } }
+    this.linkSvg.setAttribute('width', maxX - minX); this.linkSvg.setAttribute('height', maxY - minY);
+    this.linkSvg.style.left = `${minX}px`; this.linkSvg.style.top = `${minY}px`;
+    this.linkSvg.setAttribute('viewBox', `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
+    const g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'lk'); this.linkSvg.appendChild(g);
+    for (const l of this.wf.links) {
+      const p = this.pathFor(l, vSegs);
+      if (!p) continue;
+      const sel = this.sel?.kind === 'link' && this.sel.id === l.id;
+      const path = document.createElementNS(NS, 'path');
+      path.setAttribute('d', p.d); path.setAttribute('class', `link${sel ? ' sel' : ''}`); path.setAttribute('marker-end', `url(#wf-arrow${sel ? '-sel' : ''})`);
+      path.dataset.link = l.id; path.setAttribute('tabindex', '0'); path.setAttribute('aria-label', `link ${l.name}`);
+      const tip = document.createElementNS(NS, 'title'); tip.textContent = `${l.name || '(unnamed)'}${l.descriptionDev ? `\n${l.descriptionDev}` : ''}`; path.appendChild(tip);
+      g.appendChild(path);
+      if (p.p0.dot) { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', p.p0.x); c.setAttribute('cy', p.p0.y); c.setAttribute('r', 7); c.setAttribute('fill', sel ? '#ffd54a' : '#6aa7ff'); g.appendChild(c); }
+      if (l.name) { const t = document.createElementNS(NS, 'text'); t.setAttribute('x', p.label.x); t.setAttribute('y', p.label.y - 8); t.setAttribute('text-anchor', 'middle'); t.textContent = l.name; g.appendChild(t); }
+    }
+    if (this.tempLine) { const t = document.createElementNS(NS, 'line'); for (const [k, v] of Object.entries({ x1: this.tempLine.x0, y1: this.tempLine.y0, x2: this.tempLine.x1, y2: this.tempLine.y1, stroke: '#ffd54a', 'stroke-width': 4, 'stroke-dasharray': '10 6' })) t.setAttribute(k, v); t.setAttribute('class', 'lk'); this.linkSvg.appendChild(t); }
+  }
+
+  /* ---------- view ---------- */
+  centerWorld() { const r = this.viewport.getBoundingClientRect(); return { x: (r.width / 2 - this.view.tx) / this.view.z, y: (r.height / 2 - this.view.ty) / this.view.z }; }
+  worldPoint(ev) { const r = this.viewport.getBoundingClientRect(); return { x: (ev.clientX - r.left - this.view.tx) / this.view.z, y: (ev.clientY - r.top - this.view.ty) / this.view.z }; }
+  applyView() { this.world.style.transform = `translate(${this.view.tx}px, ${this.view.ty}px) scale(${this.view.z})`; if (this.zoomLabel) this.zoomLabel.textContent = `${Math.round(this.view.z * 100)}%`; }
+  zoomBy(f, cx, cy) {
+    const r = this.viewport.getBoundingClientRect(); cx ??= r.width / 2; cy ??= r.height / 2;
+    const z = Math.min(2, Math.max(0.03, this.view.z * f)), k = z / this.view.z;
+    this.view = { z, tx: cx - (cx - this.view.tx) * k, ty: cy - (cy - this.view.ty) * k }; this.applyView();
+  }
+  fit() {
+    const rects = this.wf.nodes.map(n => this.nodeRect(n.screenId)).filter(Boolean);
+    const r = this.viewport.getBoundingClientRect();
+    if (!rects.length || !r.width) { this.view = { tx: 40, ty: 40, z: 0.35 }; return this.applyView(); }
+    const x0 = Math.min(...rects.map(q => q.x)), y0 = Math.min(...rects.map(q => q.y)), x1 = Math.max(...rects.map(q => q.x + q.w)), y1 = Math.max(...rects.map(q => q.y + q.h));
+    const z = Math.min(1, (r.width - 80) / (x1 - x0), (r.height - 80) / (y1 - y0));
+    this.view = { z, tx: (r.width - (x1 - x0) * z) / 2 - x0 * z, ty: (r.height - (y1 - y0) * z) / 2 - y0 * z }; this.applyView();
+  }
+
+  /* ---------- interaction ---------- */
+  bind() {
+    const vp = this.viewport;
+    vp.addEventListener('wheel', ev => { ev.preventDefault(); const r = vp.getBoundingClientRect(); this.zoomBy(Math.exp(-ev.deltaY * 0.0016), ev.clientX - r.left, ev.clientY - r.top); }, { passive: false });
+    vp.addEventListener('keydown', ev => {
+      if (ev.code === 'Space') { this.space = true; ev.preventDefault(); }
+      const k = ev.key.toLowerCase(), ctrl = ev.ctrlKey || ev.metaKey;
+      if (ctrl && k === 'z') { ev.preventDefault(); ev.shiftKey ? this.redo() : this.undo(); return; }
+      if (ctrl && k === 'y') { ev.preventDefault(); this.redo(); return; }
+      if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); this.deleteSelected(); }
+    });
+    vp.addEventListener('keyup', ev => { if (ev.code === 'Space') this.space = false; });
+    vp.addEventListener('dblclick', ev => { const l = ev.target.closest?.('path.link'); if (l) this.editLink(Number(l.dataset.link)); });
+    vp.addEventListener('pointerdown', ev => this.down(ev));
+    vp.addEventListener('pointermove', ev => this.move(ev));
+    vp.addEventListener('pointerup', ev => this.up(ev));
+  }
+
+  nodeAt(ev) { return ev.target.closest?.('.wf-node') || null; }
+
+  down(ev) {
+    if (ev.target.closest?.('.wf-test-hud')) return;
+    vpFocus(this.viewport);
+    if (ev.button === 1 || (ev.button === 0 && this.space)) { this.op = { kind: 'pan', x: ev.clientX, y: ev.clientY, tx: this.view.tx, ty: this.view.ty }; capture(this.viewport, ev); ev.preventDefault(); return; }
+    if (ev.button !== 0) return;
+    const linkEl = ev.target.closest?.('path.link');
+    if (linkEl) {
+      const linkId = Number(linkEl.dataset.link);
+      this.select({ kind: 'link', id: linkId });
+      if (this.testMode) {
+        const l = this.wf.links.find(x => x.id === linkId);
+        if (l) {
+          const dest = this.screens.get(l.toScreenId);
+          toast(`Route: ${l.name || 'Link'} → ${dest?.name || `#${l.toScreenId}`}`, 'ok', 1800);
+          this.setActiveTestScreen(l.toScreenId, true);
+        }
+      }
+      return;
+    }
+    const node = this.nodeAt(ev);
+    if (node) {
+      const sid = Number(node.dataset.screen), p = this.worldPoint(ev), r = this.nodeRect(sid);
+      this.select({ kind: 'node', id: sid });
+      if (this.testMode && !ev.target.closest('header')) {
+        const local = { x: p.x - r.x, y: p.y - r.y - HEAD };
+        const hitId = this.hitNodeAt(sid, local);
+        const matchLink = (this.wf.links || []).find(l => l.fromScreenId === sid && (l.fromNodeId === hitId || l.fromNodeId == null));
+        if (matchLink) {
+          const dest = this.screens.get(matchLink.toScreenId);
+          toast(`Route: ${matchLink.name || 'Link'} → ${dest?.name || `#${matchLink.toScreenId}`}`, 'ok', 1800);
+          this.setActiveTestScreen(matchLink.toScreenId, true);
+        } else {
+          this.setActiveTestScreen(sid, true);
+        }
+        return;
+      }
+      if (this.linkTool && !ev.target.closest('header')) {
+        const local = { x: p.x - r.x, y: p.y - r.y - HEAD };
+        this.op = { kind: 'link', from: sid, fromNodeId: this.hitNodeAt(sid, local), x0: p.x, y0: p.y };
+      } else if (ev.target.closest('header') && !ev.target.closest('button')) {
+        if (this.testMode) { this.setActiveTestScreen(sid, true); return; }
+        if (r?.node?.locked) { toast('Screen position is locked (click 🔒 to unlock)', 'info', 1800); return; }
+        this.op = { kind: 'drag', sid, start: p, ox: r.x, oy: r.y, moved: false, snap: this.snapshot() };
+      } else return;
+      capture(this.viewport, ev);
+      return;
+    }
+    this.select(null);
+    this.op = { kind: 'pan', x: ev.clientX, y: ev.clientY, tx: this.view.tx, ty: this.view.ty };
+    capture(this.viewport, ev);
+  }
+
+  /** Smallest element under a point of a screen (text, instance or button-like shape): the trigger of a new link. */
+  hitNodeAt(screenId, pt) {
+    const full = this.full.get(screenId);
+    if (!full) return null;
+    let best = null, area = Infinity;
+    for (const e of full.nodes) {
+      if (e.parentId != null || e.role === 'bg' || e.role === 'bg-glow' || e.role === 'shine' || !e.visible) continue;
+      if (!(e.tag === 'text' || e.kind === 'instance' || e.role === 'button' || e.role === 'card' || e.role === 'field' || e.tag === 'rect')) continue;
+      const b = nodeBBox(e, full.nodes);
+      if (pt.x >= b.x - 4 && pt.x <= b.x + b.w + 4 && pt.y >= b.y - 4 && pt.y <= b.y + b.h + 4 && b.w * b.h < area && b.w * b.h < full.width * full.height * 0.6) { best = e; area = b.w * b.h; }
+    }
+    return best?.id ?? null;
+  }
+
+  move(ev) {
+    const op = this.op;
+    if (!op) return;
+    if (op.kind === 'pan') { this.view.tx = op.tx + ev.clientX - op.x; this.view.ty = op.ty + ev.clientY - op.y; this.applyView(); return; }
+    const p = this.worldPoint(ev);
+    if (op.kind === 'drag') {
+      const n = this.wf.nodes.find(x => x.screenId === op.sid);
+      n.x = Math.round(op.ox + p.x - op.start.x); n.y = Math.round(op.oy + p.y - op.start.y); op.moved = true;
+      const el = this.nodeEls.get(op.sid); el.style.left = `${n.x}px`; el.style.top = `${n.y}px`;
+      this.drawLinks();
+    } else if (op.kind === 'link') {
+      this.tempLine = { x0: op.x0, y0: op.y0, x1: p.x, y1: p.y }; this.drawLinks();
+      const over = this.nodeAt(ev);
+      this.nodeEls.forEach(e => e.classList.toggle('link-src', e === over && Number(e.dataset.screen) !== op.from));
+    }
+  }
+
+  async up(ev) {
+    const op = this.op; this.op = null;
+    if (!op) return;
+    if (op.kind === 'drag' && op.moved) {
+      if (op.snap) this.pushUndo(op.snap);
+      const n = this.wf.nodes.find(x => x.screenId === op.sid);
+      await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed });
+      this.checkDirty();
+    } else if (op.kind === 'link') {
+      this.tempLine = null; this.nodeEls.forEach(e => e.classList.remove('link-src'));
+      const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.wf-node');
+      const to = target ? Number(target.dataset.screen) : null;
+      if (to && to !== op.from) {
+        const info = await this.linkDialog({ from: op.from, to, style: this.linkStyle });
+        if (!info) { this.drawLinks(); return; }                    // cancelled: nothing is created
+        try {
+          this.pushUndo();
+          const link = await api.addLink(this.wf.id, { fromScreenId: op.from, toScreenId: to, fromNodeId: op.fromNodeId, ...info });
+          await this.refresh(); this.select({ kind: 'link', id: link.id }); toast('link created', 'ok', 1800);
+        } catch (e) { toast(e.message, 'error'); this.drawLinks(); }
+      } else this.drawLinks();
+    }
+  }
+
+  /**
+   * The form for a link: what it is called and, for the dev team, what happens on this transition (description-dev).
+   * New link: { from, to }. Existing link: { link } (also lets you change the screen it goes to). Resolves to the fields, or null when cancelled.
+   */
+  linkDialog({ link = null, from = link?.fromScreenId, to = link?.toScreenId, style = link?.style || this.linkStyle } = {}) {
+    const name = (id) => this.screens.get(id)?.name || '?';
+    return new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (!done) { done = true; resolve(v); } };
+      const inName = h('input', { type: 'text', placeholder: 'e.g. Open question' }); inName.value = link ? link.name : `Open ${name(to)}`;
+      const inDev = h('textarea', { rows: 6, placeholder: 'What happens on this transition? Conditions, data passed along, animation, error cases…' }); inDev.value = link?.descriptionDev || '';
+      const trg = h('select', {}, TRIGGERS.map(t => h('option', { value: t }, t))); trg.value = link?.trigger || 'tap';
+      const sty = h('select', {}, h('option', { value: 'curved' }, 'curved'), h('option', { value: 'cornered' }, 'cornered')); sty.value = style;
+      const dest = link ? h('select', {}, this.wf.nodes.map(n => h('option', { value: n.screenId }, name(n.screenId)))) : null;
+      if (dest) dest.value = link.toScreenId;
+      const fld = (label, input) => h('label', { class: 'field' }, h('span', {}, label), input);
+      const ok = () => {
+        if (!inName.value.trim()) { toast('Give the link a name', 'error'); inName.focus(); return; }
+        const out = { name: inName.value.trim(), descriptionDev: inDev.value, trigger: trg.value, style: sty.value };
+        if (dest && Number(dest.value) !== link.toScreenId) out.toScreenId = Number(dest.value);
+        finish(out); m.close();
+      };
+      const m = modal({ title: link ? `Link: ${name(from)} → ${name(to)}` : `New link: ${name(from)} → ${name(to)}`, wide: true,
+        content: h('div', { class: 'stack' }, fld('Name', inName), fld('description-dev (for the dev team)', inDev), dest ? fld('Goes to', dest) : null, h('div', { class: 'grid2' }, fld('Gesture', trg), fld('Line style', sty))),
+        onClose: () => finish(null),
+        actions: close => [h('button', { class: 'btn', onclick: () => { finish(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: ok }, link ? 'Apply' : 'Create link')] });
+      inName.addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+      setTimeout(() => { inName.focus(); inName.select(); }, 30);
+    });
+  }
+
+  async editLink(id) {
+    const link = this.wf.links.find(l => l.id === id);
+    if (!link) return;
+    const info = await this.linkDialog({ link });
+    if (!info) return;
+    try { await api.updateLink(this.wf.id, id, info); await this.refresh(); this.select({ kind: 'link', id }); } catch (e) { toast(e.message, 'error'); }
+  }
+
+  select(sel) { this.sel = sel; this.nodeEls.forEach((e, id) => e.classList.toggle('sel', sel?.kind === 'node' && sel.id === id)); this.drawLinks(); this.renderInspector(); }
+
+  async toggleCollapse(n) { n.collapsed = !n.collapsed; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed }); await this.refresh(); }
+  async collapseAll(v) { await Promise.all(this.wf.nodes.map(n => api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: v }))); await this.refresh(); this.fit(); }
+  async addAll() {
+    const have = new Set(this.wf.nodes.map(n => n.screenId)); let i = this.wf.nodes.length;
+    for (const s of this.screens.values()) if (!have.has(s.id)) { await api.placeScreen(this.wf.id, { screenId: s.id, x: (i % 5) * 560, y: Math.floor(i / 5) * 980 }); i++; }
+    await this.refresh(); this.fit();
+  }
+
+  async autoLayout() {
+    const nodes = this.wf.nodes.map(n => n.screenId), level = new Map();
+    const incoming = new Set(this.wf.links.map(l => l.toScreenId));
+    const queue = nodes.filter(id => !incoming.has(id)); if (!queue.length && nodes.length) queue.push(nodes[0]);
+    queue.forEach(id => level.set(id, 0));
+    for (let i = 0; i < queue.length; i++) for (const l of this.wf.links.filter(x => x.fromScreenId === queue[i])) if (!level.has(l.toScreenId)) { level.set(l.toScreenId, level.get(queue[i]) + 1); queue.push(l.toScreenId); }
+    let extra = Math.max(0, ...level.values()) + 1;
+    for (const id of nodes) if (!level.has(id)) level.set(id, extra);
+    const rows = new Map();
+    await Promise.all(nodes.map(id => { const lv = level.get(id), row = rows.get(lv) || 0; rows.set(lv, row + 1); const s = this.screens.get(id); return api.placeScreen(this.wf.id, { screenId: id, x: lv * (s.width + 170), y: row * (s.height + HEAD + 90) }); }));
+    await this.refresh(); this.fit();
+  }
+
+  async deleteLink(id) { await api.deleteLink(this.wf.id, id); this.sel = null; await this.refresh(); }
+
+  /* ---------- inspector ---------- */
+  renderInspector() {
+    const root = this.inspector; clear(root);
+    const wf = this.wf, sec = (title, ...k) => h('div', { class: 'insp-sec' }, h('h4', {}, title), ...k);
+    const fld = (label, input) => h('label', { class: 'field' }, h('span', {}, label), input);
+    const txt = (v, commit, ph = '') => { const i = h('input', { type: 'text', placeholder: ph }); i.value = v ?? ''; i.addEventListener('change', () => commit(i.value)); return i; };
+    const area = (v, commit, rows = 5) => { const t = h('textarea', { rows }); t.value = v ?? ''; t.addEventListener('change', () => commit(t.value)); return t; };
+
+    const link = this.sel?.kind === 'link' ? wf.links.find(l => l.id === this.sel.id) : null;
+    if (link) {
+      const src = this.full.get(link.fromScreenId);
+      const opts = [h('option', { value: '' }, '(whole screen)'), ...(src?.nodes || []).filter(e => e.parentId == null && (e.tag === 'text' || e.kind === 'instance' || e.role === 'button')).map(e => h('option', { value: e.id, selected: e.id === link.fromNodeId }, e.tag === 'text' ? `text "${e.text.slice(0, 28)}"` : e.name || `${e.refType || e.tag} #${e.id}`))];
+      const elSel = h('select', {}, opts); elSel.value = link.fromNodeId ?? '';
+      elSel.addEventListener('change', async () => { await api.updateLink(wf.id, link.id, { fromNodeId: elSel.value ? Number(elSel.value) : null }); await this.refresh(); this.select(this.sel); });
+      const toSel = h('select', {}, wf.nodes.map(n => h('option', { value: n.screenId, selected: n.screenId === link.toScreenId }, this.screens.get(n.screenId)?.name)));
+      toSel.value = link.toScreenId; toSel.addEventListener('change', async () => {
+        await api.updateLink(wf.id, link.id, { toScreenId: Number(toSel.value) }); await this.refresh(); this.select(this.sel);
+        toast(`The link now goes to ${this.screens.get(Number(toSel.value))?.name}: describe the transition`, 'info', 2400);
+        await this.editLink(link.id);                                  // same form as a double-click: write the description while changing the screen
+      });
+      const upd = async p => { await api.updateLink(wf.id, link.id, p); Object.assign(link, p); this.drawLinks(); this.checkDirty(); emit('workflows:changed'); };
+      const styleSel = h('select', {}, h('option', { value: 'curved' }, 'curved'), h('option', { value: 'cornered' }, 'cornered')); styleSel.value = link.style; styleSel.addEventListener('change', () => upd({ style: styleSel.value }));
+      const trg = h('select', {}, TRIGGERS.map(t => h('option', { value: t }, t))); trg.value = link.trigger; trg.addEventListener('change', () => upd({ trigger: trg.value }));
+      root.append(sec(`Link · ${this.screens.get(link.fromScreenId)?.name} → ${this.screens.get(link.toScreenId)?.name}`,
+        fld('Name', txt(link.name, v => upd({ name: v }), 'e.g. Open question')), fld('description-dev', area(link.descriptionDev, v => upd({ descriptionDev: v }))),
+        fld('Triggered by (element on the source screen)', elSel), fld('Goes to', toSel), h('div', { class: 'grid2' }, fld('Line style', styleSel), fld('Gesture', trg)),
+        h('button', { class: 'btn danger small', onclick: () => this.deleteLink(link.id) }, 'Delete link')));
+    }
+    const visSel = h('select', {}, h('option', { value: 'public' }, '🌐 Public (all projects)'), h('option', { value: 'project' }, '📁 Project-only'));
+    visSel.value = wf.visibility || 'public';
+    visSel.addEventListener('change', async () => { await api.updateWorkflow(wf.id, { visibility: visSel.value, projectId: state.currentProjectId || wf.projectId || 1 }); wf.visibility = visSel.value; this.checkDirty(); emit('workflows:changed'); });
+    root.append(sec(`Workflow · ${wf.key}`,
+      fld('Name', txt(wf.name, async v => { if (v.trim()) { await api.updateWorkflow(wf.id, { name: v.trim() }); wf.name = v.trim(); this.checkDirty(); emit('workflows:changed'); } })),
+      fld('Label', txt(wf.label, async v => { await api.updateWorkflow(wf.id, { label: v }); wf.label = v; this.checkDirty(); })),
+      fld('Visibility', visSel),
+      h('div', { class: 'row wrap' },
+        h('span', { class: 'badge' }, `Owner #${wf.rootOwnerId || wf.creatorId || 1}`),
+        h('button', { class: 'btn small', onclick: () => openLineageModal('workflow', wf.id) }, '🌳 Lineage & Root Owner')
+      ),
+      fld('description-dev (for the dev team)', area(wf.descriptionDev, async v => { await api.updateWorkflow(wf.id, { descriptionDev: v }); wf.descriptionDev = v; this.checkDirty(); }, 8))));
+    root.append(sec(`Links (${wf.links.length})`, h('div', { class: 'el-list', style: { maxHeight: '260px' } },
+      wf.links.map(l => h('div', { class: `el-row${link?.id === l.id ? ' on' : ''}`, onclick: () => this.select({ kind: 'link', id: l.id }) },
+        h('span', { class: 'grow' }, `${l.name || '(unnamed)'}`), h('span', { class: 'dim' }, `${this.screens.get(l.fromScreenId)?.key} → ${this.screens.get(l.toScreenId)?.key}`))))),
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Tip: switch on “Link tool”, then drag from a button on one screen to another screen.'));
+  }
+}
+
+function vpFocus(el) { el.focus({ preventScroll: true }); }
+
+/** Pointer capture keeps drags alive outside the canvas; it throws for synthetic events, which is harmless. */
+function capture(el, ev) { try { el.setPointerCapture(ev.pointerId); } catch { /* no active pointer */ } }

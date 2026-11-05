@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI/UX App Designer · Usage and guide</title>
+<!--
+  Usage and guide for every designer of the UI/UX App Designer.
+  Self-contained: no external files. Open it on its own and the guide pops up in a modal box;
+  inside the app it is shown in a modal with ?embed=1 (&tab=path|icon|button|element|screen|workflow).
+-->
+<style>
+  :root { --bg: #070b14; --panel: #0d1422; --panel2: #111a2c; --line: rgba(120,170,230,.25); --text: #e8f1ff; --muted: #8fa8c8; --accent: #2e9bff; --accent2: #1a7dff; --ok: #22c55e; --warn: #f59e0b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.55 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  a { color: var(--accent); }
+  kbd { display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: #0a1220; font: 12px Consolas, 'Cascadia Mono', monospace; color: #cfe6ff; }
+  code { font: 12.5px Consolas, 'Cascadia Mono', monospace; background: #0a1220; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+
+  /* landing page behind the modal (standalone use) */
+  .landing { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 30px; }
+  .landing h1 { margin: 0; font-size: 26px; }
+  .landing p { margin: 0; color: var(--muted); max-width: 520px; }
+  .btn { background: var(--accent2); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 16px; }
+  .btn:hover { background: var(--accent); }
+
+  /* the modal box */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.66); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10; }
+  .overlay[hidden] { display: none; }
+  .box { width: min(1120px, 100%); height: min(780px, 100%); display: flex; flex-direction: column; background: #0b1424; border: 1px solid rgba(120,170,230,.45); border-radius: 14px; box-shadow: 0 24px 70px rgba(0,0,0,.7); overflow: hidden; }
+  .head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: #0a101c; }
+  .head h2 { margin: 0; font-size: 16px; flex: 1; }
+  .head input { background: #060a13; border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; color: var(--text); width: 220px; font: inherit; }
+  .x { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 9px; font-size: 16px; }
+  .x:hover { background: #172440; border-color: var(--line); }
+  .body { flex: 1; display: flex; min-height: 0; }
+  nav { width: 220px; flex: 0 0 auto; overflow: auto; padding: 8px; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; gap: 2px; }
+  nav button { text-align: left; background: transparent; border: 0; border-left: 3px solid transparent; border-radius: 6px; padding: 7px 10px; color: var(--muted); }
+  nav button:hover { background: #121d33; color: var(--text); }
+  nav button.on { background: rgba(46,155,255,.16); border-left-color: var(--accent); color: #fff; }
+  nav .grp { margin: 10px 10px 2px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #5d7896; }
+  nav button[hidden] { display: none; }
+  main { flex: 1; overflow: auto; padding: 18px 26px 40px; scroll-behavior: smooth; }
+  section { display: none; max-width: 820px; }
+  section.on { display: block; }
+  h3 { margin: 0 0 4px; font-size: 21px; }
+  h4 { margin: 22px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+  .lead { color: var(--muted); margin: 0 0 14px; }
+  ol, ul { padding-left: 22px; margin: 6px 0 10px; }
+  li { margin: 3px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid rgba(120,170,230,.14); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td:first-child { white-space: nowrap; color: #cfe6ff; }
+  .tip, .note { border-left: 3px solid var(--ok); background: rgba(34,197,94,.08); padding: 8px 12px; border-radius: 0 8px 8px 0; margin: 10px 0; }
+  .note { border-left-color: var(--warn); background: rgba(245,158,11,.08); }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 14px; }
+  .flow span { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 11px; }
+  .flow i { color: var(--muted); font-style: normal; }
+  .pill { display: inline-block; background: rgba(46,155,255,.18); color: #9cc6ee; border-radius: 10px; padding: 0 8px; font-size: 11px; }
+  .embed .overlay { position: static; padding: 0; background: none; height: 100%; }
+  .embed .box { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+  .embed .landing, .embed .x, .embed .head h2 { display: none; }
+  .nomatch { color: var(--muted); padding: 10px; }
+  @media (max-width: 760px) { nav { width: 150px; } main { padding: 14px; } .head input { width: 120px; } }
+  @media print { .landing, nav, .head, .overlay { position: static; } .overlay { background: none; padding: 0; } .box { height: auto; border: 0; box-shadow: none; } section { display: block !important; page-break-inside: avoid; } main { overflow: visible; } }
+</style>
+</head>
+<body>
+<div class="landing" id="landing">
+  <h1>UI/UX App Designer</h1>
+  <p>Usage and guide for the path, icon, button, element, screen and workflow designers.</p>
+  <button class="btn" id="open">Open the guide</button>
+</div>
+
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-label="Usage and guide">
+  <div class="box">
+    <div class="head">
+      <h2>Usage and guide</h2>
+      <input id="q" type="search" placeholder="Search the guide…" aria-label="Search the guide">
+      <button class="x" id="close" title="Close (Esc)" aria-label="Close">✕</button>
+    </div>
+    <div class="body">
+      <nav id="nav" aria-label="Guide topics"></nav>
+      <main id="main">
+
+<!-- ===================================================== START -->
+<section id="start" data-title="Getting started" data-group="Basics">
+  <h3>Getting started</h3>
+  <p class="lead">Everything you design is stored in a SQLite database and can be exported to SVG (with animation) and to working HTML / CSS / TS / JS.</p>
+  <h4>The hierarchy</h4>
+  <p>Each level is built from the one before it. The designers follow the same order:</p>
+  <div class="flow"><span>Path</span><i>→</i><span>Icon</span><i>→</i><span>Button</span><i>→</i><span>Element</span><i>→</i><span>Screen</span><i>→</i><span>Workflow</span></div>
+  <table>
+    <tr><th>Level</th><th>What it is</th><th>Can contain</th></tr>
+    <tr><td>Path</td><td>A reusable group of vector shapes on a 24×24 grid</td><td>shapes, other path groups</td></tr>
+    <tr><td>Icon</td><td>24×24 composition</td><td>path groups, own shapes</td></tr>
+    <tr><td>Button</td><td>Themed frame with an icon, optionally a popup or rotating menu</td><td>icons, paths, shapes</td></tr>
+    <tr><td>Element</td><td>UI building block: HTML elements, forms, cards, navbars…</td><td>shapes, icons, buttons, other elements</td></tr>
+    <tr><td>Screen</td><td>A device-sized composition</td><td>icons, buttons, elements</td></tr>
+    <tr><td>Workflow</td><td>Screens placed on a canvas and linked together</td><td>screens</td></tr>
+  </table>
+  <p>If you drop something into a level that cannot hold it, you get a hint and nothing happens. An element can never contain itself.</p>
+  <h4>The window</h4>
+  <ul>
+    <li><b>Top bar</b>: menus (Design, Edit, Path, View, Theme, Export, Help), the <i>Screen designer / Workflow designer</i> switch, and the theme selector.</li>
+    <li><b>Left panel</b>: the libraries <i>Paths · Icons · Buttons · Elements</i>, the <i>Screens</i> catalog and the <i>Workflows</i>. Drag the divider to resize it, double-click it to collapse.</li>
+    <li><b>Right panel</b>: the designer of whatever you opened, with its toolbar, canvas and inspector.</li>
+    <li><b>Status bar</b>: the pointer position and the totals of your library.</li>
+  </ul>
+  <h4>Using the libraries</h4>
+  <ul>
+    <li><b>Search</b> and the category chips filter every library.</li>
+    <li><b>Hover a cell</b> for its toolbar: <kbd>✎</kbd> edit, <kbd>⧉</kbd> clone, <kbd>⤓</kbd> export SVG, <kbd>🗑</kbd> delete.</li>
+    <li><b>Click</b> a cell to open it in its own designer. <b>Drag</b> it onto the open designer, or <b>double-click</b> it, to place it.</li>
+    <li>Cells that the open designer cannot accept are dimmed.</li>
+    <li><b>+ New …</b> creates a path, icon, button, element or screen. <b>Import SVG</b> turns any SVG file into a path group, icon or element.</li>
+  </ul>
+  <div class="tip">Every design has a <b>variable name</b> (dashed words, unique, used in code), a <b>label</b> (shown to users) and a <b>description-dev</b> (instructions for the dev team and their coding agents). Fill them in; they are exported to <code>DEV-NOTES.md</code>.</div>
+  <p>Every change is written to the database the moment you make it, and can be undone with <kbd>Ctrl</kbd>+<kbd>Z</kbd>. <b>Save</b> marks a version you are happy with; <b>Reset</b> goes back to it (see <a href="#saving">Save, Save as, Reset and Back</a>).</p>
+</section>
+
+<!-- ===================================================== SAVING -->
+<section id="saving" data-title="Save, Save as, Reset, Back" data-group="Basics">
+  <h3>Save, Save as, Reset and Back</h3>
+  <p class="lead">The bar at the very top of every designer (paths, icons, buttons, elements, screens and workflows) keeps track of your edits.</p>
+  <table>
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr><td><b>← Back</b></td><td>Returns to the page you had open before (<kbd>Alt</kbd>+<kbd>←</kbd> or the browser's Back button do the same). Its tooltip names that page. It is greyed out on the first page.</td></tr>
+    <tr><td><b>💾 Save</b> <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Marks the current version as the saved one. <b>It blinks while there are changes you have not saved.</b> Next to it you read <i>Unsaved changes</i> or <i>All changes saved</i>.</td></tr>
+    <tr><td><b>Save as…</b></td><td>Stores the current version, including your unsaved changes, as a <i>new</i> design under a name you type, and opens it. The original goes back to the version it had at its last save.</td></tr>
+    <tr><td><b>↺ Reset</b></td><td>Throws away every change since the last save (asks first). Greyed out when there is nothing to throw away.</td></tr>
+  </table>
+  <h4>Good to know</h4>
+  <ul>
+    <li><b>Changing something back by hand</b> (or with undo) until it equals the saved version makes the blinking stop by itself.</li>
+    <li><b>Leaving with unsaved changes</b> (opening another design, pressing Back, closing a designer dialog, closing the browser tab) asks: <i>Save</i>, <i>Discard changes</i> (back to the last save) or <i>Cancel</i>.</li>
+    <li><b>Changes are never lost by accident.</b> Edits are already in the database when you make them, so a crash or a reloaded page keeps your work as it was. The page then treats that state as saved, so the safety net of <i>Reset</i> is only there while the design stays open.</li>
+    <li><b>Workflows</b> have the same bar: moving screens, adding or editing links and changing the name or description-dev count as edits.</li>
+    <li><b>Designers opened in a dialog</b> (the ✎ on a screen in the Workflow designer) have Save, Save as and Reset too; they have a <i>Close</i> button instead of Back.</li>
+    <li>The <b>Design</b> menu lists the same commands.</li>
+  </ul>
+</section>
+
+<!-- ===================================================== CANVAS -->
+<section id="canvas" data-title="The canvas (all designers)" data-group="Basics">
+  <h3>The canvas</h3>
+  <p class="lead">All designers share one canvas, toolbar and inspector.</p>
+  <h4>Moving around</h4>
+  <table>
+    <tr><th>Action</th><th>How</th></tr>
+    <tr><td>Zoom (unlimited)</td><td>mouse wheel at the cursor, <kbd>+</kbd> <kbd>−</kbd>, <b>Fit</b> or <kbd>0</kbd>, <b>100%</b></td></tr>
+    <tr><td>Pan</td><td><kbd>Space</kbd> + drag, or the middle mouse button</td></tr>
+    <tr><td>Select</td><td>click · <kbd>Shift</kbd>+click to add · drag on empty space for a marquee · <kbd>Ctrl</kbd>+<kbd>A</kbd> all · <kbd>Alt</kbd>+click selects the exact item inside a group</td></tr>
+    <tr><td>Move / resize</td><td>drag the item or its 8 handles · <kbd>Shift</kbd> keeps the ratio · <kbd>Ctrl</kbd> turns snapping off for the drag</td></tr>
+    <tr><td>Nudge</td><td>arrow keys 1 unit · <kbd>Shift</kbd>+arrows one grid step</td></tr>
+    <tr><td>Delete / duplicate</td><td><kbd>Del</kbd> · <kbd>Ctrl</kbd>+<kbd>D</kbd></td></tr>
+    <tr><td>Undo / redo</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
+    <tr><td>Edit text</td><td>double-click a text item</td></tr>
+  </table>
+  <h4>Toolbar</h4>
+  <table>
+    <tr><th>Tool</th><th>Key</th><th>What it does</th></tr>
+    <tr><td>⌖ Select</td><td><kbd>V</kbd></td><td>select and move</td></tr>
+    <tr><td>✦ Vertices</td><td><kbd>N</kbd> / <kbd>Enter</kbd></td><td>edit the vertices of the selected path</td></tr>
+    <tr><td>▭ ◯ ╱</td><td><kbd>R</kbd> <kbd>C</kbd> <kbd>L</kbd></td><td>draw a rectangle, circle or line</td></tr>
+    <tr><td>🖊 Pen</td><td><kbd>B</kbd></td><td>draw bezier curves</td></tr>
+    <tr><td>T Text</td><td><kbd>T</kbd></td><td>add text (not in path and icon designers)</td></tr>
+    <tr><td>⛶ Crop</td><td><kbd>X</kbd></td><td>drag a rectangle; the selected shapes keep only what is inside</td></tr>
+    <tr><td>✎ Path data</td><td><kbd>P</kbd></td><td>type the <code>d</code> attribute of a new path</td></tr>
+  </table>
+  <p>Further toolbar buttons: undo, redo, duplicate, delete, bring to front, send to back, zoom, and the switches <b>Grid</b> (show grid), <b>Snap grid</b>, <b>Snap 9-pt</b> and <b>Animate</b> (play animations on the canvas).</p>
+  <h4>Snapping</h4>
+  <ul>
+    <li><b>Snap grid</b> uses the grid of the open designer: 1 for paths and icons, 4 for buttons, 8 for elements, 24 for screens (changeable under <i>View → Grid size</i>).</li>
+    <li><b>Snap 9-pt</b> snaps to the nine reference points of the design's box: corners, edge centres and the centre. Pink guides show what you snapped to.</li>
+    <li>In the inspector, the 3×3 button grid places the selection on one of those nine points.</li>
+  </ul>
+  <h4>Inspector</h4>
+  <ul>
+    <li><b>Design</b>: name, variable name, label, category, size, <b>description-dev</b>.</li>
+    <li><b>Layers</b>: every node of the design in z-order, with 👁 show/hide and 🔒 lock. Click one to select it.</li>
+    <li><b>Selected node</b>: variable name, <a href="#surface-roles" data-go="themes">surface role</a>, rotation, position and size, fill, stroke, <b>line size × global</b>, opacity, corner radius, all attributes as JSON, and <b>animations</b>.</li>
+  </ul>
+  <div class="note">Line sizes are stored as a <b>ratio</b> of the theme's global line size, never a fixed number. Change the theme's line size once and every icon follows.</div>
+</section>
+
+<!-- ===================================================== PATH -->
+<section id="path" data-title="Path designer" data-group="Designers">
+  <h3>Path designer</h3>
+  <p class="lead">Draw and edit reusable vector shapes. Icons are built from path groups, so editing one updates every icon that uses it.</p>
+  <h4>Create a path group</h4>
+  <ol>
+    <li>Open the <b>Paths</b> tab and click <b>+ New path</b>, or <b>Import SVG</b> to bring in an SVG file.</li>
+    <li>Draw with the rectangle, circle, line or <b>pen</b> tools, or edit the starter shape.</li>
+    <li>Name it, give it a category and write its description-dev in the inspector.</li>
+  </ol>
+  <h4>Vertex editing</h4>
+  <ol>
+    <li>Select a path and press <kbd>Enter</kbd> (or <kbd>N</kbd>, or double-click it, or <b>Edit vertices</b> in the inspector). Rectangles, circles and lines are converted to a path first.</li>
+    <li>Drag <b>vertices</b> (squares) and <b>bezier handles</b> (pink dots). Drags snap to the grid; hold <kbd>Ctrl</kbd> for free movement.</li>
+    <li>Press <kbd>Esc</kbd>, <kbd>Enter</kbd> or <b>Done</b> to leave vertex mode.</li>
+  </ol>
+  <table>
+    <tr><th>To…</th><th>Do this</th></tr>
+    <tr><td>Add a vertex</td><td><b>right-click on the line</b> (or double-click it)</td></tr>
+    <tr><td>Remove a vertex</td><td><b>right-click the vertex</b> (or select it and press <kbd>Del</kbd>, or <kbd>Alt</kbd>+click)</td></tr>
+    <tr><td>Turn a segment into a curve / line</td><td>select the vertex at its end → <b>Line ⇄ Curve</b> or <kbd>C</kbd></td></tr>
+    <tr><td>Smooth / sharp vertex</td><td><b>Smooth</b> <kbd>S</kbd> gives collinear handles, <b>Corner</b> <kbd>K</kbd> retracts them</td></tr>
+    <tr><td>Keep a smooth curve while dragging a handle</td><td>automatic · <kbd>Alt</kbd> breaks the handle · <kbd>Shift</kbd> makes both handles equal length</td></tr>
+    <tr><td>Round a corner</td><td>select the corner → <b>Round…</b> and enter a radius</td></tr>
+    <tr><td>Split a segment</td><td><b>Split</b> adds a vertex in the middle of the segment</td></tr>
+    <tr><td>Open a path at a vertex</td><td><b>Cut here</b> (a closed path becomes open, an open one is split in two)</td></tr>
+    <tr><td>Close / open</td><td><b>Close / open</b></td></tr>
+    <tr><td>Reverse the direction</td><td><b>Reverse</b></td></tr>
+    <tr><td>Remove redundant vertices</td><td><b>Simplify</b></td></tr>
+  </table>
+  <h4>Pen tool — draw bezier curves</h4>
+  <ul>
+    <li>Click for a <b>corner point</b>; click and <b>drag</b> for a smooth point, the handles follow the drag.</li>
+    <li>Click the <b>first point</b> (it turns green) to close the path. <kbd>Enter</kbd>, a double-click or a right-click finishes an open path.</li>
+    <li><kbd>Backspace</kbd> removes the last point, <kbd>Esc</kbd> cancels.</li>
+  </ul>
+  <h4>Pathfinder, crop and group</h4>
+  <p>These work on paths, rectangles, circles, ellipses, lines and polygons. Select the shapes first.</p>
+  <table>
+    <tr><th>Tool</th><th>Result</th></tr>
+    <tr><td>∪ Union</td><td>one outline around all selected shapes</td></tr>
+    <tr><td>✂ Cut out</td><td>the <b>top</b> shape is subtracted from the shapes behind it: a bite or a hole</td></tr>
+    <tr><td>∩ Crop</td><td>only the part where the selected shapes overlap is kept</td></tr>
+    <tr><td>⊻ Exclude</td><td>everything except the overlap</td></tr>
+    <tr><td>⛶ Crop tool / Crop to box</td><td>drag a rectangle, or use the design's bounding box, as the crop area</td></tr>
+    <tr><td>Combine / Break apart</td><td>one compound path (holes) ⇄ separate paths</td></tr>
+    <tr><td>Join</td><td>connect two open paths end to end</td></tr>
+    <tr><td>Group / Ungroup</td><td><kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td></tr>
+    <tr><td>Align / Distribute</td><td>to the selection, or to the box when one item is selected (distribute needs three)</td></tr>
+    <tr><td>Flip / Rotate 90°</td><td>flip the selection; rotate by quarter turns</td></tr>
+    <tr><td>Apply transform</td><td>bake a path's transform and rotation into its points (needed before editing the vertices of a rotated path)</td></tr>
+  </table>
+  <div class="tip">The result of Cut out, Crop and Union is made of straight segments (curves are flattened). Use <b>Simplify</b> afterwards to reduce the vertices.</div>
+  <p>Right-click a shape for a menu with all of these (its first entry, <b>Open editor</b>, opens whatever editor fits the element). Paths can also be nested: place one path group inside another with a double-click or a drag.</p>
+</section>
+
+<!-- ===================================================== ICON -->
+<section id="icon" data-title="Icon designer" data-group="Designers">
+  <h3>Icon designer</h3>
+  <p class="lead">An icon is a 24×24 composition of path groups, drawn with the theme's gradient stroke.</p>
+  <ol>
+    <li>Open the <b>Icons</b> tab and click <b>+ New icon</b> (or open an existing icon).</li>
+    <li>Switch to the <b>Paths</b> tab and <b>drag path groups</b> onto the canvas, or double-click them. They fill the 24×24 grid and can then be moved, resized and rotated.</li>
+    <li>Rectangles, circles, lines and the pen also work here for one-off shapes.</li>
+    <li>Double-click a placed path (or use <b>Open editor</b> in the inspector) to edit that path group itself. All icons that use it change.</li>
+  </ol>
+  <h4>Style and animation</h4>
+  <ul>
+    <li>The stroke, glow and line size come from the theme. Set a different line size per shape with <b>Line size × global</b> (a ratio).</li>
+    <li>Select a shape and use <b>+ Add animation…</b>: move, rotate, scale, fade, visible, blink, pulse, bounce, draw and glow, with duration, delay, easing, repeat, direction and trigger (load / hover / click). <b>Animate</b> in the toolbar previews them.</li>
+    <li>Animations are exported inside the SVG file as CSS keyframes.</li>
+  </ul>
+  <div class="tip">Click a cell in the Icons tab to open it; the ⤓ button downloads that icon as an SVG including its animation.</div>
+</section>
+
+<!-- ===================================================== BUTTON -->
+<section id="button" data-title="Button designer & menus" data-group="Designers">
+  <h3>Button designer</h3>
+  <p class="lead">A button is a themed frame with an icon. It can also own a popup menu or a rotating radial menu with nested sub items.</p>
+  <h4>Build a button</h4>
+  <ol>
+    <li>Open the <b>Buttons</b> tab and click <b>+ New button</b> (or start from a ready-made one).</li>
+    <li>Drag an <b>icon</b> from the Icons tab into the frame. It is centred at 62.5% of the button, the same ratio the app uses everywhere.</li>
+    <li>Change the size with the box handles or the W/H fields. <b>Scale contents</b> (toolbar) makes the frame and icon scale together.</li>
+  </ol>
+  <h4>Add a menu</h4>
+  <p>In the inspector, open the <b>Menu</b> section.</p>
+  <table>
+    <tr><th>Setting</th><th>Meaning</th></tr>
+    <tr><td>Menu type</td><td><b>popup</b>: opens in place · <b>rotating</b>: the clicked item's icon replaces the centre and its sub items are shown</td></tr>
+    <tr><td>Layout</td><td><b>fan</b> (radius, start angle, sweep) or <b>list</b> (direction up / down / left / right, gap)</td></tr>
+    <tr><td>Item size</td><td>as a ratio of the button size, so the menu scales with the button</td></tr>
+    <tr><td>Centre icon turns</td><td>degrees the centre icon rotates while open (0 = off)</td></tr>
+  </table>
+  <h4>Add, edit and delete menu items</h4>
+  <ol>
+    <li>The canvas shows the menu <b>open</b>. <b>Hover the button</b> or any item to get a small toolbar:
+      <b>＋</b> add a sub item · <b>✎</b> edit · <b>← →</b> change the order · <b>🗑</b> delete.</li>
+    <li>Click an item that has sub items to step into its level (its icon appears in the centre). Click the centre to go back one level.</li>
+    <li>The item dialog sets the <b>label</b>, <b>variable name</b>, <b>icon</b> (picker), an <b>action / event name</b> for leaf items, a <b>target screen</b> and the <b>description-dev</b>.</li>
+    <li>The same can be done in the inspector: ＋ next to an item adds a sub item, <b>＋ Add menu item</b> adds a top-level one. Menus can be nested up to six levels.</li>
+  </ol>
+  <h4>How the menu behaves</h4>
+  <ol>
+    <li>Click the button: the items open.</li>
+    <li>Click it again: they close.</li>
+    <li>Click an item with sub items: (rotating) its icon replaces the centre and its sub items are displayed.</li>
+    <li>Click the centre again: the menu goes one level back.</li>
+    <li>Click an item without sub items: its action runs (or it navigates to its target screen) and the menu closes.</li>
+  </ol>
+  <p>Switch on <b>Test menu</b> in the toolbar to try exactly this on the canvas. Switch it off to edit again.</p>
+  <div class="note">The menu belongs to the <b>button</b>. A button placed in an element or on a screen shows the same menu, and a change here applies everywhere that button is used. To get an independent menu, clone the button (⧉ in the Buttons tab). In the element and screen designers a menu stays closed; try it with <i>Test menu</i> here or in an exported page.</div>
+</section>
+
+<!-- ===================================================== ELEMENT -->
+<section id="element" data-title="Element designer" data-group="Designers">
+  <h3>Element designer</h3>
+  <p class="lead">Elements are UI building blocks: the basic HTML elements, forms, cards, navigation bars and more, built from shapes, icons, buttons and other elements.</p>
+  <h4>Create an element</h4>
+  <ol>
+    <li>Open the <b>Elements</b> tab and click <b>+ New element</b>.</li>
+    <li>Pick a <b>preset</b> (buttons, inputs, select, checkbox, radio, switch, slider, headings, lists, table, card, modal, alerts, tabs, breadcrumb, pagination, toolbars, radial and popup menu buttons…) or start from a <b>blank bounding box</b>.</li>
+    <li>Name it. A copy of the preset is created for you; the presets themselves stay untouched.</li>
+  </ol>
+  <h4>The bounding box</h4>
+  <ul>
+    <li>Every element starts as a box (dashed). Everything you add is placed inside it.</li>
+    <li>With <b>nothing selected</b>, drag the box handles on the right, bottom or corner to resize it. <b>All sub items resize with it</b>. Turn off <b>Scale contents</b> to resize the frame alone.</li>
+    <li>You can also type the width and height in the inspector. The same scaling applies when you resize a placed instance on a screen.</li>
+  </ul>
+  <h4>Fill it</h4>
+  <ul>
+    <li>Drag <b>icons</b>, <b>buttons</b> and other <b>elements</b> in from the libraries. Draw shapes and add text with the toolbar.</li>
+    <li>Give shapes a <a href="#surface-roles" data-go="themes">surface role</a> (card, button, field) so they take the look of the active theme.</li>
+    <li>Set the <b>HTML element</b> (<code>button</code>, <code>input</code>, <code>div</code>…) in the inspector. The export uses it so the dev team knows the semantic tag.</li>
+    <li>Write the <b>description-dev</b>: props, states, behaviour.</li>
+  </ul>
+  <div class="tip">Double-click a placed button or icon to open it in its own designer, then use <b>← Back</b> to return to the screen.</div>
+</section>
+
+<!-- ===================================================== SCREEN -->
+<section id="screen" data-title="Screen designer" data-group="Designers">
+  <h3>Screen designer</h3>
+  <p class="lead">A screen is a device-sized composition of icons, buttons and elements.</p>
+  <ol>
+    <li>Open the <b>Screens</b> tab and click <b>+ New screen</b>. Choose a name and a <b>device</b> (iPhone, Android, tablet, web, watch). The device size can be changed later in the inspector.</li>
+    <li>Drag <b>elements</b>, <b>buttons</b> and <b>icons</b> from the libraries onto the device. Drop position and size are snapped to the grid.</li>
+    <li>Use <b>Snap 9-pt</b> and the 3×3 placement grid to pin items to the top, bottom, left, right or centre of the screen.</li>
+    <li>Resize placed elements with their handles; their content scales with them.</li>
+    <li>Write a <b>name</b>, <b>label</b> and <b>description-dev</b> for the screen, and give important items a variable name and a description-dev too.</li>
+  </ol>
+  <h4>Themes</h4>
+  <p>Switch the theme in the top bar at any time. The same screen is shown as Liquid glass, Glow lines or Neumorphic light / dark.</p>
+  <h4>The catalog</h4>
+  <ul>
+    <li>Tick screens for export, or use <b>Select all</b>, <b>None</b> and <b>Invert</b>. The search and the category chips narrow the list first.</li>
+    <li><b>Export selected…</b> and <b>Export all…</b> open the export dialog (see <a href="#export" data-go="export">Export</a>).</li>
+  </ul>
+  <div class="note">Items you place on a screen are links to the library: edit an element, button or icon and every screen that uses it updates.</div>
+
+  <h4>Open editor</h4>
+  <p>Every element on the canvas has an <b>✎ Open editor</b> button at the top of the inspector, and the same entry at the top of the right-click menu (double-click does it too). What it opens depends on the element:</p>
+  <table>
+    <tr><th>Element</th><th>Open editor does</th></tr>
+    <tr><td>a placed icon, button, element or path group</td><td>opens it in its own designer (<b>← Back</b> brings you back)</td></tr>
+    <tr><td>text</td><td>lets you edit the words</td></tr>
+    <tr><td>a group</td><td>enters the group: selects the items inside it</td></tr>
+    <tr><td>a rectangle, circle, line or path</td><td>starts vertex editing</td></tr>
+  </table>
+
+  <h4>Click actions</h4>
+  <p>Select an element and use the <b>Click action</b> section of the inspector to say what happens when the user clicks or taps it in the finished app:</p>
+  <table>
+    <tr><th>Action</th><th>Result in the exported page</th></tr>
+    <tr><td><b>Route to a screen</b></td><td>the element becomes a link to that screen's page</td></tr>
+    <tr><td><b>Open an element as a popup</b></td><td>the chosen element opens in a dialog over the page</td></tr>
+    <tr><td><b>Open an element as a drawer</b></td><td>the element slides in from the left, right, top or bottom</td></tr>
+    <tr><td><b>Go back</b></td><td>returns to the previous page</td></tr>
+  </table>
+  <ul>
+    <li>Popups and drawers close with the ✕, a click on the backdrop or <kbd>Esc</kbd>. Build the content once as an <b>element</b> (a menu, a filter sheet, a confirmation…), then open it from as many screens as you like.</li>
+    <li>Turn on <b>Test actions</b> in the toolbar to try the actions on the canvas. Routes open the target screen, popups and drawers appear over the canvas. Turn it off to edit again.</li>
+    <li>Elements with an action show a <b>⚡</b> badge in the Layers list. The action sits on the element you click; if it is inside a group, put it on the group.</li>
+    <li>Routes are also available as <b>links in the Workflow designer</b>. If both exist on the same element the page gets one clickable area, not two.</li>
+    <li>If the element or screen that an action points to is deleted later, that action is left out of the export.</li>
+    <li>The actions are exported in <code>data/manifest.json</code>, <code>ts/screens.ts</code> and <code>DEV-NOTES.md</code> too. The element's <b>description-dev</b> is carried along for the dev team.</li>
+  </ul>
+</section>
+
+<!-- ===================================================== WORKFLOW -->
+<section id="workflow" data-title="Workflow designer" data-group="Designers">
+  <h3>Workflow designer</h3>
+  <p class="lead">See all your screens on an infinite canvas and describe how the user moves between them.</p>
+  <ol>
+    <li>Open the <b>Workflows</b> tab and click <b>+ New workflow</b>, or open one. Switch to the workflow designer with the top-bar tab.</li>
+    <li>Add screens with <b>+ Add screen…</b> or <b>Add all screens</b>. <b>Auto layout</b> arranges them left to right along the links.</li>
+    <li>Drag a screen by its header to move it. ▾ / ▸ collapses and expands it, ✎ opens the screen in a modal screen designer, ✕ removes it from this workflow.</li>
+    <li>Switch on <b>🔗 Link tool</b>, then drag from a <b>button or text on one screen to another screen</b>. The link remembers the element that triggers it.</li>
+    <li>When you let go on the target screen a form asks for the link's <b>name</b> and <b>description-dev</b> (what happens on this transition: conditions, data passed along, animation…), the gesture and the line style. Cancel creates nothing.</li>
+    <li><b>Double-click a link</b> to open the same form again. Changing the <b>Goes to</b> screen in the inspector opens it as well, so you can update the description while you change the screen. Hover a link to read its description.</li>
+    <li>The inspector also lists the trigger element, target screen, <b>curved or cornered</b> line style and the gesture (tap, long-press, swipe…). Cornered lines hop over each other where they cross.</li>
+  </ol>
+  <p>Pan with <kbd>Space</kbd>+drag or the empty canvas, zoom with the wheel. The workflow's own name and description-dev are in the inspector, together with the list of its links.</p>
+  <div class="tip"><b>Export workflow screens…</b> opens the export dialog with exactly the screens of this workflow selected. The links become clickable areas and navigation in the exported pages.</div>
+</section>
+
+<!-- ===================================================== THEMES -->
+<section id="themes" data-title="Themes & surface roles" data-group="Concepts">
+  <h3>Themes and surface roles</h3>
+  <p class="lead">One stored design renders in every theme. Four are built in: Liquid glass, Glow lines, Neumorphic light and Neumorphic dark.</p>
+  <ul>
+    <li>Choose a theme in the top bar or the <b>Theme</b> menu. The canvas, thumbnails and exports follow it.</li>
+    <li><b>Theme → Edit themes…</b>: change colours, the <b>global line size</b>, button size and margin, clone a theme to make your own, or edit its surface roles.</li>
+    <li>Colours in a design are <b>tokens</b> such as <code>{{accent}}</code> or <code>{{text}}</code>, not fixed values, so they change with the theme.</li>
+  </ul>
+  <h4 id="surface-roles">What a surface role is</h4>
+  <p>A <b>surface role</b> tells the theme how to paint a shape (fill, border, shadow), so the same shape looks right in all four themes.</p>
+  <table>
+    <tr><th>Role</th><th>Use it for</th><th>Look</th></tr>
+    <tr><td>card</td><td>panels, cards, sheets</td><td>glass gradient with a shadow · glowing outline · raised</td></tr>
+    <tr><td>button</td><td>round or pill button frames</td><td>glass bubble · glowing outline · small raised bump</td></tr>
+    <tr><td>field</td><td>inputs, tab bars, tracks</td><td>translucent glass · thin outline · inset (pressed in)</td></tr>
+    <tr><td>shine</td><td>highlight on glass buttons</td><td>shown in Liquid, hidden in Glow and Neumorphic</td></tr>
+    <tr><td>bg / bg-glow</td><td>screen background, soft glow</td><td>theme background; the glow only in Liquid</td></tr>
+    <tr><td>(none)</td><td>everything else</td><td>keeps its own fill and stroke</td></tr>
+  </table>
+  <div class="note">If you set a fill or stroke on a shape that has a role, your colour wins over the theme. Remove it to give control back to the theme.</div>
+</section>
+
+<!-- ===================================================== ANIMATION -->
+<section id="animation" data-title="Animations" data-group="Concepts">
+  <h3>Animations</h3>
+  <p class="lead">Any shape, icon, button or element part can be animated. Animations are stored in the database and exported as CSS keyframes inside the SVG.</p>
+  <ol>
+    <li>Select a shape or placed item.</li>
+    <li>In the inspector, choose <b>+ Add animation…</b> and a type.</li>
+    <li>Edit its parameters, then press <b>Animate</b> in the toolbar to watch it.</li>
+  </ol>
+  <table>
+    <tr><th>Type</th><th>Does</th></tr>
+    <tr><td>move / rotate / scale</td><td>from → to values (scale can be one axis, with an origin)</td></tr>
+    <tr><td>fade / visible / blink</td><td>opacity changes</td></tr>
+    <tr><td>pulse / bounce</td><td>breathing scale, bouncing dots</td></tr>
+    <tr><td>draw</td><td>draws the outline of a path</td></tr>
+    <tr><td>glow</td><td>pulsing glow</td></tr>
+    <tr><td>keyframes</td><td>your own frames as JSON</td></tr>
+  </table>
+  <p>Every animation has duration, delay, easing, repeat, direction and a <b>trigger</b>: on load, on hover or on click.</p>
+</section>
+
+<!-- ===================================================== EXPORT -->
+<section id="export" data-title="Export" data-group="Concepts">
+  <h3>Export</h3>
+  <h4>One design as an SVG file</h4>
+  <p>Click <kbd>⤓</kbd> on a library cell, or use <b>Export → Export open design as SVG</b>. Animations are included. A button is exported with its menu.</p>
+  <h4>A working project (HTML, CSS, TS, JS and SVG)</h4>
+  <ol>
+    <li>In the <b>Screens</b> tab tick the screens you want (or use <b>Select all / None / Invert</b>) and click <b>Export selected…</b>. The workflow designer has <b>Export workflow screens…</b>.</li>
+    <li>Choose the <b>themes</b> to include (the exported page can switch between them), which icons to include, and a project title.</li>
+    <li>Choose the <b>export folder</b>: type an absolute path, or use <b>Browse…</b> in Chrome or Edge.</li>
+    <li>Press <b>Export</b>.</li>
+  </ol>
+  <table>
+    <tr><th>File</th><th>Content</th></tr>
+    <tr><td>index.html</td><td>catalog of the exported screens and icons</td></tr>
+    <tr><td>screens/&lt;key&gt;.html</td><td>one working page per screen: SVG per theme, link hotspots, navigation, working button menus, description-dev</td></tr>
+    <tr><td>css/, js/, ts/</td><td>theme variables, page layout, theme switcher, menu runtime and a typed registry (<code>npx tsc -p tsconfig.json</code> compiles the TS)</td></tr>
+    <tr><td>svg/</td><td>screens per theme, icons, buttons, elements and an icon sprite</td></tr>
+    <tr><td>data/manifest.json</td><td>everything as data</td></tr>
+    <tr><td>DEV-NOTES.md</td><td>every description-dev: screens, links, elements, buttons with their menu trees, icons</td></tr>
+  </table>
+  <p>From a terminal: <code>npm run export -- --out C:\folder --themes liquid,glow --screens all</code>. Double-click <code>index.html</code> to open the result; no server is needed.</p>
+</section>
+
+<!-- ===================================================== SHORTCUTS -->
+<section id="shortcuts" data-title="Keyboard shortcuts" data-group="Reference">
+  <h3>Keyboard shortcuts</h3>
+  <table>
+    <tr><th>Keys</th><th>Action</th></tr>
+    <tr><td><kbd>V</kbd> <kbd>R</kbd> <kbd>C</kbd> <kbd>L</kbd> <kbd>T</kbd> <kbd>P</kbd></td><td>select / rectangle / circle / line / text / path-data tool</td></tr>
+    <tr><td><kbd>B</kbd></td><td>pen tool (bezier curves)</td></tr>
+    <tr><td><kbd>X</kbd></td><td>crop tool</td></tr>
+    <tr><td><kbd>Enter</kbd> / <kbd>N</kbd></td><td>edit the vertices of the selected path</td></tr>
+    <tr><td><kbd>S</kbd> <kbd>K</kbd> <kbd>C</kbd></td><td>in vertex mode: smooth / corner / line⇄curve for the selected vertex</td></tr>
+    <tr><td>right-click line / vertex</td><td>in vertex mode: add / remove a vertex</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>group · ungroup</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>undo · redo</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Del</kbd> · <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>duplicate · delete · select all</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></td><td>zoom in · out · fit</td></tr>
+    <tr><td><kbd>Space</kbd>+drag</td><td>pan</td></tr>
+    <tr><td><kbd>Alt</kbd>+click</td><td>select inside a group · delete a vertex</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+drag</td><td>move or resize without snapping</td></tr>
+    <tr><td><kbd>Arrows</kbd> · <kbd>Shift</kbd>+arrows</td><td>nudge 1 unit · one grid step</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save (the open dialog designer, else the Workflow designer when it is showing, else the Screen/Path/Icon… designer)</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>←</kbd></td><td>back to the previous page</td></tr>
+    <tr><td><kbd>F1</kbd></td><td>open this guide</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>deselect, leave vertex mode, cancel the pen, close dialogs</td></tr>
+  </table>
+</section>
+
+<section id="faq" data-title="Tips & troubleshooting" data-group="Reference">
+  <h3>Tips and troubleshooting</h3>
+  <ul>
+    <li><b>I cannot drop an item.</b> The hierarchy decides what fits where. Dimmed cells in the library cannot go into the open designer. A path goes into icons, an icon into buttons, a button into elements, an element into screens.</li>
+    <li><b>The menu of my button does not open on the screen.</b> Menus are interactive only in the Button designer's <i>Test menu</i> and in exported pages.</li>
+    <li><b>Vertex editing says the shape is rotated.</b> Select the path and click <i>Apply transform to points</i>, or set Rotation to 0.</li>
+    <li><b>Cut out says the shapes do not overlap.</b> The result would be empty. Check which shape is on top (<i>Bring to front</i>).</li>
+    <li><b>My colours do not change with the theme.</b> The shape has a fixed fill or stroke. Clear it, or use a token such as <code>{{accent}}</code>, or give the shape a surface role.</li>
+    <li><b>Starting over.</b> <code>npm run reset</code> restores the built-in library from the v1 files; your own designs are kept.</li>
+    <li><b>Where is my data?</b> In <code>data/designer.db</code> (SQLite). Copy that file to back everything up.</li>
+  </ul>
+</section>
+<!-- ===================================================== END -->
+
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var params = new URLSearchParams(location.search);
+  var embed = params.get('embed') === '1';
+  if (embed) document.body.classList.add('embed');
+
+  var overlay = document.getElementById('overlay'), nav = document.getElementById('nav'), main = document.getElementById('main');
+  var sections = [].slice.call(document.querySelectorAll('section'));
+  var q = document.getElementById('q');
+
+  // build the navigation from the sections
+  var lastGroup = '';
+  sections.forEach(function (s) {
+    if (s.dataset.group !== lastGroup) { lastGroup = s.dataset.group; var g = document.createElement('div'); g.className = 'grp'; g.textContent = lastGroup; g.dataset.grp = lastGroup; nav.appendChild(g); }
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = s.dataset.title; b.dataset.id = s.id;
+    b.addEventListener('click', function () { show(s.id); });
+    nav.appendChild(b);
+  });
+
+  function show(id, noHash) {
+    var found = false;
+    sections.forEach(function (s) { var on = s.id === id; s.classList.toggle('on', on); if (on) found = true; });
+    if (!found) { id = 'start'; sections[0].classList.add('on'); }
+    [].forEach.call(nav.querySelectorAll('button'), function (b) { b.classList.toggle('on', b.dataset.id === id); });
+    main.scrollTop = 0;
+    if (!noHash && !embed) history.replaceState(null, '', '#' + id);
+  }
+
+  // in-text links to other topics
+  [].forEach.call(document.querySelectorAll('a[data-go]'), function (a) { a.addEventListener('click', function (e) { e.preventDefault(); show(a.dataset.go); var t = document.getElementById(a.getAttribute('href').slice(1)); if (t) t.scrollIntoView(); }); });
+
+  // search: hide topics that do not contain the words, jump to the first match
+  q.addEventListener('input', function () {
+    var words = q.value.toLowerCase().split(/\s+/).filter(Boolean), first = null, any = false;
+    sections.forEach(function (s) {
+      var hit = !words.length || words.every(function (w) { return s.textContent.toLowerCase().indexOf(w) >= 0 || s.dataset.title.toLowerCase().indexOf(w) >= 0; });
+      nav.querySelector('button[data-id="' + s.id + '"]').hidden = !hit;
+      if (hit && !first) first = s.id;
+      any = any || hit;
+    });
+    [].forEach.call(nav.querySelectorAll('.grp'), function (g) { g.hidden = !words.length ? false : !nav.querySelector('button:not([hidden])[data-id]'); });
+    if (first && words.length) show(first);
+  });
+
+  function open(tab) { overlay.hidden = false; show(tab || 'start'); if (!embed) q.focus(); }
+  function close() { if (embed) { try { parent.postMessage({ udGuide: 'close' }, location.origin); } catch (e) { /* standalone */ } } else overlay.hidden = true; }
+  document.getElementById('close').addEventListener('click', close);
+  document.getElementById('open').addEventListener('click', function () { open(location.hash.slice(1)); });
+  overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+
+  // which topic first: ?tab=path or #path
+  var tab = params.get('tab') || location.hash.slice(1) || 'start';
+  open(tab);
+  if (embed) q.blur();
+  window.openGuide = open;
+})();
+</script>
+</body>
+</html>

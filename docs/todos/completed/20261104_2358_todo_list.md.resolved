@@ -1,0 +1,5 @@
+RESOLVED: 2026-11-05T00:47:00+03:00
+All 6 tasks completed and verified:
+- 59/59 automated unit & integration tests pass (`cd src && npm test` exit code 0).
+- PostgreSQL `kyrpy-uiux-designer-db` on `<PGHOST>:<PGPORT>` synced (`ok: true`, `pendingOutbox: 0`).
+- Live service running on port 5180 (`./run.sh restart` succeeded).

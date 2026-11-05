@@ -1,0 +1,22 @@
+# Secrets & local environment overrides (NEVER COMMIT)
+.env
+.env.*
+!.env.example
+credentials.env
+credentials.env.*
+!credentials.env.example
+
+# Runtime logs, PIDs & SQLite WAL/SHM journal files
+logs/
+*.log
+*.pid
+*.db-wal
+*.db-shm
+
+# Dependencies & Playwright/agent scratch artifacts
+node_modules/
+.playwright-mcp/
+.agents/
+.claude/
+.shared/
+.archive/

@@ -1,0 +1,9 @@
+{
+  "id": "20261105_0433_todo_list",
+  "title": "Stage 3 Live Browser UI User Testing & UX Synthesis (@kyrpy-testusers-team)",
+  "status": "completed",
+  "orchestrator": "kyrpy-gru",
+  "teams": ["kyrpy-testusers-team", "kyrpy-dev-team"],
+  "createdAt": "2026-11-05T04:33:00+03:00",
+  "completedAt": "2026-11-05T04:37:15+03:00"
+}

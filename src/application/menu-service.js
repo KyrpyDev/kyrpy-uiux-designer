@@ -1,0 +1,81 @@
+import { NotFoundError, ValidationError } from '../domain/errors.js';
+import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS } from '../domain/entities.js';
+import { uniqueKey, slugify } from '../domain/naming.js';
+import { buildMenuTree, menuConfig } from '../domain/menu.js';
+
+const MAX_DEPTH = 6;
+
+/**
+ * Nested menu items of a button (popup or rotating menu): add / edit / delete / move, and the menu settings.
+ * Every item has a variable name (unique among its siblings), a label, an icon from the icon library and a description-dev.
+ */
+export class MenuService {
+  constructor({ buttons, icons, screens, elements, menus }) { Object.assign(this, { buttons, icons, screens, elements, menus }); }
+
+  #button(idOrKey) {
+    const b = /^\d+$/.test(String(idOrKey)) ? this.buttons.get(Number(idOrKey)) : this.buttons.getByKey(String(idOrKey));
+    if (!b) throw new NotFoundError('button', idOrKey);
+    return b;
+  }
+
+  get(buttonIdOrKey) {
+    const b = this.#button(buttonIdOrKey);
+    const items = this.menus.list(b.id);
+    return { buttonId: b.id, config: menuConfig(b.meta), items, tree: buildMenuTree(items) };
+  }
+
+  #depth(items, id) { let d = 0, cur = items.find(i => i.id === id); while (cur && cur.parentId != null) { d++; cur = items.find(i => i.id === cur.parentId); } return d; }
+
+  #check(data) {
+    if (data.iconId != null && !this.icons.get(data.iconId)) throw new ValidationError(`icon ${data.iconId} does not exist`);
+    if (data.targetScreenId != null && !this.screens.get(data.targetScreenId)) throw new ValidationError(`screen ${data.targetScreenId} does not exist`);
+    if (data.targetElementId != null && this.elements && !this.elements.get(data.targetElementId)) throw new ValidationError(`element ${data.targetElementId} does not exist`);
+  }
+
+  addItem(buttonIdOrKey, input) {
+    const b = this.#button(buttonIdOrKey);
+    const all = this.menus.list(b.id);
+    const data = normalizeMenuItem({ ...input, name: input.name || slugify(input.label || 'item') });
+    this.#check(data);
+    if (data.parentId != null) {
+      const parent = all.find(i => i.id === data.parentId);
+      if (!parent) throw new ValidationError('the parent menu item must belong to the same button');
+      if (this.#depth(all, parent.id) + 1 >= MAX_DEPTH) throw new ValidationError(`menus can be nested ${MAX_DEPTH} levels deep`);
+    }
+    const siblings = new Set(all.filter(i => (i.parentId ?? null) === (data.parentId ?? null)).map(i => i.name));
+    if (input.name && siblings.has(data.name)) throw new ValidationError(`a sibling already uses the name "${data.name}"`);
+    data.name = uniqueKey(data.name, k => siblings.has(k));
+    return this.menus.create(b.id, data);
+  }
+
+  updateItem(itemId, patch) {
+    const it = this.menus.get(Number(itemId));
+    if (!it) throw new NotFoundError('menu item', itemId);
+    const data = normalizeMenuItem({ ...patch }, { partial: true });
+    this.#check(data);
+    const all = this.menus.list(it.buttonId);
+    if (data.parentId !== undefined && data.parentId !== it.parentId) {
+      for (let p = data.parentId; p != null; p = all.find(i => i.id === p)?.parentId) if (p === it.id) throw new ValidationError('an item cannot be moved into its own sub items');
+    }
+    const parent = data.parentId !== undefined ? data.parentId : it.parentId;
+    if (data.name !== undefined && all.some(i => i.id !== it.id && (i.parentId ?? null) === (parent ?? null) && i.name === data.name)) throw new ValidationError(`a sibling already uses the name "${data.name}"`);
+    return this.menus.update(it.id, data);
+  }
+
+  removeItem(itemId) {
+    const it = this.menus.get(Number(itemId));
+    if (!it) throw new NotFoundError('menu item', itemId);
+    this.menus.delete(it.id);
+    return { deleted: true, id: it.id };
+  }
+
+  /** Menu settings of a button: kind (popup | rotating), layout (fan | list), radius, angles, scales ... */
+  setConfig(buttonIdOrKey, cfg) {
+    const b = this.#button(buttonIdOrKey);
+    if (cfg.kind !== undefined && !MENU_KINDS.includes(cfg.kind)) throw new ValidationError(`kind must be one of ${MENU_KINDS.join(', ')}`);
+    if (cfg.layout !== undefined && !MENU_LAYOUTS.includes(cfg.layout)) throw new ValidationError(`layout must be one of ${MENU_LAYOUTS.join(', ')}`);
+    const merged = { ...(b.meta.menu || {}), ...cfg };
+    this.buttons.update(b.id, { meta: { ...b.meta, menu: merged } });
+    return menuConfig({ menu: merged });
+  }
+}
