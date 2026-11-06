@@ -6,7 +6,7 @@
  */
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import { api } from '../api.js';
-import { state, emit, on, renderContext, ALL_ITEM_TYPES } from '../state.js';
+import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
 import { h, clear, modal, toast, confirmBox, promptBox } from '../dom.js';
 
 const TYPE_LABELS = {
@@ -74,7 +74,7 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
       projListWrap.append(
         h('label', {
           class: `ib-proj-chip${checked ? ' on' : ''}`,
-          title: disabledInMove ? 'Move only works with your own projects' : `Target project: ${p.name}`,
+          title: disabledInMove ? 'Move only works with your own projects' : `Target project: ${projectLabel(p)}`,
           style: {
             display: 'flex',
             alignItems: 'center',
@@ -88,7 +88,7 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
           }
         },
         chk,
-        h('span', { style: { fontWeight: '600', fontSize: '12px' } }, `📁 ${p.name}`),
+        h('span', { style: { fontWeight: '600', fontSize: '12px' } }, `📁 ${projectLabel(p)}`),
         h('span', { class: 'muted', style: { fontSize: '11px', marginLeft: 'auto' } }, `#${p.id}${ownedProj ? '' : ' (other owner)'}`)
         )
       );
@@ -416,7 +416,7 @@ export function buildItemBrowserElement({
     sourceProjSelect.append(h('option', { value: 'all', selected: sourceProjectFilter === 'all' }, 'Source: All Projects'));
     for (const p of state.projects || []) {
       sourceProjSelect.append(
-        h('option', { value: String(p.id), selected: String(sourceProjectFilter) === String(p.id) }, `Source: 📁 ${p.name} (#${p.id})`)
+        h('option', { value: String(p.id), selected: String(sourceProjectFilter) === String(p.id) }, `Source: 📁 ${projectLabel(p)} (#${p.id})`)
       );
     }
 
@@ -447,7 +447,7 @@ export function buildItemBrowserElement({
             fontSize: '11px',
             cursor: 'pointer'
           }
-        }, chk, `📁 ${p.name}`)
+        }, chk, `📁 ${projectLabel(p)}`)
       );
     }
     targetProjStrip.append(
@@ -824,14 +824,14 @@ export function buildItemBrowserElement({
       api.workflows({ includePublic: true }),
       api.projects()
     ]);
-    state.projects = projects;
+    state.projects = uniqueById(projects);
     allRecords = {
       path: state.library.paths || [],
       icon: state.library.icons || [],
       button: state.library.buttons || [],
       element: state.library.elements || [],
-      screen: screens || [],
-      workflow: workflows || []
+      screen: uniqueById(screens),
+      workflow: uniqueById(workflows)
     };
     renderTypeTabs();
     renderVisTabs();
@@ -1152,7 +1152,7 @@ export function openLibraryExportImportModal({
         onchange: e => { exportProjectId = Number(e.target.value); }
       },
         ...(state.projects || []).map(p =>
-          h('option', { value: String(p.id), selected: Number(exportProjectId) === Number(p.id) }, `📁 ${p.name} (#${p.id})`)
+          h('option', { value: String(p.id), selected: Number(exportProjectId) === Number(p.id) }, `📁 ${projectLabel(p)} (#${p.id})`)
         )
       );
 
@@ -1266,7 +1266,7 @@ export function openLibraryExportImportModal({
       onchange: e => { importProjectId = Number(e.target.value); }
     },
       ...(state.projects || []).map(p =>
-        h('option', { value: String(p.id), selected: Number(importProjectId) === Number(p.id) }, `📁 ${p.name} (#${p.id})`)
+        h('option', { value: String(p.id), selected: Number(importProjectId) === Number(p.id) }, `📁 ${projectLabel(p)} (#${p.id})`)
       )
     );
 

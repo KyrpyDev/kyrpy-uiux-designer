@@ -81,12 +81,15 @@ export function downloadSvg(type, id, extra = {}) {
 
 const BOX = (w, h2, extra = {}) => ({ tag: 'rect', role: 'card', name: 'surface', attrs: { x: 0, y: 0, width: w, height: h2, rx: 16 }, ...extra });
 
-export async function newDesign(type) {
+/** silent: create an empty item of this type straight away (no dialogs, auto-named). */
+export async function newDesign(type, { silent = false } = {}) {
   let name, device = state.settings.device, preset = null, buttonTemplate = null, visibility = 'public';
   const activeProj = state.projects.find(p => p.id === state.activeProjectId);
   if (activeProj?.visibility === 'project') visibility = 'project';
 
-  if (type === 'screen') {
+  if (silent) {
+    name = `New ${LABEL[type]} ${(state.library[PLURAL[type]]?.length || 0) + 1}`;
+  } else if (type === 'screen') {
     const r = await screenDialog(visibility);
     if (!r) return null;
     ({ name, device, visibility } = r);
@@ -553,4 +556,18 @@ export function downloadGuide() {
   const a = h('a', { href: GUIDE_URL, download: 'usage-and-guide.html' });
   document.body.appendChild(a); a.click(); a.remove();
   toast('usage-and-guide.html saved', 'ok');
+}
+
+/** "+ New" for the open designer: creates an empty item of the given type (workflows get an empty workflow). */
+export async function createEmptyItem(type) {
+  if (type === 'workflow') {
+    const name = `New workflow ${(state.library.workflows?.length || 0) + 1}`;
+    try {
+      const w = await api.createWorkflow({ name, projectId: state.activeProjectId || 1, visibility: 'public' });
+      await reloadLibrary({ silent: true });
+      toast(`Workflow "${w.name}" created`, 'ok');
+      return w;
+    } catch (e) { toast(e.message, 'error'); return null; }
+  }
+  return newDesign(type, { silent: true });
 }

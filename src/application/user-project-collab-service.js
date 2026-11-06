@@ -753,6 +753,8 @@ export class CollaborationService {
   approve(changeId, { actor = null, reviewer = null, reviewerId = null, comment = '', reviewNote = '' } = {}) {
     const ch = this.get(changeId);
     const effActor = actor || reviewer || (reviewerId ? this.users.get(Number(reviewerId)) : null);
+    // AI changeset ops (src/mcp) are applied by their own review flow, not by snapshot restore
+    if (this.externalReviewer?.handles(ch)) return this.externalReviewer.review(ch, 'approve', { actor: effActor, comment: comment || reviewNote || '' });
     if (effActor && !this.auth.isAdmin(effActor) && effActor.id !== ch.ownerId) {
       const p = this.projects.get(ch.projectId);
       if (!p || p.ownerId !== effActor.id) throw new ForbiddenError('Only the item/project owner or admin can approve changes');
@@ -777,6 +779,7 @@ export class CollaborationService {
   reject(changeId, { actor = null, reviewer = null, reviewerId = null, comment = '', reviewNote = '' } = {}) {
     const ch = this.get(changeId);
     const effActor = actor || reviewer || (reviewerId ? this.users.get(Number(reviewerId)) : null);
+    if (this.externalReviewer?.handles(ch)) return this.externalReviewer.review(ch, 'reject', { actor: effActor, comment: comment || reviewNote || '' });
     if (effActor && !this.auth.isAdmin(effActor) && effActor.id !== ch.ownerId) {
       const p = this.projects.get(ch.projectId);
       if (!p || p.ownerId !== effActor.id) throw new ForbiddenError('Only the item/project owner or admin can reject changes');

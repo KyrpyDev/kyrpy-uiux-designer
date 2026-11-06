@@ -37,6 +37,7 @@ import { SvgImportService } from './application/svg-import-service.js';
 import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
+import { buildMcpModule } from './mcp/composition.js';
 
 export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } = {}) {
   const resolvedDbFile = dbFile || dbPath || './data/designer.db';
@@ -138,6 +139,12 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log });
+  // MCP layer (src/mcp): API keys, schema registry, content hashes
+  const mcp = buildMcpModule({
+    db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
+    services, workflows, exporter, settings, collaboration, parseSvg: svgTextToNodes,
+    allowedOrigins: String(process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+  });
 
   // Ensure all built-in themes (all 15 design style families in dark & light modes) exist and are up to date
   themes.seedBuiltins();
@@ -165,6 +172,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     exporter,
     svgImport,
     importer,
+    mcp,
     close: () => db.close()
   };
 }

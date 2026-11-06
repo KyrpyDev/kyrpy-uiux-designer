@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * CLI entry point.
- *   node main.js serve  [--port 5180] [--db data/designer.db]
+ *   node main.js serve  [--port 5180] [--db data/designer.db]      (also serves /mcp unless MCP_MODE=off)
+ *   node main.js mcp    [--port 5181] [--db data/designer.db]      standalone MCP service only
  *   node main.js import [--legacy ../v1] [--reset] [--db ...]     seed/refresh from the v1 prototype + html catalog
  *   node main.js guide  [--out usage-and-guide.html]                 write the standalone usage guide
  *   node main.js export --out <folder> [--themes liquid,glow] [--screens all|key1,key2] [--icons used|all|none]
@@ -11,6 +12,7 @@ import { dirname, resolve, join } from 'node:path';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { buildContainer } from './composition-root.js';
 import { createHttpServer } from './interfaces/http/server.js';
+import { createMcpOnlyServer } from './mcp/server/standalone.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -77,8 +79,14 @@ async function main() {
       const server = createHttpServer(c, { webRoot: join(here, 'interfaces', 'web'), domainRoot: join(here, 'domain') });
       server.listen(port, '127.0.0.1', () => console.log(`UI/UX designer running at http://127.0.0.1:${port}  (db: ${dbFile})`));
       process.on('SIGINT', () => { server.close(); c.close(); process.exit(0); });
+    } else if (cmd === 'mcp') {
+      // standalone MCP service (same database, own port): node main.js mcp [--port 5181]
+      const port = Number(args.port || process.env.MCP_PORT || 5181);
+      const server = createMcpOnlyServer(c);
+      server.listen(port, '127.0.0.1', () => console.log(`kyrpy-uiux-mcp running at http://127.0.0.1:${port}/mcp  (db: ${dbFile})`));
+      process.on('SIGINT', () => { server.close(); c.close(); process.exit(0); });
     } else {
-      console.error(`unknown command "${cmd}". Use serve, import or export.`);
+      console.error(`unknown command "${cmd}". Use serve, mcp, import or export.`);
       process.exitCode = 2;
     }
   } catch (e) {

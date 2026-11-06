@@ -1,10 +1,12 @@
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { Router } from './router.js';
 import { designRoutes } from './controllers/design-routes.js';
 import { miscRoutes } from './controllers/misc-routes.js';
 import { collabRoutes } from './controllers/collab-routes.js';
+import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
 import { DomainError } from '../../domain/errors.js';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -38,14 +40,37 @@ async function serveFile(res, root, rel) {
 
 /** Builds the node http server around the container's use cases. Static: /domain/* (shared pure code) and the web app. */
 export function createHttpServer(container, { webRoot, domainRoot }) {
+  const mcpWebRoot = fileURLToPath(new URL('../../mcp/interfaces/web/', import.meta.url));
   const router = new Router();
   designRoutes(router, container);
   miscRoutes(router, container);
   collabRoutes(router, container);
+  if (container.mcp) mcpRoutes(router, container);
+
+  // Sync signal: every successful write bumps the library version and tells connected clients to re-sync,
+  // so their cached lists (including duplicates or stale rows) are replaced with the server's copy.
+  const syncClients = new Set();
+  let syncVersion = 0;
+  const MUTATIONS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+  const broadcastSync = () => {
+    syncVersion += 1;
+    const msg = `data: ${JSON.stringify({ type: 'library-changed', version: syncVersion })}\n\n`;
+    for (const c of syncClients) c.write(msg);
+  };
 
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
+      // MCP endpoint for AI coding agents (src/mcp); MCP_MODE=off disables it
+      if (container.mcp?.http && process.env.MCP_MODE !== 'off' && await container.mcp.http(req, res, url)) return;
+      if (url.pathname === '/api/events') {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+        res.write(`retry: 3000\ndata: ${JSON.stringify({ type: 'hello', version: syncVersion })}\n\n`);
+        syncClients.add(res);
+        const beat = setInterval(() => res.write(': ping\n\n'), 25000);
+        req.on('close', () => { clearInterval(beat); syncClients.delete(res); });
+        return;
+      }
       if (url.pathname.startsWith('/api/')) {
         const hit = router.match(req.method, url.pathname);
         if (!hit) throw new DomainError(`no route ${req.method} ${url.pathname}`, 'NO_ROUTE', 404);
@@ -72,7 +97,10 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
           actor = { id: 1, username: 'kyrpy', role: 'admin' };
         }
         const projectId = headerProjectId || (url.searchParams.get('projectId') ? Number(url.searchParams.get('projectId')) : 1);
-        const out = await hit.handler({ params: hit.params, query: url.searchParams, body, token, actor, projectId });
+        const ip = req.socket?.remoteAddress || '';
+        const baseUrl = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+        const out = await hit.handler({ params: hit.params, query: url.searchParams, body, token, actor, projectId, ip, baseUrl });
+        if (MUTATIONS.includes(req.method)) broadcastSync();
         if (out && out.raw !== undefined) {
           const h = { 'content-type': out.contentType || 'text/plain', 'cache-control': 'no-store' };
           if (out.filename) h['content-disposition'] = `attachment; filename="${out.filename}"`;
@@ -86,6 +114,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
         return;
       }
       if (url.pathname.startsWith('/domain/')) return serveFile(res, domainRoot, url.pathname.slice('/domain/'.length));
+      if (url.pathname.startsWith('/mcp-web/')) return serveFile(res, mcpWebRoot, url.pathname.slice('/mcp-web/'.length));
       return serveFile(res, webRoot, url.pathname === '/' ? 'index.html' : url.pathname);
     } catch (e) {
       const status = e instanceof DomainError ? e.status : 500;

@@ -1,8 +1,8 @@
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
-import { h, clear, modal, toast, debounce, promptBox, confirmBox, $ } from './dom.js';
+import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api } from './api.js';
-import { state, on, emit } from './state.js';
-import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject } from './actions.js';
+import { state, on, emit, projectLabel } from './state.js';
+import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject, createEmptyItem } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
@@ -10,6 +10,19 @@ import { WorkflowDesigner } from './components/workflow-designer.js';
 import { openExportDialog } from './components/export-dialog.js';
 import { openThemeEditor } from './components/theme-editor.js';
 import { pairThemeKey } from '/domain/theme.js';
+import { iconEl, iconForLabel, ibtn } from './icons.js';
+
+// icon for each top-level menu header (tooltip = the menu name)
+const MENU_ICONS = { Project: 'file', Design: 'design', Edit: 'edit', Insert: 'insert', Tools: 'tools', Path: 'path', 'Events & Anim': 'events', Collaborate: 'collab', View: 'view', Theme: 'theme', Export: 'export', Trash: 'trash', Help: 'help' };
+// icon-only topbar button with a hover tooltip and optional count badge
+/** Profile → AI Access Keys (MCP layer module, loaded on demand from src/mcp/interfaces/web). */
+const openAiKeys = () => import('/mcp-web/ai-keys-modal.js').then(m => m.openAiKeysModal()).catch(e => toast(`AI Access Keys: ${e.message}`, 'error'));
+/** Collaborate → Versions & AI Changesets (MCP layer module, M4). */
+const openVersions = (opts) => import('/mcp-web/versions-modal.js').then(m => m.openVersionsModal(opts)).catch(e => toast(`Versions: ${e.message}`, 'error'));
+const tbIcon = (cls, icon, tip, onclick, badge = 0, on = false) => h('button', {
+  class: `btn sm tb-icon ${cls}${on ? ' primary' : ''}`.trim(),
+  'aria-label': tip, 'data-tip': tip, onclick
+}, iconEl(icon, { size: 17 }), badge ? h('span', { class: 'tb-badge' }, String(badge)) : null);
 import {
   openAuthModal,
   ensureAuthGate,
@@ -228,8 +241,10 @@ function menuDef() {
       '-',
       ['Projects & Collaborators…', () => openProjectsModal()],
       ['Collaborative Change List (Approve / Reject)…', () => openChangesModal()],
+      ['Versions & AI Changesets (Review)…', () => openVersions()],
+      ['AI Item Requests (Inbox)…', () => openVersions({ tab: 'requests' })],
       '-',
-      ...(state.projects || []).map(p => [`${tick(p.id === state.activeProjectId)}|Project: ${p.name} (${p.visibility})`, () => setActiveProject(p.id)]),
+      ...(state.projects || []).map(p => [`${tick(p.id === state.activeProjectId)}|Project: ${projectLabel(p)} (${p.visibility})`, () => setActiveProject(p.id)]),
       '-',
       ['Set Open Design to Public (All Users)', async () => {
         if (!curDoc) return toast('Open a design first', 'error');
@@ -393,9 +408,12 @@ function menuDef() {
     ]],
     ['Collaborate', [
       ['Collaborative Change List (Approve / Reject)…', () => openChangesModal()],
+      ['Versions & AI Changesets (Review)…', () => openVersions()],
+      ['AI Item Requests (Inbox)…', () => openVersions({ tab: 'requests' })],
       ['Projects & Collaborator Invitations…', () => openProjectsModal()],
       ['Admin & User Management Panel (ACL)…', () => openAdminUsersModal()],
       ['Sign In / Register / Switch Account…', () => openAuthModal()],
+      ['AI Access Keys (MCP)…', () => openAiKeys()],
       '-',
       ['Editable Button & Device Templates…', () => openTemplatesModal('buttons')],
       ['Offline-First & PostgreSQL Sync…', () => openSyncModal('sync')],
@@ -465,8 +483,9 @@ function buildProjectsMultiDropdown() {
 
   const ddWrap = h('div', { class: 'menu proj-multi-dd' });
   const triggerBtn = h('button', {
-    class: 'btn sm proj-multi-trigger',
-    title: 'Multi-select projects to filter libraries, switch active project, or create a new project',
+    class: 'btn sm tb-icon proj-multi-trigger',
+    'aria-label': `Projects — ${labelText}`,
+    'data-tip': `Projects — active: ${activeProj.name}${selCount ? ` · ${selCount} selected` : ''}\nMulti-select to filter libraries, switch the active project, or create one`,
     'aria-haspopup': 'true',
     onclick: e => {
       e.stopPropagation();
@@ -477,48 +496,17 @@ function buildProjectsMultiDropdown() {
         rebuildDropdown();
       }
     }
-  }, `${labelText} ▾`);
+  }, iconEl('folder', { size: 17 }), selCount ? h('span', { class: 'tb-badge' }, String(selCount)) : null);
+  // Active project name shown as a label aligned beside the icon button
+  const projLabel = h('span', { class: 'proj-active-label', title: activeProj.name }, activeProj.name);
+  const triggerWrap = h('div', { class: 'proj-trigger-wrap' }, triggerBtn, projLabel);
 
   const rebuildDropdown = () => {
     clear(panel);
-    panel.append(
-      h('div', { class: 'row spread', style: { padding: '2px 4px 6px', borderBottom: '1px solid var(--line)', marginBottom: '6px' } },
-        h('span', { class: 'muted', style: { fontSize: '11px', fontWeight: '700' } }, 'PROJECTS (Multi-Select & Active)'),
-        h('div', { class: 'row', style: { gap: '4px' } },
-          h('button', {
-            class: 'btn small',
-            onclick: () => {
-              projects.forEach(p => state.selectedProjectIds.add(Number(p.id)));
-              rebuildDropdown();
-              emit('project:changed', state.activeProjectId);
-            }
-          }, 'All'),
-          h('button', {
-            class: 'btn small',
-            onclick: () => {
-              state.selectedProjectIds.clear();
-              rebuildDropdown();
-              emit('project:changed', state.activeProjectId);
-            }
-          }, 'Clear')
-        )
-      )
-    );
-
     for (const p of projects) {
       const pid = Number(p.id);
       const isChecked = state.selectedProjectIds.has(pid);
       const isActive = pid === Number(state.activeProjectId);
-      const chk = h('input', {
-        type: 'checkbox',
-        checked: isChecked,
-        title: 'Include this project’s private items in multi-project filter',
-        onchange: () => {
-          if (chk.checked) state.selectedProjectIds.add(pid);
-          else state.selectedProjectIds.delete(pid);
-          emit('project:changed', state.activeProjectId);
-        }
-      });
       panel.append(
         h('div', {
           class: `row spread proj-dd-row${isActive ? ' active' : ''}`,
@@ -529,7 +517,6 @@ function buildProjectsMultiDropdown() {
             gap: '6px'
           }
         },
-        chk,
         h('button', {
           class: 'grow',
           style: {
@@ -546,7 +533,7 @@ function buildProjectsMultiDropdown() {
             await setActiveProject(pid);
             closeMenus();
           }
-        }, `${p.visibility === 'private' || p.visibility === 'project' ? '📁' : '🌐'} ${p.name}`),
+        }, `${p.visibility === 'private' || p.visibility === 'project' ? '📁' : '🌐'} ${projectLabel(p)}`),
         isActive ? h('span', { class: 'badge', style: { fontSize: '9px' } }, 'ACTIVE') : null
         )
       );
@@ -583,7 +570,45 @@ function buildProjectsMultiDropdown() {
     );
   };
 
-  ddWrap.append(triggerBtn, panel);
+  ddWrap.append(triggerWrap, panel);
+  return ddWrap;
+}
+
+// Theme picker as an icon-only button that opens a menu of all design style / mode themes
+function buildThemeMenu() {
+  const cur = state.themes.find(t => t.key === state.themeKey) || state.themes[0];
+  const ddWrap = h('div', { class: 'menu theme-menu' });
+  const panel = h('div', {
+    class: 'menu-panel theme-menu-panel',
+    role: 'menu',
+    style: { minWidth: '240px', maxHeight: '70vh', overflowY: 'auto', padding: '6px' },
+    onclick: e => e.stopPropagation()
+  });
+  const trigger = h('button', {
+    class: 'btn sm tb-icon theme-menu-trigger',
+    'aria-label': `Design style & mode — ${cur?.name || ''}`,
+    'data-tip': `Design style & mode — ${cur?.name || ''}`,
+    'aria-haspopup': 'true',
+    onclick: e => {
+      e.stopPropagation();
+      const open = !ddWrap.classList.contains('open');
+      closeMenus();
+      if (open) {
+        ddWrap.classList.add('open');
+        clear(panel);
+        for (const t of state.themes) {
+          const active = t.key === state.themeKey;
+          panel.append(h('button', {
+            class: 'menu-item',
+            role: 'menuitemradio',
+            'aria-checked': String(active),
+            onclick: () => { closeMenus(); setTheme(t.key); }
+          }, h('span', { class: 'tick' }, active ? '✓' : ''), h('span', { class: 'mi-label' }, t.name)));
+        }
+      }
+    }
+  }, iconEl('theme', { size: 17 }));
+  ddWrap.append(trigger, panel);
   return ddWrap;
 }
 
@@ -592,13 +617,13 @@ function buildTopbar() {
   bar.append(h('div', { class: 'brand' }, h('span', { style: { color: '#2e9bff' } }, '◈'), 'UI/UX Designer'));
   for (const [title, items] of menuDef()) {
     const panel = h('div', { class: 'menu-panel', role: 'menu' });
-    const m = h('div', { class: 'menu' }, h('button', { 'aria-haspopup': 'true', onclick: e => { e.stopPropagation(); const open = !m.classList.contains('open'); closeMenus(); if (open) { m.classList.add('open'); rebuildPanel(); } } }, title), panel);
+    const m = h('div', { class: 'menu' }, h('button', { class: 'menu-head', 'aria-haspopup': 'true', 'aria-label': title, 'data-tip': title, onclick: e => { e.stopPropagation(); const open = !m.classList.contains('open'); closeMenus(); if (open) { m.classList.add('open'); rebuildPanel(); } } }, iconEl(MENU_ICONS[title] || 'dot', { size: 18 })), panel);
     const rebuildPanel = () => {
       clear(panel);
       for (const it of menuDef().find(x => x[0] === title)[1]) {
         if (it === '-') { panel.append(h('div', { class: 'menu-sep' })); continue; }
         const [label, fn, kbd] = it; const [t, l] = label.includes('|') ? label.split('|') : ['', label];
-        panel.append(h('button', { class: 'menu-item', role: 'menuitem', disabled: !fn, onclick: () => { closeMenus(); try { fn?.(); } catch (e) { toast(e.message, 'error'); } } }, h('span', { class: 'tick' }, t), l, kbd ? h('span', { class: 'kbd' }, kbd) : null));
+        panel.append(h('button', { class: 'menu-item', role: 'menuitem', disabled: !fn, 'data-tip': `${l}${kbd ? `  ·  ${kbd}` : ''}`, onclick: () => { closeMenus(); try { fn?.(); } catch (e) { toast(e.message, 'error'); } } }, h('span', { class: 'tick' }, t), iconEl(iconForLabel(l)), h('span', { class: 'mi-label' }, l), kbd ? h('span', { class: 'kbd' }, kbd) : null));
       }
     };
     bar.append(m);
@@ -608,52 +633,94 @@ function buildTopbar() {
   const projDropdown = buildProjectsMultiDropdown();
 
   // Trash Management button
-  const trashBtn = h('button', {
-    class: 'btn sm topbar-trash-btn',
-    title: 'Trash Management — Restore or permanently purge deleted items',
-    onclick: () => openTrashModal()
-  }, `🗑 Trash (${state.trashCount || 0})`);
+  const trashBtn = tbIcon('topbar-trash-btn', 'trash',
+    `Trash — restore or permanently purge deleted items (${state.trashCount || 0})`,
+    () => openTrashModal(), state.trashCount || 0);
 
   // Pending Collaborative Changes button
-  const changesBtn = h('button', {
-    class: `btn sm${state.pendingChangesCount > 0 ? ' primary' : ''}`,
-    title: 'Collaborative Change List (Approve / Reject)',
-    onclick: () => openChangesModal()
-  }, `⇄ Changes (${state.pendingChangesCount || 0})`);
+  const changesBtn = tbIcon('', 'changes',
+    `Collaborative changes — approve or reject edits (${state.pendingChangesCount || 0} pending)`,
+    () => openChangesModal(), state.pendingChangesCount || 0, state.pendingChangesCount > 0);
 
   // PostgreSQL Sync button
-  const syncBtn = h('button', {
-    class: 'btn sm',
-    title: 'Offline-First Local SQLite + PostgreSQL Sync (kyrpy-uiux-designer-db)',
-    onclick: () => openSyncModal('sync')
-  }, '⇅ PG Sync');
+  const syncBtn = tbIcon('', 'sync',
+    'PG Sync — offline-first local SQLite ↔ PostgreSQL (kyrpy-uiux-designer-db)',
+    () => openSyncModal('sync'));
 
   // User / Admin button
   const curUser = state.user || { username: 'kyrpy', role: 'admin' };
-  const userBtn = h('button', {
-    class: 'btn sm',
-    title: `Signed in as @${curUser.username} (${curUser.role}) — Click to switch account or open Admin ACL panel`,
-    onclick: () => openAuthModal()
-  }, `👤 @${curUser.username} (${curUser.role})`);
+  const userBtn = tbIcon('', 'user',
+    `Signed in as @${curUser.username} (${curUser.role}) — account, AI access keys`,
+    e => {
+      const r = e.currentTarget.getBoundingClientRect();
+      contextMenu(r.right - 220, r.bottom + 4, [
+        { label: `Account — @${curUser.username}…`, fn: () => openAuthModal() },
+        { label: 'AI Access Keys (MCP)…', fn: () => openAiKeys() }
+      ]);
+    });
 
   const curThemeObj = state.themes.find(t => t.key === state.themeKey) || state.themes[0];
   const isLightMode = curThemeObj?.tokens?.mode === 'light' || String(state.themeKey).endsWith('-light');
-  const modeToggleBtn = h('button', {
-    class: 'btn sm theme-mode-toggle-btn',
-    title: 'Toggle current design style between Dark Mode and Light Mode',
-    onclick: () => {
-      const targetKey = pairThemeKey(state.themeKey, state.themes);
-      if (targetKey) setTheme(targetKey);
-    }
-  }, isLightMode ? '☀️ Light' : '🌙 Dark');
-  const themeSel = h('select', { title: 'Design Style & Mode', 'aria-label': 'Theme' }, state.themes.map(t => h('option', { value: t.key, selected: t.key === state.themeKey }, t.name)));
-  themeSel.addEventListener('change', () => setTheme(themeSel.value));
-  const tabs = h('div', { class: 'tabs', role: 'tablist' },
-    h('button', { class: state.mode === 'screen' ? 'on' : '', onclick: () => { state.mode = 'screen'; renderMode(); buildTopbar(); } }, 'Screen designer'),
-    h('button', { class: state.mode === 'workflow' ? 'on' : '', onclick: async () => { const id = state.workflowId || app.library.workflows[0]?.id; if (!id) { toast('Create a workflow in the Workflows tab first'); return; } await app.openWorkflow(id); buildTopbar(); } }, 'Workflow designer'),
-    h('button', { class: state.mode === 'browser' ? 'on' : '', dataset: { modeTab: 'browser' }, title: 'Center Canvas Full Item Browser with checkboxes per item', onclick: () => { state.mode = 'browser'; renderMode(); buildTopbar(); } }, '🗂 Item Browser')
-  );
-  bar.append(h('div', { class: 'top-right' }, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, tabs, modeToggleBtn, themeSel));
+  const modeToggleBtn = tbIcon('theme-mode-toggle-btn', isLightMode ? 'sun' : 'moon',
+    isLightMode ? 'Light mode — click to switch this design style to Dark mode' : 'Dark mode — click to switch this design style to Light mode',
+    () => { const targetKey = pairThemeKey(state.themeKey, state.themes); if (targetKey) setTheme(targetKey); });
+  // Theme style button sits in the top-left slot, right after the menu heads
+  bar.append(buildThemeMenu());
+  bar.append(h('div', { class: 'top-right' }, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
+  buildTypeBar();
+}
+/* Designer-page section: switch between path / icon / button / element / screen / workflow / item browser,
+   plus a "New empty" button for the page that is open. */
+const TYPE_NAV = [
+  ['path', 'Path designer', 'bezier', 'paths'],
+  ['icon', 'Icon designer', 'star', 'icons'],
+  ['button', 'Button designer', 'circle', 'buttons'],
+  ['element', 'Element designer', 'rect', 'elements'],
+  ['screen', 'Screen designer — device screens', 'monitor', 'screens']
+];
+function currentPageType() { return state.mode === 'workflow' ? 'workflow' : state.mode === 'screen' ? (app.current?.type || state.tab) : null; }
+async function openPageType(type) {
+  if (type === 'workflow') {
+    const id = state.workflowId || app.library.workflows[0]?.id;
+    if (!id) { toast('Create a workflow first (+ New in this page)'); return; }
+    await app.openWorkflow(id);
+  } else {
+    state.mode = 'screen'; state.tab = type;
+    const list = type === 'screen' ? await api.list('screen') : (state.library[TYPE_NAV.find(t => t[0] === type)[3]] || []);
+    const first = list[0];
+    if (first) await app.openDesign(type, first.id);
+    else { renderMode(); app.library.renderTabs(); app.library.renderBody(); }
+  }
+  buildTopbar();
+}
+function buildTypeBar() {
+  const nav = $('#typebar'); if (!nav) return;
+  clear(nav);
+  const page = currentPageType();
+  const navBtn = (type, tip, icon, onclick) => h('button', { class: `tab-ico${page === type ? ' on' : ''}`, 'aria-label': tip, 'data-tip': tip, onclick }, iconEl(icon, { size: 18 }));
+  const newBtn = page ? ibtn('plus', `New empty ${page === 'workflow' ? 'workflow' : (TYPE_NAV.find(t => t[0] === page)?.[1] || page).replace(' designer', '').toLowerCase()}`, async () => {
+    const r = await createEmptyItem(page);
+    if (!r) return;
+    if (page === 'workflow') await app.openWorkflow(r.id); else await app.openDesign(page, r.id);
+    buildTopbar();
+  }, { desc: 'Create an empty item of this type and open it', cls: 'new-empty' }) : null;
+  // the designer's doc bar (back, save, targets, visibility, status, new) and canvas toggles live in this row
+  const designer = app.designer;
+  const inDesigner = state.mode === 'screen' && designer?.doc;
+  nav.append(...[
+    h('div', { class: 'tabs type-tabs', role: 'tablist' },
+      ...TYPE_NAV.map(([type, tip, icon]) => navBtn(type, tip, icon, () => openPageType(type))),
+      navBtn('workflow', 'Workflow designer — screen-to-screen routing graph', 'workflow', () => openPageType('workflow')),
+      h('button', { class: `tab-ico${state.mode === 'browser' ? ' on' : ''}`, 'aria-label': 'Item Browser — full-canvas item list with checkboxes', 'data-tip': 'Item Browser — full-canvas item list with checkboxes', dataset: { modeTab: 'browser' }, onclick: () => { state.mode = 'browser'; renderMode(); buildTopbar(); } }, iconEl('grid', { size: 18 }))
+    ),
+    h('span', { class: 'sep-v' }),
+    newBtn,
+    inDesigner ? h('span', { class: 'sep-v' }) : null,
+    inDesigner ? designer.docbar : null,
+    h('span', { class: 'grow' }),
+    h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
+    ...(inDesigner ? (designer.viewControls || []) : [])
+  ].filter(Boolean));
 }
 const closeMenus = () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
 document.addEventListener('click', closeMenus);
@@ -741,6 +808,7 @@ async function boot() {
     $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'kyrpy'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
   };
   on('library:changed', () => { refreshCounts(); buildTopbar(); });
+  on('topbar:refresh', () => buildTopbar());
   on('trash:changed', () => { refreshCounts(); buildTopbar(); });
   on('project:list-changed', () => { refreshCounts(); buildTopbar(); });
   on('mode:set', m => { state.mode = m; renderMode(); });
@@ -773,7 +841,31 @@ async function boot() {
     if (first) await app.openDesign('screen', first.id, { push: 'replace' });
   }
   updateBackButtons();
+  connectSync();
   window.__app = app;   // handy in the console
+}
+
+/* Sync signal from the server: when any client writes, every open client re-reads the library so cached
+   lists (and any duplicate rows they were showing) are replaced with the server's current copy. */
+function connectSync() {
+  if (typeof EventSource === 'undefined') return;
+  const resync = debounce(async () => {
+    try {
+      await reloadLibrary({ silent: true });
+      app.library?.renderBody?.();
+      await app.browser?.reload?.();
+      emit('library:changed');
+    } catch (e) { console.warn('resync failed', e); }
+  }, 300);
+  const es = new EventSource('/api/events');
+  let seen = null;
+  es.onmessage = ev => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type !== 'library-changed') return;
+    if (seen !== null && msg.version === seen) return;
+    seen = msg.version;
+    resync();
+  };
 }
 
 boot().catch(e => { console.error(e); document.body.prepend(h('pre', { style: { color: '#f66', padding: '20px' } }, `Failed to start: ${e.message}`)); });

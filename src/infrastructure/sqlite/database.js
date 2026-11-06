@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MIGRATIONS } from './migrations.js';
+import { applyMcpSchema, dropMcpTriggers } from '../../mcp/infrastructure/sqlite/mcp-schema.js';
 
 /** Cleans up any orphaned child rows or dangling nullable references after sync/migration so foreign_key_check is 100% clean. */
 export function healForeignKeys(db) {
@@ -34,8 +35,9 @@ export function healForeignKeys(db) {
 export function openDatabase(file) {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = OFF;');   // OFF while tables are rebuilt
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = OFF;');   // OFF while tables are rebuilt
   migrate(db);
+  applyMcpSchema(db);   // MCP layer (src/mcp): mcp_context on every table, uid/content_hash, schema_registry
   healForeignKeys(db);
   const bad = db.prepare('PRAGMA foreign_key_check').all();
   if (bad.length) throw new Error(`foreign key violations after migration: ${JSON.stringify(bad.slice(0, 3))}`);
@@ -45,6 +47,7 @@ export function openDatabase(file) {
 
 export function migrate(db) {
   const current = db.prepare('PRAGMA user_version').get().user_version;
+  if (current < MIGRATIONS.length) dropMcpTriggers(db);   // MCP triggers would block table rebuilds; re-created by applyMcpSchema
   MIGRATIONS.forEach((sql, i) => {
     const version = i + 1;
     if (version <= current) return;

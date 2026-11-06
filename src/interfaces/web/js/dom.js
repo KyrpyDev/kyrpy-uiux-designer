@@ -1,4 +1,5 @@
 /** Tiny DOM helpers: h() builds nodes, modal()/toast()/confirmBox()/promptBox() are the shared dialogs. */
+import { iconEl } from './icons.js';
 let formFieldSeq = 0;
 const FORM_TAGS = new Set(['input', 'select', 'textarea']);
 
@@ -107,12 +108,23 @@ export function modal({ title, content, wide = false, full = false, w90 = false,
 }
 
 /** A question with several answers. buttons: [{label, value, kind?: 'primary'|'danger'}]; resolves to the chosen value, or null when dismissed. */
-export function choiceBox(title, message, buttons) {
+export function choiceBox(title, message, buttons, { list = false } = {}) {
   return new Promise(resolve => {
     let done = false;
+    let closeFn = () => {};
     const finish = v => { if (!done) { done = true; resolve(v); } };
-    modal({ title, content: h('p', {}, message), onClose: () => finish(null),
-      actions: close => buttons.map(b => h('button', { class: `btn${b.kind ? ` ${b.kind}` : ''}`, onclick: () => { finish(b.value); close(); } }, b.label)) });
+    const pick = b => { finish(b.value); closeFn(); };
+    if (!list) {
+      modal({ title, content: h('p', {}, message), onClose: () => finish(null),
+        actions: close => buttons.map(b => h('button', { class: `btn${b.kind ? ` ${b.kind}` : ''}`, onclick: () => { finish(b.value); close(); } }, b.label)) });
+      return;
+    }
+    // list mode: one full-width row per choice, with an icon and an explanation line
+    const rows = buttons.map(b => h('button', { class: `choice-item${b.kind ? ` ${b.kind}` : ''}`, onclick: () => pick(b) },
+      iconEl(b.icon || 'dot', { size: 16 }),
+      h('span', { class: 'choice-text' }, h('b', {}, b.label), b.desc ? h('small', {}, b.desc) : null)));
+    modal({ title, content: h('div', { class: 'choice-list' }, message ? h('p', { class: 'muted' }, message) : null, rows), onClose: () => finish(null),
+      actions: close => { closeFn = close; return [h('button', { class: 'btn', onclick: () => close() }, 'Cancel')]; } });
   });
 }
 

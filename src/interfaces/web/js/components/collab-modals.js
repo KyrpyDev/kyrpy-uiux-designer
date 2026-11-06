@@ -10,7 +10,7 @@
  *  - Offline-First PostgreSQL Sync & Translations (`openSyncModal`)
  */
 import { api } from '../api.js';
-import { state, emit } from '../state.js';
+import { state, emit, projectLabel } from '../state.js';
 import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
@@ -576,7 +576,7 @@ export async function openProjectsModal() {
           }
         },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-            h('strong', {}, p.name),
+            h('strong', {}, projectLabel(p)),
             h('span', { class: 'badge' }, p.visibility)
           ),
           h('div', { class: 'muted', style: { fontSize: '11px' } }, `Owner: @${p.ownerUsername || 'kyrpy'}${p.id === state.activeProjectId ? ' · ACTIVE' : ''}`)

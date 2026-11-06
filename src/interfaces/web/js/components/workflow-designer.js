@@ -3,9 +3,10 @@
  * between them (curved or cornered; cornered lines hop over each other with a small "U" at intersections).
  */
 import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom.js';
+import { ibtn } from '../icons.js';
 import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprint.js';
 import { api } from '../api.js';
-import { state, emit } from '../state.js';
+import { state, emit, projectLabel } from '../state.js';
 import { nodeBBox } from '/domain/geometry.js';
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
@@ -201,7 +202,7 @@ export class WorkflowDesigner {
               fontSize: '12px'
             }
           },
-          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${p.name}`),
+          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${projectLabel(p)}`),
           h('span', { class: 'muted', style: { fontSize: '10px' } }, `#${pid}`)
           )
         );
@@ -215,7 +216,7 @@ export class WorkflowDesigner {
   buildDocBar() {
     const app = this.app;
     const ownedByMe = this.isOwnedByCurrentUser(this.wf);
-    this.backBtn = h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => app.back() }, '← Back');
+    this.backBtn = ibtn('back', 'Back', () => app.back(), { desc: 'Return to the previous page', kbd: 'Alt+←', dataset: { act: 'back' } });
     this.saveBtn = h('button', {
       class: 'btn small save',
       disabled: !ownedByMe,
@@ -224,9 +225,9 @@ export class WorkflowDesigner {
         : `Save is disabled because this workflow is owned by @${this.wf?.creatorUsername || 'another user'}. Use "Save as…" to save a copy.`,
       onclick: () => this.save()
     }, '💾 Save');
-    this.saveAsBtn = h('button', { class: 'btn small', title: 'Save a copy under a new name (into active project or all selected Multi-Targets).', onclick: () => this.saveAs() }, 'Save as…');
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into the active project or all selected Multi-Targets)' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
-    this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
+    this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     const copyToBtn = h('button', {
       class: 'btn small',
       title: 'Copy this workflow (and its screens + sub-items) to project(s)',
@@ -416,20 +417,20 @@ export class WorkflowDesigner {
     const bar = h('div', { class: 'dz-bar' },
       h('b', { style: { padding: '0 8px' } }, `Workflow: ${wf.name}`),
       h('span', { class: 'sep-v' }),
-      h('button', { class: 'icon-btn', title: 'Undo (Ctrl+Z)', onclick: () => this.undo() }, '↶'),
-      h('button', { class: 'icon-btn', title: 'Redo (Ctrl+Y)', onclick: () => this.redo() }, '↷'),
-      h('button', { class: 'icon-btn', title: 'Delete selected link or screen node (Del)', onclick: () => this.deleteSelected() }, '🗑'),
+      ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
+      ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
+      ibtn('trash', 'Delete', () => this.deleteSelected(), { desc: 'Delete the selected link or screen node', kbd: 'Del' }),
       h('span', { class: 'sep-v' }),
       addSel,
-      h('button', { class: 'btn small', onclick: () => this.addAll() }, 'Add all screens'), h('span', { class: 'sep-v' }), this.linkBtn, styleSel,
-      h('button', { class: 'btn small', title: 'Arrange screens left→right following the links', onclick: () => this.autoLayout() }, 'Auto layout'),
+      ibtn('plus', 'Add all screens', () => this.addAll(), { desc: 'Add every screen to this workflow' }), h('span', { class: 'sep-v' }), this.linkBtn, styleSel,
+      ibtn('grid', 'Auto layout', () => this.autoLayout(), { desc: 'Arrange screens left → right following the links' }),
       this.testBtn,
       h('span', { class: 'sep-v' }),
-      h('button', { class: 'icon-btn', onclick: () => this.zoomBy(1 / 1.25) }, '−'), this.zoomLabel, h('button', { class: 'icon-btn', onclick: () => this.zoomBy(1.25) }, '+'),
-      h('button', { class: 'btn small', onclick: () => this.fit() }, 'Fit'), h('span', { class: 'grow' }),
-      h('button', { class: 'btn small', title: 'Collapse every screen', onclick: () => this.collapseAll(true) }, 'Collapse all'), h('button', { class: 'btn small', onclick: () => this.collapseAll(false) }, 'Expand all'),
-      h('button', { class: 'btn small', title: 'How to use the workflow designer (F1)', onclick: () => openGuide('workflow') }, '? Guide'),
-      h('button', { class: 'btn small primary', onclick: () => openExportDialog({ screenIds: wf.nodes.map(n => n.screenId) }) }, 'Export workflow screens…'));
+      ibtn('zoomOut', 'Zoom out', () => this.zoomBy(1 / 1.25)), this.zoomLabel, ibtn('zoomIn', 'Zoom in', () => this.zoomBy(1.25)),
+      ibtn('fit', 'Fit to window', () => this.fit()), h('span', { class: 'grow' }),
+      ibtn('arrowUp', 'Collapse all', () => this.collapseAll(true), { desc: 'Collapse every screen' }), ibtn('arrowDown', 'Expand all', () => this.collapseAll(false), { desc: 'Expand every screen' }),
+      ibtn('book', 'Guide', () => openGuide('workflow'), { desc: 'How to use the workflow designer', kbd: 'F1' }),
+      ibtn('export', 'Export workflow screens', () => openExportDialog({ screenIds: wf.nodes.map(n => n.screenId) }), { cls: 'primary', desc: 'Export the screens used in this workflow' }));
     this.world = h('div', { class: 'wf-world' });
     this.linkSvg = document.createElementNS(NS, 'svg'); this.linkSvg.setAttribute('class', 'wf-svg');
     this.linkSvg.innerHTML = '<defs><marker id="wf-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 0L12 6L0 12z" fill="#6aa7ff"/></marker><marker id="wf-arrow-sel" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0 0L12 6L0 12z" fill="#ffd54a"/></marker></defs>';

@@ -217,6 +217,38 @@ Export any set of screens and themes into a clean, self-contained **HTML + CSS +
 
 ---
 
+## 🔌 MCP Server — Design ↔ Code Sync for AI Coding Agents
+
+The designer ships an **MCP server** (Streamable HTTP, protocol 2025-06-18) so coding agents such as Claude Code, Antigravity and Cursor can use a project's design system, propose changes to it, and push the app's current UI back for human review. The implementation and developer notes are in [`src/mcp/README.md`](src/mcp/README.md).
+
+**Connect an agent** (Profile ▸ *AI Access Keys (MCP)…* creates a key for a project you own):
+
+```bash
+claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "Authorization: Bearer $KYRPY_UIUX_API_KEY"
+# then, in the app repository:  "init uiux"   ·   "pull design updates"   ·   "push the existing app version"
+```
+
+| Area | What you get |
+|---|---|
+| **API keys** | Per user × project, scopes `read` / `request` / `propose`, expiry, 24 h rotation grace, instant revoke, audit log. Only an HMAC hash is stored. |
+| **Read & download** | Schema, manifest, ranked search, single items (JSON/SVG), tokens (JSON/CSS/TS), workflows, single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
+| **AI pack** | `uiux_init` installs the `kyrpy-uiux-designer` agent and `kyrpy-skill-uiux-designer` skill for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `.uiux/config.json` and a lockfile. Local edits are never overwritten. |
+| **Adapters** | `web` (tokens.css/ts, icon sprite, typed index) and `react-tsx` (typed `<Icon name="…"/>` component). |
+| **Versions** | Numbered project versions. Designer edits and approved AI pushes each create one, and `uiux_get_manifest { sinceVersion }` returns the exact delta. |
+| **Changesets** | `begin → stage (validated + dry-run) → diff → submit`. Nothing changes before a human approves it. Per-item conflict detection (`baseHash`): design wins for visual attributes, code wins for bindings. |
+| **Review** | *Collaborate ▸ Versions & AI Changesets* shows before/after previews and lets you approve all, approve some, or reject. AI items also appear in the Change List and the pending-changes count. |
+| **Item requests** | A coding agent asks for a missing item (the server searches first). The designer agent claims it, stages the item and fulfils the request, which completes on approval. Humans can work the same queue in *AI Item Requests*. |
+| **Code bindings** | Item ↔ file/symbol links. `stale` flags code that is behind the design, and re-pushing an unchanged app produces 0 operations. |
+| **Project scope** | A project's design system is self-contained: every public or foreign item a project uses is cloned into the project library (`<project-key>-<key>`, visibility `project`). |
+| **AI attribution** | Every AI-applied change is made by the system user **`kyrpy-agent-designer`**, which cannot sign in. The human reviewer is recorded as the approver. |
+| **Standards** | Key format, docs (`descriptionDev`, `mcpContext.purpose`), 24×24 icons, SVG sanitising, size limits, duplicates, references, hierarchy, accessibility basics. |
+| **Security** | Origin check, 1 MB bodies, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, tenant isolation. STRIDE review: [`src/mcp/SECURITY.md`](src/mcp/SECURITY.md). |
+| **PostgreSQL** | All MCP tables (keys, audit, AI pack, versions, changesets, requests, bindings) are in the PG schema and the snapshot sync. Synced key hashes only work on instances that share `KYRPY_UIUX_KEY_PEPPER`. |
+
+Run modes: embedded in `serve` at `/mcp` (disable with `MCP_MODE=off`), or standalone with `node src/main.js mcp --port 5181`.
+
+---
+
 ## 🤖 AI Agent Skill for GitHub Actions, Push, Pull, Fix & Issues
 
 This repository ships with a built-in AI Agent Skill at [`skills/github-workflow-agent/SKILL.md`](./skills/github-workflow-agent/SKILL.md) alongside our automated GitHub Actions pipeline ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)).
@@ -238,9 +270,7 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
    - AI design co-pilots that propose layout refinements, accessibility (WCAG AAA) fixes, theme token harmonization, and interactive state wiring directly through the **Collaborative Change Request (`pending` → `approved` / `rejected`)** review pipeline.
    - Automated multi-persona UX evaluation agents that simulate user journeys across workflows and attach structured UX feedback to screens.
 
-2. **🔌 Create an MCP (Model Context Protocol) Server**
-   - Expose the entire 5-layer design hierarchy (`paths`, `icons`, `buttons`, `elements`, `screens`, `workflows`), theme tokens, and live SVG/HTML renderer as a standard **MCP Server** (`stdio` and `HTTP/SSE`).
-   - Enable any MCP-compatible IDE or agent (Claude Code, Antigravity, Cursor, Windsurf, Zed) to query existing components, inspect screen layouts, create/modify vector nodes, wire screen transitions, and export production bundles via native MCP tool calls.
+2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions, changesets, item requests, code bindings and PostgreSQL sync for AI coding agents. Next: more adapters (`flutter`, `compose`, `swiftui`), project-scoped keys instead of globally unique ones, and SSE resource subscriptions.
 
 3. **🔑 Use BYOK (Bring Your Own Key) for Users' AI-Assisted Item Generator Features**
    - Built-in **BYOK (Bring Your Own Key)** settings vault allowing each user to configure their own API keys (OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or local Ollama/vLLM endpoints) stored locally or encrypted per user profile.
@@ -254,7 +284,8 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
 ## 🧪 Running Tests & Server Management
 
 ```bash
-# Run the full 72-test automated suite (unit + integration + 13 adversarial user personas)
+# Run the full automated suite: core (unit + integration + adversarial personas) + MCP milestones M0–M7
+# (the PostgreSQL round-trip test uses an isolated test database and is skipped when PG is unreachable)
 cd src && npm test
 
 # Service management via runner.sh (Linux/macOS) or runner.ps1 (Windows PowerShell)

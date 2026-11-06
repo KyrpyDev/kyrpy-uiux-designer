@@ -357,3 +357,234 @@ CREATE TABLE IF NOT EXISTS trash_items (
   deleted_at TEXT NOT NULL DEFAULT '',
   snapshot TEXT NOT NULL DEFAULT '{}'
 );
+
+-- ===== kyrpy-uiux-mcp (M0): schema_registry, mcp_context on every table, uid + content_hash =====
+CREATE TABLE IF NOT EXISTS schema_registry (
+  id          INTEGER PRIMARY KEY,
+  table_name  TEXT NOT NULL,
+  column_name TEXT NOT NULL DEFAULT '',
+  mcp_context TEXT NOT NULL DEFAULT '{}',
+  version     INTEGER NOT NULL DEFAULT 1,
+  source      TEXT NOT NULL DEFAULT 'seed',
+  updated_at  TEXT NOT NULL DEFAULT '',
+  UNIQUE (table_name, column_name)
+);
+ALTER TABLE IF EXISTS "users" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "projects" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "project_members" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "themes" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "paths" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "icons" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "buttons" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "elements" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "screens" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "nodes" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "animations" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "menu_items" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "workflows" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "workflow_screens" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "workflow_links" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "change_requests" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "template_buttons" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "translations" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "settings" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "trash_items" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "paths" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "paths" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_paths_uid ON "paths"(uid);
+ALTER TABLE IF EXISTS "icons" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "icons" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_icons_uid ON "icons"(uid);
+ALTER TABLE IF EXISTS "buttons" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "buttons" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_uid ON "buttons"(uid);
+ALTER TABLE IF EXISTS "elements" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "elements" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_elements_uid ON "elements"(uid);
+ALTER TABLE IF EXISTS "screens" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "screens" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_screens_uid ON "screens"(uid);
+ALTER TABLE IF EXISTS "workflows" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "workflows" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_uid ON "workflows"(uid);
+ALTER TABLE IF EXISTS "themes" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "themes" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_themes_uid ON "themes"(uid);
+ALTER TABLE IF EXISTS "template_buttons" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "template_buttons" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_template_buttons_uid ON "template_buttons"(uid);
+ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS uid TEXT;
+ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS content_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_template_devices_uid ON "template_devices"(uid);
+-- ===== kyrpy-uiux-mcp (M1–M6): keys, audit, AI pack, versions, changesets, requests, bindings =====
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id              INTEGER PRIMARY KEY,
+  uid             TEXT NOT NULL UNIQUE,
+  user_id         INTEGER NOT NULL,
+  project_id      INTEGER NOT NULL,
+  name            TEXT NOT NULL,
+  prefix          TEXT NOT NULL,
+  key_hash        TEXT NOT NULL UNIQUE,
+  scopes          TEXT NOT NULL DEFAULT '["read"]',
+  expires_at      TEXT,
+  last_used_at    TEXT,
+  last_used_ip    TEXT,
+  revoked_at      TEXT,
+  revoked_by      INTEGER,
+  rotated_from_id INTEGER,
+  rotated_to_id   INTEGER,
+  created_at      TEXT NOT NULL DEFAULT '',
+  mcp_context     TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS mcp_audit_log (
+  id           INTEGER PRIMARY KEY,
+  api_key_id   INTEGER,
+  user_id      INTEGER,
+  project_id   INTEGER,
+  event        TEXT NOT NULL,
+  tool         TEXT NOT NULL DEFAULT '',
+  args_digest  TEXT NOT NULL DEFAULT '',
+  result       TEXT NOT NULL DEFAULT 'ok' CHECK (result IN ('ok','error','denied')),
+  error_code   TEXT NOT NULL DEFAULT '',
+  duration_ms  INTEGER NOT NULL DEFAULT 0,
+  ip           TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL DEFAULT '',
+  mcp_context  TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_key ON mcp_audit_log(api_key_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_project ON mcp_audit_log(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS ai_artifacts (
+  id          INTEGER PRIMARY KEY,
+  uid         TEXT NOT NULL UNIQUE,
+  scope       TEXT NOT NULL CHECK (scope IN ('global','project')),
+  project_id  INTEGER NOT NULL DEFAULT 0,          
+  kind        TEXT NOT NULL CHECK (kind IN ('agent','skill','rule','command','readme')),
+  platform    TEXT NOT NULL DEFAULT 'any',
+  name        TEXT NOT NULL,
+  template    TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  checksum    TEXT NOT NULL,
+  source      TEXT NOT NULL DEFAULT 'seed' CHECK (source IN ('seed','user')),
+  updated_by  INTEGER,
+  updated_at  TEXT NOT NULL DEFAULT '',
+  mcp_context TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (scope, project_id, kind, name, platform)
+);
+
+CREATE TABLE IF NOT EXISTS project_versions (
+  id              INTEGER PRIMARY KEY,
+  uid             TEXT NOT NULL UNIQUE,
+  project_id      INTEGER NOT NULL,
+  number          INTEGER,                          
+  label           TEXT NOT NULL DEFAULT '',
+  parent_id       INTEGER,
+  source          TEXT NOT NULL CHECK (source IN ('designer','ai-push','import','restore')),
+  status          TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','superseded')),
+  manifest        TEXT NOT NULL DEFAULT '[]',
+  manifest_hash   TEXT NOT NULL DEFAULT '',
+  message         TEXT NOT NULL DEFAULT '',
+  changeset_id    INTEGER,
+  created_by_user INTEGER,
+  created_by_key  INTEGER,
+  created_at      TEXT NOT NULL DEFAULT '',
+  approved_by     INTEGER,
+  approved_at     TEXT,
+  mcp_context     TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (project_id, number)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_project_versions_head ON project_versions(project_id) WHERE status = 'approved';
+CREATE TABLE IF NOT EXISTS changesets (
+  id                INTEGER PRIMARY KEY,
+  uid               TEXT NOT NULL UNIQUE,
+  project_id        INTEGER NOT NULL,
+  base_version_id   INTEGER,
+  result_version_id INTEGER,
+  api_key_id        INTEGER,
+  user_id           INTEGER,
+  status            TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','submitted','approved','rejected','conflicted','expired','discarded')),
+  summary           TEXT NOT NULL DEFAULT '',
+  message           TEXT NOT NULL DEFAULT '',
+  client_info       TEXT NOT NULL DEFAULT '{}',
+  created_at        TEXT NOT NULL DEFAULT '',
+  updated_at        TEXT NOT NULL DEFAULT '',
+  submitted_at      TEXT,
+  expires_at        TEXT,
+  reviewed_by       INTEGER,
+  reviewed_at       TEXT,
+  review_comment    TEXT NOT NULL DEFAULT '',
+  mcp_context       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_changesets_project ON changesets(project_id, status);
+CREATE TABLE IF NOT EXISTS changeset_ops (
+  id                INTEGER PRIMARY KEY,
+  uid               TEXT NOT NULL UNIQUE,
+  changeset_id      INTEGER NOT NULL,
+  seq               INTEGER NOT NULL DEFAULT 0,
+  op                TEXT NOT NULL CHECK (op IN ('create','update','delete')),
+  item_type         TEXT NOT NULL,
+  item_uid          TEXT NOT NULL,
+  item_key          TEXT NOT NULL,
+  base_hash         TEXT,
+  proposed_hash     TEXT,
+  payload           TEXT NOT NULL DEFAULT '{}',
+  validation        TEXT NOT NULL DEFAULT '{}',
+  status            TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','applied','rejected','conflict','failed')),
+  error             TEXT NOT NULL DEFAULT '',
+  change_request_id INTEGER,
+  mcp_context       TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (changeset_id, item_type, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_changeset_ops_cr ON changeset_ops(change_request_id);
+
+CREATE TABLE IF NOT EXISTS item_requests (
+  id                  INTEGER PRIMARY KEY,
+  uid                 TEXT NOT NULL UNIQUE,
+  project_id          INTEGER NOT NULL,
+  item_type           TEXT NOT NULL,
+  intent              TEXT NOT NULL,
+  constraints         TEXT NOT NULL DEFAULT '{}',
+  context             TEXT NOT NULL DEFAULT '{}',
+  candidates          TEXT NOT NULL DEFAULT '[]',
+  status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','claimed','in-review','fulfilled','cancelled','rejected')),
+  requested_by_user   INTEGER,
+  requested_by_key    INTEGER,
+  claimed_by_key      INTEGER,
+  claimed_at          TEXT,
+  fulfilled_item_type TEXT,
+  fulfilled_item_uid  TEXT,
+  fulfilled_item_key  TEXT,
+  changeset_uid       TEXT,
+  note                TEXT NOT NULL DEFAULT '',
+  created_at          TEXT NOT NULL DEFAULT '',
+  updated_at          TEXT NOT NULL DEFAULT '',
+  resolved_at         TEXT,
+  mcp_context         TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_item_requests_project ON item_requests(project_id, status);
+
+CREATE TABLE IF NOT EXISTS code_bindings (
+  id                   INTEGER PRIMARY KEY,
+  uid                  TEXT NOT NULL UNIQUE,
+  project_id           INTEGER NOT NULL,
+  item_type            TEXT NOT NULL,
+  item_uid             TEXT NOT NULL,
+  repo_id              TEXT NOT NULL DEFAULT '',
+  file_path            TEXT NOT NULL,
+  symbol               TEXT NOT NULL DEFAULT '',
+  framework            TEXT NOT NULL DEFAULT '',
+  binding_hash         TEXT,
+  last_seen_version_id INTEGER,
+  created_by_key       INTEGER,
+  created_at           TEXT NOT NULL DEFAULT '',
+  updated_at           TEXT NOT NULL DEFAULT '',
+  mcp_context          TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (project_id, item_uid, repo_id, file_path, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_code_bindings_file ON code_bindings(project_id, file_path);

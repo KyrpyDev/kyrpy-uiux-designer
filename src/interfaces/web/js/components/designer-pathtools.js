@@ -5,6 +5,7 @@
  * Structural edits send the whole node list once (one undo step); position edits send attribute patches.
  */
 import { h, clear, toast, contextMenu } from '../dom.js';
+import { ibtn } from '../icons.js';
 import { api } from '../api.js';
 import { state } from '../state.js';
 import { nodeBBox, translateAttrs } from '/domain/geometry.js';
@@ -253,34 +254,53 @@ const methods = {
 
   buildPathBar() {
     const bar = this.pathBar; clear(bar);
-    const B = (label, title, fn) => h('button', { class: 'btn small', title, onclick: fn }, label);
-    const sep = () => h('span', { class: 'sep-v' }), tag = t => h('span', { class: 'muted pb-label' }, t);
-    const align = [['⇤', 'left', 'Align left'], ['⇔', 'hcenter', 'Align horizontal centres'], ['⇥', 'right', 'Align right'], ['⤒', 'top', 'Align top'], ['⇕', 'vmiddle', 'Align vertical centres'], ['⤓', 'bottom', 'Align bottom']];
+    const I = (icon, tip, fn, desc = '') => ibtn(icon, tip, fn, { desc, size: 17 });
+    const sep = () => h('span', { class: 'sep-v' });
     bar.append(
-      tag('Pathfinder'), B('∪ Union', 'Merge the selected shapes into one outline', () => this.pathfinder('union')),
-      B('✂ Cut out', 'Cut the top shape out of the shapes behind it (a hole or a bite)', () => this.pathfinder('subtract')),
-      B('∩ Crop', 'Keep only the part where the selected shapes overlap', () => this.pathfinder('intersect')),
-      B('⊻ Exclude', 'Keep everything except where the shapes overlap', () => this.pathfinder('exclude')),
-      B('⛶ Crop to box', 'Trim the selected shapes to the bounding box of this design', () => this.cropToBox()), sep(),
-      tag('Path'), B('Combine', 'Make one compound path from the selected paths', () => this.combineSelected()), B('Break apart', 'Split a compound path into separate paths', () => this.breakApartSelected()),
-      B('Join', 'Join two open paths end to end', () => this.joinSelected()), B('Reverse', 'Reverse the direction of the selected path', () => this.reverseSelected()),
-      B('Simplify', 'Remove redundant vertices', () => this.simplifySelected()), B('Apply transform', "Bake the path's transform and rotation into its points", () => this.bakeSelected()), sep(),
-      tag('Group'), B('Group', 'Group the selection (Ctrl+G)', () => this.groupSelected()), B('Ungroup', 'Dissolve the selected group (Ctrl+Shift+G)', () => this.ungroupSelected()), sep(),
-      tag('Align'), ...align.map(([g, m, t]) => B(g, `${t} (to the selection, or to the box when one item is selected)`, () => this.alignSelected(m))),
-      B('⇹', 'Distribute horizontally (3+ items)', () => this.distributeSelected('h')), B('⇳', 'Distribute vertically (3+ items)', () => this.distributeSelected('v')), sep(),
-      tag('Transform'), B('⇋', 'Flip horizontally', () => this.flipSelected('h')), B('⇵', 'Flip vertically', () => this.flipSelected('v')),
-      B('↻', 'Rotate 90° clockwise', () => this.rotateSelected(90)), B('↺', 'Rotate 90° counter-clockwise', () => this.rotateSelected(-90)), sep(),
-      tag('Tools'),
-      B('🔒 Lock Pos', 'Lock or unlock selected element position (Ctrl+L)', () => this.toggleLockSelected()),
-      B('⚡ Events', 'Configure element events (click, mouseover, release, drag&drop)', () => {
+      I('unite', 'Union', () => this.pathfinder('union'), 'Merge the selected shapes into one outline'),
+      I('subtract', 'Cut out', () => this.pathfinder('subtract'), 'Cut the top shape out of the shapes behind it'),
+      I('intersect', 'Crop (intersect)', () => this.pathfinder('intersect'), 'Keep only the part where the selected shapes overlap'),
+      I('exclude', 'Exclude', () => this.pathfinder('exclude'), 'Keep everything except where the shapes overlap'),
+      I('cropBox', 'Crop to box', () => this.cropToBox(), 'Trim the selected shapes to the bounding box of this design'), sep(),
+      I('combine', 'Combine', () => this.combineSelected(), 'Make one compound path from the selected paths'),
+      I('breakApart', 'Break apart', () => this.breakApartSelected(), 'Split a compound path into separate paths'),
+      I('join', 'Join', () => this.joinSelected(), 'Join two open paths end to end'),
+      I('reverse', 'Reverse', () => this.reverseSelected(), 'Reverse the direction of the selected path'),
+      I('simplify', 'Simplify', () => this.simplifySelected(), 'Remove redundant vertices'),
+      I('applyT', 'Apply transform', () => this.bakeSelected(), "Bake the path's transform and rotation into its points"), sep(),
+      I('group', 'Group', () => this.groupSelected(), 'Group the selection (Ctrl+G)'),
+      I('ungroup', 'Ungroup', () => this.ungroupSelected(), 'Dissolve the selected group (Ctrl+Shift+G)'), sep(),
+      I('alignLeft', 'Align left', () => this.alignSelected('left'), 'Align to the selection (or to the box when one item is selected)'),
+      I('alignHCenter', 'Align horizontal centres', () => this.alignSelected('hcenter')),
+      I('alignRight', 'Align right', () => this.alignSelected('right')),
+      I('alignTop', 'Align top', () => this.alignSelected('top')),
+      I('alignVMiddle', 'Align vertical centres', () => this.alignSelected('vmiddle')),
+      I('alignBottom', 'Align bottom', () => this.alignSelected('bottom')),
+      I('distH', 'Distribute horizontally', () => this.distributeSelected('h'), '3+ items'),
+      I('distV', 'Distribute vertically', () => this.distributeSelected('v'), '3+ items'), sep(),
+      I('flip', 'Flip horizontally', () => this.flipSelected('h')),
+      I('flipV', 'Flip vertically', () => this.flipSelected('v')),
+      I('rotate', 'Rotate 90° clockwise', () => this.rotateSelected(90)),
+      I('rotateCcw', 'Rotate 90° counter-clockwise', () => this.rotateSelected(-90)), sep(),
+      I('lock', 'Lock / unlock position', () => this.toggleLockSelected(), 'Lock or unlock the selected element position (Ctrl+L)'),
+      I('zap', 'Events', () => {
         const one = this.selectedNodes()[0];
         if (!one) return toast('Select an element first', 'error');
         openEventsModal({ node: one, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(one.id, patch) });
-      }),
-      B('⊞ 2×2 Grid', 'Duplicate selected element into a 2×2 grid array', () => this.arrayDuplicateSelected()),
-      B('🎨 Copy Style', 'Copy fill/stroke/role style from selected element', () => this.copySelectedStyle()),
-      B('🖌 Paste Style', 'Paste copied style onto selected element(s)', () => this.pasteSelectedStyle())
+      }, 'Configure element events (click, mouseover, release, drag&drop)'),
+      I('grid', '2×2 grid array', () => this.arrayDuplicateSelected(), 'Duplicate the selected element into a 2×2 grid'),
+      I('copy', 'Copy style', () => this.copySelectedStyle(), 'Copy fill / stroke / role style from the selected element'),
+      I('paste', 'Paste style', () => this.pasteSelectedStyle(), 'Paste the copied style onto the selected element(s)')
     );
+  },
+
+  /** Reference point (9-point grid) of this design; centre ('mc') by default. Stored in the design's meta. */
+  getRefPoint() {
+    return this.doc?.meta?.refPoint || this._refPointLocal || 'mc';
+  },
+  setRefPoint(a) {
+    this._refPointLocal = a;
+    if (this.doc && this.isOwnedByCurrentUser(this.doc)) this.updateDoc({ meta: { ...(this.doc.meta || {}), refPoint: a } });
   },
 
   /** Right-click: in vertex mode adds / removes vertices; otherwise the enhanced element & shape context menu. */

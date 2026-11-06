@@ -1,5 +1,6 @@
 /** Right-hand property inspector of a Designer: design record, selection, geometry, style, animations. */
-import { h, clear, toast } from '../dom.js';
+import { h, clear, toast, confirmBox, modal } from '../dom.js';
+import { ibtn } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions } from './menu-editor.js';
@@ -64,6 +65,41 @@ export function elementTypeTitle(e) {
   }
   const tagTitle = TAG_TYPE_NAME[e.tag] || e.tag || 'Shape';
   return `${tagTitle} element${e.name ? ` · ${e.name}` : ''}`;
+}
+
+/** Searchable modal listing every library icon; resolves through onPick(icon) when one is chosen. */
+function openIconPicker(currentId, onPick) {
+  const icons = [...(state.library.icons || [])].sort((a, b) => String(a.label || a.key).localeCompare(String(b.label || b.key)));
+  let query = '';
+  const search = h('input', { type: 'search', class: 'grow', placeholder: 'Search icons by name, key or category…', 'aria-label': 'Search icons' });
+  const count = h('span', { class: 'muted', style: { whiteSpace: 'nowrap', fontSize: '11px' } });
+  const grid = h('div', { class: 'icon-pick-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '8px', maxHeight: '62vh', overflowY: 'auto', paddingTop: '4px' } });
+  const hayOf = it => [it.label, it.key, it.name, it.category, ...(Array.isArray(it.tags) ? it.tags : [])].filter(Boolean).join(' ').toLowerCase();
+  const render = () => {
+    clear(grid);
+    const terms = query.split(/\s+/).filter(Boolean);
+    const list = icons.filter(it => terms.every(t => hayOf(it).includes(t)));
+    count.textContent = `${list.length} of ${icons.length}`;
+    if (!list.length) grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, 'No icon matches that search.'));
+    for (const it of list) {
+      grid.append(h('button', {
+        class: `icon-pick${it.id === currentId ? ' on' : ''}`,
+        title: it.key,
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '8px 6px', border: '1px solid var(--line)', borderRadius: '8px', background: it.id === currentId ? 'rgba(46,155,255,.14)' : 'transparent', color: 'inherit', cursor: 'pointer' },
+        onclick: async () => { m.close(); await onPick(it); }
+      },
+        h('img', { src: api.svgUrl('icon', it.id, { theme: state.themeKey, animated: 0 }), alt: '', loading: 'lazy', style: { width: '48px', height: '48px', objectFit: 'contain' } }),
+        h('span', { style: { fontSize: '11px', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' } }, it.label || it.key)));
+    }
+  };
+  search.addEventListener('input', () => { query = search.value.trim().toLowerCase(); render(); });
+  const m = modal({
+    title: 'Change icon',
+    wide: true,
+    content: h('div', {}, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, search, count), grid)
+  });
+  render();
+  search.focus();
 }
 
 export class Inspector {
@@ -141,6 +177,7 @@ export class Inspector {
     root.append(this.nodesList());
     root.scrollTop = scroll;
     if (wasIn && focusKey) { const f = root.querySelector(`[data-f="${focusKey}"]`); f?.focus(); f?.select?.(); }
+    d.fitInspectorToContent?.();   // first render only: fit the panel to its content
   }
 
   designSection() {
@@ -160,15 +197,7 @@ export class Inspector {
       kids.push(h('div', { class: 'grid2' }, ...row));
       if (type !== 'screen') kids.push(h('label', { class: 'row', title: 'Resizing the bounding box scales every sub element with it' }, h('input', { type: 'checkbox', checked: d.scaleContent, onchange: e => { d.scaleContent = e.target.checked; d.buildBar(); } }), h('span', { class: 'muted' }, 'Scale the contents with the bounding box')));
     }
-    if (type === 'screen') {
-      const devList = state.templateDevices?.length
-        ? state.templateDevices.map(dv => [dv.key, `${dv.name} (${dv.width}×${dv.height})`])
-        : Object.entries(DEVICES).map(([k, v]) => [k, `${v.name} (${v.width}×${v.height})`]);
-      kids.push(this.field('Device', this.select('doc-device', doc.meta?.device, devList, v => {
-        const dev = state.templateDevices?.find(dv => dv.key === v) || DEVICES[v];
-        if (dev) d.updateDoc({ meta: { ...doc.meta, device: v }, width: dev.width, height: dev.height });
-      })));
-    }
+    // screen device selection lives in the designer top bar (device icon button)
     if (type === 'element') kids.push(this.field('HTML element', this.text('doc-tag', doc.meta?.htmlTag, v => d.updateDoc({ meta: { ...doc.meta, htmlTag: v.trim() } }), { placeholder: 'button, input, div…' })));
     const lockField = this.field('Lock design', h('label', { class: 'row', style: { paddingTop: '5px' } }, h('input', { type: 'checkbox', checked: !!doc.locked, onchange: e => d.updateDoc({ locked: e.target.checked }) }), h('span', {}, doc.locked ? '🔒 Locked' : '🔓 Editable')));
     kids.push(
@@ -179,13 +208,13 @@ export class Inspector {
               ['public', '🌐 Public (all users)'],
               ['private', '👤 Private (all my projects)'],
               ['project', '📁 Project-only']
-            ], v => d.updateDoc({ visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 }))),
+            ], v => d.updateDoc(v === 'project' ? { visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 } : { visibility: v }))),
             lockField
           ),
       h('div', { class: 'row wrap', style: { fontSize: '11px' } },
         h('span', { class: 'badge' }, `Owner ID: #${doc.rootOwnerId || doc.creatorId || 1}`),
         doc.clonedFromId ? h('span', { class: 'badge accent' }, `Cloned from #${doc.clonedFromId}`) : null,
-        h('button', { class: 'btn small', onclick: () => openLineageModal(type, doc.id) }, '🌳 Lineage & Root Owner')
+        ibtn('collab', 'Lineage & root owner', () => openLineageModal(type, doc.id), { desc: 'View the creator and root owner chain' })
       )
     );
     const dev = h('textarea', { rows: 6, 'data-f': 'doc-dev', placeholder: 'Instructions for the dev team / coding agents…' });
@@ -272,12 +301,12 @@ export class Inspector {
           popEl ? h('span', { class: 'badge', style: { marginLeft: '4px' }, title: `Opens popup element: ${popEl.name}` }, `🗔 ${popEl.key}`) : null,
           scr ? h('span', { class: 'badge', style: { marginLeft: '4px' }, title: `Routes to screen: ${scr.name}` }, `➜ ${scr.name}`) : null
         ),
-        h('button', { class: 'icon-btn small', title: isVisible ? 'Visible (click to hide)' : 'Hidden (click to show)', onclick: () => menuActions.toggleVisible(d, n.id, bid) }, isVisible ? '👁' : '—'),
-        h('button', { class: 'icon-btn small', title: 'Add sub item', onclick: () => menuActions.add(d, n.id, bid) }, '＋'),
-        h('button', { class: 'icon-btn small', title: 'Edit menu item', onclick: () => menuActions.edit(d, n.id, bid) }, '✎'),
-        h('button', { class: 'icon-btn small', title: 'Move earlier (order up)', onclick: () => menuActions.move(d, n.id, -1, bid) }, '↑'),
-        h('button', { class: 'icon-btn small', title: 'Move later (order down)', onclick: () => menuActions.move(d, n.id, 1, bid) }, '↓'),
-        h('button', { class: 'icon-btn small', title: 'Remove menu item', onclick: () => menuActions.remove(d, n.id, bid) }, '🗑')));
+        ibtn(isVisible ? 'view' : 'close', isVisible ? 'Visible' : 'Hidden', () => menuActions.toggleVisible(d, n.id, bid), { desc: isVisible ? 'Click to hide this item' : 'Click to show this item' }),
+        ibtn('plus', 'Add sub item', () => menuActions.add(d, n.id, bid)),
+        ibtn('pencil', 'Edit menu item', () => menuActions.edit(d, n.id, bid)),
+        ibtn('arrowUp', 'Move earlier', () => menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
+        ibtn('arrowDown', 'Move later', () => menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),
+        ibtn('trash', 'Remove menu item', () => menuActions.remove(d, n.id, bid))));
       walk(n.children, depth + 1);
     });
     walk(tree, 0);
@@ -285,7 +314,7 @@ export class Inspector {
       h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Order items (↑/↓), add (＋), edit (✎), toggle visible (👁), or remove (🗑). Each item can route to a screen or show an element as a popup/modal box.'),
       ...settings,
       h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')),
-      h('button', { class: 'btn small primary', onclick: () => menuActions.add(d, null, bid) }, '＋ Add menu item'));
+      ibtn('plus', 'Add menu item', () => menuActions.add(d, null, bid), { cls: 'primary' }));
   }
 
   nodesList() {
@@ -296,8 +325,15 @@ export class Inspector {
         h('span', { class: 't' }, TAG_LABEL[e.tag] || e.tag), h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: e.name }, e.name ? `${e.name} · ${label}` : label),
         e.role ? h('span', { class: 'badge' }, e.role) : null,
         e.onClick ? h('span', { class: 'badge', title: `click: ${e.onClick.type}` }, `⚡ ${e.onClick.type}`) : null,
-        h('button', { class: 'icon-btn small', title: e.visible ? 'Hide' : 'Show', onclick: ev => { ev.stopPropagation(); d.patchNode(e.id, { visible: !e.visible }); } }, e.visible ? '👁' : '—'),
-        h('button', { class: 'icon-btn small', title: e.locked ? 'Unlock' : 'Lock', onclick: ev => { ev.stopPropagation(); d.patchNode(e.id, { locked: !e.locked }); } }, e.locked ? '🔒' : '🔓'));
+        ibtn(e.visible ? 'view' : 'close', e.visible ? 'Hide' : 'Show', ev => { ev.stopPropagation(); d.patchNode(e.id, { visible: !e.visible }); }),
+        ibtn(e.locked ? 'lock' : 'unlock', e.locked ? 'Unlock' : 'Lock', ev => { ev.stopPropagation(); d.patchNode(e.id, { locked: !e.locked }); }, { active: !!e.locked }),
+        ibtn('pencil', 'Edit layer', ev => { ev.stopPropagation(); d.select([e.id]); }, { desc: 'Select this layer and open its properties' }),
+        ibtn('trash', 'Delete layer', async ev => {
+          ev.stopPropagation();
+          if (!await confirmBox(`Delete layer "${e.name || label}"?`)) return;
+          d.select([e.id]);
+          await d.deleteSelected();
+        }, { cls: 'danger' }));
     });
     return this.section(`Layers (${d.nodes.length})`, h('div', { class: 'el-list' }, rows.length ? rows : h('div', { class: 'empty' }, 'Nothing here yet. Use the tools or drag from the library.')));
   }
@@ -306,16 +342,21 @@ export class Inspector {
     const d = this.d;
     return this.section(`${sel.length} nodes selected`,
       this.anchorGrid(), h('div', { class: 'row wrap' },
-        h('button', { class: 'btn small', onclick: () => d.duplicateSelected() }, 'Duplicate'), h('button', { class: 'btn small danger', onclick: () => d.deleteSelected() }, 'Delete'),
-        h('button', { class: 'btn small', onclick: () => d.reorder('up') }, 'Up'), h('button', { class: 'btn small', onclick: () => d.reorder('down') }, 'Down')));
+        ibtn('copy', 'Duplicate', () => d.duplicateSelected(), { kbd: 'Ctrl+D' }), ibtn('trash', 'Delete', () => d.deleteSelected(), { kbd: 'Del', cls: 'danger' }),
+        ibtn('arrowUp', 'Move up', () => d.reorder('up')), ibtn('arrowDown', 'Move down', () => d.reorder('down'))));
   }
 
   anchorGrid() {
     const d = this.d;
     const names = { tl: 'top-left', tc: 'top-center', tr: 'top-right', ml: 'middle-left', mc: 'center', mr: 'middle-right', bl: 'bottom-left', bc: 'bottom-center', br: 'bottom-right' };
+    const order = ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'];
     const margin = this.d.type === 'icon' ? 1 : (state.settings.grid || 24) / 2;
-    return h('div', { class: 'row' }, h('div', { class: 'anchors', role: 'group', 'aria-label': '9 reference points' }, ANCHORS.map(a => h('button', { title: `Place at ${names[a]}`, onclick: () => d.placeSelected(a, margin) }, '·'))),
-      h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Place on the 9 reference points'));
+    const active = d.getRefPoint?.() || 'mc';   // reference point: centre by default
+    return h('div', { class: 'row' },
+      h('div', { class: 'ref-grid', role: 'radiogroup', 'aria-label': '9 reference points' },
+        order.map(a => ibtn(a === active ? 'check' : 'dot', `Reference point: ${names[a]}`, () => { d.setRefPoint?.(a); d.placeSelected(a, margin); },
+          { active: a === active, desc: a === active ? 'Current reference point (default: centre)' : 'Use as reference point and place the selection here', cls: 'ref-cell', size: 12 }))),
+      h('span', { class: 'muted', style: { fontSize: '11px' } }, `Reference: ${names[active]}`));
   }
 
   /* ---------- single element ---------- */
@@ -331,10 +372,26 @@ export class Inspector {
     };
     const secs = [];
 
+    // library icon at the very top: shows the icon in use and opens the searchable icon picker to change it
+    if (e.kind === 'instance' && e.refType === 'icon') {
+      const cur = findDesign('icon', e.refId);
+      secs.push(this.section('Icon from library',
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+          cur ? h('img', { class: 'thumb small', alt: cur.label || cur.key, src: api.svgUrl('icon', cur.id, { theme: state.themeKey, animated: 0 }), style: { width: '44px', height: '44px', objectFit: 'contain' } }) : null,
+          h('div', { class: 'grow', style: { minWidth: 0 } },
+            h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, cur?.label || 'Missing icon'),
+            h('div', { class: 'muted', style: { fontSize: '11px' } }, cur?.key || `icon #${e.refId}`)),
+          ibtn('search', 'Change icon…', () => openIconPicker(e.refId, async icon => {
+            if (icon.id === e.refId) return;
+            await d.patchNode(e.id, { refId: icon.id });
+            toast(`Icon changed to "${icon.label || icon.key}"`, 'ok', 1400);
+          }), { cls: 'primary', desc: 'Search the library and pick another icon' }))));
+    }
+
     // identity (placed at the very top of the inspector panel when any element is selected, with dynamic element type title)
     const ed = d.editorFor(e);
     secs.push(this.section(elementTypeTitle(e),
-      h('div', { class: 'row wrap' }, h('button', { class: 'btn small primary', disabled: !ed || ed.disabled, title: ed?.hint, onclick: () => d.openEditor(e) }, `✎ ${ed?.label || 'Open editor'}`),
+      h('div', { class: 'row wrap' }, ibtn('pencil', ed?.label || 'Open editor', () => d.openEditor(e), { desc: ed?.hint || '', disabled: !ed || ed.disabled, cls: 'primary' }),
         h('span', { class: 'muted', style: { fontSize: '11px' } }, ed?.hint || '')),
       this.field('Variable name', this.text('el-name', e.name, v => patch({ name: v.trim() }), { mono: true })),
       h('div', { class: 'grid2' },
@@ -357,9 +414,9 @@ export class Inspector {
           h('div', { class: 'muted', style: { fontSize: '11px' } },
             `Max child size limited to ${Math.round(ib.w)}×${Math.round(ib.h)}px (inner margin ${getContainerConfig(parentCont, state.library.elements).innerMargin}px).`),
           h('div', { class: 'row wrap' },
-            h('button', { class: 'btn small', onclick: () => d.select([parentCont.id]) }, '▣ Select Container'),
-            h('button', { class: 'btn small', onclick: () => patch({ attrs: clampNodeToContainer(e, parentCont, d.nodes, state.library.elements) }) }, '⤢ Fit Inside Container'),
-            h('button', { class: 'btn small', onclick: () => patch({ parentId: null }) }, '↗ Detach from Container')
+            ibtn('selectBox', 'Select container', () => d.select([parentCont.id])),
+            ibtn('fitBox', 'Fit inside container', () => patch({ attrs: clampNodeToContainer(e, parentCont, d.nodes, state.library.elements) }), { desc: 'Clamp this element inside its container' }),
+            ibtn('unlink', 'Detach from container', () => patch({ parentId: null }))
           )
         ));
       }
@@ -371,10 +428,10 @@ export class Inspector {
       this.field('W', this.num('g-w', box.w, v => setBox({ w: Math.max(0.5, v) }))), this.field('H', this.num('g-h', box.h, v => setBox({ h: Math.max(0.5, v) })))),
       h('label', { class: 'row' }, h('input', { type: 'checkbox', checked: !!e.locked, onchange: ev => patch({ locked: ev.target.checked }) }), h('span', { class: 'muted' }, e.locked ? '🔒 Position locked (cannot be dragged)' : '🔓 Position unlocked (check to lock position)')),
       this.anchorGrid(),
-      h('div', { class: 'row wrap' }, ['front', 'up', 'down', 'back'].map(w => h('button', { class: 'btn small', onclick: () => d.reorder(w) }, w === 'front' ? 'To front' : w === 'back' ? 'To back' : w === 'up' ? 'Forward' : 'Backward')),
-        h('button', { class: 'btn small', onclick: () => d.duplicateSelected() }, 'Duplicate'), h('button', { class: 'btn small danger', onclick: () => d.deleteSelected() }, 'Delete'))];
+      h('div', { class: 'row wrap' }, ['front', 'up', 'down', 'back'].map(w => ibtn(w === 'front' ? 'bringFront' : w === 'back' ? 'sendBack' : w === 'up' ? 'arrowUp' : 'arrowDown', w === 'front' ? 'To front' : w === 'back' ? 'To back' : w === 'up' ? 'Forward' : 'Backward', () => d.reorder(w))),
+        ibtn('copy', 'Duplicate', () => d.duplicateSelected(), { kbd: 'Ctrl+D' }), ibtn('trash', 'Delete', () => d.deleteSelected(), { kbd: 'Del', cls: 'danger' }))];
     if (isVertexEditable(e.tag) && e.kind !== 'instance') geo.unshift(h('div', { class: 'row wrap' }, h('button', { class: 'btn small primary', title: 'Drag vertices and bezier handles (Enter / N)', onclick: () => d.vtx.enter(e) }, e.tag === 'path' ? '✦ Edit vertices' : '✦ Convert to path & edit vertices'), h('span', { class: 'muted', style: { fontSize: '11px' } }, 'double-click on the canvas')));
-    if (e.tag === 'path' && (e.attrs.transform || e.rotation)) geo.unshift(h('div', { class: 'row wrap' }, h('button', { class: 'btn small', title: "Bake the path's transform and rotation into its points (needed for vertex editing of rotated paths)", onclick: () => d.bakeSelected() }, 'Apply transform to points'), h('span', { class: 'muted', style: { fontSize: '11px' } }, 'this path is transformed')));
+    if (e.tag === 'path' && (e.attrs.transform || e.rotation)) geo.unshift(h('div', { class: 'row wrap' }, ibtn('sliders', 'Apply transform to points', () => d.bakeSelected(), { desc: "Bake the path's transform and rotation into its points (needed for vertex editing of rotated paths)" }), h('span', { class: 'muted', style: { fontSize: '11px' } }, 'this path is transformed')));
     secs.push(this.section('Position & size', ...geo));
 
     // content & style
@@ -453,8 +510,8 @@ export class Inspector {
     const childRows = children.map(ch => h('div', { class: 'el-row' },
       h('span', { class: 't' }, TAG_LABEL[ch.tag] || ch.tag),
       h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name || ch.tag),
-      h('button', { class: 'icon-btn small', title: 'Select sub-element', onclick: () => d.select([ch.id]) }, '⌖'),
-      h('button', { class: 'icon-btn small', title: 'Detach sub-element from container', onclick: () => d.patchNode(ch.id, { parentId: null }) }, '↗')
+      ibtn('pointer', 'Select sub-element', () => d.select([ch.id])),
+      ibtn('unlink', 'Detach sub-element', () => d.patchNode(ch.id, { parentId: null }))
     ));
 
     const out = [
@@ -488,8 +545,8 @@ export class Inspector {
           this.field('Inner margin (px)', this.num(`ct-im-${e.id}`, cfg.innerMargin, v => setContainerAttrs({ 'data-inner-margin': Math.max(0, v) }), { min: 0, step: 2 }))
         ),
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn small primary', title: 'Fit container width to device screen respecting outer margin', onclick: () => fitToScreen('width') }, '↔ Fit Screen Width'),
-          h('button', { class: 'btn small', title: 'Fit container to full device screen respecting outer margin', onclick: () => fitToScreen('full') }, '⛶ Fit Full Screen')
+          ibtn('fit', 'Fit screen width', () => fitToScreen('width'), { desc: 'Fit container width to the device screen, respecting outer margin', cls: 'primary' }),
+          ibtn('monitor', 'Fit full screen', () => fitToScreen('full'), { desc: 'Fit container to the full device screen, respecting outer margin' })
         ),
         h('div', { class: 'el-list', style: { marginTop: '4px' } },
           childRows.length ? childRows : h('div', { class: 'empty' }, 'No sub-elements yet. Drag & drop items onto this container.')
@@ -530,8 +587,8 @@ export class Inspector {
             ))
           ),
           h('div', { class: 'row wrap' },
-            h('button', { class: 'btn small', onclick: () => stepCarousel(-1) }, cfg.carouselDir === 'vertical' ? '▲ Roll Up' : '◀ Roll Left'),
-            h('button', { class: 'btn small', onclick: () => stepCarousel(1) }, cfg.carouselDir === 'vertical' ? '▼ Roll Down' : '▶ Roll Right')
+            ibtn(cfg.carouselDir === 'vertical' ? 'arrowUp' : 'arrowLeft', cfg.carouselDir === 'vertical' ? 'Roll up' : 'Roll left', () => stepCarousel(-1)),
+            ibtn(cfg.carouselDir === 'vertical' ? 'arrowDown' : 'arrowRight', cfg.carouselDir === 'vertical' ? 'Roll down' : 'Roll right', () => stepCarousel(1))
           )
         )
       );
@@ -596,13 +653,13 @@ export class Inspector {
     if (type === 'screen') {
       const screens = this.screenChoices();
       kids.push(this.field('Target screen', this.select('ck-screen', cur.targetId ?? '', [['', '(choose a screen…)'], ...screens.filter(s => s.id !== d.doc.id).map(s => [s.id, s.name])], v => v && save({ type: 'screen', targetId: Number(v) }))));
-      if (cur.targetId) open.push(h('button', { class: 'btn small', onclick: () => d.opts.openDesign?.('screen', cur.targetId) }, 'Open that screen'));
+      if (cur.targetId) open.push(ibtn('monitor', 'Open that screen', () => d.opts.openDesign?.('screen', cur.targetId)));
     } else if (['element', 'show-element', 'popup', 'toolbar', 'drawer'].includes(type)) {
       const els = [...state.library.elements].sort((a, b) => a.name.localeCompare(b.name));
       kids.push(this.field('Element / Toolbar to open', this.select('ck-element', cur.targetId ?? '', [['', '(choose an element…)'], ...els.map(x => [x.id, x.name])], v => v && save({ type, targetId: Number(v), ...(type === 'drawer' ? { side: cur.side || 'right' } : {}), ...(type === 'show-element' ? { displayMode: cur.displayMode || 'popup' } : {}) }))));
       if (type === 'drawer') kids.push(this.field('Slides in from', this.select('ck-side', cur.side || 'right', DRAWER_SIDES, v => cur.targetId && save({ type, targetId: cur.targetId, side: v }))));
       if (type === 'show-element') kids.push(this.field('Display Mode', this.select('ck-display-mode', cur.displayMode || 'popup', [['popup', 'Popup / Modal Box'], ['drawer', 'Slide-In Drawer'], ['inline', 'Inline Overlay']], v => cur.targetId && save({ type, targetId: cur.targetId, displayMode: v }))));
-      if (cur.targetId) open.push(h('button', { class: 'btn small', onclick: () => d.opts.openDesign?.('element', cur.targetId) }, 'Open that element'));
+      if (cur.targetId) open.push(ibtn('layers', 'Open that element', () => d.opts.openDesign?.('element', cur.targetId)));
     } else if (type === 'drawer-menu') {
       kids.push(this.field('Drawer Side', this.select('ck-drawer-menu-side', cur?.side || 'right', DRAWER_SIDES, v => save({ ...cur, type, side: v }))));
     } else if (type === 'slider-vertical') {
@@ -676,7 +733,7 @@ export class Inspector {
     return h('div', { class: 'anim-card' },
       h('div', { class: 'row' }, h('input', { type: 'checkbox', checked: a.enabled, title: 'Enabled', onchange: ev => up({ enabled: ev.target.checked }) }),
         h('b', { class: 'grow' }, `${a.type}`), this.text(`a${a.id}-name`, a.name, v => up({ name: v }), { placeholder: 'name' }),
-        h('button', { class: 'icon-btn small', title: 'Remove animation', onclick: () => d.removeAnimation(a) }, '🗑')),
+        ibtn('trash', 'Remove animation', () => d.removeAnimation(a))),
       h('div', { class: 'grid2' }, params),
       h('div', { class: 'grid2' },
         this.field('Duration ms', this.num(`a${a.id}-dur`, a.durationMs, v => up({ durationMs: Math.max(50, v) }), { min: 50 })),

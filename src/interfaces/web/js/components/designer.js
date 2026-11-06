@@ -5,8 +5,9 @@
  * bounding box that scales its contents, marquee select, vertex editing of paths, live button menus, undo/redo.
  */
 import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
+import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
-import { state, renderContext, currentTheme, findDesign, libOf } from '../state.js';
+import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import {
@@ -17,7 +18,7 @@ import {
 import { defaultAnimation } from '/domain/animation.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
-import { updateSettings, openGuide, reloadLibrary } from '../actions.js';
+import { updateSettings, openGuide, reloadLibrary, createEmptyItem } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { MenuEditor, menuActions } from './menu-editor.js';
 import { PenTool } from './pen-tool.js';
@@ -99,9 +100,25 @@ export class Designer {
     this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Hover/right-click element: quick toolbar & events · Del: delete · Enter: edit vertices');
     this.viewport.append(this.world, this.hoverBar, this.hint);
     this.inspectorEl = h('aside', { class: 'dz-inspector' });
-    this.body = h('div', { class: 'dz-body' }, this.viewport, this.inspectorEl);
+    this.inspectorFitted = false;
+    // drag handle on the inspector's left edge: drag to resize, the width is clamped
+    this.inspSplit = h('div', { class: 'insp-splitter', role: 'separator', 'aria-orientation': 'vertical', title: 'Drag to resize the inspector' });
+    this.inspSplit.addEventListener('pointerdown', ev => {
+      this.inspSplit.setPointerCapture(ev.pointerId);
+      const startX = ev.clientX, startW = this.inspectorEl.getBoundingClientRect().width;
+      const mv = e => this.setInspectorWidth(startW - (e.clientX - startX));
+      const up = () => {
+        this.inspSplit.removeEventListener('pointermove', mv);
+        this.inspSplit.removeEventListener('pointerup', up);
+        this.fitted = false; this.fit();
+      };
+      this.inspSplit.addEventListener('pointermove', mv);
+      this.inspSplit.addEventListener('pointerup', up);
+    });
+    this.body = h('div', { class: 'dz-body' }, this.viewport, this.inspSplit, this.inspectorEl);
     this.pathBar = h('div', { class: 'dz-bar dz-pathbar', role: 'toolbar', 'aria-label': 'Path tools' });
-    this.root.append(this.docbar, this.bar, this.pathBar, this.liveHud, this.body);
+    this.topRow = h('div', { class: 'dz-toprow' }, this.docbar, this.pathBar);
+    this.root.append(this.topRow, this.bar, this.liveHud, this.body);
     this.bindViewport();
     new ResizeObserver(() => { if (this.doc && !this.fitted) this.fit(); }).observe(this.viewport);
   }
@@ -177,8 +194,9 @@ export class Designer {
     });
     const wrap = h('div', { class: 'menu save-targets-dd', style: { position: 'relative', display: 'inline-flex' } });
     const triggerBtn = h('button', {
-      class: `btn small save-targets-trigger${count > 0 ? ' active' : ''}`,
-      title: 'Multi-target Save Option: select multiple projects and/or your Global Private Library to save this item (and all sub-items) into all selected targets',
+      class: `btn small ib save-targets-trigger${count > 0 ? ' active' : ''}`,
+      'aria-label': 'Save targets',
+      'data-tip': 'Save targets — also save into multiple projects and/or your Global Private Library (with all sub-items)',
       onclick: e => {
         e.stopPropagation();
         const isOpen = wrap.classList.contains('open');
@@ -188,11 +206,12 @@ export class Designer {
           rebuildPanel();
         }
       }
-    }, `${labelText} ▾`);
+    }, iconEl('target', { size: 16 }), h('span', { class: 'tb-badge', hidden: count === 0 }, String(count)));
 
     const updateTriggerText = () => {
       const c = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
-      triggerBtn.textContent = `${c > 0 ? `🎯 Targets (${c})` : '🎯 Targets…'} ▾`;
+      const badge = triggerBtn.querySelector('.tb-badge');
+      if (badge) { badge.textContent = String(c); badge.hidden = c === 0; }
       triggerBtn.classList.toggle('active', c > 0);
     };
 
@@ -279,7 +298,7 @@ export class Designer {
               fontSize: '12px'
             }
           },
-          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${p.name}`),
+          h('span', { class: 'row', style: { gap: '6px' } }, chk, `📁 ${projectLabel(p)}`),
           h('span', { class: 'muted', style: { fontSize: '10px' } }, `#${pid}`)
           )
         );
@@ -290,28 +309,95 @@ export class Designer {
     return wrap;
   }
 
+  /**
+   * Switches a screen to another device: the frame takes the device size, and every item (and sub item) is scaled
+   * uniformly to fit that extent and centred in it. One undo step.
+   */
+  async applyDevice(dv) {
+    if (!this.doc) return;
+    const oldW = this.doc.width || 1, oldH = this.doc.height || 1;
+    const s = Math.min(dv.width / oldW, dv.height / oldH);
+    const ox = (dv.width - oldW * s) / 2, oy = (dv.height - oldH * s) / 2;
+    const nodes = this.nodes;
+    const patches = nodes.map(n => {
+      const from = nodeBBox(n, nodes);
+      const to = { x: ox + from.x * s, y: oy + from.y * s, w: from.w * s, h: from.h * s };
+      return { id: n.id, attrs: resizeAttrs(n, from, to) };
+    });
+    await this.mutate(async () => {
+      const saved = await api.updateDesign(this.type, this.doc.id, {
+        meta: { ...(this.doc.meta || {}), device: dv.key }, width: dv.width, height: dv.height, scaleContent: false
+      });
+      this.doc = { ...this.doc, ...saved };
+      await Promise.all(patches.map(p => api.patchNode(this.type, this.doc.id, p.id, { attrs: p.attrs })));
+      await this.reload(false);
+    });
+    this.fitted = false; this.fit();   // re-centre the canvas on the new device frame
+  }
+
+  /** Screen device picker as an icon button in the top bar (sets the device frame size). */
+  buildDeviceMenu() {
+    const list = () => state.templateDevices?.length
+      ? state.templateDevices.map(dv => ({ key: dv.key, name: dv.name, width: dv.width, height: dv.height }))
+      : Object.entries(DEVICES).map(([k, v]) => ({ key: k, name: v.name, width: v.width, height: v.height }));
+    const curKey = this.doc?.meta?.device;
+    const curName = list().find(x => x.key === curKey)?.name || 'No device';
+    const ddWrap = h('div', { class: 'menu device-menu' });
+    const panel = h('div', {
+      class: 'menu-panel device-menu-panel',
+      role: 'menu',
+      style: { minWidth: '260px', maxHeight: '70vh', overflowY: 'auto', padding: '6px' },
+      onclick: e => e.stopPropagation()
+    });
+    const trigger = h('button', {
+      class: 'btn small ib device-menu-trigger',
+      'aria-label': `Device — ${curName}`,
+      'data-tip': `Device — ${curName}\nChoose the screen's device frame size`,
+      'aria-haspopup': 'true',
+      onclick: e => {
+        e.stopPropagation();
+        const open = !ddWrap.classList.contains('open');
+        document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+        if (!open) return;
+        ddWrap.classList.add('open');
+        clear(panel);
+        for (const dv of list()) {
+          const active = dv.key === curKey;
+          panel.append(h('button', {
+            class: 'menu-item',
+            role: 'menuitemradio',
+            'aria-checked': String(active),
+            onclick: async () => {
+              document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+              if (!this.doc) return;
+              await this.applyDevice(dv);
+              this.buildDocBar();
+            }
+          }, h('span', { class: 'tick' }, active ? '✓' : ''), h('span', { class: 'mi-label' }, `${dv.name} (${dv.width}×${dv.height})`)));
+        }
+      }
+    }, iconEl('monitor', { size: 16 }));
+    ddWrap.append(trigger, panel);
+    return ddWrap;
+  }
+
   buildDocBar() {
     clear(this.docbar);
     const o = this.opts;
     const d = this.doc || {};
     const ownedByMe = this.isOwnedByCurrentUser(d);
     const canMove = this.canMoveRecord(d);
-    this.backBtn = o.onBack ? h('button', { class: 'btn small', dataset: { act: 'back' }, onclick: () => o.onBack() }, '← Back') : null;
-    this.saveBtn = h('button', {
-      class: 'btn small save',
-      disabled: !ownedByMe,
-      title: ownedByMe
-        ? 'Save (Ctrl+S): keep the current version (and save to any selected Multi-Targets).'
-        : `Save is disabled because this item is owned by @${d.creatorUsername || 'another user'}. Use "Save as…" to save a copy to your project(s) or Global Private Library.`,
-      onclick: () => this.save()
-    }, '💾 Save');
-    this.saveAsBtn = h('button', {
-      class: 'btn small',
-      title: 'Save a copy (with all cascading sub-items) to the active project or all selected Multi-Target projects.',
-      onclick: () => this.saveAs()
-    }, 'Save as…');
+    this.backBtn = o.onBack ? ibtn('back', 'Back', () => o.onBack(), { desc: 'Return to the previous page', kbd: 'Alt+←', dataset: { act: 'back' } }) : null;
+    this.saveBtn = ibtn('save', 'Save', () => this.save(), {
+      desc: ownedByMe
+        ? 'Keep the current version (and save to any selected Multi-Targets).'
+        : `Disabled: owned by @${d.creatorUsername || 'another user'}. Use Save as… to save a copy.`,
+      kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save'
+    });
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to the active project or all selected Multi-Target projects.' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
-    this.resetBtn = h('button', { class: 'btn small', title: 'Throw away every change since the last save', onclick: () => this.reset() }, '↺ Reset');
+    this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
+    this.deviceMenu = this.type === 'screen' ? this.buildDeviceMenu() : null;
     this.docState = h('span', { class: 'doc-state', role: 'status' });
 
     const visOrder = ['public', 'private', 'project'];
@@ -320,57 +406,41 @@ export class Designer {
       : d.visibility === 'private'
         ? '👤 Private (My Global)'
         : '🌐 Public';
-    const visBtn = h('button', {
-      class: 'btn small',
-      dataset: { act: 'cycle-visibility' },
-      title: 'Cycle visibility: Public (all users) → Private (all my projects / global library) → Project-Only (active project scope)',
-      onclick: async () => {
-        if (!this.doc) return;
-        const curIdx = visOrder.indexOf(this.doc.visibility || 'public');
-        const next = visOrder[(curIdx + 1) % visOrder.length];
-        await this.updateDoc({ visibility: next, projectId: state.activeProjectId || this.doc.projectId || 1 });
-        this.buildDocBar();
-        toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
-      }
-    }, visLabel);
+    // visibility as a three-way icon group (Public / Private / Project-only); the active one is highlighted
+    const setVis = async next => {
+      if (!this.doc || next === (this.doc.visibility || 'public')) return;
+      await this.updateDoc(next === 'project' ? { visibility: next, projectId: state.activeProjectId || this.doc.projectId || 1 } : { visibility: next });
+      this.buildDocBar();
+      toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
+    };
+    const visSeg = h('div', { class: 'vis-seg', role: 'radiogroup', 'aria-label': 'Visibility scope' },
+      [['public', 'globe', 'Public', 'Visible to all users'], ['private', 'user', 'Private', 'My global library (all my projects)'], ['project', 'folder', 'Project-only', 'Only the active project']].map(([v, icon, name, desc]) =>
+        ibtn(icon, name, () => setVis(v), { desc, active: (d.visibility || 'public') === v, cls: 'vis-btn', dataset: { act: `vis-${v}` } })));
 
-    const lockDocBtn = h('button', {
-      class: `btn small${d.locked ? ' active' : ''}`,
-      title: 'Lock / Unlock positions on this design',
-      onclick: async () => {
-        if (!this.doc) return;
-        await this.updateDoc({ locked: !this.doc.locked });
-        this.buildDocBar();
-        toast(this.doc.locked ? '🔒 Design positions locked' : '🔓 Design positions unlocked', 'ok');
-      }
-    }, d.locked ? '🔒 Locked' : '🔓 Unlocked');
+    const lockDocBtn = ibtn(d.locked ? 'lock' : 'unlock', d.locked ? 'Positions locked' : 'Positions unlocked', async () => {
+      if (!this.doc) return;
+      await this.updateDoc({ locked: !this.doc.locked });
+      this.buildDocBar();
+      toast(this.doc.locked ? '🔒 Design positions locked' : '🔓 Design positions unlocked', 'ok');
+    }, { desc: 'Lock / unlock positions on this design', active: !!d.locked });
 
-    const lineageBtn = h('button', {
-      class: 'btn small',
-      title: 'View creator & root owner lineage chain',
-      onclick: () => this.doc && openLineageModal(this.type, this.doc.id)
-    }, `🧬 Root: @${d.rootOwnerUsername || d.creatorUsername || 'kyrpy'}${d.clonedFromId ? ` (cloned #${d.clonedFromId})` : ''}`);
+    const lineageBtn = ibtn('collab', 'Lineage', () => this.doc && openLineageModal(this.type, this.doc.id),
+      { desc: `Root owner: @${d.rootOwnerUsername || d.creatorUsername || 'kyrpy'}${d.clonedFromId ? ` · cloned from #${d.clonedFromId}` : ''}\nView the creator & root owner lineage chain` });
 
-    const copyToProjBtn = h('button', {
-      class: 'btn small',
-      title: 'Copy this item (and all its sub-items) to one or multiple projects',
-      onclick: () => this.doc && openCopyMoveToProjectsModal({
-        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
-        mode: 'copy'
-      })
-    }, '📥 Copy to…');
+    const copyToProjBtn = ibtn('copy', 'Copy to…', () => this.doc && openCopyMoveToProjectsModal({
+      items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
+      mode: 'copy'
+    }), { desc: 'Copy this item (and all its sub-items) to one or multiple projects' });
 
-    const moveToProjBtn = h('button', {
-      class: 'btn small',
+    const moveToProjBtn = ibtn('import', 'Move to…', () => this.doc && canMove && openCopyMoveToProjectsModal({
+      items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
+      mode: 'move'
+    }), {
       disabled: !canMove,
-      title: canMove
+      desc: canMove
         ? 'Move this item (and all its sub-items) to one or multiple of your own projects'
-        : (d.builtin ? 'Default basic items cannot be moved (only copied)' : 'Items owned by other users cannot be moved (only copied)'),
-      onclick: () => this.doc && canMove && openCopyMoveToProjectsModal({
-        items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
-        mode: 'move'
-      })
-    }, '📤 Move to…');
+        : (d.builtin ? 'Default basic items cannot be moved (only copied)' : 'Items owned by other users cannot be moved (only copied)')
+    });
 
     this.docbar.append(...[
       this.backBtn,
@@ -379,15 +449,22 @@ export class Designer {
       this.saveAsBtn,
       this.saveTargetsDropdown,
       this.resetBtn,
+      this.deviceMenu,
       h('span', { class: 'sep-v' }),
-      visBtn,
+      visSeg,
       lockDocBtn,
       copyToProjBtn,
       moveToProjBtn,
       lineageBtn,
       h('span', { class: 'sep-v' }),
+      ibtn('plus', `New empty ${NAMES[this.type]}`, async () => {
+        const r = await createEmptyItem(this.type);
+        if (r) this.opts.openDesign?.(this.type, r.id);
+      }, { desc: `Create an empty ${NAMES[this.type].toLowerCase()} and open it`, cls: 'new-empty' }),
+      h('span', { class: 'sep-v' }),
       this.docState
     ]);
+    emit('topbar:refresh');
     this.updateDocBar();
   }
 
@@ -485,7 +562,9 @@ export class Designer {
     if (!name?.trim()) return false;
     await this.settle();
     try {
+      // No explicit multi-targets: the copy goes to the active project, still cascading every sub-item
       const targetPids = [...(state.saveTargetProjectIds || [])];
+      if (!targetPids.length && state.activeProjectId) targetPids.push(Number(state.activeProjectId));
       const includePriv = Boolean(state.saveToUserPrivateLibrary);
       const reverted = this.dirty;
       let copy;
@@ -542,47 +621,47 @@ export class Designer {
     const s = state.settings;
     const tools = TOOLS.filter(t => !(this.isGlyph && ['text', 'container', 'carousel'].includes(t[0])));
     const tool = ([k, key, glyph, tip]) => h('button', { class: `icon-btn${this.tool === k ? ' active' : ''}`, title: `${tip} (${key})`, dataset: { tool: k }, onclick: () => (k === 'node' ? this.vtx.enter(this.selectedNodes()[0]) : this.setTool(k)) }, glyph);
-    const toggle = (label, tip, get, set) => { const b = h('button', { class: `btn small${get() ? ' active' : ''}`, title: tip, onclick: () => { set(!get()); b.classList.toggle('active', get()); } }, label); return b; };
+    const toggle = (icon, tip, get, set, desc = '') => { const b = ibtn(icon, tip, () => { set(!get()); b.classList.toggle('active', get()); }, { desc, active: get() }); b.dataset.view = '1'; return b; };
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
     const kids = [
       h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
       h('b', { style: { padding: '0 8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: this.doc.key }, this.doc.name),
       h('span', { class: 'sep-v' }), ...tools.map(tool), h('span', { class: 'sep-v' }),
-      h('button', { class: 'icon-btn', title: 'Undo (Ctrl+Z)', onclick: () => this.undo() }, '↶'),
-      h('button', { class: 'icon-btn', title: 'Redo (Ctrl+Y)', onclick: () => this.redo() }, '↷'),
-      h('button', { class: 'icon-btn', title: 'Duplicate (Ctrl+D)', onclick: () => this.duplicateSelected() }, '⧉'),
-      h('button', { class: 'icon-btn', title: 'Delete (Del)', onclick: () => this.deleteSelected() }, '🗑'),
-      h('button', { class: 'icon-btn', title: 'Bring to front', onclick: () => this.reorder('front') }, '⤒'),
-      h('button', { class: 'icon-btn', title: 'Send to back', onclick: () => this.reorder('back') }, '⤓'),
+      ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
+      ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
+      ibtn('copy', 'Duplicate', () => this.duplicateSelected(), { kbd: 'Ctrl+D' }),
+      ibtn('trash', 'Delete', () => this.deleteSelected(), { kbd: 'Del' }),
+      ibtn('bringFront', 'Bring to front', () => this.reorder('front')),
+      ibtn('sendBack', 'Send to back', () => this.reorder('back')),
       h('span', { class: 'sep-v' }),
-      h('button', { class: 'icon-btn', title: 'Zoom out (-)', onclick: () => this.zoomBy(1 / 1.25) }, '−'), this.zoomLabel,
-      h('button', { class: 'icon-btn', title: 'Zoom in (+)', onclick: () => this.zoomBy(1.25) }, '+'),
-      h('button', { class: 'btn small', title: 'Fit (0)', onclick: () => this.fit() }, 'Fit'),
-      h('button', { class: 'btn small', title: 'Actual size', onclick: () => this.setZoom(1) }, '100%'),
+      ibtn('zoomOut', 'Zoom out', () => this.zoomBy(1 / 1.25), { kbd: '-' }), this.zoomLabel,
+      ibtn('zoomIn', 'Zoom in', () => this.zoomBy(1.25), { kbd: '+' }),
+      ibtn('fit', 'Fit to window', () => this.fit(), { kbd: '0' }),
+      ibtn('actual', 'Actual size (100%)', () => this.setZoom(1)),
       h('span', { class: 'sep-v' }),
-      toggle('Grid', 'Show grid', () => s.showGrid, v => { updateSettings({ showGrid: v }); this.renderOverlay(); }),
-      toggle('Snap grid', 'Snap to grid', () => s.snapToGrid, v => updateSettings({ snapToGrid: v })),
-      toggle('Snap 9-pt', 'Snap to the 9 reference points (corners, edges, centre)', () => s.snapToAnchors, v => { updateSettings({ snapToAnchors: v }); this.renderOverlay(); }),
-      toggle('Animate', 'Play animations on the canvas', () => state.playAnimations, v => { state.playAnimations = v; this.renderStage(); })
+      toggle('grid2', 'Show grid', () => s.showGrid, v => { updateSettings({ showGrid: v }); this.renderOverlay(); }),
+      toggle('magnet', 'Snap to grid', () => s.snapToGrid, v => updateSettings({ snapToGrid: v })),
+      toggle('anchor', 'Snap to 9 points', () => s.snapToAnchors, v => { updateSettings({ snapToAnchors: v }); this.renderOverlay(); }, 'Snap to the 9 reference points (corners, edges, centre)'),
+      toggle('play', 'Animate', () => state.playAnimations, v => { state.playAnimations = v; this.renderStage(); }, 'Play animations on the canvas')
     ];
-    if (this.boxResizable) kids.push(toggle('Scale contents', 'Resizing the bounding box scales everything inside it', () => this.scaleContent, v => { this.scaleContent = v; }));
-    if (this.type === 'button') kids.push(toggle('Test menu', 'Click the button and its items like in the finished app (off = edit mode, the menu stays open)', () => this.menuLive, v => {
+    if (this.boxResizable) kids.push(toggle('scale', 'Scale contents', () => this.scaleContent, v => { this.scaleContent = v; }, 'Resizing the bounding box scales everything inside it'));
+    if (this.type === 'button') kids.push(toggle('tools', 'Test menu', () => this.menuLive, v => {
       this.menuLive = v; this.stage.classList.toggle('menu-live', v || this.actionsLive);
       this.menu.menuState = v ? { open: false, path: [] } : { open: true, path: [] }; this.renderStage();
-    }));
+    }, 'Click the button and its items like in the finished app (off = edit mode, the menu stays open)'));
     if (['button', 'element', 'screen'].includes(this.type)) {
-      kids.push(
-        h('button', {
-          class: `btn small${this.actionsLive ? ' active' : ''}`,
-          dataset: { act: 'test-actions' },
-          title: 'Interactive Test Actions Mode: test buttons, animations, edit forms, popups/drawers/toolbars, and workflow screen routing (off = edit mode)',
-          onclick: () => this.setTestActions(!this.actionsLive)
-        }, this.actionsLive ? '🟢 Testing Actions' : '▶ Test actions')
-      );
+      kids.push(ibtn('testMode', this.actionsLive ? 'Testing actions (on)' : 'Test actions', () => this.setTestActions(!this.actionsLive), {
+        desc: 'Interactive mode: test buttons, animations, edit forms, popups/drawers/toolbars and workflow routing (off = edit mode)',
+        active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
+      }));
     }
-    kids.push(h('span', { class: 'grow' }), h('button', { class: 'btn small', title: `How to use the ${NAMES[this.type].toLowerCase()} (F1)`, onclick: () => openGuide(this.type) }, '? Guide'), h('button', { class: 'btn small', title: 'Show/hide the inspector', onclick: () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; } }, 'Inspector'),
-      ...(this.opts.onClose ? [h('button', { class: 'btn small', onclick: () => this.opts.onClose() }, 'Close')] : []));
-    this.bar.append(...kids);
+    kids.push(h('span', { class: 'grow' }),
+      ibtn('book', 'Guide', () => openGuide(this.type), { desc: `How to use the ${NAMES[this.type].toLowerCase()}`, kbd: 'F1', dataset: { view: '1' } }),
+      ibtn('inspector', 'Inspector', () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; }, { desc: 'Show / hide the inspector panel', active: this.inspectorOpen, dataset: { view: '1' } }),
+      ...(this.opts.onClose ? [ibtn('close', 'Close', () => this.opts.onClose(), { desc: 'Close this designer' })] : []));
+    this.viewControls = kids.filter(k => k.dataset?.view === '1');
+    this.bar.append(...kids.filter(k => k.dataset?.view !== '1'));
+    emit('topbar:refresh');
     this.buildPathBar();
   }
 
@@ -726,6 +805,22 @@ export class Designer {
     this.updateHoverToolbar();
   }
 
+  setInspectorWidth(w) {
+    this.inspectorEl.style.width = `${Math.min(720, Math.max(240, Math.round(w)))}px`;
+  }
+
+  /** First load: size the inspector to the width its content needs (clamped), then the user can drag it. */
+  fitInspectorToContent() {
+    if (this.inspectorFitted || !this.inspectorOpen) return;
+    this.inspectorFitted = true;
+    const el = this.inspectorEl;
+    el.style.width = 'max-content';
+    const natural = el.getBoundingClientRect().width;
+    el.style.width = '';
+    this.setInspectorWidth(natural + 16);
+    this.fitted = false;
+  }
+
   /** Renders the floating mouse-over / selection toolbar above the active element on the canvas. */
   updateHoverToolbar() {
     if (!this.hoverBar || !this.doc || this.dragging || this.vtx?.active || this.actionsLive) {
@@ -739,7 +834,9 @@ export class Designer {
     }
     const b = nodeBBox(target, this.nodes);
     const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
-    const sy = Math.max(8, this.view.ty + b.y * this.view.z - 38);
+    // sit above the bounding box with a 20px gap so the top-edge vertices stay clickable
+    const barH = this.hoverBar.offsetHeight || 34;
+    const sy = Math.max(4, this.view.ty + b.y * this.view.z - barH - 20);
     this.hoverBar.style.left = `${Math.round(sx)}px`;
     this.hoverBar.style.top = `${Math.round(sy)}px`;
 
@@ -756,9 +853,11 @@ export class Designer {
 
       this.hoverBar.append(
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
-        h('button', { class: 'hb-btn', title: 'Open Editor (Double-click)', onclick: e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); } }, '✎ Edit'),
+        ibtn('pencil', 'Open Editor (Double-click)', e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
         isMenuItemRole ? h('button', {
           class: `hb-btn${menuBtnItems.length ? ' active' : ''}`,
+          'aria-label': 'Menu items',
+          'data-tip': menuBtnItems.length ? `Edit menu item (${menuBtnItems.length} item(s))` : 'Add / Edit menu item',
           title: menuBtnItems.length ? `Edit menu item (${menuBtnItems.length} item(s))` : 'Add / Edit menu item',
           onclick: async e => {
             e.stopPropagation();
@@ -768,12 +867,17 @@ export class Designer {
                 await menuActions.edit(this, menuBtnItems[0].id, menuBtnId);
               } else if (menuBtnItems.length > 1) {
                 const picked = await choiceBox(
-                  'Edit Menu Item',
-                  'Select a menu item to edit, or add a new menu item:',
+                  'Edit menu items',
+                  `${menuBtnItems.length} item(s) on this menu. Pick one to edit, or add a new one.`,
                   [
-                    ...menuBtnItems.map(mi => ({ value: `edit:${mi.id}`, label: `✎ ${mi.label || mi.name}${mi.visible === false ? ' (hidden)' : ''}`, primary: true })),
-                    { value: 'add', label: '＋ Add new menu item' }
-                  ]
+                    ...menuBtnItems.map(mi => ({
+                      value: `edit:${mi.id}`, icon: 'pencil',
+                      label: `${mi.label || mi.name || `Item #${mi.id}`}${mi.visible === false ? '  · hidden' : ''}`,
+                      desc: mi.action || mi.targetId ? `→ ${mi.action || 'target'}${mi.targetId ? ` #${mi.targetId}` : ''}` : 'No action set yet'
+                    })),
+                    { value: 'add', icon: 'plus', label: 'Add new menu item', desc: 'Create another entry in this menu', kind: 'primary' }
+                  ],
+                  { list: true }
                 );
                 if (picked === 'add') await menuActions.add(this, null, menuBtnId);
                 else if (picked && picked.startsWith('edit:')) await menuActions.edit(this, Number(picked.slice(5)), menuBtnId);
@@ -784,53 +888,34 @@ export class Designer {
               openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
             }
           }
-        }, `☰ Edit menu item${menuBtnItems.length ? ` (${menuBtnItems.length})` : ''}`) : null,
-        h('button', {
-          class: `hb-btn${evCount ? ' active' : ''}`,
-          title: 'Configure Events (click, mouseover, release, drag&drop -> open element, popup, toolbar, route)',
-          onclick: e => {
-            e.stopPropagation();
-            this.select([target.id]);
-            openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
-          }
-        }, `⚡ Events${evCount ? ` (${evCount})` : ''}`),
-        h('button', {
-          class: 'hb-btn',
-          title: 'Preview or attach Small Element Floating Toolbar',
-          onclick: async e => {
+        }, iconEl('sliders', { size: 15 }), menuBtnItems.length ? h('span', { class: 'hb-count' }, String(menuBtnItems.length)) : null) : null,
+        ibtn('zap', `Configure Events (click, mouseover, release, drag&drop -> open element, popup, toolbar, route)${evCount ? ` · ${evCount} set` : ''}`, e => {
+          e.stopPropagation();
+          this.select([target.id]);
+          openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
+        }, { cls: `hb-btn${evCount ? ' active' : ''}` }),
+        ibtn('layers', 'Preview or attach Small Element Floating Toolbar', async e => {
             e.stopPropagation();
             this.select([target.id]);
             const tbEl = state.library.elements.find(x => x.key === 'html-floating-toolbar');
             const evs = [...(target.events || []).filter(x => !(x.trigger === 'click' && x.type === 'toolbar')), { trigger: 'click', type: 'toolbar', ...(tbEl ? { targetId: tbEl.id } : {}), position: 'top' }];
             await this.patchNode(target.id, { events: evs });
             this.showToolbarPreview(target, { type: 'toolbar', targetId: tbEl?.id, position: 'top' });
-          }
-        }, '🧰 Toolbar'),
-        h('button', {
-          class: 'hb-btn',
-          title: 'Add Pulse / Flip Animation',
-          onclick: async e => {
-            e.stopPropagation();
-            this.select([target.id]);
-            await this.addAnimation(target.id, 'pulse');
-            toast('Added animation to element', 'ok', 1400);
-          }
-        }, '✨ Anim'),
-        h('button', {
-          class: `hb-btn${target.locked ? ' active' : ''}`,
-          title: target.locked ? 'Unlock element position (Ctrl+L)' : 'Lock element position on screen (Ctrl+L)',
-          onclick: async e => {
-            e.stopPropagation();
-            await this.patchNode(target.id, { locked: !target.locked });
-            this.hoverBar.dataset.nodeId = '';
-            this.updateHoverToolbar();
-            toast(target.locked ? '🔒 Position locked' : '🔓 Position unlocked', 'ok', 1200);
-          }
-        }, target.locked ? '🔒' : '🔓'),
-        h('button', {
-          class: 'hb-btn',
-          title: 'Copy item (and sub-items) to project(s)',
-          onclick: e => {
+          }, { cls: 'hb-btn' }),
+        ibtn('play', 'Add Pulse / Flip Animation', async e => {
+          e.stopPropagation();
+          this.select([target.id]);
+          await this.addAnimation(target.id, 'pulse');
+          toast('Added animation to element', 'ok', 1400);
+        }, { cls: 'hb-btn' }),
+        ibtn(target.locked ? 'lock' : 'unlock', target.locked ? 'Unlock element position (Ctrl+L)' : 'Lock element position on screen (Ctrl+L)', async e => {
+          e.stopPropagation();
+          await this.patchNode(target.id, { locked: !target.locked });
+          this.hoverBar.dataset.nodeId = '';
+          this.updateHoverToolbar();
+          toast(target.locked ? '🔒 Position locked' : '🔓 Position unlocked', 'ok', 1200);
+        }, { cls: 'hb-btn', active: !!target.locked }),
+        ibtn('import', 'Copy item (and sub-items) to project(s)', e => {
             e.stopPropagation();
             const refItem = (target.kind === 'instance' && target.refType && target.refId)
               ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name })
@@ -839,42 +924,31 @@ export class Designer {
               ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
               : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
             openCopyMoveToProjectsModal({ items: [itemRef], mode: 'copy' });
-          }
-        }, '📥 Copy to…'),
+        }, { cls: 'hb-btn' }),
         (() => {
           const refItem = (target.kind === 'instance' && target.refType && target.refId)
             ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name, creatorId: this.doc.creatorId })
             : this.doc;
           const canMoveRef = this.canMoveRecord(refItem);
-          return h('button', {
-            class: 'hb-btn',
-            disabled: !canMoveRef,
-            title: canMoveRef
+          return ibtn('export', canMoveRef
               ? 'Move item (and sub-items) to your project(s)'
-              : 'Default basic items and items owned by other users cannot be moved (only copied)',
-            onclick: e => {
-              e.stopPropagation();
-              if (!canMoveRef) return;
-              const itemRef = (target.kind === 'instance' && target.refType && target.refId)
-                ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
-                : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
-              openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
-            }
-          }, '📤 Move to…');
+              : 'Default basic items and items owned by other users cannot be moved (only copied)', e => {
+            e.stopPropagation();
+            if (!canMoveRef) return;
+            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
+              ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
+              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
+            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
+          }, { cls: 'hb-btn', disabled: !canMoveRef });
         })(),
-        h('button', {
-          class: 'hb-btn',
-          title: 'Duplicate element (Ctrl+D)',
-          onclick: async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }
-        }, '⧉'),
-        h('button', {
-          class: 'hb-btn danger',
-          title: 'Delete element (Del)',
-          onclick: async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }
-        }, '🗑')
+        ibtn('copy', 'Duplicate element (Ctrl+D)', async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }, { cls: 'hb-btn' }),
+        ibtn('trash', 'Delete element (Del)', async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }, { cls: 'hb-btn danger' })
       );
     }
     this.hoverBar.hidden = false;
+    // measure after the content is built and shown, then sit 20px above the bounding box
+    this.hoverBar.style.left = `${Math.round(sx)}px`;
+    this.hoverBar.style.top = `${Math.max(4, Math.round(this.view.ty + b.y * this.view.z - this.hoverBar.offsetHeight - 20))}px`;
   }
 
   drawGhost(mk) {

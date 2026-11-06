@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { healForeignKeys } from '../sqlite/database.js';
+import { MCP_PG_SCHEMA_SQL, MCP_SYNC_TABLES } from '../../mcp/infrastructure/postgres/mcp-pg-schema.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -37,7 +38,7 @@ function loadCredentialsEnv() {
   return out;
 }
 
-export const PG_SCHEMA_SQL = `
+const CORE_PG_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
@@ -398,7 +399,10 @@ CREATE TABLE IF NOT EXISTS trash_items (
 );
 `;
 
-const SYNC_TABLES = [
+/** Core DDL + the MCP layer's additions (mcp_context, uid, content_hash, schema_registry). */
+export const PG_SCHEMA_SQL = CORE_PG_SCHEMA_SQL + MCP_PG_SCHEMA_SQL;
+
+export const SYNC_TABLES = [
   { name: 'users', pk: ['id'], conflict: 'id', uniqueCols: ['username', 'email'] },
   { name: 'projects', pk: ['id'], conflict: 'id', uniqueCols: ['key'] },
   { name: 'project_members', pk: ['id'], conflict: 'id', uniqueTuple: ['project_id', 'user_id'] },
@@ -419,7 +423,9 @@ const SYNC_TABLES = [
   { name: 'template_buttons', pk: ['id'], conflict: 'id', uniqueCols: ['key'] },
   { name: 'translations', pk: ['id'], conflict: 'id', uniqueTuple: ['table_name', 'record_id', 'field_name', 'lang_code'] },
   { name: 'settings', pk: ['key'], conflict: 'key' },
-  { name: 'trash_items', pk: ['id'], conflict: 'id' }
+  { name: 'trash_items', pk: ['id'], conflict: 'id' },
+  { name: 'schema_registry', pk: ['id'], conflict: 'id', uniqueTuple: ['table_name', 'column_name'] },
+  ...MCP_SYNC_TABLES
 ];
 
 function pgLiteral(v) {

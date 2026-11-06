@@ -12,6 +12,6 @@
     "export": "node --disable-warning=ExperimentalWarning main.js export",
     "guide": "node --disable-warning=ExperimentalWarning main.js guide",
     "db:export-public": "node --disable-warning=ExperimentalWarning scripts/export-public-db.js",
-    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js"
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js mcp/tests/*.test.js"
   }
 }

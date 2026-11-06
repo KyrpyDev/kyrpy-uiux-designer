@@ -3,6 +3,7 @@
  * Items are dragged onto the open designer (the hierarchy rules decide where they may go).
  */
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
+import { ibtn } from '../icons.js';
 import { api } from '../api.js';
 import { state, on, emit, libOf, PLURAL } from '../state.js';
 import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog, reloadLibrary } from '../actions.js';
@@ -163,38 +164,15 @@ export class LibraryPanel {
       });
     };
     const bar = h('div', { class: 'sel-bar', style: { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
-      h('button', {
-        class: 'btn small lib-sel-all-btn',
-        title: 'Select all visible items',
-        onclick: () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }
-      }, 'Select all'),
-      h('button', {
-        class: 'btn small lib-sel-none-btn',
-        title: 'Deselect all items (Non select)',
-        onclick: () => { selSet.clear(); updateInfo(); }
-      }, 'Non select'),
-      h('button', {
-        class: 'btn small lib-sel-invert-btn',
-        title: 'Reverse selection of visible items',
-        onclick: () => {
-          getVisible().forEach(r => (selSet.has(r.id) ? selSet.delete(r.id) : selSet.add(r.id)));
-          updateInfo();
-        }
-      }, 'Reverse'),
-      h('button', {
-        class: 'btn small lib-copy-to-btn',
-        title: 'Open 90% wide Item Browser to Copy selected items to project(s)',
-        onclick: () => openBrowserWithSelection('copy')
-      }, '📥 Copy to…'),
-      h('button', {
-        class: 'btn small lib-move-to-btn',
-        title: 'Open 90% wide Item Browser to Move selected items to project(s)',
-        onclick: () => openBrowserWithSelection('move')
-      }, '📤 Move to…'),
-      h('button', {
-        class: 'btn small lib-export-import-btn',
-        title: 'Export or Import paths, icons, buttons, elements, screens, and workflows as HTML, SVG, or JSON',
-        onclick: () => {
+      ibtn('pointer', 'Select all', () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }, { desc: 'Select all visible items', cls: 'lib-sel-all-btn' }),
+      ibtn('close', 'Deselect all', () => { selSet.clear(); updateInfo(); }, { desc: 'Clear the selection', cls: 'lib-sel-none-btn' }),
+      ibtn('rotate', 'Reverse selection', () => {
+        getVisible().forEach(r => (selSet.has(r.id) ? selSet.delete(r.id) : selSet.add(r.id)));
+        updateInfo();
+      }, { desc: 'Invert the selection of visible items', cls: 'lib-sel-invert-btn' }),
+      ibtn('copy', 'Copy to…', () => openBrowserWithSelection('copy'), { desc: 'Open the wide Item Browser to copy selected items to project(s)', cls: 'lib-copy-to-btn' }),
+      ibtn('import', 'Move to…', () => openBrowserWithSelection('move'), { desc: 'Open the wide Item Browser to move selected items to project(s)', cls: 'lib-move-to-btn' }),
+      ibtn('export', 'Export / import', () => {
           const preselected = [...selSet].map(id => ({ type, id }));
           openLibraryExportImportModal({
             initialTab: 'export',
@@ -206,12 +184,8 @@ export class LibraryPanel {
               this.renderBody();
             }
           });
-        }
-      }, '⇅ HTML·SVG·JSON'),
-      h('button', {
-        class: 'btn small lib-empty-private-btn',
-        title: 'Empty active project’s private library (default libraries are immutable)',
-        onclick: async () => {
+        }, { desc: 'Export or import paths, icons, buttons, elements, screens and workflows as HTML, SVG or JSON', cls: 'lib-export-import-btn' }),
+      ibtn('trash', 'Empty private library', async () => {
           const pid = Number(state.activeProjectId || state.currentProjectId || 1);
           const proj = (state.projects || []).find(p => p.id === pid);
           if (!(await confirmBox(`Empty private ${PLURAL[type] || type} library of project "${proj?.name || '#' + pid}"? Default/public items cannot be emptied.`, { okLabel: 'Empty Private Library' }))) return;
@@ -226,8 +200,7 @@ export class LibraryPanel {
           } catch (err) {
             toast(err.message, 'err');
           }
-        }
-      }, '🧹 Empty'),
+        }, { desc: 'Empty the active project’s private library (default libraries are immutable)', cls: 'lib-empty-private-btn' }),
       info
     );
     bar._updateInfo = updateInfo;
@@ -237,7 +210,7 @@ export class LibraryPanel {
   toolbar(type, rec) {
     const canMove = !rec.builtin && Number(rec.creatorId || 1) === Number(state.user?.id || 1);
     return h('div', { class: 'tb' },
-      h('button', { title: 'Open in its designer', onclick: e => { e.stopPropagation(); this.app.openDesign(type, rec.id); } }, '✎'),
+      ibtn('pencil', 'Open in designer', e => { e.stopPropagation(); this.app.openDesign(type, rec.id); }),
       h('button', {
         title: 'Copy to projects… (cascades sub-items)',
         onclick: e => {
@@ -264,10 +237,10 @@ export class LibraryPanel {
           });
         }
       }, '📤'),
-      h('button', { title: 'Clone (tracks Root Owner lineage)', onclick: async e => { e.stopPropagation(); await cloneDesign(type, rec); } }, '⧉'),
-      h('button', { title: 'Root Owner & Clone Lineage', onclick: e => { e.stopPropagation(); openLineageModal(type, rec.id); } }, '🌳'),
-      h('button', { title: 'Export SVG (with animation)', onclick: e => { e.stopPropagation(); downloadSvg(type, rec.id, type === 'icon' || type === 'path' ? { frame: 0 } : {}); } }, '⤓'),
-      h('button', { title: 'Move to Trash', onclick: async e => { e.stopPropagation(); await deleteDesign(type, rec); } }, '🗑')
+      ibtn('copy', 'Clone', async e => { e.stopPropagation(); await cloneDesign(type, rec); }, { desc: 'Clone (tracks root owner lineage)' }),
+      ibtn('collab', 'Lineage', e => { e.stopPropagation(); openLineageModal(type, rec.id); }, { desc: 'Root owner & clone lineage' }),
+      ibtn('export', 'Export SVG', e => { e.stopPropagation(); downloadSvg(type, rec.id, type === 'icon' || type === 'path' ? { frame: 0 } : {}); }, { desc: 'Export SVG (with animation)' }),
+      ibtn('trash', 'Move to trash', async e => { e.stopPropagation(); await deleteDesign(type, rec); })
     );
   }
 

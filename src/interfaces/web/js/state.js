@@ -67,3 +67,9 @@ export function renderContext({ animations, ...extra } = {}) {
   };
   return createContext({ theme: currentTheme(), lib, animations: state.playAnimations ? (animations ?? state.library.animations) : [], ...extra });
 }
+
+/** Display name of a project; never "undefined" (falls back to label, then the id). */
+export const projectLabel = p => (p && (p.name || p.label)) || `Project #${p?.id ?? '?'}`;
+
+/** Drops duplicate rows (same id), keeping the first occurrence. */
+export const uniqueById = rows => [...new Map((rows || []).filter(Boolean).map(r => [r.id, r])).values()];
