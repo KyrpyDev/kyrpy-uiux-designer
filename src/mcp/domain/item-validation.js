@@ -6,6 +6,7 @@
  * Item format = the uiux_get_item JSON format (references by uid/key, nodes with index/parentIndex).
  */
 import { canonicalJson } from './content-hash.js';
+import { actionRefs } from './portable-actions.js';
 
 export const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
 export const KEY_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -22,6 +23,7 @@ export function itemRefs(item) {
   const out = [];
   const add = (r, path) => { if (r && typeof r === 'object' && (r.uid || r.key)) out.push({ type: r.type, uid: r.uid || null, key: r.key || null, path }); };
   (item.nodes || []).forEach((n, i) => { if (n?.ref) add(n.ref, `nodes[${i}].ref`); });
+  for (const r of actionRefs(Array.isArray(item.nodes) ? item.nodes : [])) add(r, r.path);
   (item.menuItems || []).forEach((m, i) => {
     if (m?.icon) add({ type: 'icon', ...m.icon }, `menuItems[${i}].icon`);
     if (m?.targetScreen) add({ type: 'screen', ...m.targetScreen }, `menuItems[${i}].targetScreen`);

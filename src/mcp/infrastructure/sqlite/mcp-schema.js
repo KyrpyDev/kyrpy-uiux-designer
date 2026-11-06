@@ -221,6 +221,30 @@ CREATE TABLE IF NOT EXISTS code_bindings (
   UNIQUE (project_id, item_uid, repo_id, file_path, symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_code_bindings_file ON code_bindings(project_id, file_path);`
+  },
+  {
+    id: 'm8-001-version-items',
+    sql: `
+CREATE TABLE IF NOT EXISTS version_items (
+  item_uid     TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  item_type    TEXT NOT NULL,
+  project_id   INTEGER NOT NULL,
+  item_json    TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context  TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (item_uid, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_version_items_project ON version_items(project_id);`
+  },
+  {
+    // content hash v2: node actions are hashed by target uid / node path (portable-actions.js)
+    id: 'm7-001-content-hash-v2', pg: false,
+    run: db => {
+      for (const t of ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows']) {
+        if (columnsOf(db, t).includes('content_hash')) db.exec(`UPDATE ${t} SET content_hash = NULL`);   // fresh DBs get the column later
+      }
+    }
   }
 ];
 
@@ -248,7 +272,7 @@ function runMigrations(db, report) {
   const done = new Set(db.prepare('SELECT id FROM mcp_migrations').all().map(r => r.id));
   for (const m of MCP_MIGRATIONS) {
     if (done.has(m.id)) continue;
-    db.exec(m.sql);
+    if (m.run) m.run(db); else db.exec(m.sql);
     db.prepare('INSERT INTO mcp_migrations (id) VALUES (?)').run(m.id);
     report.migrations.push(m.id);
   }
@@ -290,7 +314,7 @@ WHEN NEW.content_hash IS NOT NULL AND NEW.content_hash IS OLD.content_hash
 BEGIN UPDATE ${q(t)} SET content_hash = NULL WHERE rowid = NEW.rowid; END;`);
   }
 
-  // Only (project_id, key) for now: the global UNIQUE(key) stays until key lookups are project-scoped (see src/mcp/README.md).
+  // keys are unique per project (the global UNIQUE(key) is removed by dropGlobalKeyUnique)
   for (const t of PROJECT_KEY_TABLES) {
     if (!tables.has(t)) continue;
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_${t}_project_key ON ${q(t)}(project_id, key)`);
@@ -398,17 +422,45 @@ function syncAiArtifacts(db, report) {
   }
 }
 
+/**
+ * Per-project keys: rebuilds the item tables whose `key` column still carries the global UNIQUE constraint
+ * (a column constraint cannot be dropped in SQLite). Every column is copied, so uid, content_hash and
+ * mcp_context survive; indexes and core triggers of the table are recreated; the (project_id, key)
+ * unique index is (re)created by ensureIdentity(). Runs once per database; foreign keys are OFF here.
+ */
+function dropGlobalKeyUnique(db, report) {
+  const re = /(\bkey\s+TEXT\s+NOT\s+NULL)\s+UNIQUE\b/i;
+  let triggersDropped = false;
+  for (const t of PROJECT_KEY_TABLES) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    if (!row || !re.test(row.sql)) continue;
+    if (!triggersDropped) { dropMcpTriggers(db); triggersDropped = true; }
+    const indexes = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL").all(t).map(r => r.sql);
+    const triggers = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? AND name NOT LIKE 'trg\\_mcp\\_%' ESCAPE '\\'").all(t).map(r => r.sql);
+    const tmp = `${t}__mcp_rebuild`;
+    const create = row.sql.replace(re, '$1').replace(/^CREATE TABLE\s+(?:"[^"]+"|\w+)/i, `CREATE TABLE ${q(tmp)}`);
+    const cols = columnsOf(db, t).map(q).join(', ');
+    db.exec(create);
+    db.exec(`INSERT INTO ${q(tmp)} (${cols}) SELECT ${cols} FROM ${q(t)}`);
+    db.exec(`DROP TABLE ${q(t)}`);
+    db.exec(`ALTER TABLE ${q(tmp)} RENAME TO ${q(t)}`);
+    for (const sql of [...indexes, ...triggers]) db.exec(sql);
+    report.keyUniqueDropped.push(t);
+  }
+}
+
 /** Applies the whole MCP-layer schema. Safe to call on every open; returns what changed. */
 export function applyMcpSchema(db) {
   const report = {
     migrations: [], mcpContextAdded: [], uidBackfilled: {},
-    registryInserted: 0, registryUpdated: 0, registryPlaceholders: [], aiArtifacts: 0
+    registryInserted: 0, registryUpdated: 0, registryPlaceholders: [], aiArtifacts: 0, keyUniqueDropped: []
   };
   const own = !db.isTransaction;
   if (own) db.exec('BEGIN');
   try {
     runMigrations(db, report);
     ensureAgentUser(db);
+    dropGlobalKeyUnique(db, report);
     ensureMcpContextColumns(db, report);
     ensureIdentity(db, report);
     syncRegistry(db, report);

@@ -29,6 +29,25 @@ export class VersionService {
 
   #snapshot(m) { return m.items.map(e => ({ type: e.type, uid: e.uid, key: e.key, contentHash: e.contentHash, origin: e.origin })); }
 
+  /** Stores the item JSON of every manifest entry not stored yet (content-addressed), so the version can be restored. */
+  storeItems(projectId, manifest) {
+    const has = this.repo.db.prepare('SELECT 1 FROM version_items WHERE item_uid = ? AND content_hash = ?');
+    const ins = this.repo.db.prepare('INSERT OR IGNORE INTO version_items (item_uid, content_hash, item_type, project_id, item_json) VALUES (?, ?, ?, ?, ?)');
+    const principal = this.projectPrincipal(projectId);
+    for (const e of manifest) {
+      if (!e.contentHash || has.get(e.uid, e.contentHash)) continue;
+      const row = this.query.reads.find(e.type, e.uid);
+      if (!row) continue;
+      const { contentHash, scope, untrusted, builtin, visibility, ...item } = this.query.itemJson(principal, row);
+      ins.run(e.uid, e.contentHash, e.type, Number(projectId), JSON.stringify(item));
+    }
+  }
+
+  storedItem(uid, contentHash) {
+    const r = this.repo.db.prepare('SELECT item_json FROM version_items WHERE item_uid = ? AND content_hash = ?').get(uid, contentHash);
+    return r ? JSON.parse(r.item_json) : null;
+  }
+
   /** Returns the head version, recording a new one first when the live project differs from it. */
   ensureHead(projectId, { userId = null } = {}) {
     return this.transaction(() => {
@@ -37,18 +56,21 @@ export class VersionService {
       const head = this.repo.head(projectId);
       if (head && head.manifestHash === live.manifestHash) return head;
       this.repo.supersedeHead(projectId);
-      return this.repo.insertVersion({
+      const v = this.repo.insertVersion({
         projectId, number: this.repo.nextNumber(projectId), parentId: head?.id ?? null,
         source: head ? 'designer' : 'import', status: 'approved',
         manifest: this.#snapshot(live), manifestHash: live.manifestHash,
         message: head ? 'Designer changes' : 'Baseline', createdByUser: userId, approvedAt: new Date().toISOString()
       });
+      this.storeItems(projectId, v.manifest);
+      this.onChange?.(projectId, v);
+      return v;
     });
   }
 
   /** Creates the pending version of a submitted changeset (no number yet). */
-  createPending({ projectId, parentId, changesetId, message, label, userId, apiKeyId }) {
-    return this.repo.insertVersion({ projectId, parentId, source: 'ai-push', status: 'pending', changesetId, message, label, createdByUser: userId, createdByKey: apiKeyId });
+  createPending({ projectId, parentId, changesetId, message, label, userId, apiKeyId, source = 'ai-push' }) {
+    return this.repo.insertVersion({ projectId, parentId, source, status: 'pending', changesetId, message, label, createdByUser: userId, createdByKey: apiKeyId });
   }
 
   /** Approves a pending version: it becomes the head with the live manifest and the next number. */
@@ -59,10 +81,13 @@ export class VersionService {
     const live = this.liveManifest(v.projectId);
     const head = this.repo.head(v.projectId);
     this.repo.supersedeHead(v.projectId);
-    return this.repo.updateVersion(v.id, {
+    const done = this.repo.updateVersion(v.id, {
       status: 'approved', number: this.repo.nextNumber(v.projectId), parentId: head?.id ?? v.parentId,
       manifest: this.#snapshot(live), manifestHash: live.manifestHash, approvedBy: reviewerId, approvedAt: new Date().toISOString()
     });
+    this.storeItems(v.projectId, done.manifest);
+    this.onChange?.(v.projectId, done);
+    return done;
   }
 
   reject(versionId) { return this.repo.updateVersion(versionId, { status: 'rejected' }); }

@@ -158,7 +158,7 @@ try {
 
   // 3e'. MCP layer: keys, audit, versions, changesets, requests and bindings are private per instance;
   //      only the built-in (global, seed) AI pack templates and the schema registry are public.
-  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings']) {
+  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items']) {
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)) db.exec(`DELETE FROM ${t};`);
   }
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ai_artifacts'").get()) {

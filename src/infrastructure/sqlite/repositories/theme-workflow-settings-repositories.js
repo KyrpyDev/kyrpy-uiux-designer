@@ -97,8 +97,11 @@ export class WorkflowRepository {
       .map(r => ({ ...toWorkflow(r), screenCount: r.screen_count, linkCount: r.link_count }));
   }
   get(id) { return toWorkflow(this.db.prepare('SELECT * FROM workflows WHERE id = ?').get(id)); }
-  getByKey(key) { return toWorkflow(this.db.prepare('SELECT * FROM workflows WHERE key = ?').get(key)); }
-  keyExists(key) { return !!this.db.prepare('SELECT 1 FROM workflows WHERE key = ?').get(key); }
+  getByKey(key, projectId = null) { return toWorkflow(this.db.prepare("SELECT * FROM workflows WHERE key = ? ORDER BY (project_id = ?) DESC, (visibility = 'public') DESC, id LIMIT 1").get(key, projectId == null ? -1 : Number(projectId))); }
+  keyExists(key, projectId = null) {
+    return projectId == null ? !!this.db.prepare('SELECT 1 FROM workflows WHERE key = ?').get(key)
+      : !!this.db.prepare('SELECT 1 FROM workflows WHERE key = ? AND project_id = ?').get(key, Number(projectId));
+  }
   create(w, { id: explicitId } = {}) {
     const creatorId = w.creatorId ?? 1;
     const rootOwnerId = w.rootOwnerId ?? creatorId;

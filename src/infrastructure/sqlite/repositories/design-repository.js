@@ -75,8 +75,13 @@ export class DesignRepository {
   }
 
   get(id) { return toDesign(this.db.prepare(`SELECT * FROM ${this.table} WHERE id = ?`).get(id)); }
-  getByKey(key) { return toDesign(this.db.prepare(`SELECT * FROM ${this.table} WHERE key = ?`).get(key)); }
-  keyExists(key) { return !!this.db.prepare(`SELECT 1 FROM ${this.table} WHERE key = ?`).get(key); }
+  /** Keys are unique per project: prefer the given project, then the public library, then the oldest row. */
+  getByKey(key, projectId = null) { return toDesign(this.db.prepare(`SELECT * FROM ${this.table} WHERE key = ? ORDER BY (project_id = ?) DESC, (visibility = 'public') DESC, id LIMIT 1`).get(key, projectId == null ? -1 : Number(projectId))); }
+  /** With projectId: is the key taken in that project? Without: anywhere. */
+  keyExists(key, projectId = null) {
+    return projectId == null ? !!this.db.prepare(`SELECT 1 FROM ${this.table} WHERE key = ?`).get(key)
+      : !!this.db.prepare(`SELECT 1 FROM ${this.table} WHERE key = ? AND project_id = ?`).get(key, Number(projectId));
+  }
   categories() { return this.db.prepare(`SELECT category, COUNT(*) AS n FROM ${this.table} GROUP BY category ORDER BY category`).all(); }
   count() { return this.db.prepare(`SELECT COUNT(*) AS n FROM ${this.table}`).get().n; }
 

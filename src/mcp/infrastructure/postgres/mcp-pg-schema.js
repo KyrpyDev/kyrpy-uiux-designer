@@ -6,7 +6,7 @@
  * uid is not backfilled remotely: the next push sends the local uids, and the local `uid_keep` trigger
  * protects local uids from NULLs pulled before that.
  */
-import { IDENTITY_TABLES } from '../../domain/tables.js';
+import { IDENTITY_TABLES, PROJECT_KEY_TABLES } from '../../domain/tables.js';
 import { MCP_MIGRATIONS } from '../sqlite/mcp-schema.js';
 
 /**
@@ -22,6 +22,7 @@ export const MCP_SYNC_TABLES = [
   { name: 'changesets', pk: ['id'], conflict: 'id', uniqueCols: ['uid'] },
   { name: 'changeset_ops', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['changeset_id', 'item_type', 'item_key'] },
   { name: 'item_requests', pk: ['id'], conflict: 'id', uniqueCols: ['uid'] },
+  { name: 'version_items', pk: ['item_uid', 'content_hash'], conflict: 'item_uid, content_hash' },
   { name: 'code_bindings', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['project_id', 'item_uid', 'repo_id', 'file_path', 'symbol'] }
 ];
 
@@ -36,7 +37,7 @@ export function sqliteToPgDdl(sql) {
     .replace(/DEFAULT \((strftime|datetime)\([^)]*\)\)/g, "DEFAULT ''")
     .replace(/--[^\n]*/g, '');
 }
-const MCP_PG_TABLES_SQL = MCP_MIGRATIONS.filter(m => m.id !== 'm0-001-schema-registry').map(m => sqliteToPgDdl(m.sql)).join('\n');
+const MCP_PG_TABLES_SQL = MCP_MIGRATIONS.filter(m => m.id !== 'm0-001-schema-registry' && m.pg !== false).map(m => sqliteToPgDdl(m.sql)).join('\n');
 
 /** Tables that exist in the PostgreSQL schema (sessions, sync_outbox, sync_state and mcp_migrations stay local). */
 export const PG_TABLES = [
@@ -61,6 +62,9 @@ ${PG_TABLES.map(t => `ALTER TABLE IF EXISTS "${t}" ADD COLUMN IF NOT EXISTS mcp_
 ${IDENTITY_TABLES.map(t => `ALTER TABLE IF EXISTS "${t}" ADD COLUMN IF NOT EXISTS uid TEXT;
 ALTER TABLE IF EXISTS "${t}" ADD COLUMN IF NOT EXISTS content_hash TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_${t}_uid ON "${t}"(uid);`).join('\n')}
+-- ===== per-project keys: drop the global UNIQUE(key), keys are unique per (project_id, key) =====
+${PROJECT_KEY_TABLES.map(t => `ALTER TABLE IF EXISTS "${t}" DROP CONSTRAINT IF EXISTS "${t}_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_${t}_project_key ON "${t}"(project_id, key);`).join('\n')}
 -- ===== kyrpy-uiux-mcp (M1–M6): keys, audit, AI pack, versions, changesets, requests, bindings =====
 ${MCP_PG_TABLES_SQL}
 `;

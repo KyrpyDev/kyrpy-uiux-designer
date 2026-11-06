@@ -28,7 +28,7 @@ export class BindingService {
 
   #item(principal, type, ref) {
     if (!ITEM_TYPES.includes(type)) throw new ValidationError(`type must be one of ${ITEM_TYPES.join(', ')}`);
-    const row = this.reads.find(type, ref);
+    const row = this.reads.find(type, ref, principal.project.id);
     if (!row || row.project_id !== principal.project.id) throw new NotFoundError(`project ${type}`, ref);
     return row;
   }

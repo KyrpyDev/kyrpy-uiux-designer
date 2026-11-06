@@ -149,8 +149,9 @@ export class DesignService {
   create(input, { nodes = [], actor = null, actorId = null } = {}) {
     const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
     const data = normalizeDesign(this.ownerType, { ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
-    if (input.key && this.designs.keyExists(data.key)) throw new ConflictError(`${this.ownerType} key "${data.key}" already exists`);
-    if (!input.key) data.key = uniqueKey(data.name, k => this.designs.keyExists(k));
+    // keys are unique per project (src/mcp: per-project keys)
+    if (input.key && this.designs.keyExists(data.key, data.projectId)) throw new ConflictError(`${this.ownerType} key "${data.key}" already exists in this project`);
+    if (!input.key) data.key = uniqueKey(data.name, k => this.designs.keyExists(k, data.projectId));
     if (input.builtin) data.builtin = true;
     const clean = nodes.map(e => ({ ...normalizeNode(e), id: e.id, animations: e.animations }));
     this.#assertInstances(clean);
@@ -171,7 +172,7 @@ export class DesignService {
     const beforeDoc = (effActorId || recordChange) ? this.get(d.id) : null;
     const { scaleContent, ...rest } = patch;
     const data = normalizeDesign(this.ownerType, { ...rest }, { partial: true });
-    if (data.key && data.key !== d.key && this.designs.keyExists(data.key)) throw new ConflictError(`key "${data.key}" already exists`);
+    if (data.key && data.key !== d.key && this.designs.keyExists(data.key, data.projectId ?? d.projectId)) throw new ConflictError(`key "${data.key}" already exists`);
     const resized = (data.width !== undefined && data.width !== d.width) || (data.height !== undefined && data.height !== d.height);
     const updated = this.transaction(() => {
       if (resized && (scaleContent ?? ['button', 'element'].includes(this.ownerType))) {
@@ -210,7 +211,7 @@ export class DesignService {
     const d = this.#require(id);
     if (!snap || !Array.isArray(snap.nodes)) throw new ValidationError('restore needs a saved version: { record, nodes, menuItems }');
     const rec = normalizeDesign(this.ownerType, { ...(snap.record || {}) }, { partial: true });
-    if (rec.key && rec.key !== d.key && this.designs.keyExists(rec.key)) throw new ConflictError(`key "${rec.key}" already exists`);
+    if (rec.key && rec.key !== d.key && this.designs.keyExists(rec.key, d.projectId)) throw new ConflictError(`key "${rec.key}" already exists`);
     const nodes = (snap.nodes || []).map(e => ({ ...normalizeNode(e), id: e.id, animations: Array.isArray(e.animations) ? e.animations : [] }));
     this.#assertInstances(nodes, d.id);
     return this.transaction(() => {
@@ -232,6 +233,7 @@ export class DesignService {
     let trashRec = null;
     if (!permanent && this.trash) {
       const snapshot = {
+        uid: this.designs.db?.prepare(`SELECT uid FROM ${this.designs.table} WHERE id = ?`).get(d.id)?.uid ?? null,   // keeps the MCP identity on restore
         record: d,
         nodes: this.nodes.listByOwner(this.ownerType, d.id),
         animations: this.animations.listByOwner(this.ownerType, d.id),
@@ -275,7 +277,7 @@ export class DesignService {
         ...src,
         name: newName,
         label: name || `${src.label} copy`,
-        key: uniqueKey(slugify(name || `${src.key}-copy`), k => this.designs.keyExists(k)),
+        key: uniqueKey(slugify(name || ((projectId ?? src.projectId) !== src.projectId ? src.key : `${src.key}-copy`)), k => this.designs.keyExists(k, projectId ?? src.projectId ?? 1)),
         builtin: false,
         position: undefined,
         projectId: projectId ?? src.projectId ?? 1,

@@ -45,10 +45,33 @@ export function originAllowed(origin, host, extra = []) {
   } catch { return false; }
 }
 
-export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins = [] }) {
-  const sessions = new Map();   // id → { apiKeyId, protocolVersion, lastSeen }
+export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins = [], versions = null, pollMs = 10_000 }) {
+  // id → { apiKeyId, projectId, protocolVersion, lastSeen, subscriptions: Set<uri>, streams: Set<res> }
+  const sessions = new Map();
 
-  const sweep = () => { const t = Date.now(); for (const [k, v] of sessions) if (t - v.lastSeen > SESSION_TTL_MS) sessions.delete(k); };
+  const closeStreams = s => { for (const r of s.streams || []) { try { r.end(); } catch { /* gone */ } } s.streams?.clear(); };
+  const sweep = () => { const t = Date.now(); for (const [k, v] of sessions) if (t - v.lastSeen > SESSION_TTL_MS && !v.streams?.size) { closeStreams(v); sessions.delete(k); } };
+
+  /** Sends notifications/resources/updated to every open stream of the project's sessions subscribed to the uri. */
+  const notify = (projectId, uris) => {
+    let sent = 0;
+    for (const s of sessions.values()) {
+      if (s.projectId !== Number(projectId) || !s.streams.size) continue;
+      for (const uri of uris) {
+        if (!s.subscriptions.has(uri)) continue;
+        const frame = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/resources/updated', params: { uri } })}\n\n`;
+        for (const r of s.streams) { try { r.write(frame); sent++; } catch { /* closed */ } }
+      }
+    }
+    return sent;
+  };
+
+  // designer edits only become a version when someone records the head: poll the projects that have listeners
+  const poller = versions ? setInterval(() => {
+    const projects = new Set([...sessions.values()].filter(s => s.streams.size && s.subscriptions.size).map(s => s.projectId));
+    for (const pid of projects) { try { versions.ensureHead(pid); } catch { /* project gone */ } }
+  }, pollMs) : null;
+  poller?.unref?.();
 
   const baseUrlOf = req => {
     const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
@@ -63,7 +86,7 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
   };
 
   /** Returns true when the request was an MCP request (handled), false otherwise. */
-  return async function handle(req, res, url) {
+  const handle = async function handle(req, res, url) {
     const path = url.pathname;
     if (path !== '/mcp' && !path.startsWith('/mcp/')) return false;
     const ip = req.socket?.remoteAddress || '';
@@ -87,10 +110,24 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
       }
       if (path !== '/mcp') { send(res, 404, rpcError(RPC.METHOD_NOT_FOUND, 'not found')); return true; }
 
-      if (req.method === 'GET') { send(res, 405, 'this server does not offer a server-to-client stream', { allow: 'POST, DELETE' }); return true; }
+      if (req.method === 'GET') {
+        if (!String(req.headers.accept || '').includes('text/event-stream')) { send(res, 405, 'GET needs Accept: text/event-stream', { allow: 'GET, POST, DELETE' }); return true; }
+        const principal = authenticate(req, ip);
+        const s = sessions.get(String(req.headers['mcp-session-id'] || ''));
+        if (!s) { send(res, 400, rpcError(RPC.INVALID_REQUEST, 'a stream needs an initialized session (Mcp-Session-Id)')); return true; }
+        if (s.apiKeyId !== principal.apiKeyId) { send(res, 403, rpcError(RPC.INVALID_REQUEST, 'session belongs to another API key')); return true; }
+        if (s.streams.size >= 2) { send(res, 409, rpcError(RPC.INVALID_REQUEST, 'this session already has open streams')); return true; }
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+        res.write(': kyrpy-uiux-mcp stream open\n\n');
+        s.streams.add(res);
+        const beat = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* closed */ } }, 25_000);
+        beat.unref?.();
+        req.on('close', () => { clearInterval(beat); s.streams.delete(res); });
+        return true;
+      }
       if (req.method === 'DELETE') {
         const sid = req.headers['mcp-session-id'];
-        if (sid) sessions.delete(String(sid));
+        if (sid && sessions.has(String(sid))) { closeStreams(sessions.get(String(sid))); sessions.delete(String(sid)); }
         send(res, 200, '');
         return true;
       }
@@ -116,7 +153,7 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
       const sid = req.headers['mcp-session-id'] ? String(req.headers['mcp-session-id']) : null;
       if (msg?.method === 'initialize') {
         const id = randomUUID();
-        sessions.set(id, { apiKeyId: principal.apiKeyId, protocolVersion: protocol.negotiate(msg.params?.protocolVersion), lastSeen: Date.now() });
+        sessions.set(id, { apiKeyId: principal.apiKeyId, projectId: principal.project.id, protocolVersion: protocol.negotiate(msg.params?.protocolVersion), lastSeen: Date.now(), subscriptions: new Set(), streams: new Set() });
         headers['mcp-session-id'] = id;
       } else if (sid) {
         const s = sessions.get(sid);
@@ -125,7 +162,8 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
         s.lastSeen = Date.now();
       }
 
-      const out = await protocol.handle(msg, { principal, ip, baseUrl: baseUrlOf(req) });
+      const session = headers['mcp-session-id'] ? sessions.get(headers['mcp-session-id']) : sid ? sessions.get(sid) : null;
+      const out = await protocol.handle(msg, { principal, ip, baseUrl: baseUrlOf(req), session });
       if (out === null) { send(res, 202, '', headers); return true; }
       send(res, 200, out, headers);
       return true;
@@ -140,4 +178,8 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
       return true;
     }
   };
+  handle.notify = notify;
+  handle.sessions = sessions;
+  handle.stop = () => { if (poller) clearInterval(poller); for (const s of sessions.values()) closeStreams(s); };
+  return handle;
 }

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { uniqueKey } from '../../domain/naming.js';
 import { DESIGN_TABLES, TYPE_TO_TABLE } from '../domain/tables.js';
 import { ITEM_TYPES } from '../domain/item-validation.js';
+import { actionTargetType } from '../domain/portable-actions.js';
 
 /** Deterministic uid of a project's clone (UUID v8 layout): equal in dry runs, on apply and on every instance. */
 export function cloneUid(projectKey, srcUid) {
@@ -34,7 +35,8 @@ export class ProjectLibraryService {
     if (!cloneId) {
       const svc = type === 'workflow' ? this.workflows : this.services[type];
       cloneId = svc.clone(src.id, { name: src.name, projectId: Number(projectId), visibility: 'project', creatorId: this.agentUserId() }).id;
-      const key = uniqueKey(`${this.#projectKey(projectId)}-${src.key}`, k => !!this.db.prepare(`SELECT 1 FROM ${table} WHERE key = ? AND id <> ?`).get(k, cloneId));
+      // keys are unique per project: the clone keeps the original key unless the project already uses it
+      const key = uniqueKey(src.key, k => !!this.db.prepare(`SELECT 1 FROM ${table} WHERE key = ? AND project_id = ? AND id <> ?`).get(k, Number(projectId), cloneId));
       const uid = cloneUid(this.#projectKey(projectId), src.uid);
       const taken = this.db.prepare(`SELECT 1 FROM ${table} WHERE uid = ?`).get(uid);
       this.db.prepare(`UPDATE ${table} SET key = ?, label = ?${taken ? '' : ', uid = ?'} WHERE id = ?`).run(...[key, src.label ?? src.name, ...(taken ? [] : [uid]), cloneId]);
@@ -60,6 +62,16 @@ export class ProjectLibraryService {
     for (const [ownerType, t] of Object.entries(DESIGN_TABLES)) {
       this.db.prepare(`UPDATE nodes SET ref_id = ? WHERE ref_type = ? AND ref_id = ? AND owner_type = ? AND owner_id IN (SELECT id FROM ${t} WHERE project_id = ?)`)
         .run(toId, type, fromId, ownerType, p);
+    }
+    // click / event actions of the project's nodes
+    for (const [ownerType, t] of Object.entries(DESIGN_TABLES)) {
+      const rows = this.db.prepare(`SELECT id, on_click, events FROM nodes WHERE owner_type = ? AND owner_id IN (SELECT id FROM ${t} WHERE project_id = ?) AND (on_click LIKE ? OR events LIKE ?)`)
+        .all(ownerType, p, `%"targetId":${fromId}%`, `%"targetId":${fromId}%`);
+      const fix = a => (a && actionTargetType(a) === type && Number(a.targetId) === Number(fromId) ? { ...a, targetId: toId } : a);
+      for (const r of rows) {
+        const oc = r.on_click ? JSON.parse(r.on_click) : null, ev = r.events ? JSON.parse(r.events) : [];
+        this.db.prepare('UPDATE nodes SET on_click = ?, events = ? WHERE id = ?').run(oc ? JSON.stringify(fix(oc)) : r.on_click, JSON.stringify(Array.isArray(ev) ? ev.map(fix) : ev), r.id);
+      }
     }
     const col = { icon: 'icon_id', screen: 'target_screen_id', element: 'target_element_id' }[type];
     if (col) this.db.prepare(`UPDATE menu_items SET ${col} = ? WHERE ${col} = ? AND button_id IN (SELECT id FROM buttons WHERE project_id = ?)`).run(toId, fromId, p);

@@ -37,6 +37,8 @@ export class ItemRequestService {
     const sets = ['updated_at = ?'], args = [this.#iso()];
     for (const [k, c] of Object.entries(cols)) if (patch[k] !== undefined) { sets.push(`${c} = ?`); args.push(patch[k]); }
     this.db.prepare(`UPDATE item_requests SET ${sets.join(', ')} WHERE id = ?`).run(...args, id);
+    const pid = this.db.prepare('SELECT project_id FROM item_requests WHERE id = ?').get(id)?.project_id;
+    if (pid != null) this.onChange?.(pid);
   }
 
   #mine(principal, uid) {
@@ -60,6 +62,7 @@ export class ItemRequestService {
     this.db.prepare(`INSERT INTO item_requests (uid, project_id, item_type, intent, constraints, context, candidates, requested_by_user, requested_by_key)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uid, principal.project.id, type, text.slice(0, 1000), JSON.stringify(c1), JSON.stringify(c2),
       JSON.stringify(candidates), principal.user.id, principal.apiKeyId ?? null);
+    this.onChange?.(principal.project.id);
     return { request: this.#get(uid), candidates,
       hint: candidates.length ? 'Check the candidates: if one fits, use it and call uiux_cancel_request.' : 'Hand the request uid to the kyrpy-uiux-designer agent.' };
   }
@@ -105,7 +108,7 @@ export class ItemRequestService {
       this.#set(r.id, { status: 'in-review', itemType: t, itemUid: op.itemUid, itemKey: op.key, changeset: cs.uid });
       return this.#get(r.uid);
     }
-    const row = this.reads.find(t, ref);
+    const row = this.reads.find(t, ref, principal.project.id);
     if (!row || row.project_id !== principal.project.id) throw new NotFoundError(`project ${t}`, ref);
     return this.#done(r, t, row.uid, row.key);
   }
@@ -147,7 +150,7 @@ export class ItemRequestService {
     this.#assertMember(r.projectId, actor);
     if (!['open', 'claimed', 'in-review'].includes(r.status)) throw new ConflictError(`request is ${r.status}`);
     const t = type || r.type;
-    const row = this.reads.find(t, ref);
+    const row = this.reads.find(t, ref, r.projectId);
     if (!row || row.project_id !== r.projectId) throw new NotFoundError(`project ${t}`, ref);
     return this.#done(r, t, row.uid, row.key, `fulfilled by @${actor.username}`);
   }

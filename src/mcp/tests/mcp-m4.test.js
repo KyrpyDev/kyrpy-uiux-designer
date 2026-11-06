@@ -197,17 +197,17 @@ test('M4: conflicts — item changed in the designer after base; restage with he
   } finally { w.close(); }
 });
 
-test('M4: deletes, key collisions, empty push, reject-all, auto-approve setting, workflows', async () => {
+test('M4: deletes, per-project keys, empty push, reject-all, auto-approve setting, workflows', async () => {
   const w = await world();
   try {
     // another user's public icon owns a key → KEY_TAKEN with a suggestion
     const other = w.c.projects.create({ name: 'Bob App' }, { actor: w.bob.user });
     w.c.icon.create({ name: 'Pub', key: 'pub-icon', projectId: other.id, visibility: 'public' }, { actor: w.bob.user, nodes: [{ tag: 'rect', attrs: { x: 1, y: 1, width: 3, height: 3 } }] });
     const cs = await w.ok('uiux_begin_changeset', {});
-    const taken = await w.call('uiux_stage_item', { changeset: cs.changeset, item: { type: 'icon', key: 'pub-icon', ...docs(), nodes: [{ tag: 'circle', attrs: { cx: 5, cy: 5, r: 2 } }] } });
-    assert.equal(taken.structuredContent.error.code, 'VALIDATION_FAILED');
-    assert.equal(taken.structuredContent.error.details.errors[0].code, 'KEY_TAKEN');
-    assert.match(taken.structuredContent.error.details.fixes[0], /pub-icon-2/);
+    // keys are unique per project: another library's key is free here (a create, not an update of bob's icon)
+    const own = await w.ok('uiux_stage_item', { changeset: cs.changeset, item: { type: 'icon', key: 'pub-icon', ...docs(), nodes: [{ tag: 'circle', attrs: { cx: 5, cy: 5, r: 2 } }] } });
+    assert.equal(own.op, 'create');
+    assert.equal((await w.ok('uiux_stage_delete', { changeset: cs.changeset, type: 'icon', ref: 'pub-icon' })).unstaged, true);
 
     // empty push → nothing to submit; discard
     assert.equal((await w.call('uiux_submit_changeset', { changeset: cs.changeset })).structuredContent.error.code, 'VALIDATION_FAILED');

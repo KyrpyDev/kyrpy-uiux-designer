@@ -73,8 +73,8 @@ export class WorkflowService {
   create(input, { actor = null, actorId = null } = {}) {
     const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
     const data = normalizeWorkflow({ ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
-    if (input.key && this.workflows.keyExists(data.key)) throw new ConflictError(`workflow key "${data.key}" exists`);
-    if (!input.key) data.key = uniqueKey(data.name, k => this.workflows.keyExists(k));
+    if (input.key && this.workflows.keyExists(data.key, data.projectId)) throw new ConflictError(`workflow key "${data.key}" exists in this project`);
+    if (!input.key) data.key = uniqueKey(data.name, k => this.workflows.keyExists(k, data.projectId));
     return this.get(this.workflows.create(data).id);
   }
 
@@ -83,7 +83,7 @@ export class WorkflowService {
     const w = this.#require(id);
     const beforeDoc = (effActorId || recordChange) ? this.get(w.id) : null;
     const data = normalizeWorkflow({ ...patch }, { partial: true });
-    if (data.key && data.key !== w.key && this.workflows.keyExists(data.key)) throw new ConflictError(`workflow key "${data.key}" exists`);
+    if (data.key && data.key !== w.key && this.workflows.keyExists(data.key, data.projectId ?? w.projectId)) throw new ConflictError(`workflow key "${data.key}" exists`);
     this.workflows.update(w.id, data);
     const afterDoc = this.get(w.id);
     if (beforeDoc && this.collaboration && (recordChange || (effActorId && Number(effActorId) !== Number(w.creatorId || 1)))) {
@@ -113,6 +113,7 @@ export class WorkflowService {
     let trashRec = null;
     if (!permanent && this.trash) {
       const snapshot = {
+        uid: this.workflows.db?.prepare('SELECT uid FROM workflows WHERE id = ?').get(w.id)?.uid ?? null,   // keeps the MCP identity on restore
         record: w,
         nodes: this.workflows.nodes(w.id),
         links: this.workflows.links(w.id)
@@ -149,7 +150,7 @@ export class WorkflowService {
         ...src,
         name: name || `${src.name} copy`,
         label: name || `${src.label} copy`,
-        key: uniqueKey(slugify(name || `${src.key}-copy`), k => this.workflows.keyExists(k)),
+        key: uniqueKey(slugify(name || ((projectId ?? src.projectId) !== src.projectId ? src.key : `${src.key}-copy`)), k => this.workflows.keyExists(k, projectId ?? src.projectId ?? 1)),
         projectId: projectId ?? src.projectId ?? 1,
         visibility: visibility ?? src.visibility ?? 'public',
         creatorId: effCreatorId,
@@ -168,7 +169,7 @@ export class WorkflowService {
     const w = this.#require(id);
     if (!snap || !Array.isArray(snap.nodes) || !Array.isArray(snap.links)) throw new ValidationError('restore needs a saved version: { record, nodes, links }');
     const rec = normalizeWorkflow({ ...(snap.record || {}) }, { partial: true });
-    if (rec.key && rec.key !== w.key && this.workflows.keyExists(rec.key)) throw new ConflictError(`workflow key "${rec.key}" exists`);
+    if (rec.key && rec.key !== w.key && this.workflows.keyExists(rec.key, w.projectId)) throw new ConflictError(`workflow key "${rec.key}" exists`);
     return this.transaction(() => {
       this.workflows.update(w.id, rec);
       this.workflows.clearContent(w.id);

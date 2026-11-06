@@ -36,7 +36,7 @@ const safeEqual = (a, b) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, parseSvg, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
+export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, parseSvg, pollMs, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
   const { pepper, source: pepperSource } = loadKeyPepper(dbFile);
   const hashKey = plaintext => createHmac('sha256', pepper).update(plaintext).digest('hex');
 
@@ -62,7 +62,7 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
   // M2: read model + MCP server (needs the core design services; absent in minimal test containers)
   if (services && workflows && exporter && settings) {
     const query = new DesignQueryService({ agentUserId, reads: new DesignReadRepository(db), hashes: contentHashes, registry: schemaRegistry, services, workflows, exporter, projects, settings });
-    const bundles = new BundleService({ query });
+    const bundles = new BundleService({ query, exporter });
     const limiter = new RateLimiter(limits);
     const aiPack = new AiPackService({ artifacts: new AiArtifactRepository(db), query, bundles, projects, auth });
     // M4: versions + changesets (need the core change list for review)
@@ -86,7 +86,11 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
       };
     }
     const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings });
-    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, http: createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins }) });
+    const http = createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins, versions, ...(pollMs ? { pollMs } : {}) });
+    // live updates for subscribed sessions (resources/subscribe + GET /mcp event stream)
+    versions.onChange = projectId => http.notify(projectId, ['uiux://project/manifest', 'uiux://project/versions']);
+    requests.onChange = projectId => http.notify(projectId, ['uiux://requests/open']);
+    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, http });
   }
   return out;
 }

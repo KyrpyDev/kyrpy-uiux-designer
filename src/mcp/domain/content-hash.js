@@ -23,6 +23,8 @@ export function canonicalJson(value) {
 /** Sorts a list by the canonical text of its entries (order-independent collections). */
 const sortCanonical = list => list.map(v => [canonicalJson(v), v]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([, v]) => v);
 
+import { toPortableAction } from './portable-actions.js';
+
 const json = text => {
   if (text === null || text === undefined || text === '') return null;
   if (typeof text !== 'string') return text;
@@ -63,11 +65,14 @@ function canonicalNodes(nodes, animations, uidOf) {
     animsByNode.get(a.node_id).push(canonicalAnimation(a));
   }
   const { roots, pathOf } = nodeTree(nodes);
+  // actions reference rows by uid and nodes by tree path, so the hash is instance-independent
+  const act = a => toPortableAction(a, (t, id) => ({ uid: uidOf(t, id) }), id => pathOf.get(id) ?? null, { nodeField: 'targetNode' });
+  const acts = v => (Array.isArray(v) ? v.map(act) : v);
   const emit = ({ node: n, children }) => [
     n.kind, n.tag, n.name, n.role ?? null,
     n.ref_type ?? null, n.ref_type && n.ref_id != null ? uidOf(n.ref_type, n.ref_id) : null,
     num(n.rotation), bool(n.visible), n.text ?? '', json(n.attrs), n.description_dev ?? '',
-    json(n.on_click), json(n.events),
+    act(json(n.on_click)), acts(json(n.events)),
     sortCanonical(animsByNode.get(n.id) || []),
     children.map(emit)
   ];

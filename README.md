@@ -233,13 +233,16 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 | **API keys** | Per user × project, scopes `read` / `request` / `propose`, expiry, 24 h rotation grace, instant revoke, audit log. Only an HMAC hash is stored. |
 | **Read & download** | Schema, manifest, ranked search, single items (JSON/SVG), tokens (JSON/CSS/TS), workflows, single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
 | **AI pack** | `uiux_init` installs the `kyrpy-uiux-designer` agent and `kyrpy-skill-uiux-designer` skill for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `.uiux/config.json` and a lockfile. Local edits are never overwritten. |
-| **Adapters** | `web` (tokens.css/ts, icon sprite, typed index) and `react-tsx` (typed `<Icon name="…"/>` component). |
-| **Versions** | Numbered project versions. Designer edits and approved AI pushes each create one, and `uiux_get_manifest { sinceVersion }` returns the exact delta. |
+| **Adapters** | `web` (tokens.css/ts, icon sprite, typed index), `react-tsx` (typed `<Icon name="…"/>`), and `flutter` / `compose` / `swiftui` (native token constants, icon catalog, SVGs). |
+| **Working HTML app** | `uiux_export_app` (or *Collaborate ▸ Download Project as HTML App*) packs the project as a working HTML app: every screen, workflow link, click/event action, popup, drawer and button menu works, and all images are SVG. `app/interactions.json` describes every interaction, menu, workflow and developer note in machine-readable form, so agents can inspect and re-implement the behaviour. |
+| **Versions** | Numbered project versions. Designer edits and approved AI pushes each create one, and `uiux_get_manifest { sinceVersion }` returns the exact delta. **Restore** any version (*Versions ▸ Restore…* or `uiux_restore_version`). It becomes a reviewable changeset that brings deleted items back with their original uid. |
+| **Live updates** | `resources/subscribe` plus a `GET /mcp` event stream: agents get `notifications/resources/updated` when a new version or an item request arrives. |
 | **Changesets** | `begin → stage (validated + dry-run) → diff → submit`. Nothing changes before a human approves it. Per-item conflict detection (`baseHash`): design wins for visual attributes, code wins for bindings. |
 | **Review** | *Collaborate ▸ Versions & AI Changesets* shows before/after previews and lets you approve all, approve some, or reject. AI items also appear in the Change List and the pending-changes count. |
 | **Item requests** | A coding agent asks for a missing item (the server searches first). The designer agent claims it, stages the item and fulfils the request, which completes on approval. Humans can work the same queue in *AI Item Requests*. |
 | **Code bindings** | Item ↔ file/symbol links. `stale` flags code that is behind the design, and re-pushing an unchanged app produces 0 operations. |
-| **Project scope** | A project's design system is self-contained: every public or foreign item a project uses is cloned into the project library (`<project-key>-<key>`, visibility `project`). |
+| **Project scope** | A project's design system is self-contained, and **keys are unique per project**: every public or foreign item a project uses (including click and navigation targets) is cloned into the project library under its own key. |
+| **Portable interactions** | Click and event actions reference other items as `{type, uid, key}` and nodes by index. They survive cloning, syncing and pushing, and the content hash is instance-independent. |
 | **AI attribution** | Every AI-applied change is made by the system user **`kyrpy-agent-designer`**, which cannot sign in. The human reviewer is recorded as the approver. |
 | **Standards** | Key format, docs (`descriptionDev`, `mcpContext.purpose`), 24×24 icons, SVG sanitising, size limits, duplicates, references, hierarchy, accessibility basics. |
 | **Security** | Origin check, 1 MB bodies, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, tenant isolation. STRIDE review: [`src/mcp/SECURITY.md`](src/mcp/SECURITY.md). |
@@ -270,7 +273,7 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
    - AI design co-pilots that propose layout refinements, accessibility (WCAG AAA) fixes, theme token harmonization, and interactive state wiring directly through the **Collaborative Change Request (`pending` → `approved` / `rejected`)** review pipeline.
    - Automated multi-persona UX evaluation agents that simulate user journeys across workflows and attach structured UX feedback to screens.
 
-2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions, changesets, item requests, code bindings and PostgreSQL sync for AI coding agents. Next: more adapters (`flutter`, `compose`, `swiftui`), project-scoped keys instead of globally unique ones, and SSE resource subscriptions.
+2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions and restore, changesets, item requests, code bindings, per-project keys, web/React/Flutter/Compose/SwiftUI adapters, a working HTML app export, live subscriptions and PostgreSQL sync for AI coding agents.
 
 3. **🔑 Use BYOK (Bring Your Own Key) for Users' AI-Assisted Item Generator Features**
    - Built-in **BYOK (Bring Your Own Key)** settings vault allowing each user to configure their own API keys (OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or local Ollama/vLLM endpoints) stored locally or encrypted per user profile.

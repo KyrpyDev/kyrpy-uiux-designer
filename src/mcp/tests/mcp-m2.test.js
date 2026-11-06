@@ -185,12 +185,13 @@ test('M2: manifest = project items (used foreign items are cloned into the proje
   try {
     const m = (await w.call('uiux_get_manifest', { includeDeps: true })).structuredContent;
     const keys = m.items.map(i => `${i.type}:${i.key}:${i.origin}`).sort();
-    // project scope: bob-shared (another project's icon used by ada-cta) became the project clone ada-app-bob-shared
-    assert.deepEqual(keys, ['button:ada-cta:project', 'icon:ada-star:project', 'icon:ada-app-bob-shared:project', 'screen:ada-detail:project', 'screen:ada-home:project', 'workflow:ada-flow:project'].sort());
-    const clone = w.c.icon.get('ada-app-bob-shared');
+    // project scope: bob-shared (another project's icon used by ada-cta) became a project clone with the same key
+    assert.deepEqual(keys, ['button:ada-cta:project', 'icon:ada-star:project', 'icon:bob-shared:project', 'screen:ada-detail:project', 'screen:ada-home:project', 'workflow:ada-flow:project'].sort());
+    const clone = w.c.icon.get(w.c.mcp.query.reads.findInProject('icon', 'bob-shared', w.adaP.id).id);
     assert.equal(clone.visibility, 'project');
     assert.equal(w.c.users.get(clone.creatorId).username, 'kyrpy-agent-designer');
-    assert.equal(w.c.icon.get('bob-shared').projectId, w.bobP.id, 'the original stays in its project');
+    assert.equal(w.c.mcp.query.reads.findInProject('icon', 'bob-shared', w.bobP.id).project_id, w.bobP.id, 'the original stays in its project');
+    assert.notEqual(clone.id, w.c.mcp.query.reads.findInProject('icon', 'bob-shared', w.bobP.id).id);
     assert.equal(m.counts.icon, 2);
     assert.ok(m.items.find(i => i.key === 'ada-cta').deps.length === 1);
     const page = (await w.call('uiux_get_manifest', { limit: 2 })).structuredContent;

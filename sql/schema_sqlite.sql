@@ -57,9 +57,9 @@ CREATE TABLE api_keys (
   mcp_context     TEXT NOT NULL DEFAULT '{}'
 );
 
-CREATE TABLE buttons (
+CREATE TABLE "buttons" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,          -- variable name used in code (dashed words)
+  key             TEXT NOT NULL,          -- variable name used in code (dashed words)
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',      -- text shown to users
   description_dev TEXT NOT NULL DEFAULT '',      -- instructions for the dev team / coding agents
@@ -158,7 +158,7 @@ CREATE TABLE code_bindings (
 
 CREATE TABLE "elements" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,          -- variable name used in code (dashed words)
+  key             TEXT NOT NULL,          -- variable name used in code (dashed words)
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',      -- text shown to users
   description_dev TEXT NOT NULL DEFAULT '',      -- instructions for the dev team / coding agents
@@ -173,9 +173,9 @@ CREATE TABLE "elements" (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , project_id INTEGER NOT NULL DEFAULT 1, visibility TEXT NOT NULL DEFAULT 'public', creator_id INTEGER NOT NULL DEFAULT 1, cloned_from_id INTEGER, root_item_id INTEGER, root_owner_id INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, mcp_context TEXT NOT NULL DEFAULT '{}', uid TEXT, content_hash TEXT);
 
-CREATE TABLE icons (
+CREATE TABLE "icons" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,          -- variable name used in code (dashed words)
+  key             TEXT NOT NULL,          -- variable name used in code (dashed words)
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',      -- text shown to users
   description_dev TEXT NOT NULL DEFAULT '',      -- instructions for the dev team / coding agents
@@ -270,9 +270,9 @@ CREATE TABLE nodes (
   description_dev TEXT NOT NULL DEFAULT ''
 , on_click TEXT NOT NULL DEFAULT '', events TEXT NOT NULL DEFAULT '[]', mcp_context TEXT NOT NULL DEFAULT '{}');
 
-CREATE TABLE paths (
+CREATE TABLE "paths" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,          -- variable name used in code (dashed words)
+  key             TEXT NOT NULL,          -- variable name used in code (dashed words)
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',      -- text shown to users
   description_dev TEXT NOT NULL DEFAULT '',      -- instructions for the dev team / coding agents
@@ -346,9 +346,9 @@ CREATE TABLE schema_registry (
   UNIQUE (table_name, column_name)
 );
 
-CREATE TABLE screens (
+CREATE TABLE "screens" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,          -- variable name used in code (dashed words)
+  key             TEXT NOT NULL,          -- variable name used in code (dashed words)
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',      -- text shown to users
   description_dev TEXT NOT NULL DEFAULT '',      -- instructions for the dev team / coding agents
@@ -481,6 +481,17 @@ CREATE TABLE users (
   last_login_at TEXT
 , mcp_context TEXT NOT NULL DEFAULT '{}');
 
+CREATE TABLE version_items (
+  item_uid     TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  item_type    TEXT NOT NULL,
+  project_id   INTEGER NOT NULL,
+  item_json    TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context  TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (item_uid, content_hash)
+);
+
 CREATE TABLE "workflow_links" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   workflow_id     INTEGER NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
@@ -502,9 +513,9 @@ CREATE TABLE workflow_screens (
   PRIMARY KEY (workflow_id, screen_id)
 );
 
-CREATE TABLE workflows (
+CREATE TABLE "workflows" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  key             TEXT NOT NULL UNIQUE,
+  key             TEXT NOT NULL,
   name            TEXT NOT NULL,
   label           TEXT NOT NULL DEFAULT '',
   description_dev TEXT NOT NULL DEFAULT '',
@@ -567,6 +578,8 @@ CREATE INDEX idx_sync_outbox_pending ON sync_outbox(synced, id);
 CREATE INDEX idx_translations_lookup ON translations(table_name, record_id, lang_code);
 
 CREATE INDEX idx_trash_type_proj ON trash_items(item_type, project_id, visibility);
+
+CREATE INDEX idx_version_items_project ON version_items(project_id);
 
 CREATE UNIQUE INDEX ux_buttons_project_key ON "buttons"(project_id, key);
 

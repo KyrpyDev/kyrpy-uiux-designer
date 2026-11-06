@@ -15,6 +15,7 @@ import { parseMcpContext } from '../domain/mcp-context.js';
 import { canonicalJson } from '../domain/content-hash.js';
 import { SEED_VERSION } from '../domain/schema-registry-seed.js';
 import { ITEM_TYPES } from '../infrastructure/sqlite/design-read-repository.js';
+import { toPortableAction } from '../domain/portable-actions.js';
 
 export const SCHEMA_VERSION = `1.${SEED_VERSION}`;
 const KEY_PATTERN = '^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$';
@@ -226,15 +227,15 @@ export class DesignQueryService {
 
   /* ---------- single item ---------- */
 
-  #row(type, ref) {
+  #row(type, ref, projectId = null) {
     if (!ITEM_TYPES.includes(type)) throw new ValidationError(`type must be one of ${ITEM_TYPES.join(', ')}`);
-    const row = this.reads.find(type, ref);
+    const row = this.reads.find(type, ref, projectId);
     if (!row) throw new NotFoundError(type, ref);
     return row;
   }
 
   getItem(principal, { type, ref, format = 'json', style, animated = true } = {}) {
-    const row = this.#row(type, ref);
+    const row = this.#row(type, ref, principal.project.id);
     this.#assertReadable(principal, row);
     if (format === 'svg') {
       if (type === 'workflow') throw new ValidationError('workflows have no svg; use format "json"');
@@ -267,6 +268,7 @@ export class DesignQueryService {
     }
     const d = this.services[row.type].get(row.id);
     const nodeIds = new Map(d.nodes.map((n, i) => [n.id, i]));
+    const act = a => toPortableAction(a, (t, id) => ({ uid: this.reads.uidOf(t, id), key: this.reads.keyOf(t, id) }), id => nodeIds.get(id) ?? null);
     return {
       ...base,
       category: d.category, tags: d.tags, width: d.width, height: d.height, meta: d.meta,
@@ -274,7 +276,7 @@ export class DesignQueryService {
         index: nodeIds.get(n.id), parentIndex: n.parentId != null ? nodeIds.get(n.parentId) ?? null : null, ord: n.ord,
         kind: n.kind, tag: n.tag, name: n.name, role: n.role, ref: n.refType ? { type: n.refType, ...ref(n.refType, n.refId) } : null,
         rotation: n.rotation, visible: !!n.visible, text: n.text, attrs: n.attrs, descriptionDev: n.descriptionDev,
-        onClick: n.onClick, events: n.events
+        onClick: act(n.onClick), events: Array.isArray(n.events) ? n.events.map(act) : n.events
       })),
       animations: (d.animations || []).map(a => ({ nodeIndex: nodeIds.get(a.nodeId) ?? null, name: a.name, type: a.type, params: a.params,
         durationMs: a.durationMs, delayMs: a.delayMs, easing: a.easing, iterations: a.iterations, direction: a.direction,

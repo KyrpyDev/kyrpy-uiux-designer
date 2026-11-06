@@ -155,6 +155,30 @@ const M4_TOOLS = [
     scope: 'propose', readOnly: false,
     run: ({ principal, changesets }, args) => ({ summary: 'Changeset discarded.', data: changesets.discard(principal, args) })
   },
+  {
+    name: 'uiux_restore_version',
+    title: 'Restore a project version',
+    description: 'Proposes bringing the project back to an earlier version: removed items come back with their original uid, changed items roll back, items added since are deleted. The result is a normal changeset that the project owner reviews; nothing changes before approval.',
+    inputSchema: { type: 'object', properties: { version: { type: 'integer', minimum: 1, description: 'Version number to restore.' }, message: str('Message for the reviewer.', { maxLength: 2000 }) }, required: ['version'], additionalProperties: false },
+    scope: 'propose', readOnly: false,
+    run: ({ principal, changesets }, args) => {
+      const data = changesets.restoreVersion(principal, args);
+      return { summary: data.unchanged ? `The project already matches version ${data.restoredFrom}.` : `Restore of version ${data.restoredFrom} submitted for review: ${data.opCount} operation(s)${data.skipped.length ? `, ${data.skipped.length} skipped` : ''}.`, data };
+    }
+  },
+  {
+    name: 'uiux_export_app',
+    title: 'Export the project as a working HTML app',
+    description: 'Packs the project as a working HTML app (every project screen, workflow navigation, click/event actions, popups, drawers, button menus; all images SVG) plus app/interactions.json, a machine-readable description of every interaction, menu, workflow and developer note. Returns a single-use download URL with shell steps; open uiux/source/app/index.html, read app/interactions.json and app/DEV-NOTES.md to implement the behaviour.',
+    inputSchema: { type: 'object', properties: { styles: { oneOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 }], description: 'Style keys (default: current style and its twin).' } }, additionalProperties: false },
+    scope: 'read',
+    run: ({ principal, bundles, limiter, baseUrl, versions }, args) => {
+      takeBundle(limiter, principal);
+      versions?.ensureHead(principal.project.id);
+      const data = bundles.create(principal, { ...args, includeApp: true, includeSvg: false, adapters: ['web'] }, { baseUrl });
+      return { summary: `App export ready (${data.files} files, ${(data.bytes / 1024).toFixed(0)} KB). Run the install steps, then open uiux/source/app/index.html and read uiux/source/app/interactions.json.`, data };
+    }
+  },
   /* ---------- M5: item requests ---------- */
   {
     name: 'uiux_request_item',
@@ -436,7 +460,8 @@ export const TOOLS = [
         styles: { oneOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 }], description: 'Style keys, or "all". Default: the current style and its dark/light twin.' },
         types: typesProp,
         includeSvg: { type: 'boolean', description: 'Include rendered SVGs (default true).' },
-        adapters: { type: 'array', items: { type: 'string', enum: ['web', 'react-tsx'] }, maxItems: 4, description: 'Target adapters (default ["web"]: tokens.css, tokens.ts, icon sprite, typed index; "react-tsx": typed <Icon> component + tokens).' }
+        includeApp: { type: 'boolean', description: 'Also include app/: the project as a working HTML app (screens, workflow links, actions, popups, menus; SVG images) and app/interactions.json (default false).' },
+        adapters: { type: 'array', items: { type: 'string', enum: ['web', 'react-tsx', 'flutter', 'compose', 'swiftui'] }, maxItems: 5, description: 'Target adapters (default ["web"]: tokens.css, tokens.ts, icon sprite, typed index; "react-tsx": typed <Icon> component + tokens; "flutter" / "compose" / "swiftui": native tokens + icon catalog + SVGs).' }
       },
       additionalProperties: false
     },

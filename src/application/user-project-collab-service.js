@@ -23,6 +23,12 @@ import {
 import { isValidKey, slugify, uniqueKey } from '../domain/naming.js';
 import { restoreBody, workflowRestoreBody } from '../domain/doc-fingerprint.js';
 
+/** Gives a restored row back its stable uid (MCP identity), when the snapshot has one and it is still free. */
+function restoreUid(db, table, id, uid) {
+  if (!uid || !db) return;
+  try { db.prepare(`UPDATE ${table} SET uid = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM ${table} WHERE uid = ?)`).run(uid, id, uid); } catch { /* table without uid column */ }
+}
+
 export class ForbiddenError extends DomainError {
   constructor(message = 'Permission denied for this operation') {
     super(message, 'FORBIDDEN', 403);
@@ -1101,10 +1107,11 @@ export class TrashService {
           rootOwnerId: item.rootOwnerId ?? 1
         };
         const freeId = item.originalId && !wfRepo.get(item.originalId);
-        const key = wfRepo.keyExists(rec.key)
-          ? uniqueKey(rec.key, k => wfRepo.keyExists(k))
+        const key = wfRepo.keyExists(rec.key, rec.projectId)
+          ? uniqueKey(rec.key, k => wfRepo.keyExists(k, rec.projectId))
           : rec.key;
         const created = wfRepo.create({ ...rec, key }, freeId ? { id: item.originalId } : {});
+        restoreUid(wfRepo.db, 'workflows', created.id, snap.uid);
         for (const n of snap.nodes || []) {
           try {
             wfRepo.placeScreen({
@@ -1150,10 +1157,11 @@ export class TrashService {
         rootOwnerId: item.rootOwnerId ?? 1
       };
       const freeId = item.originalId && !repo.get(item.originalId);
-      const key = repo.keyExists(rec.key)
-        ? uniqueKey(rec.key, k => repo.keyExists(k))
+      const key = repo.keyExists(rec.key, rec.projectId)
+        ? uniqueKey(rec.key, k => repo.keyExists(k, rec.projectId))
         : rec.key;
       const created = repo.create({ ...rec, key }, freeId ? { id: item.originalId } : {});
+      restoreUid(repo.db, repo.table, created.id, snap.uid);
       const nodesWithAnims = (snap.nodes || []).map(n => ({
         ...n,
         animations: (snap.animations || []).filter(a => a.nodeId === n.id)
@@ -1317,7 +1325,7 @@ export class LibraryTransferService {
         }
       }
       const wfName = overrideName || src.name;
-      const wfKey = uniqueKey(slugify(`${overrideName || src.key}-p${targetProjectId}`), k => wfRepo.keyExists(k));
+      const wfKey = uniqueKey(slugify(overrideName || src.key), k => wfRepo.keyExists(k, targetProjectId));   // keys are per project
       const createdWf = wfRepo.create({
         key: wfKey,
         name: wfName,
@@ -1426,8 +1434,8 @@ export class LibraryTransferService {
     }
 
     const finalName = overrideName || src.name;
-    const baseKey = slugify(`${overrideName || src.key}-p${targetProjectId}`);
-    const newKey = uniqueKey(baseKey, k => svc.designs.keyExists(k));
+    const baseKey = slugify(overrideName || src.key);   // keys are per project: a copy keeps its key
+    const newKey = uniqueKey(baseKey, k => svc.designs.keyExists(k, targetProjectId));
     const rootItemId = src.rootItemId || src.id;
     const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
     const effCreatorId = actor?.id ?? src.creatorId ?? 1;

@@ -81,7 +81,7 @@ test('M0: seed refresh never overwrites user-edited registry rows', () => {
 test('M0: the MCP schema pass is idempotent', () => {
   const c = fresh();
   const again = applyMcpSchema(c.db);
-  assert.deepEqual(again, { migrations: [], mcpContextAdded: [], uidBackfilled: {}, registryInserted: 0, registryUpdated: 0, registryPlaceholders: [], aiArtifacts: 0 });
+  assert.deepEqual(again, { migrations: [], mcpContextAdded: [], uidBackfilled: {}, registryInserted: 0, registryUpdated: 0, registryPlaceholders: [], aiArtifacts: 0, keyUniqueDropped: [] });
   c.close();
 });
 

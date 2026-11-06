@@ -126,12 +126,20 @@ export async function openVersionsModal({ changeset, tab: startTab } = {}) {
       h('td', {}, v.source),
       h('td', { class: 'ver-hide-sm' }, String(v.items)),
       h('td', {}, v.message || ''),
-      h('td', { class: 'ver-hide-sm' }, when(v.approvedAt || v.createdAt))));
+      h('td', { class: 'ver-hide-sm' }, when(v.approvedAt || v.createdAt)),
+      h('td', {}, v.number && v.number !== data.head ? h('button', { class: 'btn sm', title: `Propose restoring v${v.number} (reviewed like an AI changeset)`, onclick: async () => {
+        try {
+          const r = await request('POST', `/api/projects/${projectId}/versions/${v.number}/restore`, {});
+          if (r.unchanged) { toast(`The project already matches v${v.number}`, 'ok'); return; }
+          toast(`Restore of v${v.number} is ready for review (${r.opCount} change(s))`, 'ok');
+          openDetail(r.changeset);
+        } catch (e) { toast(e.message, 'error'); }
+      } }, 'Restore…') : null)));
     return h('div', { class: 'ver-list' },
       h('div', { class: 'ver-card' }, h('div', { class: 'ver-muted', style: { marginBottom: '6px' } }, `Head: v${data.head}. Designer edits are recorded as a new version automatically; give the head a label to mark a release.`),
         h('div', { class: 'ver-actions', style: { justifyContent: 'flex-start' } }, label, msg, save)),
       h('table', { class: 'ver-table' },
-        h('thead', {}, h('tr', {}, ['Version', 'Status', 'Source', 'Items', 'Message', 'When'].map((t, i) => h('th', { class: i === 3 || i === 5 ? 'ver-hide-sm' : '' }, t)))),
+        h('thead', {}, h('tr', {}, ['Version', 'Status', 'Source', 'Items', 'Message', 'When', ''].map((t, i) => h('th', { class: i === 3 || i === 5 ? 'ver-hide-sm' : '' }, t)))),
         h('tbody', {}, rows)));
   }
 
@@ -197,4 +205,21 @@ export async function openVersionsModal({ changeset, tab: startTab } = {}) {
   modal({ title: 'Versions, AI Changesets & Requests', content: host, wide: true });
   await render();
   if (changeset) openDetail(changeset);
+}
+
+/** Collaborate → "Download project as HTML app": the project as a working HTML app + interactions.json (.tar.gz). */
+export async function downloadProjectApp() {
+  const projectId = state.activeProjectId || 1;
+  const { token, userId, projectId: sp } = api.getSession();
+  const headers = { 'x-user-id': String(userId || 1), 'x-project-id': String(sp || 1) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  toast('Building the HTML app export…', 'ok');
+  const r = await fetch(`/api/projects/${projectId}/app-export`, { headers, cache: 'no-store' });
+  if (!r.ok) { const d = await r.json().catch(() => null); toast(d?.error?.message || r.statusText, 'error'); return; }
+  const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `project-${projectId}-app.tar.gz`;
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  toast(`Downloaded ${name}: open app/index.html; app/interactions.json describes every action, menu and workflow`, 'ok');
 }

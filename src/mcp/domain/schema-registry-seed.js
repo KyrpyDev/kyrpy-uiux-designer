@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 6;
+export const SEED_VERSION = 7;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -513,6 +513,19 @@ export const SCHEMA_REGISTRY_SEED = {
       created_by_key: 'API key that recorded it (`api_keys.id`).',
       created_at: 'ISO creation time.',
       updated_at: 'ISO time of the last change.',
+      mcp_context: C.mcp_context
+    }
+  },
+  version_items: {
+    purpose: 'Content-addressed item JSON of every (item uid, contentHash) a project version contained; lets a version be restored.',
+    constraints: ['Written when a version is recorded; never edited.', 'Agents never write this table.'],
+    columns: {
+      item_uid: 'uid of the item.',
+      content_hash: 'contentHash of this content.',
+      item_type: 'path | icon | button | element | screen | workflow.',
+      project_id: 'Project the version belongs to (`projects.id`).',
+      item_json: 'The item in the uiux_get_item JSON format at that content.',
+      created_at: 'ISO time it was stored.',
       mcp_context: C.mcp_context
     }
   },

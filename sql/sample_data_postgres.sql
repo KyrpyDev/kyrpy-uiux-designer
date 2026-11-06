@@ -421,6 +421,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_template_buttons_uid ON "template_buttons"(
 ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS uid TEXT;
 ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS content_hash TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_template_devices_uid ON "template_devices"(uid);
+-- ===== per-project keys: drop the global UNIQUE(key), keys are unique per (project_id, key) =====
+ALTER TABLE IF EXISTS "paths" DROP CONSTRAINT IF EXISTS "paths_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_paths_project_key ON "paths"(project_id, key);
+ALTER TABLE IF EXISTS "icons" DROP CONSTRAINT IF EXISTS "icons_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_icons_project_key ON "icons"(project_id, key);
+ALTER TABLE IF EXISTS "buttons" DROP CONSTRAINT IF EXISTS "buttons_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_buttons_project_key ON "buttons"(project_id, key);
+ALTER TABLE IF EXISTS "elements" DROP CONSTRAINT IF EXISTS "elements_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_elements_project_key ON "elements"(project_id, key);
+ALTER TABLE IF EXISTS "screens" DROP CONSTRAINT IF EXISTS "screens_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_screens_project_key ON "screens"(project_id, key);
+ALTER TABLE IF EXISTS "workflows" DROP CONSTRAINT IF EXISTS "workflows_key_key";
+CREATE UNIQUE INDEX IF NOT EXISTS ux_workflows_project_key ON "workflows"(project_id, key);
 -- ===== kyrpy-uiux-mcp (M1–M6): keys, audit, AI pack, versions, changesets, requests, bindings =====
 
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -592,6 +605,18 @@ CREATE TABLE IF NOT EXISTS code_bindings (
   UNIQUE (project_id, item_uid, repo_id, file_path, symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_code_bindings_file ON code_bindings(project_id, file_path);
+
+CREATE TABLE IF NOT EXISTS version_items (
+  item_uid     TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  item_type    TEXT NOT NULL,
+  project_id   INTEGER NOT NULL,
+  item_json    TEXT NOT NULL,
+  created_at   TEXT NOT NULL DEFAULT '',
+  mcp_context  TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (item_uid, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_version_items_project ON version_items(project_id);
 TRUNCATE TABLE users, projects, project_members, themes, paths, icons, buttons, elements, screens, nodes, animations, menu_items, workflows, workflow_screens, workflow_links, change_requests, template_devices, template_buttons, translations, settings, trash_items RESTART IDENTITY CASCADE;
 -- Table: users (2 rows)
 INSERT INTO "users" ("id", "username", "email", "password_hash", "salt", "display_name", "role", "status", "permissions", "avatar_color", "created_at", "updated_at", "last_login_at", "mcp_context") VALUES (1, 'kyrpy', 'kyrpy@kyrpy.com', 'a875b70ccb4a20cb714d01f70a2b41b79caca7979a5a9c0561a9d7f03dac37d0da315f713cb08aa47b52851227ccaf88dc2d37905224db832063713b3d6f41d3', 'kyrpy_salt_v1', 'Kyrpy (Admin)', 'admin', 'active', '["*"]', '#2e9bff', '2026-11-05 00:00:00', '2026-11-05 00:00:00', NULL, '{}') ON CONFLICT DO NOTHING;

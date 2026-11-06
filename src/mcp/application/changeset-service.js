@@ -18,6 +18,9 @@ import { mergeMcpContext, parseMcpContext } from '../domain/mcp-context.js';
 import { validateItemStatic, itemRefs, ITEM_TYPES, LIMITS } from '../domain/item-validation.js';
 import { TYPE_TO_TABLE } from '../domain/tables.js';
 import { cleanFilePath } from './binding-service.js';
+import { fromPortableAction } from '../domain/portable-actions.js';
+import { normalizeClickAction, normalizeEventBinding } from '../../domain/entities.js';
+import { isUid } from '../domain/uid.js';
 
 const HIER = ITEM_TYPES;   // path → icon → button → element → screen → workflow
 const OPEN = ['open', 'conflicted'];
@@ -77,17 +80,15 @@ export class ChangesetService {
       }
     }
     if (!row && item.key) {
-      const byKey = this.reads.find(type, item.key);
-      if (byKey && byKey.project_id === principal.project.id) row = byKey;
-      else if (byKey) keyTaken = byKey;
+      row = this.reads.findInProject(type, item.key, principal.project.id);   // keys are unique per project
     }
     return { row, keyTaken };
   }
 
-  #freeKey(key) {
+  #freeKey(key, projectId) {
     for (let i = 2; i < 1000; i++) {
       const k = `${key}-${i}`;
-      if (!ITEM_TYPES.some(t => this.reads.find(t, k))) return k;
+      if (!ITEM_TYPES.some(t => this.reads.findInProject(t, k, projectId))) return k;
     }
     return `${key}-${Date.now()}`;
   }
@@ -95,7 +96,7 @@ export class ChangesetService {
   #resolveRef(principal, ref, path) {
     const type = ref.type;
     if (!ITEM_TYPES.includes(type)) throw new ValidationError(`${path}: unknown type "${type}"`);
-    const row = (ref.uid && this.reads.find(type, ref.uid)) || (ref.key && this.reads.find(type, ref.key));
+    const row = (ref.uid && this.reads.find(type, ref.uid)) || (ref.key && this.reads.find(type, ref.key, principal.project.id));
     if (!row) throw new DomainError(`${path}: ${type} "${ref.uid || ref.key}" not found; search for it first or stage it in the same changeset`, 'REF', 422);
     if (!this.#readable(principal, row)) throw new DomainError(`${path}: ${type} "${row.key}" is not visible to this project`, 'REF', 422);
     // project scope: a used item from another library is cloned into the project and referenced there
@@ -124,6 +125,16 @@ export class ChangesetService {
     return {
       nodes: item.nodes.map((n, i) => {
         const { index, parentIndex, ref, ord, ...rest } = n;
+        // action targets are soft references: a target that does not exist yet (for example a screen staged after
+        // the button that opens it, or a screen that contains that very button) is patched in after all ops applied
+        const port = (a, p, slot) => {
+          try { return fromPortableAction(a, (t, path) => this.#resolveRef(principal, t, path), idx => -(idx + 1), p); } catch (e) {
+            if (this.fixups && e.code === 'REF' && a?.target) { this.fixups.push({ ...slot, action: a, path: p }); return undefined; }
+            throw e;
+          }
+        };
+        if (rest.onClick) rest.onClick = port(rest.onClick, `nodes[${i}].onClick`, { nodeIndex: i, field: 'onClick' }) ?? null;
+        if (Array.isArray(rest.events)) rest.events = rest.events.map((e, j) => port(e, `nodes[${i}].events[${j}]`, { nodeIndex: i, field: 'events', eventIndex: j })).filter(e => e !== undefined);
         return {
           ...rest, id: -(i + 1), parentId: Number.isInteger(parentIndex) ? -(parentIndex + 1) : null,
           ...(ref ? { kind: rest.kind || 'instance', refType: ref.type, refId: this.#resolveRef(principal, ref, `nodes[${i}].ref`) } : {}),
@@ -166,10 +177,61 @@ export class ChangesetService {
     }
   }
 
+  /**
+   * Runs fn while collecting deferred action targets, then patches them in. strict: an action whose target
+   * still does not exist fails (submit); otherwise it is reported (staging, preview, review).
+   */
+  #withFixups(principal, fn, { strict = false } = {}) {
+    const prev = this.fixups;
+    this.fixups = [];
+    try {
+      const result = fn();
+      const unresolved = this.#resolveFixups(principal, this.fixups, { strict });
+      return { result, unresolved };
+    } finally { this.fixups = prev; }
+  }
+
+  #resolveFixups(principal, fixups, { strict }) {
+    const unresolved = [];
+    for (const f of fixups) {
+      const owner = f.ownerUid ? this.reads.find(f.ownerType, f.ownerUid) : null;
+      if (!owner) { unresolved.push(f); continue; }
+      const nodes = this.db.prepare('SELECT id, ord, on_click, events FROM nodes WHERE owner_type = ? AND owner_id = ? ORDER BY ord, id').all(f.ownerType, owner.id);
+      const byOrd = new Map(nodes.map(r => [r.ord, r.id]));
+      const node = nodes.find(r => r.ord === f.nodeIndex);
+      if (!node) { unresolved.push(f); continue; }
+      let act;
+      try { act = fromPortableAction(f.action, (t, path) => this.#resolveRef(principal, t, path), idx => byOrd.get(idx) ?? null, f.path); } catch (e) {
+        if (e.code === 'REF' && !strict) { unresolved.push(f); continue; }
+        throw e;
+      }
+      if (f.field === 'onClick') {
+        this.db.prepare('UPDATE nodes SET on_click = ? WHERE id = ?').run(JSON.stringify(normalizeClickAction(act)), node.id);
+      } else {
+        const ev = (() => { try { return JSON.parse(node.events || '[]'); } catch { return []; } })();
+        ev.splice(Math.min(f.eventIndex, ev.length), 0, normalizeEventBinding(act));
+        this.db.prepare('UPDATE nodes SET events = ? WHERE id = ?').run(JSON.stringify(ev), node.id);
+      }
+    }
+    return unresolved;
+  }
+
+  /** Staged actions point at nodes by temporary id -(index+1); after insert, point them at the real node ids. */
+  #fixNodeTargets(type, ownerId) {
+    const rows = this.db.prepare('SELECT id, ord, on_click, events FROM nodes WHERE owner_type = ? AND owner_id = ? ORDER BY ord, id').all(type, ownerId);
+    const byIndex = new Map(rows.map(r => [r.ord, r.id]));
+    const fix = a => (a && Number(a.targetNodeId) < 0 ? { ...a, targetNodeId: byIndex.get(-Number(a.targetNodeId) - 1) ?? null } : a);
+    for (const r of rows) {
+      if (!/"targetNodeId":-/.test(`${r.on_click}${r.events}`)) continue;
+      const oc = r.on_click ? JSON.parse(r.on_click) : null, ev = r.events ? JSON.parse(r.events) : [];
+      this.db.prepare('UPDATE nodes SET on_click = ?, events = ? WHERE id = ?').run(oc ? JSON.stringify(fix(oc)) : r.on_click, JSON.stringify(Array.isArray(ev) ? ev.map(fix) : ev), r.id);
+    }
+  }
+
   /** Applies one op to the live tables (inside the caller's transaction). Returns the item id (null for deletes). */
   #applyOne(principal, { op, type, itemUid, key, payload }) {
     const item = payload.item || {};
-    const row = op === 'create' ? null : this.reads.find(type, itemUid) || this.reads.find(type, key);
+    const row = op === 'create' ? null : this.reads.find(type, itemUid) || this.reads.findInProject(type, key, principal.project.id);
     if (op !== 'create' && (!row || row.project_id !== principal.project.id)) throw new NotFoundError(type, key);
     if (op === 'delete') {
       (type === 'workflow' ? this.workflows : this.services[type]).remove(row.id, {});
@@ -202,7 +264,10 @@ export class ChangesetService {
     }
 
     const svc = this.services[type];
+    const fixStart = this.fixups?.length ?? 0;
     const conv = this.#coreNodes(principal, item, payload.svg);
+    const ownerUid = op === 'create' ? itemUid : row.uid;
+    for (const f of this.fixups?.slice(fixStart) || []) Object.assign(f, { ownerType: type, ownerUid });
     if (conv?.size && ['button', 'element'].includes(type)) { rec.width ??= conv.size.width; rec.height ??= conv.size.height; }
     let id;
     if (op === 'create') {
@@ -218,6 +283,7 @@ export class ChangesetService {
       }
       svc.restore(id, { record: rec, nodes, menuItems: item.menuItems !== undefined ? [] : d.menuItems || [] });
     }
+    if (conv && !payload.svg) this.#fixNodeTargets(type, id);
     if (type === 'button' && Array.isArray(item.menuItems) && item.menuItems.length) this.#insertMenu(principal, id, item.menuItems);
     this.#setColumns(type, id, { uid: op === 'create' ? itemUid : null, mcpContext: item.mcpContext });
     return id;
@@ -262,14 +328,14 @@ export class ChangesetService {
    * Validates a proposal without storing it: static rules, target, dry-run apply, hash, duplicate check.
    * @returns {{op, type, key, itemUid, row, errors, warnings, fixes, proposedHash, liveHash, unchanged, duplicate}}
    */
-  #evaluate(principal, cs, { item, svg, allowDuplicate = false }) {
+  #evaluate(principal, cs, { item, svg, allowDuplicate = false, restore = false }) {
     const type = item?.type;
     const pre = ITEM_TYPES.includes(type) && item.key ? this.#target(principal, type, item) : { row: null, keyTaken: null };
     const op = pre.row ? 'update' : 'create';
-    const { errors, warnings, fixes } = validateItemStatic(item, { op, svg });
+    const { errors, warnings, fixes } = validateItemStatic(item, { op: restore ? 'update' : op, svg });   // restored items keep their old docs
     const out = { op, type, key: item?.key, row: pre.row, errors, warnings, fixes, proposedHash: null, liveHash: null, unchanged: false, duplicate: null };
     if (pre.keyTaken) {
-      const free = this.#freeKey(item.key);
+      const free = this.#freeKey(item.key, principal.project.id);
       errors.push({ code: 'KEY_TAKEN', path: 'key', message: `key "${item.key}" is already used by a ${this.#scopeOf(principal, pre.keyTaken)} ${type} (${pre.keyTaken.uid}); reference that item instead, or use another key such as "${free}"` });
       fixes.push(`use key "${free}"`);
     }
@@ -277,11 +343,18 @@ export class ChangesetService {
 
     const ops = cs ? this.repo.ops(cs.id) : [];
     const staged = cs ? ops.find(o => o.type === type && o.key === item.key) : null;
-    out.itemUid = pre.row ? pre.row.uid : staged?.op === 'create' ? staged.itemUid : this.newUid();
+    // a create keeps a caller-given uid when no row has it (restores and lockfile-stable agents keep identity)
+    out.itemUid = pre.row ? pre.row.uid : staged?.op === 'create' ? staged.itemUid
+      : (isUid(item.uid) && !this.reads.findByUid(item.uid) ? item.uid : this.newUid());
     try {
       const res = this.#dryRun(() => {
-        for (const dep of this.#depOps(item, ops.filter(o => o.key !== item.key || o.type !== type))) this.#applyOne(principal, dep);
-        const id = this.#applyOne(principal, { op, type, itemUid: out.itemUid, key: item.key, payload: { item, svg } });
+        const { result: id, unresolved } = this.#withFixups(principal, () => {
+          for (const dep of this.#depOps(item, ops.filter(o => o.key !== item.key || o.type !== type))) this.#applyOne(principal, dep);
+          return this.#applyOne(principal, { op, type, itemUid: out.itemUid, key: item.key, payload: { item, svg } });
+        });
+        for (const f of unresolved) {
+          warnings.push({ code: 'ACTION_TARGET', path: f.path, message: `${f.action.target.type || 'item'} "${f.action.target.uid || f.action.target.key}" does not exist yet; stage it in this changeset before submitting (proposedHash excludes this action)` });
+        }
         const hash = this.hashes.get(type, id);
         const ctx = this.db.prepare(`SELECT mcp_context FROM ${TYPE_TO_TABLE[type]} WHERE id = ?`).get(id).mcp_context;
         return { hash, ctx, shape: op === 'create' && !allowDuplicate && type !== 'workflow' ? this.#shape(type, id) : null };
@@ -346,11 +419,11 @@ export class ChangesetService {
       proposedHash: ev.proposedHash, currentHash: ev.liveHash, unchanged: ev.unchanged, errors: ev.errors, warnings: ev.warnings, fixes: ev.fixes };
   }
 
-  stage(principal, { changeset, item, svg, baseHash, allowDuplicate, binding } = {}) {
+  stage(principal, { changeset, item, svg, baseHash, allowDuplicate, binding, restore = false } = {}) {
     const cs = this.#open(principal, changeset);
     const existing = item?.type && item?.key ? this.repo.findOp(cs.id, item.type, item.key) : null;
     if (!existing && this.repo.countOps(cs.id) >= LIMITS.opsPerChangeset) throw new ValidationFailed(`a changeset holds at most ${LIMITS.opsPerChangeset} operations; submit this one and begin another`);
-    const ev = this.#evaluate(principal, cs, { item, svg, allowDuplicate });
+    const ev = this.#evaluate(principal, cs, { item, svg, allowDuplicate, restore });
     if (binding !== undefined) {
       if (!binding || typeof binding !== 'object' || !binding.file) ev.errors.push({ code: 'SCHEMA', path: 'binding', message: 'binding needs {file, symbol?, framework?, repo?}' });
       else { try { cleanFilePath(binding.file); } catch (e) { ev.errors.push({ code: 'SCHEMA', path: 'binding.file', message: e.message }); } }
@@ -384,7 +457,7 @@ export class ChangesetService {
       this.repo.deleteOp(stagedCreate.id);
       return { changeset: cs.uid, unstaged: true, type, key: stagedCreate.key, staged: this.repo.countOps(cs.id) };
     }
-    const row = this.reads.find(type, ref);
+    const row = this.reads.find(type, ref, principal.project.id);
     if (!row || row.project_id !== principal.project.id) throw new NotFoundError(`project ${type}`, ref);
     const live = this.hashes.get(type, row.id);
     const base = this.repo.version(cs.baseVersionId);
@@ -405,7 +478,7 @@ export class ChangesetService {
   /** Per-op comparison with the base the agent used and with the live head. */
   #diffOps(principal, cs) {
     return this.repo.ops(cs.id).map(o => {
-      const row = this.reads.find(o.type, o.itemUid) || (o.op === 'create' ? this.reads.find(o.type, o.key) : null);
+      const row = this.reads.find(o.type, o.itemUid) || (o.op === 'create' ? this.reads.findInProject(o.type, o.key, principal.project.id) : null);
       const liveRow = row && row.project_id === principal.project.id ? row : null;
       const headHash = liveRow ? this.hashes.get(o.type, liveRow.id) : null;
       let conflictReason = null;
@@ -455,7 +528,7 @@ export class ChangesetService {
         { conflicts: conflicts.map(c => ({ opUid: c.opUid, op: c.op, type: c.type, key: c.key, uid: c.uid, baseHash: c.baseHash, headHash: c.headHash, proposedHash: c.proposedHash, reason: c.conflictReason })) });
     }
     // the whole changeset must apply cleanly (references between ops, hierarchy …)
-    try { this.#dryRun(() => { for (const o of this.#ordered(ops)) this.#applyOne(principal, o); }); } catch (e) {
+    try { this.#dryRun(() => this.#withFixups(principal, () => { for (const o of this.#ordered(ops)) this.#applyOne(principal, o); }, { strict: true })); } catch (e) {
       if (!(e instanceof DomainError)) throw e;
       throw new ValidationFailed(`the changeset does not apply: ${e.message}`, { errors: [{ code: 'APPLY', path: 'changeset', message: e.message }] });
     }
@@ -463,7 +536,7 @@ export class ChangesetService {
     const byUid = new Map(diffed.map(d => [d.opUid, d]));
     const done = this.transaction(() => {
       const head = this.versions.ensureHead(cs.projectId);
-      const v = this.versions.createPending({ projectId: cs.projectId, parentId: head.id, changesetId: cs.id, message: String(message).slice(0, 2000), label, userId: principal.user.id, apiKeyId: principal.apiKeyId });
+      const v = this.versions.createPending({ projectId: cs.projectId, parentId: head.id, changesetId: cs.id, source: cs.clientInfo?.restoreOf ? 'restore' : 'ai-push', message: String(message).slice(0, 2000), label, userId: principal.user.id, apiKeyId: principal.apiKeyId });
       for (const o of ops) {
         const d = byUid.get(o.uid);
         const row = d.itemId ? this.reads.find(o.type, d.itemId) : null;
@@ -486,6 +559,51 @@ export class ChangesetService {
   }
 
   get(principal, { changeset } = {}) { return this.view(this.#changeset(principal, changeset)); }
+
+  /**
+   * Restore: a changeset that brings the project back to version N (re-creates removed items with their
+   * original uid, rolls changed items back to their stored JSON, deletes items added since). It goes
+   * through the normal review; on approval the new head has source "restore".
+   */
+  restoreVersion(principal, { version, message = '', submit = true } = {}) {
+    const P = principal.project.id;
+    const head = this.versions.ensureHead(P);
+    const target = this.repo.byNumber(P, version);
+    if (!target || target.number == null) throw new NotFoundError('version', version);
+    if (target.id === head.id) throw new ValidationFailed(`version ${version} is already the head`);
+    const cs = this.begin(principal, { summary: `Restore version ${version}`, clientInfo: { restoreOf: target.number } });
+    const skipped = [];
+    const wanted = new Set(target.manifest.map(e => e.uid));
+    const order = [...target.manifest].sort((a, b) => HIER.indexOf(a.type) - HIER.indexOf(b.type));
+    for (const e of order) {
+      const live = this.reads.find(e.type, e.uid);
+      if (live && live.project_id === P && this.hashes.get(e.type, live.id) === e.contentHash) continue;
+      const item = this.versions.storedItem(e.uid, e.contentHash);
+      if (!item) { skipped.push({ type: e.type, key: e.key, reason: 'content of this version was not stored' }); continue; }
+      try { this.stage(principal, { changeset: cs.changeset, item: { ...item, uid: e.uid }, allowDuplicate: true, restore: true }); } catch (err) {
+        if (!(err instanceof DomainError)) throw err;
+        skipped.push({ type: e.type, key: e.key, reason: err.message });
+      }
+    }
+    for (const e of head.manifest) {
+      if (wanted.has(e.uid)) continue;
+      try { this.stageDelete(principal, { changeset: cs.changeset, type: e.type, ref: e.uid }); } catch (err) {
+        if (!(err instanceof DomainError)) throw err;
+        skipped.push({ type: e.type, key: e.key, reason: err.message });
+      }
+    }
+    const row = this.repo.changeset(cs.changeset);
+    if (!this.repo.countOps(row.id)) { this.repo.updateChangeset(row.id, { status: 'discarded' }); return { ...this.view(this.repo.changeset(row.id)), restoredFrom: target.number, unchanged: true, skipped }; }
+    const out = submit ? this.submit(principal, { changeset: cs.changeset, message: message || `Restore version ${target.number}` }) : this.view(this.repo.changeset(row.id));
+    return { ...out, restoredFrom: target.number, skipped };
+  }
+
+  /** Designer side: the owner (or an admin) asks for a restore; the result is reviewed like any changeset. */
+  restoreForActor(projectId, number, actor, { message } = {}) {
+    const p = this.#project(projectId);
+    if (!actor || (p.ownerId !== actor.id && !this.auth.isAdmin(actor))) throw new ForbiddenError('only the project owner or an admin can restore a version');
+    return this.restoreVersion({ project: { id: p.id, key: p.key, name: p.name }, user: { id: actor.id }, apiKeyId: null }, { version: Number(number), message });
+  }
 
   list(principal, { status } = {}) {
     this.repo.expireStale(this.now().toISOString());
@@ -561,6 +679,8 @@ export class ChangesetService {
 
     this.transaction(() => {
       this.versions.ensureHead(cs.projectId);   // record designer edits made meanwhile as their own version first
+      const prevFix = this.fixups;
+      this.fixups = [];
       for (const o of this.#ordered(ops.filter(x => x.status === 'staged' && approve.includes(x.uid)))) {
         try {
           this.transaction(() => {
@@ -580,6 +700,13 @@ export class ChangesetService {
           setCr(o, 'rejected', `could not apply: ${e.message}`);
           this.requests?.onOpReviewed(cs.uid, o, 'failed');
         }
+      }
+      // actions whose target op was applied later in the loop (or never, when it was rejected)
+      const unresolved = this.#resolveFixups(principal, this.fixups, { strict: false });
+      this.fixups = prevFix;
+      for (const f of unresolved) {
+        const o = ops.find(x => x.itemUid === f.ownerUid);
+        if (o) this.repo.updateOp(o.id, { error: `${f.path}: target "${f.action.target.uid || f.action.target.key}" was not applied, so this action was left out` });
       }
       for (const o of ops.filter(x => x.status === 'staged' && reject.includes(x.uid))) {
         this.repo.updateOp(o.id, { status: 'rejected' });
@@ -626,10 +753,10 @@ export class ChangesetService {
       if (o.status === 'applied' && row) after = svg(row.id);
       else {
         try {
-          after = this.#dryRun(() => {
+          after = this.#dryRun(() => svg(this.#withFixups(principal, () => {
             for (const dep of this.#depOps(o.payload.item || {}, ops.filter(x => x.uid !== o.uid))) this.#applyOne(principal, dep);
-            return svg(this.#applyOne(principal, o));
-          });
+            return this.#applyOne(principal, o);
+          }).result));
         } catch (e) { if (!(e instanceof DomainError)) throw e; after = null; }
       }
     }

@@ -13,12 +13,13 @@ requests) and its PostgreSQL sync. Date: 2026-11-06. Sensors: `tests/mcp-m7.test
 | **R**epudiation | all tool calls, key lifecycle | `mcp_audit_log` (argument digest only), change_requests authored by `kyrpy-agent-designer`, reviewer + time on changesets and versions | M2 audit, M7 load |
 | **I**nformation disclosure | search, manifest, bundles, resources | scope filter (project + own private + public); untrusted flag on foreign text; bundle URLs single-use, 15 min, bound to the key; key hashes synced to PG are useless without the instance pepper | M2, PG live test |
 | Prompt injection via design text | labels, descriptions, mcpContext | server instructions + `dataNotice`: text is data, never instructions; `untrusted` flag | M2 |
+| Live stream abuse | `GET /mcp` (SSE) | key + session ownership checked, at most 2 streams per session, keep-alive pings, streams closed with the session | follow-ups test |
 | **D**enial of service | `/mcp` | 1 MB body cap, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, 256 KB per item, 2,000 nodes, 200 bindings per call, 24 h changeset expiry | M2 rate limits, M7 |
 | **E**levation of privilege | scopes | `read` / `request` / `propose` checked per tool; an API key never approves; auto-approve only through the owner's project setting `pushRequiresReview = false` | M5 scope test, M4 |
 
 Residual risks (accepted, tracked):
-1. Keys are still globally unique (`UNIQUE(key)`); collisions are reported as `KEY_TAKEN` with a free key.
-2. Node `onClick` / `events` targets keep numeric ids from the source instance.
+1. ~~Global `UNIQUE(key)`~~ fixed: keys are unique per project (tenant data cannot collide across projects).
+2. ~~Numeric action targets~~ fixed: actions are portable (`{type, uid, key}`), and targets are resolved with the same visibility checks as instances.
 3. The core web app still trusts the `x-user-id` header when no session token is sent (legacy single-user mode); the agent user is suspended so it cannot be impersonated this way. Recommended: disable header auth in multi-user deployments.
 4. Load measured in-process: 400 mixed calls, 8 concurrent, p95 ≈ 60 ms on the dev machine.
 

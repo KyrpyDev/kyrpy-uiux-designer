@@ -3,6 +3,7 @@
  * uid/key resolution and dependency edges. No business rules beyond the SQL scope filter.
  */
 import { DESIGN_TABLES, TYPE_TO_TABLE } from '../../domain/tables.js';
+import { storedActionTargets } from '../../domain/portable-actions.js';
 
 export const ITEM_TYPES = [...Object.keys(DESIGN_TABLES), 'workflow'];
 
@@ -53,13 +54,26 @@ export class DesignReadRepository {
     return this.db.prepare(sql).all(usedParams(sql, params)).map(r => ({ ...r, type }));
   }
 
-  /** One row by uid, key or numeric id (no scope filter; the caller decides access). */
-  find(type, ref) {
+  /**
+   * One row by uid, key or numeric id (no scope filter; the caller decides access). Keys are unique per
+   * project, so a key prefers `preferProjectId`, then the public library, then the oldest row.
+   */
+  find(type, ref, preferProjectId = null) {
     const t = TYPE_TO_TABLE[type];
     if (!t) return null;
     const s = String(ref);
     const col = /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(s) ? 'uid' : /^\d+$/.test(s) ? 'id' : 'key';
-    const r = this.db.prepare(`SELECT ${this.#cols(type)} FROM ${t} WHERE ${col} = ?`).get(col === 'id' ? Number(s) : s);
+    const r = col === 'key'
+      ? this.db.prepare(`SELECT ${this.#cols(type)} FROM ${t} WHERE key = ? ORDER BY (project_id = ?) DESC, (visibility = 'public') DESC, id LIMIT 1`).get(s, preferProjectId == null ? -1 : Number(preferProjectId))
+      : this.db.prepare(`SELECT ${this.#cols(type)} FROM ${t} WHERE ${col} = ?`).get(col === 'id' ? Number(s) : s);
+    return r ? { ...r, type } : null;
+  }
+
+  /** The row with this key in this project, or null. */
+  findInProject(type, key, projectId) {
+    const t = TYPE_TO_TABLE[type];
+    if (!t || key == null) return null;
+    const r = this.db.prepare(`SELECT ${this.#cols(type)} FROM ${t} WHERE key = ? AND project_id = ?`).get(String(key), Number(projectId));
     return r ? { ...r, type } : null;
   }
 
@@ -88,6 +102,13 @@ export class DesignReadRepository {
     if (DESIGN_TABLES[type]) {
       for (const r of this.db.prepare('SELECT DISTINCT ref_type, ref_id FROM nodes WHERE owner_type = ? AND owner_id = ? AND ref_type IS NOT NULL AND ref_id IS NOT NULL').all(type, id)) {
         out.push({ type: r.ref_type, id: r.ref_id });
+      }
+      // click / event targets (navigate to a screen, open an element …) are dependencies too
+      for (const r of this.db.prepare("SELECT on_click, events FROM nodes WHERE owner_type = ? AND owner_id = ? AND (on_click LIKE '%targetId%' OR events LIKE '%targetId%')").all(type, id)) {
+        const parse = v => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
+        for (const t of storedActionTargets(parse(r.on_click), parse(r.events))) {
+          if (this.db.prepare(`SELECT 1 FROM ${TYPE_TO_TABLE[t.type]} WHERE id = ?`).get(t.id)) out.push(t);
+        }
       }
       if (type === 'button') {
         for (const m of this.db.prepare('SELECT icon_id, target_screen_id, target_element_id FROM menu_items WHERE button_id = ?').all(id)) {

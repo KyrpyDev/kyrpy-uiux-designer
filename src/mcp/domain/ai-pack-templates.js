@@ -5,7 +5,7 @@
  * Template syntax (see ai-pack-render.js): {{var}}, {{#each list}}…{{this}}…{{/each}}, {{#if var}}…{{/if}}.
  * Bump TEMPLATE_VERSION whenever a body changes, so `uiux_init` updates installed packs.
  */
-export const TEMPLATE_VERSION = 3;
+export const TEMPLATE_VERSION = 4;
 
 export const AGENT_NAME = 'kyrpy-uiux-designer';
 export const SKILL_NAME = 'kyrpy-skill-uiux-designer';
@@ -70,6 +70,8 @@ Styles: {{#each styles}}\`{{this}}\` {{/each}}(default \`{{defaultStyle}}\`) · 
 | \`uiux_request_item\` / \`uiux_get_request\` / \`uiux_cancel_request\` | ask for a missing item (search runs first), poll it, cancel it |
 | \`uiux_list_requests\` → \`uiux_claim_request\` → \`uiux_fulfill_request\` | designer agent: work the request inbox |
 | \`uiux_bind_code\` / \`uiux_list_bindings\` | record where items live in the code; \`stale\` = code is behind the design |
+| \`uiux_export_app\` | the project as a working HTML app + \`app/interactions.json\` (every action, menu, workflow, dev note) |
+| \`uiux_restore_version\` | propose rolling the project back to an earlier version (reviewed like any changeset) |
 
 ## Procedure: pull design updates
 1. Read \`.uiux/uiux.lock.json\`; call \`uiux_get_manifest\` with \`ifNoneMatch\` = its \`manifestHash\`.
@@ -100,6 +102,15 @@ Only when a human asks for it, and only if the server lists the \`propose\` tool
    bindings: \`uiux_get_item\`, merge, restage with \`baseHash\` = the conflict's \`headHash\`, submit again.
 8. Tell the human to review it in the designer (Collaborate → Versions & AI Changesets). Poll \`uiux_get_changeset\`;
    once approved, pull (the delta from the new version is empty) and update the lockfile \`version\`.
+
+## Procedure: understand the app's behaviour
+1. \`uiux_export_app\` → run its install steps → open \`{{uiuxRoot}}/source/app/index.html\` (screens, navigation, popups, drawers,
+   menus all work; images are SVG).
+2. Read \`{{uiuxRoot}}/source/app/interactions.json\`: \`workflows[].links\` (hotspot node → screen), node \`onClick\` / \`events\`
+   (targets as \`{type, uid, key}\`, \`targetNodeIndex\` = node of the same item), button \`menu\` items and every \`descriptionDev\`.
+3. Implement routes and handlers from that spec; keep the generated SVGs and tokens as they are.
+4. Long-running sessions: \`resources/subscribe\` to \`uiux://project/manifest\` and keep \`GET /mcp\` (text/event-stream) open to hear
+   about new versions instead of polling.
 
 ## Procedure: convert for this app
 - **Web (any framework):** copy \`{{uiuxRoot}}/source/adapters/web/<style>/\` to \`{{uiuxRoot}}/<style>/\`. It contains

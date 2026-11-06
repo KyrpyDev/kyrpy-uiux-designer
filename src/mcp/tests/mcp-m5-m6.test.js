@@ -112,16 +112,17 @@ test('project scope: a used public item is cloned into the project and reference
     const cs = await w.ok('designer', 'uiux_begin_changeset', {});
     const btn = await w.ok('designer', 'uiux_stage_item', { changeset: cs.changeset, item: { type: 'button', key: 'ada-filter-btn', name: 'Filter', label: 'Filter results', ...docs('opens filters'), width: 48, height: 48,
       nodes: [{ tag: 'rect', attrs: { x: 0, y: 0, width: 48, height: 48, rx: 12 } }, { tag: 'use', kind: 'instance', ref: { type: 'icon', key: 'bob-filter' }, attrs: { x: 12, y: 12, width: 24, height: 24 } }] } });
-    assert.equal(w.c.icon.list({}).some(i => i.key === 'ada-app-bob-filter'), false, 'dry runs leave no clone');
+    assert.equal(w.c.mcp.query.reads.findInProject('icon', 'bob-filter', w.p.id), null, 'dry runs leave no clone');
     const sub = await w.ok('designer', 'uiux_submit_changeset', { changeset: cs.changeset });
     await w.rest('POST', `/api/changesets/${sub.changeset}/review`, { approve: sub.ops.map(o => o.opUid) });
-    const clone = w.c.icon.get('ada-app-bob-filter');
+    const clone = w.c.icon.get(w.c.mcp.query.reads.findInProject('icon', 'bob-filter', w.p.id).id);
+    assert.equal(clone.key, 'bob-filter', 'per-project keys: the clone keeps the key');
     assert.equal(clone.projectId, w.p.id);
     assert.equal(clone.visibility, 'project');
     assert.equal(w.c.users.get(clone.creatorId).username, 'kyrpy-agent-designer');
     const b = w.c.button.get('ada-filter-btn');
     assert.equal(b.nodes.find(n => n.kind === 'instance').refId, clone.id, 'the button uses the clone');
-    assert.equal(w.c.icon.get('bob-filter').projectId, w.bp.id, 'the public original is untouched');
+    assert.equal(w.c.mcp.query.reads.findInProject('icon', 'bob-filter', w.bp.id).visibility, 'public', 'the public original is untouched');
     assert.equal(w.c.button.get('ada-filter-btn').nodes.length, 2);
     const m = await w.ok('designer', 'uiux_get_manifest', {});
     assert.ok(m.items.every(i => i.origin === 'project'), 'the manifest is project-only');

@@ -41,6 +41,7 @@ export function mcpRoutes(router, c) {
     router.get('/api/projects/:id/versions', ({ params, actor }) => versions.listForActor(Number(params.id), actor));
     router.post('/api/projects/:id/versions', ({ params, body, actor }) => versions.snapshotForActor(Number(params.id), body || {}, actor));
     router.get('/api/projects/:id/versions/:number', ({ params, actor }) => versions.getForActor(Number(params.id), Number(params.number), actor));
+    router.post('/api/projects/:id/versions/:number/restore', ({ params, body, actor }) => changesets.restoreForActor(Number(params.id), Number(params.number), actor, { message: body?.message || '' }));
     router.get('/api/projects/:id/changesets', ({ params, query, actor }) => changesets.listForActor(Number(params.id), actor, { status: query.get('status') || '' }));
     router.get('/api/changesets/:uid', ({ params, actor }) => changesets.getForActor(params.uid, actor));
     router.get('/api/changesets/:uid/ops/:op/preview', ({ params, query, actor }) => changesets.preview(params.uid, params.op, actor, { style: query.get('style') || '' }));
@@ -49,6 +50,17 @@ export function mcpRoutes(router, c) {
     }, actor));
   }
 
+  // The project as a working HTML app (+ interactions.json) for people and agents: .tar.gz download
+  if (c.mcp.bundles && c.mcp.versions) {
+    router.get('/api/projects/:id/app-export', ({ params, query, actor }) => {
+      const pid = Number(params.id);
+      c.mcp.versions.listForActor(pid, actor);   // membership check; also records the head (and adopts used foreign items)
+      const p = c.projects.get(pid);
+      const styles = query.get('styles') ? query.get('styles').split(',').map(s => s.trim()).filter(Boolean) : undefined;
+      const a = c.mcp.bundles.archive({ project: { id: p.id, key: p.key, name: p.name }, user: { id: actor.id } }, { styles, includeApp: true, includeSvg: true, adapters: ['web'] });
+      return { raw: a.buffer, contentType: 'application/gzip', filename: a.filename };
+    });
+  }
   // Item requests (M5): members see the inbox and may fulfil by hand or reject
   if (c.mcp.requests) {
     const rq = c.mcp.requests;

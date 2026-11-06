@@ -69,6 +69,9 @@ const RESOURCES = [
   { uri: 'uiux://requests/open', name: 'requests', title: 'Open item requests', mimeType: 'application/json', description: 'Item requests waiting for the designer agent (open and claimed).' },
   { uri: 'uiux://project/versions', name: 'versions', title: 'Project versions', mimeType: 'application/json', description: 'Numbered versions of the project, head first.' }
 ];
+/** Resources that send notifications/resources/updated to subscribed sessions. */
+export const SUBSCRIBABLE = ['uiux://project/manifest', 'uiux://project/versions', 'uiux://requests/open'];
+
 const RESOURCE_TEMPLATES = [
   { uriTemplate: 'uiux://schema/{table}', name: 'schema-table', title: 'Schema of one table', mimeType: 'application/json' },
   { uriTemplate: 'uiux://item/{type}/{ref}', name: 'item', title: 'One item as JSON (ref = uid or key)', mimeType: 'application/json' },
@@ -100,6 +103,8 @@ export class McpProtocol {
         case 'resources/list': return ok(msg.id, { resources: RESOURCES });
         case 'resources/templates/list': return ok(msg.id, { resourceTemplates: RESOURCE_TEMPLATES });
         case 'resources/read': return ok(msg.id, this.#readResource(params, ctx));
+        case 'resources/subscribe': return ok(msg.id, this.#subscribe(params, ctx, true));
+        case 'resources/unsubscribe': return ok(msg.id, this.#subscribe(params, ctx, false));
         case 'prompts/list': return ok(msg.id, { prompts: PROMPTS.map(({ text, ...p }) => p) });
         case 'prompts/get': return ok(msg.id, this.#getPrompt(params));
         default: return fail(msg.id, RPC.METHOD_NOT_FOUND, `method not found: ${msg.method}`);
@@ -109,6 +114,14 @@ export class McpProtocol {
       console.error('[mcp]', e);
       return fail(msg.id, RPC.INTERNAL, 'internal error');
     }
+  }
+
+  /** Subscriptions live on the transport session; updates arrive on its GET /mcp event stream. */
+  #subscribe({ uri } = {}, { session }, on) {
+    if (!SUBSCRIBABLE.includes(uri)) throw new DomainError(`cannot subscribe to ${uri}; subscribable: ${SUBSCRIBABLE.join(', ')}`, 'VALIDATION', 422);
+    if (!session) throw new DomainError('subscriptions need a session: send initialize first and pass Mcp-Session-Id', 'VALIDATION', 422);
+    if (on) session.subscriptions.add(uri); else session.subscriptions.delete(uri);
+    return {};
   }
 
   #getPrompt({ name, arguments: args = {} } = {}) {
@@ -131,7 +144,7 @@ export class McpProtocol {
   #initialize(params) {
     return {
       protocolVersion: this.negotiate(params.protocolVersion),
-      capabilities: { tools: { listChanged: false }, resources: { subscribe: false, listChanged: false }, prompts: { listChanged: false } },
+      capabilities: { tools: { listChanged: false }, resources: { subscribe: true, listChanged: false }, prompts: { listChanged: false } },
       serverInfo: SERVER_INFO,
       instructions: INSTRUCTIONS
     };

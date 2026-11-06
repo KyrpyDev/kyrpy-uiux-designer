@@ -19,7 +19,7 @@ test('PG: every MCP table except the local ledger is in the PG DDL and the sync 
     assert.ok(PG_SCHEMA_SQL.includes(`CREATE TABLE IF NOT EXISTS ${t} (`), `${t} DDL`);
     assert.ok(synced.has(t), `${t} synced`);
   }
-  assert.equal(MCP_SYNC_TABLES.length, 8);
+  assert.equal(MCP_SYNC_TABLES.length, 9);
   const ddl = sqliteToPgDdl("id INTEGER PRIMARY KEY AUTOINCREMENT, p INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, t TEXT NOT NULL DEFAULT (strftime('%Y','now')) -- note");
   assert.equal(ddl.trim(), "id INTEGER PRIMARY KEY, p INTEGER NOT NULL, t TEXT NOT NULL DEFAULT ''");
 });
@@ -61,7 +61,7 @@ test('PG live: push all tables, pull into a fresh instance, the MCP state surviv
     }
     const pull = new PostgresSyncService({ db: b.db, config: { database: TEST_DB } }).pullFromPostgres();
     assert.ok(pull.ok, pull.error);
-    for (const tbl of ['project_versions', 'changesets', 'changeset_ops', 'item_requests', 'code_bindings', 'api_keys']) {
+    for (const tbl of ['project_versions', 'changesets', 'changeset_ops', 'item_requests', 'code_bindings', 'api_keys', 'version_items']) {
       assert.equal(count(b, tbl), count(a.c, tbl), `${tbl} pulled`);
     }
     const headA = a.c.mcp.versions.repo.head(a.p.id), headB = b.mcp.versions.repo.head(a.p.id);

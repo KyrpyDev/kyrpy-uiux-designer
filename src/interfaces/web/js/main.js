@@ -18,6 +18,7 @@ const MENU_ICONS = { Project: 'file', Design: 'design', Edit: 'edit', Insert: 'i
 /** Profile → AI Access Keys (MCP layer module, loaded on demand from src/mcp/interfaces/web). */
 const openAiKeys = () => import('/mcp-web/ai-keys-modal.js').then(m => m.openAiKeysModal()).catch(e => toast(`AI Access Keys: ${e.message}`, 'error'));
 /** Collaborate → Versions & AI Changesets (MCP layer module, M4). */
+const downloadAppExport = () => import('/mcp-web/versions-modal.js').then(m => m.downloadProjectApp()).catch(e => toast(`App export: ${e.message}`, 'error'));
 const openVersions = (opts) => import('/mcp-web/versions-modal.js').then(m => m.openVersionsModal(opts)).catch(e => toast(`Versions: ${e.message}`, 'error'));
 const tbIcon = (cls, icon, tip, onclick, badge = 0, on = false) => h('button', {
   class: `btn sm tb-icon ${cls}${on ? ' primary' : ''}`.trim(),
@@ -243,6 +244,7 @@ function menuDef() {
       ['Collaborative Change List (Approve / Reject)…', () => openChangesModal()],
       ['Versions & AI Changesets (Review)…', () => openVersions()],
       ['AI Item Requests (Inbox)…', () => openVersions({ tab: 'requests' })],
+      ['Download Project as HTML App (for AI agents)…', () => downloadAppExport()],
       '-',
       ...(state.projects || []).map(p => [`${tick(p.id === state.activeProjectId)}|Project: ${projectLabel(p)} (${p.visibility})`, () => setActiveProject(p.id)]),
       '-',
@@ -410,6 +412,7 @@ function menuDef() {
       ['Collaborative Change List (Approve / Reject)…', () => openChangesModal()],
       ['Versions & AI Changesets (Review)…', () => openVersions()],
       ['AI Item Requests (Inbox)…', () => openVersions({ tab: 'requests' })],
+      ['Download Project as HTML App (for AI agents)…', () => downloadAppExport()],
       ['Projects & Collaborator Invitations…', () => openProjectsModal()],
       ['Admin & User Management Panel (ACL)…', () => openAdminUsersModal()],
       ['Sign In / Register / Switch Account…', () => openAuthModal()],
