@@ -235,7 +235,7 @@ const M4_TOOLS = [
   {
     name: 'uiux_fulfill_request',
     title: 'Fulfil an item request',
-    description: 'Links the item that fulfils a request: an existing project item (ref), or an item staged in a changeset (ref + changeset). A staged item fulfils the request once its changeset op is approved; if it is rejected the request goes back to claimed.',
+    description: 'Links the item that fulfils a request: an existing item (ref; a public or own private item, e.g. a search candidate, is cloned into the project first), or an item staged in a changeset (ref + changeset). A staged item fulfils the request once its changeset op is approved; if it is rejected the request goes back to claimed and its note carries the reviewer\'s reason.',
     inputSchema: { type: 'object', properties: { request: reqProp, type: typeProp, ref: str('Item uid or key.', { minLength: 1, maxLength: 120 }), changeset: csProp }, required: ['request', 'ref'], additionalProperties: false },
     scope: 'propose', readOnly: false,
     run: ({ principal, requests }, args) => { const data = requests.fulfill(principal, args); return { summary: `Request ${data.status}${data.status === 'in-review' ? ' (fulfilled when the changeset is approved)' : ''}.`, data }; }

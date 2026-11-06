@@ -108,9 +108,23 @@ export class ItemRequestService {
       this.#set(r.id, { status: 'in-review', itemType: t, itemUid: op.itemUid, itemKey: op.key, changeset: cs.uid });
       return this.#get(r.uid);
     }
-    const row = this.reads.find(t, ref, principal.project.id);
-    if (!row || row.project_id !== principal.project.id) throw new NotFoundError(`project ${t}`, ref);
-    return this.#done(r, t, row.uid, row.key);
+    const row = this.#usable(t, ref, r.projectId, principal.user.id);
+    return this.#done(r, t, row.uid, row.key, row.adoptedFrom ? `existing ${t} ${row.adoptedFrom} cloned into the project` : undefined);
+  }
+
+  /**
+   * The project row that fulfils a request with an existing item. A readable item of another library
+   * (public, or the user's private one — e.g. a search candidate) is cloned into the project first (project scope).
+   */
+  #usable(type, ref, projectId, userId) {
+    const row = this.reads.find(type, ref, projectId);
+    const readable = row && (row.project_id === projectId || row.visibility === 'public' || (row.visibility === 'private' && row.creator_id === userId));
+    if (!readable) throw new NotFoundError(`${type} visible to the project`, ref);
+    if (row.project_id === projectId) return row;
+    if (!this.library) throw new NotFoundError(`project ${type}`, ref);
+    const id = (this.transaction || (f => f()))(() => this.library.adopt(projectId, type, row.id));
+    const clone = this.reads.find(type, String(id));
+    return { ...clone, adoptedFrom: row.uid };
   }
 
   #done(r, type, uid, key, note) {
@@ -119,11 +133,13 @@ export class ItemRequestService {
   }
 
   /** Called by the changeset review for every reviewed op. */
-  onOpReviewed(changesetUid, op, status) {
+  onOpReviewed(changesetUid, op, status, comment = '') {
     const rows = this.db.prepare("SELECT * FROM item_requests WHERE changeset_uid = ? AND fulfilled_item_uid = ? AND status = 'in-review'").all(changesetUid, op.itemUid).map(toRequest);
+    const why = String(comment || '').trim();
     for (const r of rows) {
       if (status === 'applied') this.#done(r, r.item.type, r.item.uid, r.item.key);
-      else this.#set(r.id, { status: 'claimed', note: `the proposed item was ${status} in review; propose another` });
+      // reopens for the same claimant, carrying the reviewer's reason so the next proposal can address it
+      else this.#set(r.id, { status: 'claimed', note: `the proposed item was ${status} in review${why ? `: ${why}` : ''}; propose another`.slice(0, 500) });
     }
   }
 
@@ -150,9 +166,9 @@ export class ItemRequestService {
     this.#assertMember(r.projectId, actor);
     if (!['open', 'claimed', 'in-review'].includes(r.status)) throw new ConflictError(`request is ${r.status}`);
     const t = type || r.type;
-    const row = this.reads.find(t, ref, r.projectId);
-    if (!row || row.project_id !== r.projectId) throw new NotFoundError(`project ${t}`, ref);
-    return this.#done(r, t, row.uid, row.key, `fulfilled by @${actor.username}`);
+    if (!ITEM_TYPES.includes(t)) throw new ValidationError(`type must be one of ${ITEM_TYPES.join(', ')}`);
+    const row = this.#usable(t, ref, r.projectId, actor.id);
+    return this.#done(r, t, row.uid, row.key, `fulfilled by @${actor.username}${row.adoptedFrom ? ` with ${t} ${row.adoptedFrom} (cloned into the project)` : ''}`);
   }
 
   rejectByHand(uid, { note = '' } = {}, actor) {

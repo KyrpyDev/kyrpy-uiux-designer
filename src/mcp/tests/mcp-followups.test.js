@@ -311,3 +311,33 @@ test('spec gaps: get_item html, manifest of a version, need-ui-item prompt, D6 p
     assert.equal(w.c.mcp.query.reads.findInProject('icon', 'pub-ai', w.p.id).visibility, 'public', 'public only because the owner allowed it');
   } finally { w.close(); }
 });
+
+test('item requests: fulfilling with a public item clones it into the project; a rejected proposal reopens with the reviewer\'s reason', async () => {
+  const w = await world();
+  try {
+    const pub = w.c.icon.create({ name: 'Bell', key: 'bell', visibility: 'public' }, { actor: w.bob.user, nodes: DOT });
+    const hidden = w.c.icon.create({ name: 'Secret', key: 'secret', projectId: w.bp.id, visibility: 'project' }, { actor: w.bob.user, nodes: DOT });
+    const req = (await w.ok('uiux_request_item', { type: 'icon', intent: 'notification bell icon' })).request;
+    const nope = await w.call('uiux_fulfill_request', { request: req.uid, type: 'icon', ref: hidden.uid || 'secret' });
+    assert.ok(nope.isError, 'an item of another project is not usable');
+    const done = await w.ok('uiux_fulfill_request', { request: req.uid, type: 'icon', ref: 'bell' });
+    assert.equal(done.status, 'fulfilled');
+    const clone = w.c.mcp.query.reads.findInProject('icon', 'bell', w.p.id);
+    assert.ok(clone && clone.id !== pub.id, 'public item cloned into the project library');
+    assert.equal(done.item.uid, clone.uid, 'the request points at the project clone');
+    assert.match(done.note, /cloned into the project/);
+
+    // a proposal for a second request is rejected → request reopens with the reason
+    const r2 = (await w.ok('uiux_request_item', { type: 'icon', intent: 'calendar icon for dates' })).request;
+    await w.ok('uiux_claim_request', { request: r2.uid });
+    const cs = await w.ok('uiux_begin_changeset', {});
+    await w.ok('uiux_stage_item', { changeset: cs.changeset, item: { type: 'icon', key: 'calendar', name: 'Calendar', label: 'Calendar', ...docs('dates'), nodes: [{ tag: 'rect', attrs: { x: 3, y: 4, width: 18, height: 16 } }] } });
+    assert.equal((await w.ok('uiux_fulfill_request', { request: r2.uid, type: 'icon', ref: 'calendar', changeset: cs.changeset })).status, 'in-review');
+    const sub = await w.ok('uiux_submit_changeset', { changeset: cs.changeset });
+    const rev = await w.rest('POST', `/api/changesets/${sub.changeset}/review`, { reject: sub.ops.map(o => o.opUid), comment: 'needs a visible date grid' });
+    assert.equal(rev.status, 200, JSON.stringify(rev.data));
+    const back = await w.ok('uiux_get_request', { request: r2.uid });
+    assert.equal(back.status, 'claimed');
+    assert.match(back.note, /rejected in review: needs a visible date grid/);
+  } finally { w.close(); }
+});

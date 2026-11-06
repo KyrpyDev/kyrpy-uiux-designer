@@ -142,7 +142,7 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 ## M5 — item requests
 
 - **Table:** `item_requests`, with statuses `open → claimed → in-review → fulfilled`, plus `cancelled` and `rejected`.
-- **Tools:** `uiux_request_item` (scope request; searches first and returns candidates; `searchOnly`), `uiux_cancel_request` (request), `uiux_list_requests` and `uiux_get_request` (read), `uiux_claim_request` and `uiux_fulfill_request` (propose; `ref` = an existing project item, or `ref + changeset` = a staged item). The changeset review moves requests to `fulfilled` when their op is applied, or back to `claimed` when it is rejected or fails. Resource: `uiux://requests/open`.
+- **Tools:** `uiux_request_item` (scope request; searches first and returns candidates; `searchOnly`), `uiux_cancel_request` (request), `uiux_list_requests` and `uiux_get_request` (read), `uiux_claim_request` and `uiux_fulfill_request` (propose; `ref` = an existing item, or `ref + changeset` = a staged item). An existing public or own private item (for example a search candidate) is cloned into the project library first, so the request always points at a project item. The changeset review moves requests to `fulfilled` when their op is applied, or back to `claimed` when it is rejected or fails; the request note then carries the reviewer's comment (or the apply error) so the next proposal can address it. Resource: `uiux://requests/open`.
 - **Designer:** the *AI item requests* tab (Collaborate → AI Item Requests) lets members fulfil a request with an existing project item or reject it. REST: `GET /api/projects/:id/item-requests`, `POST /api/item-requests/:uid/fulfill|reject`.
 
 ## M6 — code bindings + react-tsx

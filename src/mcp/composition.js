@@ -75,7 +75,7 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
       projects, auth, db, transaction, parseSvg, library, agentUserId, newUid: () => uuidv7(randomBytes), ...(now ? { now } : {})
     }) : null;
     const newUid = () => uuidv7(randomBytes);
-    const requests = new ItemRequestService({ db, query, reads, versionRepo, projects, auth, newUid, ...(now ? { now } : {}) });
+    const requests = new ItemRequestService({ db, query, reads, versionRepo, projects, auth, newUid, library, transaction, ...(now ? { now } : {}) });
     const bindings = new BindingService({ db, reads, hashes: contentHashes, versions, newUid, ...(now ? { now } : {}) });
     if (changesets) { changesets.requests = requests; changesets.bindings = bindings; }
     if (changesets) {

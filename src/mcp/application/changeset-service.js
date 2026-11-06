@@ -712,7 +712,7 @@ export class ChangesetService {
           if (!(e instanceof DomainError)) throw e;
           this.repo.updateOp(o.id, { status: 'failed', error: e.message });
           setCr(o, 'rejected', `could not apply: ${e.message}`);
-          this.requests?.onOpReviewed(cs.uid, o, 'failed');
+          this.requests?.onOpReviewed(cs.uid, o, 'failed', e.message);
         }
       }
       // actions whose target op was applied later in the loop (or never, when it was rejected)
@@ -725,7 +725,7 @@ export class ChangesetService {
       for (const o of ops.filter(x => x.status === 'staged' && reject.includes(x.uid))) {
         this.repo.updateOp(o.id, { status: 'rejected' });
         setCr(o, 'rejected');
-        this.requests?.onOpReviewed(cs.uid, o, 'rejected');
+        this.requests?.onOpReviewed(cs.uid, o, 'rejected', note);
       }
       const now = this.repo.ops(cs.id);
       if (now.some(o => o.status === 'staged')) {
