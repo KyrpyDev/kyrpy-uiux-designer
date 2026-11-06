@@ -15,7 +15,8 @@
 import { DomainError, NotFoundError, ValidationError, ForbiddenError, ConflictError } from '../../domain/errors.js';
 import { canonicalJson } from '../domain/content-hash.js';
 import { mergeMcpContext, parseMcpContext } from '../domain/mcp-context.js';
-import { validateItemStatic, itemRefs, ITEM_TYPES, LIMITS } from '../domain/item-validation.js';
+import { validateItemStatic, itemRefs, ITEM_TYPES, LIMITS, contrastWarnings } from '../domain/item-validation.js';
+import { parseColor } from '../domain/native-adapters.js';
 import { TYPE_TO_TABLE } from '../domain/tables.js';
 import { cleanFilePath } from './binding-service.js';
 import { fromPortableAction } from '../domain/portable-actions.js';
@@ -57,6 +58,8 @@ export class ChangesetService {
     if (!p) throw new NotFoundError('project', projectId);
     return p;
   }
+
+  #mayCreatePublic(projectId) { return this.projects.get(Number(projectId))?.settings?.ai?.mayCreatePublicItems === true; }
 
   #readable(principal, row) {
     return row.project_id === principal.project.id || row.visibility === 'public'
@@ -271,7 +274,8 @@ export class ChangesetService {
     if (conv?.size && ['button', 'element'].includes(type)) { rec.width ??= conv.size.width; rec.height ??= conv.size.height; }
     let id;
     if (op === 'create') {
-      id = svc.create({ ...rec, projectId: principal.project.id, visibility: 'project', creatorId: this.agentUserId?.() ?? principal.user.id }, { nodes: conv?.nodes || [] }).id;
+      const visibility = item.visibility === 'public' && this.#mayCreatePublic(principal.project.id) ? 'public' : 'project';
+      id = svc.create({ ...rec, projectId: principal.project.id, visibility, creatorId: this.agentUserId?.() ?? principal.user.id }, { nodes: conv?.nodes || [] }).id;
     } else {
       id = row.id;
       const d = svc.get(id);
@@ -334,6 +338,16 @@ export class ChangesetService {
     const op = pre.row ? 'update' : 'create';
     const { errors, warnings, fixes } = validateItemStatic(item, { op: restore ? 'update' : op, svg });   // restored items keep their old docs
     const out = { op, type, key: item?.key, row: pre.row, errors, warnings, fixes, proposedHash: null, liveHash: null, unchanged: false, duplicate: null };
+    // D6: AI-created items are project items unless the owner allows public ones
+    if (op === 'create' && item?.visibility !== undefined && item.visibility !== 'project') {
+      if (item.visibility !== 'public') errors.push({ code: 'VISIBILITY', path: 'visibility', message: 'AI-created items are "project" (or "public" when the project allows it)' });
+      else if (!this.#mayCreatePublic(principal.project.id)) {
+        errors.push({ code: 'VISIBILITY', path: 'visibility', message: 'this project does not allow AI-created public items (Project AI settings: mayCreatePublicItems)' });
+        fixes.push('drop "visibility" (the item becomes a project item)');
+      }
+    }
+    // §14.7: text / background contrast in the default style (warning)
+    try { warnings.push(...contrastWarnings(item, this.query.tokens(principal, {}).tokens || {}, parseColor)); } catch { /* no styles */ }
     if (pre.keyTaken) {
       const free = this.#freeKey(item.key, principal.project.id);
       errors.push({ code: 'KEY_TAKEN', path: 'key', message: `key "${item.key}" is already used by a ${this.#scopeOf(principal, pre.keyTaken)} ${type} (${pre.keyTaken.uid}); reference that item instead, or use another key such as "${free}"` });

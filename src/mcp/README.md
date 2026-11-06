@@ -167,6 +167,14 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 - **Native adapters + SSE (F4):** `domain/native-adapters.js` adds `flutter` (Dart `UiuxTokens` / `UiuxIcons`; output checked with `flutter analyze`), `compose` (Kotlin `object UiuxTokens`, `enum class UiuxIcon`) and `swiftui` (`enum UiuxTokens`, `enum UiuxIcon`), each with `icons/*.svg`. `resources/subscribe` / `unsubscribe` (manifest, versions, requests/open) work on the transport session. `GET /mcp` with `Accept: text/event-stream` streams `notifications/resources/updated`. Projects with listeners are polled every 10 s so designer edits are noticed.
 - **Working HTML app (F5):** `uiux_export_app`, `uiux_create_bundle { includeApp }`, `GET /api/projects/:id/app-export` and *Collaborate → Download Project as HTML App* produce `app/`: the core exporter's working HTML/CSS/JS/TS app for the project's own screens, with workflow hotspots, actions, popups, drawers and menus, SVG images, and `DEV-NOTES.md`. They also produce `app/interactions.json` (format `kyrpy-uiux-interactions/1`) covering workflows, screen components and interactions, button menus, element actions and every developer note. The export was checked in headless Chrome: the hotspot navigates home → detail with no errors.
 
+## Spec gaps closed
+
+- `uiux_get_item { format: "html" }`: a standalone page with the rendered SVG, a table of nodes with behaviour (actions, instances, developer notes), menu and navigation lists, and the item JSON in `<script type="application/json" id="uiux-item">`. All item text is escaped.
+- `uiux_get_manifest { version }`: the stored manifest of a version (`sinceVersion` still gives the delta).
+- Prompt `need-ui-item` (§11.3): search → request → hand off to the designer agent.
+- D6: an AI-created item may be `visibility: "public"` only when the project setting `mayCreatePublicItems` is on (`VISIBILITY` error otherwise); the setting is checked again when the item is applied.
+- §14.7: `A11Y_CONTRAST` warning when a text node's fill does not reach WCAG AA (4.5:1, or 3:1 for large text) against the filled shape behind it. `{{token}}` colors are resolved with the default style's tokens.
+
 ## Rules for anyone changing the schema
 
 1. A new table or column needs an entry in `domain/schema-registry-seed.js` (bump `SEED_VERSION` when changing text). `npm test` enforces this.

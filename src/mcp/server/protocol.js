@@ -49,6 +49,17 @@ export const PROMPTS = [
 call uiux_get_manifest with ifNoneMatch = manifestHash from .uiux/uiux.lock.json; if unchanged say so and stop; otherwise call uiux_create_bundle, run its install steps, convert into the style folders, update the lockfile, and report added / changed / removed items.`
   },
   {
+    name: 'need-ui-item',
+    title: 'I need a UI item',
+    description: 'Finds an existing item for a need, or requests a new one from the designer agent.',
+    arguments: [{ name: 'type', description: 'path | icon | button | element | screen | workflow', required: true }, { name: 'intent', description: 'What it is for, in a few words', required: true }],
+    text: a => `I need a ${a.type || 'UI item'}${a.intent ? ` for: ${a.intent}` : ''}. Follow the skill kyrpy-skill-uiux-designer, procedure "someone needs a UI item":
+1. uiux_search_items with 2–4 descriptive words and the type; prefer project items, then private, then public.
+2. A good match → use it (its key and import path); pull first if it is not in the local bundle.
+3. Nothing fits → uiux_request_item { type, intent, constraints, context }; if a returned candidate fits, use it and cancel the request.
+4. Otherwise hand the request uid to the kyrpy-uiux-designer agent (claim → validate → stage → fulfil → submit) and report the request uid.`
+  },
+  {
     name: 'push-app-version',
     title: 'Push the existing app version',
     description: 'Reverse sync: inventories the app\'s UI and proposes new or changed items to the designer for review.',

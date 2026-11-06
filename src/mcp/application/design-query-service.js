@@ -243,7 +243,8 @@ export class DesignQueryService {
       const f = this.exporter.svgFile(type, row.id, { theme: styleKey, animated });
       return { type, uid: row.uid, key: row.key, style: styleKey, format: 'svg', filename: f.filename, svg: f.content, untrusted: this.#untrusted(principal, row) };
     }
-    if (format !== 'json') throw new ValidationError('format must be "json" or "svg"');
+    if (format === 'html') return this.itemHtml(principal, row, { style, animated });
+    if (format !== 'json') throw new ValidationError('format must be "json", "svg" or "html"');
     return this.itemJson(principal, row);
   }
 
@@ -289,6 +290,40 @@ export class DesignQueryService {
   }
 
   #nodeName(nodeId) { return this.reads.nodeName(nodeId); }
+
+  /**
+   * One item as a standalone HTML page: the rendered SVG (animated), a readable list of its interactions and
+   * developer notes, and the full item JSON in <script type="application/json" id="uiux-item">. All text is
+   * escaped (item text is data written by people or agents).
+   */
+  itemHtml(principal, row, { style, animated = true } = {}) {
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const item = this.itemJson(principal, row);
+    const styleKey = this.#resolveStyle(style);
+    const svg = row.type === 'workflow' ? '' : this.exporter.svgFile(row.type, row.id, { theme: styleKey, animated }).content.replace(/^<\?xml[^>]*>\s*/, '');
+    const target = a => (a.target ? `${a.target.type === a.type ? '' : `${a.target.type} `}"${a.target.key || a.target.uid}"` : Number.isInteger(a.targetNodeIndex) ? `node #${a.targetNodeIndex}` : '');
+    const act = a => `${esc(a.trigger || 'click')} → ${esc(a.type)}${target(a) ? ` ${esc(target(a))}` : ''}${a.side ? ` (${esc(a.side)})` : ''}`;
+    const rows = (item.nodes || []).filter(n => n.onClick || n.events?.length || n.descriptionDev || n.ref).map(n => `<tr><td>${n.index}</td><td>${esc(n.name || n.tag)}</td><td>${n.ref ? `uses ${esc(n.ref.type)} "${esc(n.ref.key)}"` : ''}</td><td>${[n.onClick && act({ trigger: 'click', ...n.onClick }), ...(n.events || []).map(act)].filter(Boolean).join('<br>')}</td><td>${esc(n.descriptionDev)}</td></tr>`);
+    const menu = (item.menuItems || []).map(m => `<li>${esc(m.parent ? `${m.parent} / ` : '')}${esc(m.label || m.name)} → ${esc(m.action)}${m.targetScreen ? ` screen "${esc(m.targetScreen.key)}"` : ''}${m.targetElement ? ` element "${esc(m.targetElement.key)}"` : ''}</li>`);
+    const links = (item.links || []).map(l => `<li>${esc(l.from?.key)}${l.fromNodeName ? ` [${esc(l.fromNodeName)}]` : ''} → ${esc(l.to?.key)} (${esc(l.trigger || 'click')})${l.descriptionDev ? ` — ${esc(l.descriptionDev)}` : ''}</li>`);
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(item.name || item.key)} — ${esc(item.type)}</title>
+<meta name="generator" content="kyrpy-uiux-mcp"><meta name="uiux-uid" content="${esc(item.uid)}"><meta name="uiux-content-hash" content="${esc(item.contentHash)}">
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:1100px}figure{margin:0 0 16px}figure svg{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}</style>
+</head><body>
+<h1>${esc(item.label || item.name || item.key)}</h1>
+<p><code>${esc(item.type)}</code> · key <code>${esc(item.key)}</code> · style <code>${esc(styleKey)}</code></p>
+${item.descriptionDev ? `<p>${esc(item.descriptionDev)}</p>` : ''}${item.mcpContext?.purpose ? `<p><b>Purpose:</b> ${esc(item.mcpContext.purpose)}</p>` : ''}
+${svg ? `<figure>${svg}</figure>` : ''}
+${rows.length ? `<h2>Nodes with behaviour</h2><table><tr><th>#</th><th>Node</th><th>Contains</th><th>Interactions</th><th>Developer notes</th></tr>${rows.join('')}</table>` : ''}
+${menu.length ? `<h2>Menu</h2><ul>${menu.join('')}</ul>` : ''}
+${links.length ? `<h2>Navigation</h2><ul>${links.join('')}</ul>` : ''}
+<script type="application/json" id="uiux-item">${JSON.stringify(item).replace(/</g, '\\u003c')}</script>
+</body></html>
+`;
+    return { type: row.type, uid: row.uid, key: row.key, style: styleKey, format: 'html', filename: `${row.key}.html`, html, untrusted: item.untrusted };
+  }
 
   /* ---------- tokens & workflows ---------- */
 

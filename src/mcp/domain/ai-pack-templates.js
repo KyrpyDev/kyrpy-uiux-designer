@@ -5,7 +5,7 @@
  * Template syntax (see ai-pack-render.js): {{var}}, {{#each list}}…{{this}}…{{/each}}, {{#if var}}…{{/if}}.
  * Bump TEMPLATE_VERSION whenever a body changes, so `uiux_init` updates installed packs.
  */
-export const TEMPLATE_VERSION = 4;
+export const TEMPLATE_VERSION = 5;
 
 export const AGENT_NAME = 'kyrpy-uiux-designer';
 export const SKILL_NAME = 'kyrpy-skill-uiux-designer';
@@ -59,7 +59,7 @@ Styles: {{#each styles}}\`{{this}}\` {{/each}}(default \`{{defaultStyle}}\`) · 
 | \`uiux_get_schema\` | learn the rules (call once per session; \`table\` for column details) |
 | \`uiux_get_manifest\` | see what changed: pass \`ifNoneMatch\` = lockfile \`manifestHash\` |
 | \`uiux_search_items\` | find an existing item before creating anything |
-| \`uiux_get_item\` | read one item (JSON) or render it (SVG in a style) |
+| \`uiux_get_item\` | read one item (JSON), render it (SVG in a style), or get a standalone HTML page with its behaviour and notes |
 | \`uiux_get_tokens\` | tokens as JSON / CSS variables / TypeScript |
 | \`uiux_list_workflows\` | screen navigation graphs |
 | \`uiux_create_bundle\` | download everything as a .tar.gz (single-use URL, 15 min) |

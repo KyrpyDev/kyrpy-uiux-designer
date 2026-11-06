@@ -136,3 +136,52 @@ export function validateItemStatic(item, { op = 'create', svg } = {}) {
   }
   return { errors, warnings, fixes };
 }
+
+/* ---------- WCAG AA contrast (§14.7) ---------- */
+
+const luminance = c => {
+  const f = v => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+};
+/** WCAG contrast ratio of two {r,g,b} colors (1 … 21). */
+export function contrastRatio(a, b) {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+const BG_TAGS = new Set(['rect', 'circle', 'ellipse', 'path', 'polygon']);
+
+/**
+ * Warnings for text nodes whose fill does not reach WCAG AA against the shape drawn behind them (the
+ * nearest earlier filled shape in the same group or an ancestor). `{{token}}` colors are resolved with
+ * the given style tokens; gradients, `none` and unknown values are skipped.
+ */
+export function contrastWarnings(item, tokens = {}, parse) {
+  const nodes = Array.isArray(item?.nodes) ? item.nodes : [];
+  const color = v => {
+    if (v == null) return null;
+    const m = /^\{\{\s*([\w-]+)\s*\}\}$/.exec(String(v).trim());
+    return parse(m ? tokens[m[1]] : v);
+  };
+  const parentOf = i => (Number.isInteger(nodes[i]?.parentIndex) ? nodes[i].parentIndex : null);
+  const ancestors = i => { const out = new Set(); for (let p = parentOf(i), n = 0; p != null && n < 50; p = parentOf(p), n++) out.add(p); return out; };
+  const out = [];
+  nodes.forEach((n, i) => {
+    if (n?.tag !== 'text') return;
+    const fg = color(n.attrs?.fill);
+    if (!fg) return;
+    const anc = ancestors(i);
+    for (let j = i - 1; j >= 0; j--) {
+      const b = nodes[j];
+      if (!BG_TAGS.has(b?.tag) || !(parentOf(j) === parentOf(i) || anc.has(parentOf(j)) || anc.has(j))) continue;
+      const bg = color(b.attrs?.fill);
+      if (!bg) continue;
+      const size = Number(n.attrs?.['font-size']) || 14, bold = Number(n.attrs?.['font-weight']) >= 700 || n.attrs?.['font-weight'] === 'bold';
+      const need = size >= 24 || (size >= 18.66 && bold) ? 3 : 4.5;
+      const r = contrastRatio(fg, bg);
+      if (r < need) out.push({ code: 'A11Y_CONTRAST', path: `nodes[${i}].attrs.fill`, message: `text "${String(n.text || n.name || '').slice(0, 30)}" has contrast ${r.toFixed(2)}:1 on nodes[${j}]; WCAG AA needs ${need}:1` });
+      return;
+    }
+  });
+  return out;
+}

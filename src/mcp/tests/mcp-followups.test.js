@@ -267,3 +267,47 @@ test('F5: the project exports as a working HTML app with a machine-readable inte
     assert.equal((await fetch(`${w.base}/api/projects/${w.p.id}/app-export`, { headers: { authorization: `Bearer ${w.bob.token}` } })).status, 403);
   } finally { w.close(); }
 });
+
+test('spec gaps: get_item html, manifest of a version, need-ui-item prompt, D6 public items, WCAG contrast', async () => {
+  const { contrastRatio, contrastWarnings } = await import('../domain/item-validation.js');
+  assert.equal(contrastRatio({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }).toFixed(0), '21');
+  const w = await world();
+  try {
+    const u = w.ada.user, P = { projectId: w.p.id, visibility: 'project' };
+    const s = w.c.screen.create({ name: 'Home', key: 'home', ...P, descriptionDev: 'Start <b>here</b>' }, { actor: u, nodes: DOT });
+    w.c.button.create({ name: 'Go', key: 'go', ...P }, { actor: u, nodes: [{ tag: 'rect', name: 'bg', attrs: { x: 0, y: 0, width: 40, height: 40 }, onClick: { type: 'screen', targetId: s.id } }] });
+    // html format
+    const h = await w.ok('uiux_get_item', { type: 'button', ref: 'go', format: 'html' });
+    assert.match(h.html, /^<!doctype html>/);
+    assert.match(h.html, /<svg[\s>]/);
+    assert.match(h.html, /click → screen &quot;home&quot;/);
+    assert.match(h.html, /<script type="application\/json" id="uiux-item">/);
+    const sh = await w.ok('uiux_get_item', { type: 'screen', ref: 'home', format: 'html' });
+    assert.match(sh.html, /Start &lt;b&gt;here&lt;\/b&gt;/, 'item text is escaped');
+    // manifest of a stored version
+    const v1 = (await w.ok('uiux_get_manifest', {})).version;
+    w.c.icon.create({ name: 'Later', key: 'later', ...P }, { actor: u, nodes: DOT });
+    const live = await w.ok('uiux_get_manifest', {});
+    const old = await w.ok('uiux_get_manifest', { version: v1 });
+    assert.equal(old.version, v1);
+    assert.ok(!old.items.some(i => i.key === 'later') && live.version > v1);
+    // prompt
+    const pr = (await w.post({ jsonrpc: '2.0', id: 9, method: 'prompts/get', params: { name: 'need-ui-item', arguments: { type: 'icon', intent: 'share arrow' } } })).body.result;
+    assert.match(pr.messages[0].content.text, /uiux_request_item/);
+    // D6
+    const cs = await w.ok('uiux_begin_changeset', {});
+    const pub = { type: 'icon', key: 'pub-ai', name: 'Pub', visibility: 'public', ...docs('p'), nodes: [{ tag: 'rect', attrs: { x: 2, y: 2, width: 9, height: 9 } }] };
+    const denied = await w.call('uiux_stage_item', { changeset: cs.changeset, item: pub });
+    assert.equal(denied.structuredContent.error.details.errors[0].code, 'VISIBILITY');
+    w.c.mcp.apiKeys.updateAiSettings(w.p.id, { mayCreatePublicItems: true }, w.ada.user);
+    await w.ok('uiux_stage_item', { changeset: cs.changeset, item: pub });
+    // contrast warning: grey on grey
+    const low = await w.ok('uiux_stage_item', { changeset: cs.changeset, item: { type: 'button', key: 'low', name: 'Low', label: 'Low', ...docs('l'), width: 120, height: 48,
+      nodes: [{ tag: 'rect', attrs: { x: 0, y: 0, width: 120, height: 48, fill: '#777777' } }, { tag: 'text', text: 'Low', attrs: { x: 10, y: 30, fill: '#888888' } }] } });
+    assert.equal(low.warnings.find(x => x.code === 'A11Y_CONTRAST')?.path, 'nodes[1].attrs.fill');
+    assert.deepEqual(contrastWarnings({ nodes: [{ tag: 'rect', attrs: { fill: '{{bg}}' } }, { tag: 'text', attrs: { fill: '{{fg}}' } }] }, { bg: '#000', fg: '#fff' }, (await import('../domain/native-adapters.js')).parseColor), [], 'tokens resolved; white on black passes');
+    const sub = await w.ok('uiux_submit_changeset', { changeset: cs.changeset });
+    await w.approveAll(sub);
+    assert.equal(w.c.mcp.query.reads.findInProject('icon', 'pub-ai', w.p.id).visibility, 'public', 'public only because the owner allowed it');
+  } finally { w.close(); }
+});
