@@ -49,7 +49,7 @@ function Start-Designer([string]$Mode, [string]$Bypass) {
   $env:APP_MODE = $Mode
   $env:BYPASS_AUTH = $Bypass
   Write-Host "Starting Kyrpy UI/UX Designer on http://${HostAddr}:${Port} (APP_MODE=$Mode, BYPASS_AUTH=$Bypass)..." -ForegroundColor Cyan
-  $Proc = Start-Process -FilePath "node" -ArgumentList "--disable-warning=ExperimentalWarning", "index.js" -WorkingDirectory (Join-Path $RootDir "src") -PassThru -WindowStyle Hidden
+  $Proc = Start-Process -FilePath "node" -ArgumentList "--disable-warning=ExperimentalWarning", "main.js", "serve", "--port", $Port -WorkingDirectory (Join-Path $RootDir "src") -PassThru -WindowStyle Hidden
   Set-Content -Path $PidFile -Value $Proc.Id
   Write-Host "[OK] Running (PID $($Proc.Id)) -> http://${HostAddr}:${Port}" -ForegroundColor Green
   Write-Host "Default login credential: username 'admin' / password 'admin'" -ForegroundColor Gray

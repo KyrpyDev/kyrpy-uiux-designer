@@ -42,12 +42,14 @@ $HostAddr = "127.0.0.1"
 $AppMode = "dev"
 $BypassAuth = "true"
 $PgSyncEnabled = "false"
+$LocalOnly = "true"
 $PgHost = ""
 $PgPort = "5432"
-$PgUser = ""
+$PgUser = "postgres"
 $PgPassword = ""
-$PgDatabase = "postgres"
-$PgSchema = "uiux_designer"
+$PgDatabase = "kyrpy-uiux-designer-db"
+$PgAdminDb = "postgres"
+$PgSchema = "public"
 $PgSsl = "false"
 
 if (-not $NonInteractive) {
@@ -65,18 +67,19 @@ if (-not $NonInteractive) {
 
   $WantPg = Read-Host "Configure server-side PostgreSQL connection? [y/N]"
   if ($WantPg -match "^[Yy]") {
-    $PgHost = (Read-Host "  PG_HOST (leave empty for local-only SQLite mode)").Trim()
+    $PgHost = (Read-Host "  PGHOST (leave empty for local-only SQLite mode)").Trim()
     if ($PgHost) {
-      $InPgPort = Read-Host "  PG_PORT [5432]"
+      $InPgPort = Read-Host "  PGPORT [5432]"
       if ($InPgPort) { $PgPort = $InPgPort.Trim() }
-      $InPgUser = Read-Host "  PG_USER [postgres]"
+      $InPgUser = Read-Host "  PGUSER [postgres]"
       if ($InPgUser) { $PgUser = $InPgUser.Trim() } else { $PgUser = "postgres" }
-      $PgPassword = Read-Host "  PG_PASSWORD"
-      $InPgDb = Read-Host "  PG_DATABASE [postgres]"
+      $PgPassword = Read-Host "  PGPASSWORD"
+      $InPgDb = Read-Host "  PGDATABASE [kyrpy-uiux-designer-db]"
       if ($InPgDb) { $PgDatabase = $InPgDb.Trim() }
-      $InPgSchema = Read-Host "  PG_SCHEMA [uiux_designer]"
-      if ($InPgSchema) { $PgSchema = $InPgSchema.Trim() }
+      $InPgAdmin = Read-Host "  PGADMINDB [postgres]"
+      if ($InPgAdmin) { $PgAdminDb = $InPgAdmin.Trim() }
       $PgSyncEnabled = "true"
+      $LocalOnly = "false"
     }
   }
 }
@@ -90,6 +93,13 @@ BYPASS_AUTH=$BypassAuth
 DEFAULT_ADMIN_USER=admin
 DEFAULT_ADMIN_PASS=admin
 PG_SYNC_ENABLED=$PgSyncEnabled
+LOCAL_ONLY=$LocalOnly
+PGHOST=$PgHost
+PGPORT=$PgPort
+PGUSER=$PgUser
+PGPASSWORD=$PgPassword
+PGDATABASE=$PgDatabase
+PGADMINDB=$PgAdminDb
 PG_HOST=$PgHost
 PG_PORT=$PgPort
 PG_USER=$PgUser

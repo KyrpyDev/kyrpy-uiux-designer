@@ -20,9 +20,13 @@ Thank you for your interest in contributing to **Kyrpy UI/UX App Designer**! We 
 
 1. Run the one-click installer in local mode:
    ```bash
-   ./install.sh --local-only
+   # Linux / macOS
+   ./installer.sh --non-interactive
+
+   # Windows PowerShell
+   .\installer.ps1 -NonInteractive
    ```
-2. Open `http://127.0.0.1:5180` in your browser.
+2. Open `http://127.0.0.1:5180` in your browser (or manage the server with `./runner.sh {start|dev|release|stop|restart|status|logs}`).
 3. Run the automated test suite after making changes:
    ```bash
    cd src && npm test

@@ -62,12 +62,14 @@ HOST="${HOST:-127.0.0.1}"
 APP_MODE="dev"
 BYPASS_AUTH="true"
 PG_SYNC_ENABLED="false"
+LOCAL_ONLY="true"
 PG_HOST=""
 PG_PORT="5432"
-PG_USER=""
+PG_USER="postgres"
 PG_PASSWORD=""
-PG_DATABASE="postgres"
-PG_SCHEMA="uiux_designer"
+PG_DATABASE="kyrpy-uiux-designer-db"
+PG_ADMIN_DB="postgres"
+PG_SCHEMA="public"
 PG_SSL="false"
 
 if [ -f "$ENV_FILE" ] && [ "$NON_INTERACTIVE" -eq 1 ]; then
@@ -91,48 +93,60 @@ else
 
     echo ""
     echo "----------------------------------------------------------------------"
-    echo "  🗄️  Database & Cloud Sync Setup"
+    echo "  🗄️  Database & Server-Side PostgreSQL Setup (.env)"
     echo "  By default, Kyrpy UI/UX Designer works 100% locally with the bundled"
     echo "  SQLite sample database (src/data/designer.db)."
-    echo "  Optionally enter PostgreSQL credentials for cloud sync, or press"
-    echo "  Enter to run in Local-Only SQLite mode."
+    echo "  Enter server-side PostgreSQL credentials below, or press Enter to"
+    echo "  run strictly on your local machine (Local-Only SQLite mode)."
     echo "----------------------------------------------------------------------"
     read -r -p "Local HTTP port [5180]: " INPUT_PORT
     PORT="${INPUT_PORT:-5180}"
 
     read -r -p "Configure server-side PostgreSQL connection? [y/N]: " WANT_PG
     if [[ "${WANT_PG:-N}" =~ ^[Yy]$ ]]; then
-      read -r -p "  PG_HOST (leave empty for local-only mode): " PG_HOST
+      read -r -p "  PGHOST (leave empty for local-only mode): " PG_HOST
       if [ -n "$PG_HOST" ]; then
-        read -r -p "  PG_PORT [5432]: " INPUT_PG_PORT
+        read -r -p "  PGPORT [5432]: " INPUT_PG_PORT
         PG_PORT="${INPUT_PG_PORT:-5432}"
-        read -r -p "  PG_USER [postgres]: " INPUT_PG_USER
+        read -r -p "  PGUSER [postgres]: " INPUT_PG_USER
         PG_USER="${INPUT_PG_USER:-postgres}"
-        read -r -s -p "  PG_PASSWORD: " PG_PASSWORD
+        read -r -s -p "  PGPASSWORD: " PG_PASSWORD
         echo ""
-        read -r -p "  PG_DATABASE [postgres]: " INPUT_PG_DB
-        PG_DATABASE="${INPUT_PG_DB:-postgres}"
-        read -r -p "  PG_SCHEMA [uiux_designer]: " INPUT_PG_SCHEMA
-        PG_SCHEMA="${INPUT_PG_SCHEMA:-uiux_designer}"
+        read -r -p "  PGDATABASE [kyrpy-uiux-designer-db]: " INPUT_PG_DB
+        PG_DATABASE="${INPUT_PG_DB:-kyrpy-uiux-designer-db}"
+        read -r -p "  PGADMINDB [postgres]: " INPUT_PG_ADMIN
+        PG_ADMIN_DB="${INPUT_PG_ADMIN:-postgres}"
         read -r -p "  Enable SSL (PG_SSL)? [y/N]: " INPUT_PG_SSL
         if [[ "${INPUT_PG_SSL:-N}" =~ ^[Yy]$ ]]; then PG_SSL="true"; fi
 
-        info "Testing TCP connectivity to PostgreSQL at ${PG_HOST}:${PG_PORT}..."
-        if node -e "
+        info "Testing connectivity to PostgreSQL at ${PG_HOST}:${PG_PORT}..."
+        PG_REACHABLE=0
+        if command -v psql >/dev/null 2>&1; then
+          if PGPASSWORD="$PG_PASSWORD" PGCONNECT_TIMEOUT=4 psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_ADMIN_DB" -c "SELECT 1;" >/dev/null 2>&1 || \
+             PGPASSWORD="$PG_PASSWORD" PGCONNECT_TIMEOUT=4 psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -c "SELECT 1;" >/dev/null 2>&1; then
+            PG_REACHABLE=1
+          fi
+        elif node -e "
           const net = require('node:net');
           const s = net.connect({ host: process.argv[1], port: Number(process.argv[2]), timeout: 3000 });
           s.on('connect', () => { s.destroy(); process.exit(0); });
           s.on('error', () => process.exit(1));
           s.on('timeout', () => { s.destroy(); process.exit(1); });
         " "$PG_HOST" "$PG_PORT" 2>/dev/null; then
+          PG_REACHABLE=1
+        fi
+
+        if [ "$PG_REACHABLE" -eq 1 ]; then
           PG_SYNC_ENABLED="true"
-          ok "PostgreSQL server reachable! Cloud sync enabled."
+          LOCAL_ONLY="false"
+          ok "PostgreSQL server reachable! Bi-directional cloud sync enabled."
         else
-          warn "Could not reach ${PG_HOST}:${PG_PORT}. Falling back to Local-Only SQLite mode (PG_SYNC_ENABLED=false)."
+          warn "Could not connect to PostgreSQL at ${PG_HOST}:${PG_PORT}. Falling back to Local-Only SQLite mode (PG_SYNC_ENABLED=false, LOCAL_ONLY=true)."
           PG_SYNC_ENABLED="false"
+          LOCAL_ONLY="true"
         fi
       else
-        info "No PG_HOST entered. Using Local-Only SQLite mode."
+        info "No PGHOST entered. Using Local-Only SQLite mode."
       fi
     else
       info "Using Local-Only SQLite mode (src/data/designer.db)."
@@ -148,6 +162,13 @@ BYPASS_AUTH=${BYPASS_AUTH}
 DEFAULT_ADMIN_USER=admin
 DEFAULT_ADMIN_PASS=admin
 PG_SYNC_ENABLED=${PG_SYNC_ENABLED}
+LOCAL_ONLY=${LOCAL_ONLY}
+PGHOST=${PG_HOST}
+PGPORT=${PG_PORT}
+PGUSER=${PG_USER}
+PGPASSWORD=${PG_PASSWORD}
+PGDATABASE=${PG_DATABASE}
+PGADMINDB=${PG_ADMIN_DB}
 PG_HOST=${PG_HOST}
 PG_PORT=${PG_PORT}
 PG_USER=${PG_USER}
@@ -157,7 +178,7 @@ PG_SCHEMA=${PG_SCHEMA}
 PG_SSL=${PG_SSL}
 EOF
   chmod 600 "$ENV_FILE" 2>/dev/null || true
-  ok "Wrote configuration to .env (APP_MODE=${APP_MODE}, PG_SYNC_ENABLED=${PG_SYNC_ENABLED})"
+  ok "Wrote configuration to .env (APP_MODE=${APP_MODE}, PG_SYNC_ENABLED=${PG_SYNC_ENABLED}, LOCAL_ONLY=${LOCAL_ONLY})"
 fi
 
 # 3. Ensure sample SQLite database & default `admin` / `admin` account exist

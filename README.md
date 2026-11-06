@@ -99,9 +99,9 @@ cd kyrpy-uiux-designer
    - **`release` mode (`APP_MODE=release`, `BYPASS_AUTH=false`)**: Protects the studio page with a full-screen **Login / Register** gate requiring authentication (e.g. `admin` / `admin` or a newly registered user account).
 3. **Prompts for Optional `.env` PostgreSQL Credentials**:
    - Asks for your preferred local HTTP port (default: `5180`).
-   - Asks if you want to configure a server-side PostgreSQL connection (`PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE`, `PG_SCHEMA`).
-   - **Automatic Local-Only Fallback**: If you skip PostgreSQL or if the server is unreachable, it automatically sets `PG_SYNC_ENABLED=false` so the studio runs **100% locally on SQLite (`src/data/designer.db`)**.
-4. **Seeds Default `admin` / `admin` Account & Sample Data**: Ensures `src/data/designer.db` is loaded with the sample design system (`211 paths`, `206 icons`, `211 buttons`, `112 elements`, `24 screens`, `3 workflows`, `4 themes`) and the `admin` / `admin` account.
+   - Asks if you want to configure a server-side PostgreSQL connection (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGADMINDB`).
+   - **Automatic Local-Only Fallback**: If you skip PostgreSQL or if the server is unreachable, it automatically sets `PG_SYNC_ENABLED=false` and `LOCAL_ONLY=true` so the studio runs **100% locally on SQLite (`src/data/designer.db`)**.
+4. **Seeds Default `admin` / `admin` Account & Sample Data**: Ensures `src/data/designer.db` is loaded with the sample design system (`211 paths`, `206 icons`, `211 buttons`, `114 elements`, `24 screens`, `3 workflows`, `30 themes`, `12 device templates`, `40 button templates`) and the `admin` / `admin` account.
 5. **Runs Automated Verification Tests & Starts the Server** at **`http://127.0.0.1:5180`**.
 
 > **Non-Interactive Install**:
@@ -143,10 +143,11 @@ This repository ships with a rich, production-grade sample UI/UX library ready t
 
 | Asset / Dump File | Description |
 | :--- | :--- |
-| [`src/data/designer.db`](./src/data/designer.db) | Pre-populated local SQLite database used immediately on startup (`211` paths, `206` icons, `211` buttons, `112` elements, `24` screens, `3` workflows, `4` themes, `12` device templates, `8` button templates). |
+| [`src/data/designer.db`](./src/data/designer.db) | Pre-populated local SQLite database used immediately on startup (`211` paths, `206` icons, `211` buttons, `114` elements, `24` screens, `3` workflows, `30` themes across 15 Dark/Light style families, `12` device templates, `40` button templates). |
 | [`sql/schema_postgres.sql`](./sql/schema_postgres.sql) | Standalone PostgreSQL DDL schema for all 21 tables (`users`, `projects`, `paths`, `icons`, `buttons`, `elements`, `screens`, `nodes`, `animations`, `menu_items`, `workflows`, `trash_items`, etc.). |
-| [`sql/sample_data_postgres.sql`](./sql/sample_data_postgres.sql) | Full PostgreSQL dump (`CREATE TABLE IF NOT EXISTS` + idempotent `INSERT ... ON CONFLICT DO UPDATE`) to seed any PostgreSQL database. |
-| [`sql/sample_data_sqlite.sql`](./sql/sample_data_sqlite.sql) | Full SQLite SQL dump used by `./install.sh` to reconstruct `src/data/designer.db` from scratch if deleted. |
+| [`sql/sample_data_postgres.sql`](./sql/sample_data_postgres.sql) | Full PostgreSQL dump (`CREATE TABLE IF NOT EXISTS` + idempotent `INSERT ... ON CONFLICT DO NOTHING`) to seed any PostgreSQL database. |
+| [`sql/sample_data_sqlite.sql`](./sql/sample_data_sqlite.sql) | Full SQLite SQL dump used by `./installer.sh` to reconstruct `src/data/designer.db` from scratch if deleted. |
+| [`sql/schema_sqlite.sql`](./sql/schema_sqlite.sql) | Synchronized SQLite DDL schema for all tables and indexes. |
 
 ### Importing the Sample Dump into PostgreSQL Manually
 ```bash
@@ -253,7 +254,7 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
 ## 🧪 Running Tests & Server Management
 
 ```bash
-# Run the full 68-test automated suite (unit + integration + 9 adversarial user personas)
+# Run the full 72-test automated suite (unit + integration + 13 adversarial user personas)
 cd src && npm test
 
 # Service management via runner.sh (Linux/macOS) or runner.ps1 (Windows PowerShell)

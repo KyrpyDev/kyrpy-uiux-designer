@@ -92,12 +92,16 @@ try {
     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '["*"]', ?, ?, ?, NULL)
   `).run(2, 'admin', 'admin@local.dev', adminHash, 'admin_salt_v1', 'Administrator', 'superadmin', '#10b981', now, now);
 
-  // 3b. Keep only Default Public Project (id=1) with default circle / 70% button settings
+  // 3b. Keep only Default Public Project (id=1), preserving its live button style / icon size settings
+  const liveProj1 = db.prepare('SELECT settings FROM projects WHERE id = 1').get();
+  const proj1Settings = (liveProj1 && liveProj1.settings && liveProj1.settings !== '{}')
+    ? liveProj1.settings
+    : '{"buttonStyle":"circle","buttonIconSizePct":70}';
   db.exec('DELETE FROM projects WHERE id != 1;');
   db.prepare(`
     INSERT OR REPLACE INTO projects (id, key, name, label, description, owner_id, visibility, require_approval, settings, created_at, updated_at)
-    VALUES (1, 'default-project', 'Default Public Project', 'Default Public Project', 'Default workspace project containing public and shared UI/UX designs.', 1, 'public', 1, '{"buttonStyle":"circle","buttonIconSizePct":70}', ?, ?)
-  `).run(now, now);
+    VALUES (1, 'default-project', 'Default Public Project', 'Default Public Project', 'Default workspace project containing public and shared UI/UX designs.', 1, 'public', 1, ?, ?, ?)
+  `).run(proj1Settings, now, now);
 
   db.exec('DELETE FROM project_members;');
   db.prepare(`

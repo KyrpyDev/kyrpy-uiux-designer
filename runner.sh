@@ -42,7 +42,7 @@ start_bg() {
   (
     cd "$ROOT_DIR/src"
     PORT="$PORT" HOST="$HOST" APP_MODE="$mode" BYPASS_AUTH="$bypass" \
-      nohup node --disable-warning=ExperimentalWarning index.js > "$LOG_FILE" 2>&1 &
+      nohup node --disable-warning=ExperimentalWarning main.js serve --port "$PORT" > "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
   )
   sleep 1

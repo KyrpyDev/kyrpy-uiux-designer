@@ -434,12 +434,12 @@ export class PostgresSyncService {
     this.db = db;
     const creds = loadCredentialsEnv();
     this.config = {
-      host: config.host ?? process.env.PGHOST ?? creds.PGHOST ?? '',
-      port: String(config.port || process.env.PGPORT || creds.PGPORT || '5432'),
-      user: config.user || process.env.PGUSER || creds.PGUSER || 'postgres',
-      password: config.password ?? process.env.PGPASSWORD ?? process.env.KYRPY_POSTGRES_ADMIN_PASSWORD ?? creds.PGPASSWORD ?? creds.KYRPY_POSTGRES_ADMIN_PASSWORD ?? '',
-      database: config.database || process.env.PGDATABASE || creds.PGDATABASE || 'kyrpy-uiux-designer-db',
-      adminDb: config.adminDb || process.env.PGADMINDB || creds.PGADMINDB || 'postgres'
+      host: config.host ?? process.env.PGHOST ?? process.env.PG_HOST ?? creds.PGHOST ?? creds.PG_HOST ?? '',
+      port: String(config.port || process.env.PGPORT || process.env.PG_PORT || creds.PGPORT || creds.PG_PORT || '5432'),
+      user: config.user || process.env.PGUSER || process.env.PG_USER || creds.PGUSER || creds.PG_USER || 'postgres',
+      password: config.password ?? process.env.PGPASSWORD ?? process.env.PG_PASSWORD ?? process.env.KYRPY_POSTGRES_ADMIN_PASSWORD ?? creds.PGPASSWORD ?? creds.PG_PASSWORD ?? creds.KYRPY_POSTGRES_ADMIN_PASSWORD ?? '',
+      database: config.database || process.env.PGDATABASE || process.env.PG_DATABASE || creds.PGDATABASE || creds.PG_DATABASE || 'kyrpy-uiux-designer-db',
+      adminDb: config.adminDb || process.env.PGADMINDB || process.env.PG_ADMIN_DB || creds.PGADMINDB || creds.PG_ADMIN_DB || 'postgres'
     };
     const envSyncFlag = String(process.env.PG_SYNC_ENABLED ?? creds.PG_SYNC_ENABLED ?? '').toLowerCase();
     const envLocalOnly = String(process.env.LOCAL_ONLY ?? creds.LOCAL_ONLY ?? '').toLowerCase();
