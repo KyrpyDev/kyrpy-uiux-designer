@@ -37,7 +37,14 @@ export class DesignRepository {
     if (q) { where.push('(key LIKE ? OR name LIKE ? OR label LIKE ? OR tags LIKE ? OR description_dev LIKE ?)'); const l = `%${q}%`; args.push(l, l, l, l, l); }
     if (category) { where.push('category = ?'); args.push(category); }
     const vis = visibility === 'all' ? '' : visibility;
-    if (vis) {
+    if (vis === 'mine' && effUserId) {
+      // "All Projects": the user's own private items plus the project-only items of every project they own or belong to
+      where.push(`((visibility = 'private' AND creator_id = ?) OR (visibility = 'project' AND project_id IN (
+        SELECT id FROM projects WHERE owner_id = ? UNION SELECT project_id FROM project_members WHERE user_id = ? AND status = 'active')))`);
+      args.push(effUserId, effUserId, effUserId);
+    } else if (vis === 'mine') {
+      where.push(`visibility IN ('private', 'project')`);
+    } else if (vis) {
       where.push('visibility = ?'); args.push(vis);
       if (vis === 'project' && pIds.length) {
         where.push(`project_id IN (${pIds.map(() => '?').join(',')})`);
@@ -66,7 +73,7 @@ export class DesignRepository {
       where.push(`(visibility != 'private' OR creator_id = ?)`);
       args.push(Number(actorId));
     }
-    if (creatorId != null && creatorId !== '' && vis !== 'private') {
+    if (creatorId != null && creatorId !== '' && vis !== 'private' && vis !== 'mine') {
       where.push('creator_id = ?');
       args.push(Number(creatorId));
     }

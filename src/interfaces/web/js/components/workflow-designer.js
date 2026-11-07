@@ -103,7 +103,7 @@ export class WorkflowDesigner {
     const wrap = h('div', { class: 'menu save-targets-dd', style: { position: 'relative', display: 'inline-flex' } });
     const triggerBtn = h('button', {
       class: `btn small save-targets-trigger${count > 0 ? ' active' : ''}`,
-      title: 'Multi-target Save Option: select multiple projects and/or your Global Private Library to save this workflow (and all sub-items) into all selected targets',
+      title: 'Multi-target Save Option: select multiple projects and/or your All Projects library to save this workflow (and all sub-items) into all selected targets',
       onclick: e => {
         e.stopPropagation();
         const isOpen = wrap.classList.contains('open');
@@ -138,7 +138,7 @@ export class WorkflowDesigner {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear(); // the Global Private Library target is locked on: Clear only drops the projects
+                selSet.clear(); // the All Projects library target is locked on: Clear only drops the projects
                 updateTriggerText();
                 rebuildPanel();
               }
@@ -168,7 +168,7 @@ export class WorkflowDesigner {
             fontSize: '12px',
             fontWeight: '600'
           }
-        }, privChk, h('span', {}, '👤 My Global Private Library (All My Projects)'), h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 })))
+        }, privChk, h('span', {}, '🗂 All Projects (my global library — user\'s all projects)'), h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 })))
       );
 
       for (const p of projects) {
@@ -221,7 +221,7 @@ export class WorkflowDesigner {
         : `Save is disabled because this workflow is owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)}. Use "Save as…" to save a copy.`,
       onclick: () => this.save()
     }, '💾 Save');
-    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into your Global Private Library and any selected Multi-Targets)' });
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into your All Projects library and any selected Multi-Targets)' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     const copyToBtn = h('button', {

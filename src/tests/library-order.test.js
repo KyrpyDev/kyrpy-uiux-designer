@@ -62,3 +62,21 @@ test('revealInLibrary switches a mismatching visibility filter to the saved item
   assert.equal(follows('project', 'project'), null);
   assert.equal(follows('all', 'private'), null);
 });
+
+test('library filter "mine" (All Projects): own private items + project-only items of every project the user belongs to', async () => {
+  const { buildContainer } = await import('../composition-root.js');
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const ada = c.auth.register({ username: 'ada', email: 'ada@example.com', password: 'secret123' }).user;
+    const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'secret123' }).user;
+    const pa = c.projects.create({ name: 'Ada One' }, { actor: ada }), pa2 = c.projects.create({ name: 'Ada Two' }, { actor: ada }), pb = c.projects.create({ name: 'Bob One' }, { actor: bob });
+    const mk = (name, vis, project, owner) => c.button.create({ name, key: name.toLowerCase(), projectId: project, visibility: vis, creatorId: owner.id }, { nodes: [] });
+    mk('PrivAda', 'private', 1, ada); mk('ProjA1', 'project', pa.id, ada); mk('ProjA2', 'project', pa2.id, ada);
+    mk('PrivBob', 'private', 1, bob); mk('ProjB', 'project', pb.id, bob);
+    const names = f => c.button.list(f).map(b => b.name).sort().join(',');
+    assert.equal(names({ visibility: 'mine', actorId: ada.id }), 'PrivAda,ProjA1,ProjA2', 'all my projects, nothing of bob');
+    assert.equal(names({ visibility: 'mine', actorId: ada.id, projectId: pa.id }), 'PrivAda,ProjA1,ProjA2', 'the active project does not narrow All Projects');
+    assert.equal(names({ visibility: 'mine', actorId: bob.id }), 'PrivBob,ProjB');
+    assert.equal(names({ visibility: 'project', actorId: ada.id, projectId: pa.id }), 'ProjA1', 'Project-only stays the active project');
+  } finally { c.close(); }
+});

@@ -199,7 +199,7 @@ function chooseSaveTargets(rec) {
       onClose: () => finish(null),
       content: h('div', {},
         h('p', {}, `"${rec.name}" belongs to the public library, which only the superadmin can change. Save your own copy (with all sub-items) to:`),
-        box('🔒 My Global Private Library', priv, v => { priv = v; }),
+        box('🗂 All Projects (my global library)', priv, v => { priv = v; }),
         ...(own.length ? [h('b', {}, 'My projects')] : [h('p', { class: 'muted' }, 'You have no projects yet: the copy goes to your private library.')]),
         ...own.map(p => box(p.name, picked.has(Number(p.id)), v => { v ? picked.add(Number(p.id)) : picked.delete(Number(p.id)); }))),
       actions: close => [
@@ -354,7 +354,7 @@ function menuDef() {
         await d().patchRecord({ visibility: 'public' });
         toast(`"${curDoc.name}" is now PUBLIC`, 'ok');
       }],
-      ['Set Open Design to Private (My Global Library — All My Projects)', async () => {
+      ['Set Open Design to All Projects (my global library — user\'s all projects)', async () => {
         if (!curDoc) return toast('Open a design first', 'error');
         await d().patchRecord({ visibility: 'private' });
         toast(`"${curDoc.name}" is now PRIVATE (Global Library)`, 'ok');
@@ -555,7 +555,7 @@ function menuDef() {
       ['🗂 Open 90% Item Browser Modal (Copy / Move)…', () => openItemBrowserModal()],
       ['🗂 Center Canvas Full Item Browser', () => { state.mode = 'browser'; renderMode(); }],
       '-',
-      ['🧹 Empty Active Project Private Library…', async () => {
+      ['🧹 Empty Active Project Library…', async () => {
         const pid = state.activeProjectId || 1;
         try {
           const res = await api.emptyProjectLibrary(pid, { itemType: 'all' });

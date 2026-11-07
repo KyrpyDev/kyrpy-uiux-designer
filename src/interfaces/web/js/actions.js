@@ -15,8 +15,8 @@ export async function reloadLibrary({ silent = false } = {}) {
   if (state.activeProjectId) libParams.projectId = state.activeProjectId;
   if (state.visibilityFilter === 'public') {
     libParams.visibility = 'public';
-  } else if (state.visibilityFilter === 'private') {
-    libParams.visibility = 'private';
+  } else if (state.visibilityFilter === 'mine') {
+    libParams.visibility = 'mine';          // All Projects: my private items + the project-only items of all my projects
     libParams.includePublic = false;
   } else if (state.visibilityFilter === 'project') {
     libParams.visibility = 'project';
@@ -106,15 +106,16 @@ export async function setVisibilityFilter(filter) {
 
 /**
  * After an item was saved or its visibility changed: when the library is filtered to another scope (e.g. "Project-only"
- * while the item is now Private) the item would silently disappear from the list. Follow the item's scope instead.
+ * while the item is now in All Projects) the item would silently disappear from the list. Follow the item's scope instead.
  * @returns {Promise<boolean>} true when the filter was switched (the library was reloaded)
  */
 export async function revealInLibrary(rec) {
   const vis = rec?.visibility || 'public';
+  const scope = vis === 'public' ? 'public' : vis === 'project' ? 'project' : 'mine';   // private items belong to "All Projects"
   const f = state.visibilityFilter || 'all';
-  if (f === 'all' || f === vis) return false;
-  await setVisibilityFilter(vis);
-  toast(`Library filter switched to ${vis === 'project' ? 'Project-only' : vis === 'private' ? 'Private' : 'Public'} so "${rec.name || rec.key}" stays visible`, 'info', 2800);
+  if (f === 'all' || f === scope || (f === 'mine' && vis !== 'public')) return false;
+  await setVisibilityFilter(scope);
+  toast(`Library filter switched to ${scope === 'project' ? 'Project-only' : scope === 'mine' ? 'All Projects' : 'Public'} so "${rec.name || rec.key}" stays visible`, 'info', 2800);
   return true;
 }
 
@@ -227,7 +228,7 @@ function screenDialog(defaultVis = 'public') {
     const dev = h('select', {}, devList.map(d => h('option', { value: d.key, selected: d.key === state.settings.device }, `${d.name} (${d.width}×${d.height})`)));
     const vis = h('select', {}, [
       h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
-      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects — global library)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'All Projects (user\'s all projects)'),
       h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific (active project only)')
     ]);
     modal({ title: 'New screen', onClose: () => fin(null),
@@ -254,7 +255,7 @@ function buttonDialog(defaultVis = 'public') {
     ]);
     const vis = h('select', {}, [
       h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
-      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects — global library)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'All Projects (user\'s all projects)'),
       h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific')
     ]);
     modal({ title: 'New button from template', onClose: () => fin(null),
@@ -277,7 +278,7 @@ function elementDialog(defaultVis = 'public') {
     const name = h('input', { type: 'text', placeholder: 'Name of the new element' });
     const vis = h('select', {}, [
       h('option', { value: 'public', selected: defaultVis === 'public' }, 'Public (all users)'),
-      h('option', { value: 'private', selected: defaultVis === 'private' }, 'Private (all my projects)'),
+      h('option', { value: 'private', selected: defaultVis === 'private' }, 'All Projects (user\'s all projects)'),
       h('option', { value: 'project', selected: defaultVis === 'project' }, 'Project-specific')
     ]);
     const presets = state.library.elements.filter(e => e.meta?.preset);
@@ -343,7 +344,7 @@ export async function importSvgDialog(asType = 'icon') {
   const category = h('input', { type: 'text', value: 'imported', placeholder: 'category' });
   const vis = h('select', {}, [
     h('option', { value: 'public' }, 'Public (all users)'),
-    h('option', { value: 'private' }, 'Private (all my projects)'),
+    h('option', { value: 'private' }, 'All Projects (user\'s all projects)'),
     h('option', { value: 'project' }, 'Project-specific')
   ]);
   file.addEventListener('change', async () => {
@@ -426,7 +427,7 @@ export async function importFolderOrFontDialog(asType = null, initialTab = 'fold
   const categoryInput = h('input', { type: 'text', value: mode === 'font' ? 'font-icons' : 'folder-import', placeholder: 'Category' });
   const visSel = h('select', {}, [
     h('option', { value: 'public' }, 'Public (all users)'),
-    h('option', { value: 'private' }, 'Private (all my projects — global library)'),
+    h('option', { value: 'private' }, 'All Projects (user\'s all projects)'),
     h('option', { value: 'project' }, 'Project-specific (active project only)')
   ]);
   const limitInput = h('input', { type: 'number', value: '60', min: '1', max: '500', style: { width: '80px' } });

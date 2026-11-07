@@ -210,7 +210,7 @@ export class Inspector {
         : h('div', { class: 'grid2' },
             this.field('Visibility', this.select('doc-vis', doc.visibility || 'public', [
               ['public', '🌐 Public (all users)'],
-              ['private', '👤 Private (all my projects)'],
+              ['private', '🗂 All Projects (user\'s all projects)'],
               ['project', '📁 Project-only']
             ], v => d.updateDoc(v === 'project' ? { visibility: v, projectId: state.activeProjectId || state.currentProjectId || doc.projectId || 1 } : { visibility: v }))),
             lockField

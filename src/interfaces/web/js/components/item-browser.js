@@ -175,7 +175,7 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
         fontSize: '12px',
         fontWeight: '600'
       }
-    }, privGlobalChk, h('span', {}, '👤 Also save to My Global Private Item Library (available across all my projects)')),
+    }, privGlobalChk, h('span', {}, '🗂 Also save to All Projects (my global library, available in all my projects)')),
     h('div', { class: 'row spread', style: { marginTop: '6px' } },
       h('span', { style: { fontWeight: '600', fontSize: '12px' } }, 'Select Target Project(s):'),
       h('div', { class: 'row', style: { gap: '6px' } },
@@ -210,7 +210,7 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
         onclick: async () => {
           const projectIds = [...selectedProjects];
           if (!projectIds.length && !(activeMode === 'copy' && includeUserPrivate)) {
-            toast('Select at least one target project (or your Global Private Library)', 'err');
+            toast('Select at least one target project (or your All Projects library)', 'err');
             return;
           }
           try {
@@ -335,7 +335,7 @@ export function buildItemBrowserElement({
       for (const item of allRecords[t] || []) {
         const itemVis = item.visibility || 'public';
         if (visFilter === 'public' && itemVis !== 'public') continue;
-        if (visFilter === 'private' && (itemVis !== 'private' || Number(item.creatorId || 1) !== curUserId)) continue;
+        if (visFilter === 'mine' && !(itemVis === 'project' || (itemVis === 'private' && Number(item.creatorId || 1) === curUserId))) continue;
         if (visFilter === 'project' && itemVis !== 'project') continue;
         if (itemVis === 'private' && Number(item.creatorId || 1) !== curUserId) continue;
         if (sourceProjectFilter !== 'all') {
@@ -383,7 +383,7 @@ export function buildItemBrowserElement({
 
   function renderVisTabs() {
     clear(visBar);
-    for (const [k, label] of [['all', 'All items'], ['public', '🌐 Public'], ['private', '👤 Private'], ['project', '📁 Project-only']]) {
+    for (const [k, label] of [['all', 'All items'], ['public', '🌐 Public'], ['mine', '🗂 All Projects'], ['project', '📁 Project-only']]) {
       visBar.append(
         h('button', {
           class: visFilter === k ? 'on' : '',
@@ -589,7 +589,7 @@ export function buildItemBrowserElement({
       const canMoveItem = !item.builtin && Number(item.creatorId || 1) === Number(state.user?.id || 1);
       const visBadge = (item.visibility || 'public') === 'project'
         ? `📁 Proj #${item.projectId || 1}`
-        : (item.visibility === 'private' ? '👤 Private' : '🌐 Public');
+        : (item.visibility === 'private' ? '🗂 All Projects' : '🌐 Public');
       const chk = h('input', {
         type: 'checkbox',
         class: 'chk ib-item-chk',
@@ -1304,7 +1304,7 @@ export function openLibraryExportImportModal({
 
     // activeTab === 'import'
     const visToggle = h('div', { class: 'seg' },
-      ...[['project', '📁 Project Library (Private)'], ['public', '🌐 Public Library']].map(([v, label]) =>
+      ...[['project', '📁 Project Library'], ['public', '🌐 Public Library']].map(([v, label]) =>
         h('button', {
           class: importVisibility === v ? 'on' : '',
           dataset: { importVis: v },

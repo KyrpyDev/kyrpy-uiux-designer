@@ -156,10 +156,10 @@ export class LibraryPanel {
     return scopeFirst((list || []).filter(d => {
       const vis = d.visibility || 'public';
       if (vf === 'public' && vis !== 'public') return false;
-      if (vf === 'private' && (vis !== 'private' || Number(d.creatorId || 1) !== curUserId)) return false;
+      if (vf === 'mine' && !(vis === 'project' || (vis === 'private' && Number(d.creatorId || 1) === curUserId))) return false;
       if (vf === 'project' && vis !== 'project') return false;
       if (vis === 'private' && Number(d.creatorId || 1) !== curUserId) return false;
-      if (vis === 'project' && d.projectId) {
+      if (vis === 'project' && d.projectId && vf !== 'mine') {
         if (selProjects && selProjects.size > 0) {
           if (!selProjects.has(Number(d.projectId))) return false;
         } else if (activePid && Number(d.projectId) !== activePid) {
@@ -173,8 +173,8 @@ export class LibraryPanel {
   visBar(onChange) {
     const cur = state.visibilityFilter || 'all';
     const set = v => { state.visibilityFilter = v; onChange(); };
-    return h('div', { class: 'cats lib-vis-filter', title: 'Filter by public, private (user global library), or project-specific visibility' },
-      [['all', 'All items'], ['public', '🌐 Public'], ['private', '👤 Private'], ['project', '📁 Project-only']].map(([k, lbl]) =>
+    return h('div', { class: 'cats lib-vis-filter', title: 'Public library · All Projects (your items across all your projects) · Project-only (the active project)' },
+      [['all', 'All items'], ['public', '🌐 Public'], ['mine', '🗂 All Projects'], ['project', '📁 Project-only']].map(([k, lbl]) =>
         h('button', { class: `cat${cur === k ? ' on' : ''}`, dataset: { visFilter: k }, onclick: () => set(k) }, lbl)
       ),
       editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'Items you edited are listed first with a red edge. Click to clear these marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear edited (${editedKeys().length})`) : null
@@ -545,7 +545,7 @@ export class LibraryPanel {
         const params = { q, category: this.cat.icon || '', pack: this.iconPack || '' };
         if (state.activeProjectId) params.projectId = state.activeProjectId;
         if (state.visibilityFilter && state.visibilityFilter !== 'all') params.visibility = state.visibilityFilter;
-        if (state.visibilityFilter === 'private' || state.visibilityFilter === 'project') params.includePublic = '0';
+        if (state.visibilityFilter === 'mine' || state.visibilityFilter === 'project') params.includePublic = '0';
         remote = { params, loading: false, offset: 0, dropped: 0, done: false };
         rows = []; total = 0;
         scroller.scrollTop = 0;
@@ -759,7 +759,7 @@ export class LibraryPanel {
         h('div', { class: 'grow' },
           h('div', { class: 'row' },
             h('b', {}, w.name),
-            h('span', { class: 'badge' }, w.visibility === 'project' ? '📁 Project' : w.visibility === 'private' ? '👤 Private' : '🌐 Public')
+            h('span', { class: 'badge' }, w.visibility === 'project' ? '📁 Project' : w.visibility === 'private' ? '🗂 All Projects' : '🌐 Public')
           ),
           h('div', { class: 'dim' }, `${w.screenCount} screens · ${w.linkCount} links · ${w.key}`)
         ),

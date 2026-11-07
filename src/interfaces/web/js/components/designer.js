@@ -197,7 +197,7 @@ export class Designer {
     const triggerBtn = h('button', {
       class: `btn small ib save-targets-trigger${count > 0 ? ' active' : ''}`,
       'aria-label': 'Save targets',
-      'data-tip': 'Save targets — also save into multiple projects and/or your Global Private Library (with all sub-items)',
+      'data-tip': 'Save targets — also save into multiple projects and/or your All Projects library (with all sub-items)',
       onclick: e => {
         e.stopPropagation();
         const isOpen = wrap.classList.contains('open');
@@ -233,7 +233,7 @@ export class Designer {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear(); // the Global Private Library target is locked on: Clear only drops the projects
+                selSet.clear(); // the All Projects library target is locked on: Clear only drops the projects
                 updateTriggerText();
                 rebuildPanel();
               }
@@ -242,7 +242,7 @@ export class Designer {
         )
       );
 
-      // User's own Global Private Library option
+      // User's own All Projects library option
       const privChk = h('input', {
         type: 'checkbox',
         class: 'save-target-private-chk',
@@ -266,7 +266,7 @@ export class Designer {
           }
         },
         privChk,
-        h('span', {}, '👤 My Global Private Library (All My Projects)'),
+        h('span', {}, '🗂 All Projects (my global library — user\'s all projects)'),
         h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 }))
         )
       );
@@ -394,7 +394,7 @@ export class Designer {
         : `Disabled: owned by ${ownerLabel(d.creatorUsername, d.creatorId)}. Use Save as… to save a copy.`,
       kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save'
     });
-    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to your Global Private Library and any selected Multi-Target projects.' });
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to your All Projects library and any selected Multi-Target projects.' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     this.deviceMenu = this.type === 'screen' ? this.buildDeviceMenu() : null;
@@ -404,7 +404,7 @@ export class Designer {
     const visLabel = d.visibility === 'project'
       ? '📁 Project-Only'
       : d.visibility === 'private'
-        ? '👤 Private (My Global)'
+        ? '🗂 All Projects (user\'s all projects)'
         : '🌐 Public';
     // visibility as a three-way icon group (Public / Private / Project-only); the active one is highlighted
     const setVis = async next => {
@@ -415,7 +415,7 @@ export class Designer {
       toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
     };
     const visSeg = h('div', { class: 'vis-seg', role: 'radiogroup', 'aria-label': 'Visibility scope' },
-      [['public', 'globe', 'Public', 'Visible to all users'], ['private', 'user', 'Private', 'My global library (all my projects)'], ['project', 'folder', 'Project-only', 'Only the active project']].map(([v, icon, name, desc]) =>
+      [['public', 'globe', 'Public', 'Visible to all users'], ['private', 'user', 'All Projects', 'My global library: available in all of my projects'], ['project', 'folder', 'Project-only', 'Only the active project']].map(([v, icon, name, desc]) =>
         ibtn(icon, name, () => setVis(v), { desc, active: (d.visibility || 'public') === v, cls: 'vis-btn', dataset: { act: `vis-${v}` } })));
 
     const lockDocBtn = ibtn(d.locked ? 'lock' : 'unlock', d.locked ? 'Positions locked' : 'Positions unlocked', async () => {
@@ -565,7 +565,7 @@ export class Designer {
     if (!name?.trim()) return false;
     await this.settle();
     try {
-      // The copy always goes to the Global Private Library (locked target) plus any checked projects, cascading every sub-item
+      // The copy always goes to the All Projects library (locked target) plus any checked projects, cascading every sub-item
       const targetPids = [...(state.saveTargetProjectIds || [])];
       const includePriv = Boolean(state.saveToUserPrivateLibrary);
       const reverted = this.dirty;
