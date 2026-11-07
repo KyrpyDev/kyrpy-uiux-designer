@@ -90,7 +90,7 @@ const ACCOUNT_TOOLS = [
 /* ---------- account-key init: list projects + versions → the human chooses clone or edit@version ---------- */
 
 const INIT_ACCOUNT_PROPERTIES = {
-  mode: { type: 'string', enum: ['clone', 'edit'], description: 'Account keys: what the HUMAN chose after the selection list. clone = copy a visible project into a NEW project of theirs; edit = work on one of their own projects at a version. Omit on the first call to get the list.' },
+  mode: { type: 'string', enum: ['download', 'clone', 'edit'], description: 'Account keys: what the HUMAN chose after the selection list. download = read-only local copy of any visible project (nothing is created or changed on the server); clone = copy a visible project into a NEW project of theirs; edit = work on one of their own projects at a version. Omit on the first call to get the list.' },
   project: str('Account keys: the chosen project key (source for clone, target for edit).', { maxLength: 80 }),
   version: { type: 'integer', minimum: 1, description: 'Account keys: the chosen version number (default: head). clone copies the head; edit at an older version records it as baseVersion (restore:true brings the project back to it, reviewed).' },
   newProjectName: str('clone: name of the new project (default "<source name> app").', { maxLength: 120 }),
@@ -122,14 +122,16 @@ function initSelection({ principal, accounts, versions }, args) {
   const lines = projects.slice(0, 30).map(p => `- ${p.key} — ${p.name} (${p.role}${p.role === 'owner' ? '' : `, by @${p.owner}`}) · head v${p.head ?? '?'}${p.versions.length > 1 ? ` · versions ${p.versions.map(v => v.number).join(', ')}` : ''}${p.canEdit ? '' : ' · clone only'}`);
   const question = [
     'Which design should this repository use?',
-    '  1) CLONE a project into a NEW project of yours (the source is never changed)',
-    '  2) EDIT one of your own projects, at a version you choose',
+    '  1) DOWNLOAD a project read-only into this repository (nothing is created on the server)',
+    '  2) CLONE a project into a NEW project of yours (the source is never changed)',
+    '  3) EDIT one of your own projects, at a version you choose',
     '', ...lines
   ].join('\n');
   return {
     needsSelection: true,
     question,
     options: [
+      { mode: 'download', available: true, label: 'Download a project (read-only copy, all design + button styles)', needs: ['project'], note: 'Installs the design and every design style / button style into the repository. Nothing is created or changed on the server; pushes are not possible for a project you do not own.' },
       { mode: 'clone', available: canCreate, label: 'Clone a project and create a new project', needs: ['project', 'newProjectName (optional)'], note: canCreate ? 'Copies the head version of any project you can see into a new private project owned by you.' : 'This key has no "create" scope: create an account key with "create" in the designer (AI Access Keys).' },
       { mode: 'edit', available: projects.some(p => p.canEdit), label: 'Edit an existing project at a version', needs: ['project (owned)', 'version (default head)'], note: canPropose ? 'Pushes go to that project as changesets; the owner approves them.' : 'This key has no "propose" scope: it can pull the design but not push changes.' }
     ],
@@ -137,11 +139,12 @@ function initSelection({ principal, accounts, versions }, args) {
     total: list.total,
     askHuman: [
       'STOP and ask the human before writing any file. Do not choose for them.',
-      'Show them `question` (or the projects[] table: key, name, role, head, versions) and ask: clone or edit? which project? which version? For clone also ask the new project name.',
+      'Show them `question` (or the projects[] table: key, name, role, head, versions) and ask: download, clone or edit? which project? which version? For clone also ask the new project name.',
       'If your client supports MCP elicitation or a choice prompt, use it; otherwise ask in chat and wait for the answer.',
       'Then call uiux_init again with { mode, project, version?, newProjectName? } plus your usual platform / framework / client arguments.'
     ],
     examples: [
+      { mode: 'download', project: projects[0]?.key || '<project-key>' },
       { mode: 'clone', project: projects.find(p => p.canClone)?.key || '<project-key>', newProjectName: 'My app' },
       { mode: 'edit', project: projects.find(p => p.canEdit)?.key || '<owned-project-key>', version: projects.find(p => p.canEdit)?.head || 1 }
     ]
@@ -167,6 +170,16 @@ function accountInit(ctx, args) {
   if (!own.mode || !own.project) {
     const data = initSelection(ctx, own);
     return { summary: `ASK THE HUMAN: clone or edit, which project and version? ${data.total} project(s) visible, ${data.projects.filter(p => p.canEdit).length} editable. Then call uiux_init again with { mode, project, version }.\n\n${data.question}`, data };
+  }
+
+  if (own.mode === 'download') {
+    const src = accounts.resolve(principal, own.project, 'read');
+    const bound = accounts.bind(principal, src);
+    const head = versions ? versions.ensureHead(src.id).number : null;
+    const data = runInit({ ...ctx, principal: bound }, { ...pass, origin: { project: src.key, name: src.name, version: head }, selection: { mode: 'download', source: src.key, sourceVersion: head, baseVersion: head, headVersion: head } });
+    data.selection = { mode: 'download', project: { key: src.key, name: src.name }, version: head };
+    data.steps = [...data.steps, `This repository holds a read-only copy of "${src.key}" v${head}. All design styles and button styles are installed: switch with node ${pass.uiuxRoot || 'uiux'}/source/switch-style.mjs --list. To build on it and push changes, call uiux_init { mode: "clone", project: "${src.key}" }.`];
+    return { summary: `Downloaded "${src.key}" v${head} (read-only). Install plan: ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[].`, data };
   }
 
   if (own.mode === 'clone') {
@@ -482,7 +495,7 @@ export const TOOLS = [
   {
     name: 'uiux_init',
     title: 'Install / update the UI/UX design pack',
-    description: 'Call this first in a new repository, and again whenever you want to update. ACCOUNT keys: the first call (no mode/project) returns every project you can see with its versions and a question — ask the human whether to CLONE a project into a new one of theirs or EDIT one of their own projects at a chosen version, then call again with { mode, project, version }. Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
+    description: 'Call this first in a new repository, and again whenever you want to update. ACCOUNT keys: the first call (no mode/project) returns every project you can see with its versions and a question — ask the human whether to DOWNLOAD a project (read-only copy), CLONE a project into a new one of theirs or EDIT one of their own projects at a chosen version, then call again with { mode, project, version }. Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
     inputSchema: {
       type: 'object',
       properties: {

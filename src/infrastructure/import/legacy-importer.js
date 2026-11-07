@@ -1,7 +1,7 @@
 import { parseXml } from './xml-parser.js';
 import { xmlToNodes } from './svg-to-nodes.js';
 import { loadLegacy, iconBodyMarkup } from './legacy-loader.js';
-import { iconElementMapper, legacyItemMapper, liquidScreenMapper, iconCategory, elementCategory, screenCategory } from './tokenizer.js';
+import { iconElementMapper, legacyItemMapper, liquidScreenMapper, iconCategory, elementCategory, screenCategory, libraryScreenKey, libraryElementKey } from './tokenizer.js';
 import { HTML_ELEMENTS, BUTTON_ELEMENTS } from './elements-catalog.js';
 import { SAMPLE_MENUS } from './sample-menus.js';
 import { WORKFLOWS } from './default-workflows.js';
@@ -245,7 +245,8 @@ export class LegacyImporter {
     const keyOf = (map, id) => [...map].find(([, v]) => v === id)?.[0];
     const iconKeysOf = ns => [...new Set(ns.filter(n => n.refType === 'icon').map(n => keyOf(iconIds, n.refId)).filter(Boolean))];
 
-    for (const it of legacy.items) {
+    for (const it0 of legacy.items) {
+      const it = { ...it0, id: libraryElementKey(it0.id) };
       if (have.has(it.id)) { stats.skipped++; continue; }
       const nodes = xmlToNodes(parseXml(`<svg>${it.svg}</svg>`).children, { mapAttrs: legacyItemMapper(), resolveUse });
       const draft = { key: it.id, name: it.name, label: it.name, width: it.w, height: it.h, category: elementCategory(it.id), meta: { htmlTag: 'div' } };
@@ -304,7 +305,7 @@ export class LegacyImporter {
     // the liquid-glass family is the canonical source; the other themes are produced by the theme engine
     const source = legacy.screens.filter(s => s.family === 'liquid' && s.kind !== 'empty' && !/^Empty device/.test(s.caption || '')).sort((a, b) => a.index - b.index);
     for (const s of source) {
-      const key = s.folder.replace(/^\d+-/, '');
+      const key = libraryScreenKey(s.folder.replace(/^\d+-/, ''));
       if (ids.has(key)) { stats.skipped++; continue; }
       const root = parseXml(s.svg);
       const w = parseFloat(root.attrs.width) || 390, h = parseFloat(root.attrs.height) || 844;
@@ -341,7 +342,7 @@ export class LegacyImporter {
         placed.add(skey);
       }));
       const haveLinkSigs = new Set((fullWf.links || []).map(l => `${l.fromScreenId}:${l.toScreenId}:${l.name}`));
-      const links = def.links === 'subset-of:untrap-main-flow' ? main.links.filter(l => placed.has(l[0]) && placed.has(l[1])) : def.links;
+      const links = def.links === 'subset-of:sample-main-flow' ? main.links.filter(l => placed.has(l[0]) && placed.has(l[1])) : def.links;
       for (const [from, to, name, dev, opts = {}] of links) {
         const f = screenIds.get(from), t = screenIds.get(to);
         if (!f || !t) continue;
@@ -376,7 +377,7 @@ export class LegacyImporter {
     const keyById = new Map([...screenIds].map(([k, id]) => [id, k]));
     const iconKeyById = new Map(S.icon.list().map(i => [i.id, i.key]));
     const links = [];
-    for (const wf of this.workflows.list()) if (wf.key === 'untrap-main-flow') links.push(...this.workflows.get(wf.id).links);
+    for (const wf of this.workflows.list()) if (wf.key === 'sample-main-flow') links.push(...this.workflows.get(wf.id).links);
     for (const [, id] of screenIds) {
       const full = S.screen.get(id);
       if (!full.builtin) continue;

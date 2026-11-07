@@ -93,7 +93,7 @@ A button owns a tree of **menu items** (label, variable name, icon, action/event
   its icon takes the centre and its sub items are shown · click the centre → one level back · a leaf item fires its action/target and closes. The centre icon can turn (45° by default).
 * In the Button designer the menu is shown open. **Hover the button or any item** for the toolbar: ＋ sub item · ✎ edit · ← → order · 🗑 delete. “Test menu” switches to click-through mode.
 * Settings (type, layout, radius, start angle, sweep, item size, gap, rotate-on-open) are ratios of the button size, so the menu scales with the button.
-* Samples: `document-radial-menu` (3 levels), `page-review-menu`, `more-popup-button`.
+* Samples: `item-radial-menu` (3 levels), `page-check-menu`, `more-popup-button`.
 
 ## Using it
 

@@ -133,7 +133,7 @@ export class AiPackService {
 
     const manifest = this.query.manifestPage(principal, { limit: 1 });
     const wantBundle = args.includeBundle !== false && args.manifestHash !== manifest.manifestHash;
-    const bundle = wantBundle ? createBundle({ styles: o.styles, adapters: ['web'], root: o.uiuxRoot }) : null;
+    const bundle = wantBundle ? createBundle({ styles: o.styles, adapters: ['web'], root: o.uiuxRoot, switchable: true }) : null;
     const prev = Object.fromEntries((args.installed || []).map(i => [i.path, i.recordedChecksum]));
     const lockfile = {
       lockfileVersion: 1,
@@ -141,7 +141,7 @@ export class AiPackService {
       project: { key: principal.project.key, name: principal.project.name },
       schemaVersion: SCHEMA_VERSION,
       manifestHash: bundle ? bundle.manifestHash : (args.manifestHash || manifest.manifestHash),
-      styles: o.styles, uiuxRoot: o.uiuxRoot, adapters: ['web'],
+      styles: o.styles, allStyles: bundle ? true : undefined, uiuxRoot: o.uiuxRoot, adapters: ['web'],
       pack: {
         platform: o.platform, version: pack.packVersion,
         files: Object.fromEntries(files.map(f => [f.path, f.action === 'conflict' ? (prev[f.path] || null) : f.checksum]))
@@ -160,7 +160,7 @@ export class AiPackService {
         : `MCP client for this repository: mcpSetup.steps show how the human keeps THIS project's key per repository (${mcpSetup.keyKind === 'project' ? 'local scope / .envrc / .gemini/.env' : 'user scope'}). You never see or write the key: show the steps to the human if the connection must be set up for teammates or another client.`] : []),
       ...(bundle ? [
         `Download and unpack the design bundle by running bundle.install in order (it replaces ${root}/source/). On macOS use "shasum -a 256 -c" instead of "sha256sum -c".`,
-        `For each style in ${JSON.stringify(o.styles)}: copy ${root}/source/adapters/web/<style>/ to ${root}/<style>/ (for example: mkdir -p ${root}/<style> && cp -R ${root}/source/adapters/web/<style>/. ${root}/<style>/). For non-web stacks follow the skill's "convert for this app" procedure instead.`
+        `ALL design styles and button styles were downloaded. Copy every style folder so the developer can switch: for each directory in ${root}/source/adapters/web/ run mkdir -p ${root}/<style> && cp -R ${root}/source/adapters/web/<style>/. ${root}/<style>/ (default styles: ${JSON.stringify(o.styles)}). Then activate the default: node ${root}/source/switch-style.mjs ${o.styles[0]} (writes ${root}/active/). Switch later with: node ${root}/source/switch-style.mjs --list | <design-style> [<button-style>] | --button <button-style>. Per-item SVG files exist only for ${JSON.stringify(o.styles)}; the web sprites of all styles are included. For non-web stacks follow the skill's "convert for this app" procedure instead.`
       ] : ['The design is already up to date (manifestHash unchanged): no download needed.']),
       `Write lockfile as JSON to ${LOCKFILE_PATH}.`,
       'Check that no API key was written anywhere: `grep -rn "kud_live_\\|kud_test_" . --exclude-dir=node_modules --exclude-dir=.git` must print nothing.',

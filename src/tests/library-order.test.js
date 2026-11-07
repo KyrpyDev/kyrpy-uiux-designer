@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { privateFirst } from '../domain/entities.js';
+import { privateFirst, scopeFirst, visClass } from '../domain/entities.js';
 
 test('privateFirst lists the user\'s own private items first and keeps every other order (stable)', () => {
   const list = [
@@ -23,4 +23,16 @@ test('privateFirst stays linear for a large icon library', () => {
   assert.equal(out.length, big.length);
   assert.deepEqual(out.slice(0, 11).map(d => d.id), [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]);
   assert.equal(out[11].id, 1);
+});
+
+test('scopeFirst orders project items, then own private, then public (stable) and visClass tags them', () => {
+  const list = [
+    { id: 1, visibility: 'public' }, { id: 2, visibility: 'project' }, { id: 3, visibility: 'private', creatorId: 7 },
+    { id: 4, visibility: 'public' }, { id: 5, visibility: 'project' }, { id: 6, visibility: 'private', creatorId: 7 }
+  ];
+  assert.deepEqual(scopeFirst(list, 7).map(d => d.id), [2, 5, 3, 6, 1, 4]);
+  assert.deepEqual(scopeFirst(list.filter(d => d.visibility === 'public'), 7).map(d => d.id), [1, 4]);
+  assert.equal(visClass({ visibility: 'project' }), ' vis-project');
+  assert.equal(visClass({ visibility: 'private' }), ' vis-private');
+  assert.equal(visClass({ visibility: 'public' }), '');
 });

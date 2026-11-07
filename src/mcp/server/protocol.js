@@ -13,7 +13,7 @@ export const SERVER_INFO = { name: 'kyrpy-uiux-mcp', title: 'Kyrpy UI/UX Designe
 
 export const INSTRUCTIONS = `Kyrpy UI/UX Designer — the design system of one project, for coding agents.
 0. In a repository without .uiux/uiux.lock.json, call uiux_init and follow its steps (installs the kyrpy-uiux-designer agent and skill).
-   ACCOUNT keys (one key for all of the user's projects): the first uiux_init returns the projects with their versions — ASK THE HUMAN to choose CLONE (new project of theirs from any visible design) or EDIT (one of their own projects at a version), then call uiux_init again with { mode, project, version }.
+   ACCOUNT keys (one key for all of the user's projects): the first uiux_init returns the projects with their versions — ASK THE HUMAN to choose DOWNLOAD (read-only copy of any visible project), CLONE (new project of theirs from any visible design) or EDIT (one of their own projects at a version), then call uiux_init again with { mode, project, version }.
 1. Call uiux_get_schema once to learn the rules (hierarchy, naming, ratios, styles).
 2. Before creating any UI item, call uiux_search_items; reuse or clone what exists.
 3. Download assets with uiux_create_bundle and the shell steps it returns (do not paste file contents into the chat).

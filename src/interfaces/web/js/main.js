@@ -687,44 +687,6 @@ function buildProjectsMultiDropdown() {
   return ddWrap;
 }
 
-// Theme picker as an icon-only button that opens a menu of all design style / mode themes
-function buildThemeMenu() {
-  const cur = state.themes.find(t => t.key === state.themeKey) || state.themes[0];
-  const ddWrap = h('div', { class: 'menu theme-menu' });
-  const panel = h('div', {
-    class: 'menu-panel theme-menu-panel',
-    role: 'menu',
-    style: { minWidth: '240px', maxHeight: '70vh', overflowY: 'auto', padding: '6px' },
-    onclick: e => e.stopPropagation()
-  });
-  const trigger = h('button', {
-    class: 'btn sm tb-icon theme-menu-trigger',
-    'aria-label': `Design style & mode — ${cur?.name || ''}`,
-    'data-tip': `Design style & mode — ${cur?.name || ''}`,
-    'aria-haspopup': 'true',
-    onclick: e => {
-      e.stopPropagation();
-      const open = !ddWrap.classList.contains('open');
-      closeMenus();
-      if (open) {
-        ddWrap.classList.add('open');
-        clear(panel);
-        for (const t of state.themes) {
-          const active = t.key === state.themeKey;
-          panel.append(h('button', {
-            class: 'menu-item',
-            role: 'menuitemradio',
-            'aria-checked': String(active),
-            onclick: () => { closeMenus(); setTheme(t.key); }
-          }, h('span', { class: 'tick' }, active ? '✓' : ''), h('span', { class: 'mi-label' }, t.name)));
-        }
-      }
-    }
-  }, iconEl('theme', { size: 17 }));
-  ddWrap.append(trigger, panel);
-  return ddWrap;
-}
-
 /* Topbar rebuilds are deferred while the pointer is pressed on the top rows or a topbar menu is open.
    Sync events (any write on the server → SSE → library:changed) used to replace every button between
    mousedown and mouseup, so the browser never fired the click (Trash / Changes / Profile "did nothing")
@@ -798,7 +760,6 @@ function renderTopbar() {
     isLightMode ? 'Light mode — click to switch this design style to Dark mode' : 'Dark mode — click to switch this design style to Light mode',
     () => { const targetKey = pairThemeKey(state.themeKey, state.themes); if (targetKey) setTheme(targetKey); });
   // Theme style button sits in the top-left slot, right after the menu heads
-  bar.append(buildThemeMenu());
   // API / MCP health dots (links to /docs/api and /docs/mcp in a new tab; polling lives in health-status.js)
   const healthGroup = h('div', { class: 'tb-health-group', role: 'group', 'aria-label': 'Service health' }, healthIndicators());
   bar.append(h('div', { class: 'top-center' }, projDropdown));
@@ -991,7 +952,7 @@ async function boot() {
   if (hs?.view) { nav.idx = hs.idx; nav.labels[hs.idx] = hs.label; if (!(await app.openView(hs.view, { push: false }))) history.replaceState(null, ''); }
   if (!app.current && state.mode !== 'workflow') {
     const screens = await api.list('screen');
-    const first = screens.find(s => s.key === 'scan-list') || screens[0];
+    const first = screens.find(s => s.key === 'item-list') || screens[0];
     if (first) await app.openDesign('screen', first.id, { push: 'replace' });
   }
   updateBackButtons();

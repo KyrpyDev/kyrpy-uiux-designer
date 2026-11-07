@@ -40,6 +40,26 @@ export function privateFirst(list, userId) {
   return own.length ? own.concat(rest) : rest;
 }
 
+/**
+ * Library order: project-scope items first, then the user's own private items, then public items; every group keeps
+ * its existing order (stable, O(n)).
+ */
+export function scopeFirst(list, userId) {
+  const uid = Number(userId || 1);
+  const project = [], own = [], rest = [];
+  for (const d of list || []) {
+    if (d.visibility === 'project') project.push(d);
+    else if (d.visibility === 'private' && Number(d.creatorId || 1) === uid) own.push(d);
+    else rest.push(d);
+  }
+  return project.length || own.length ? project.concat(own, rest) : rest;
+}
+
+/** CSS class for the card edge of a library item: project and private items get their own colour, public stay plain. */
+export function visClass(d) {
+  return d?.visibility === 'project' ? ' vis-project' : d?.visibility === 'private' ? ' vis-private' : '';
+}
+
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];
 export const PROJECT_ROLES = ['owner', 'admin', 'editor', 'contributor', 'viewer'];
 

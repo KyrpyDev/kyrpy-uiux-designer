@@ -73,7 +73,7 @@ test('project-based UI designs, public vs project-only visibility, and collabora
   const alice = c.auth.register({ username: 'alice', email: 'alice@kyrpy.com', password: 'password123' }).user;
   const bob = c.auth.register({ username: 'bob', email: 'bob@kyrpy.com', password: 'password123' }).user;
 
-  const projA = c.projects.create({ name: 'Untrap Mobile v2', visibility: 'private' }, { actorId: 1 });
+  const projA = c.projects.create({ name: 'Sample App Mobile v2', visibility: 'private' }, { actorId: 1 });
   const projB = c.projects.create({ name: 'Internal Admin', visibility: 'private' }, { actorId: alice.id });
 
   // Invite Alice as contributor to ProjA

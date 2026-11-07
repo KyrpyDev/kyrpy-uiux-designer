@@ -2,6 +2,9 @@
  * Account (user-wide) keys: list projects, the uiux_init selection flow (clone → new project, edit at a version),
  * scope / ownership limits, and the push of a cloned project → owner approval.
  */
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
@@ -73,7 +76,7 @@ test('account key: uiux_init without a choice returns projects + versions and as
   try {
     const sel = await w.ok('uiux_init', { platform: 'claude' });
     assert.equal(sel.needsSelection, true);
-    assert.deepEqual(sel.options.map(o => o.mode), ['clone', 'edit']);
+    assert.deepEqual(sel.options.map(o => o.mode), ['download', 'clone', 'edit']);
     assert.ok(sel.askHuman.some(s => /ask the human/i.test(s)));
     const mine = sel.projects.find(p => p.key === w.mine.key);
     const pub = sel.projects.find(p => p.key === w.bobPub.key);
@@ -151,5 +154,40 @@ test('account key: edit an owned project at a chosen version (older version → 
     // not the owner → cannot edit
     assert.equal((await w.err('uiux_init', { mode: 'edit', project: w.bobPub.key })).code, 'SCOPE_DENIED');
     assert.equal((await w.err('uiux_init', { mode: 'edit', project: w.mine.key, version: 999 })).code, 'NOT_FOUND');
+  } finally { w.close(); }
+});
+
+test('account key: download installs a read-only copy with ALL design styles, button styles and a style switcher', async () => {
+  const w = await world();
+  try {
+    const plan = await w.ok('uiux_init', { mode: 'download', project: w.bobPub.key, platform: 'claude', framework: 'react' });
+    assert.equal(plan.selection.mode, 'download');
+    assert.equal(plan.selection.project.key, w.bobPub.key);
+    const cfg = JSON.parse(plan.files.find(f => f.path === '.uiux/config.json').content);
+    assert.equal(cfg.project, w.bobPub.key, 'no new project is created');
+    assert.equal(cfg.origin.project, w.bobPub.key);
+    assert.equal(plan.lockfile.allStyles, true);
+    assert.ok(plan.steps.some(st => /switch-style\.mjs/.test(st)));
+    assert.ok(plan.bundle && plan.bundle.styles.length >= 10, 'every design style is in the bundle');
+    const dir = mkdtempSync(join(tmpdir(), 'uiux-dl-'));
+    try {
+      const res = await fetch(plan.bundle.url);
+      writeFileSync(join(dir, 'b.tgz'), Buffer.from(await res.arrayBuffer()));
+      const src = join(dir, 'uiux', 'source'); mkdirSync(src, { recursive: true });
+      execFileSync('tar', ['-xzf', join(dir, 'b.tgz'), '-C', src]);
+      const read = f => readFileSync(join(src, f), 'utf8');
+      const sty = JSON.parse(read('styles.json'));
+      assert.ok(sty.designStyles.length >= 10 && sty.buttonStyles.length >= 8);
+      for (const st of sty.designStyles.map(x => x.key)) assert.ok(existsSync(join(src, 'adapters/web', st, 'tokens.css')), `tokens for ${st}`);
+      assert.match(read('tokens/button-styles.css'), /\[data-button-style="pill"\]/);
+      assert.ok(JSON.parse(read('tokens/button-templates.json')).length >= 1);
+      // the switcher works: list, switch design + button style
+      const sw = ['switch-style.mjs'];
+      assert.match(execFileSync('node', [join(src, ...sw), '--list'], { encoding: 'utf8' }), /Button styles/);
+      const other = sty.designStyles.find(x => x.key !== sty.defaultStyle).key;
+      execFileSync('node', [join(src, ...sw), other, 'pill'], { encoding: 'utf8' });
+      const active = JSON.parse(readFileSync(join(dir, 'uiux', 'active', 'active.json'), 'utf8').toString());
+      assert.equal(active.designStyle, other); assert.equal(active.buttonStyle, 'pill');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   } finally { w.close(); }
 });

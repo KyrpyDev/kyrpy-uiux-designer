@@ -92,7 +92,7 @@ export function iconElementMapper() {
 
 /** Icon categories from the v1 naming scheme. */
 const CATEGORY_RULES = [
-  [/^untrap-logo|^v[1-4]$/, 'brand'],
+  [/^sample-logo|^v[1-4]$/, 'brand'],
   [/^folder/, 'folder'],
   [/^page-|^item$|^item-/, 'page'],
   [/report|generate-reports|export-to-pdf|import-pdf|show-statistics|show-results/, 'report'],
@@ -111,20 +111,57 @@ export function iconCategory(key) {
 
 const ELEMENT_CATEGORY = {
   'button-primary': 'buttons', 'icon-button': 'buttons', 'main-button': 'buttons', 'home-button': 'buttons', 'home-screen-3-button': 'buttons',
-  'text-field': 'inputs', 'toggle': 'inputs', 'model-select': 'forms', 'model-form': 'forms', 'register-form': 'forms',
-  'drawer-menu': 'navigation', 'burger-menu': 'navigation', 'left-drawer-menu': 'navigation', 'analysis-menu': 'navigation',
-  'bottom-menu-bar-item': 'navigation', 'tab-bar': 'navigation', 'header-bar': 'navigation', 'header-logo': 'navigation', 'home-header': 'navigation', 'folder-header': 'navigation',
-  'status-bar': 'navigation', 'params-popup': 'surfaces', 'metrics-popup': 'surfaces', 'comment-box': 'surfaces', 'card': 'surfaces', 'question-card': 'surfaces',
-  'folder-row': 'surfaces', 'list-row': 'surfaces', 'page-preview': 'surfaces', 'scan-preview': 'surfaces', 'info-bar': 'surfaces', 'logo-background': 'surfaces', 'ad-banner': 'ads'
+  'text-field': 'inputs', 'toggle': 'inputs', 'option-select': 'forms', 'config-form': 'forms', 'register-form': 'forms',
+  'drawer-menu': 'navigation', 'burger-menu': 'navigation', 'left-drawer-menu': 'navigation', 'options-menu': 'navigation',
+  'bottom-menu-bar-item': 'navigation', 'tab-bar': 'navigation', 'header-bar': 'navigation', 'brand-header': 'navigation', 'home-header': 'navigation', 'item-header': 'navigation',
+  'status-bar': 'navigation', 'details-popup': 'surfaces', 'stats-popup': 'surfaces', 'comment-box': 'surfaces', 'card': 'surfaces', 'article-card': 'surfaces',
+  'item-row': 'surfaces', 'list-row': 'surfaces', 'page-preview': 'surfaces', 'image-preview': 'surfaces', 'info-bar': 'surfaces', 'brand-background': 'surfaces', 'ad-banner': 'ads'
 };
 export const elementCategory = key => ELEMENT_CATEGORY[key] || 'general';
 
 const SCREEN_CATEGORY = {
   'splash': 'auth', 'sign-in': 'auth', 'sign-up': 'auth', 'google-sign-in': 'auth',
-  'scan-list': 'home', 'side-menu': 'home', 'scan-actions': 'home',
-  'booklet-analyzed': 'booklet', 'booklet-new-pages': 'booklet', 'analyzed-images': 'booklet',
-  'question-detail': 'question', 'question-menu': 'question', 'question-menu-scrolled': 'question', 'question-parameters': 'question',
-  'ai-model-metrics': 'question', 're-analyze-page': 'question', 'edit-model-config': 'question',
-  'project-comments': 'comments', 'page-comments': 'comments'
+  'item-list': 'home', 'side-menu': 'home', 'item-actions': 'home',
+  'collection-complete': 'booklet', 'collection-new-items': 'booklet', 'collection-gallery': 'booklet',
+  'item-detail': 'question', 'item-menu': 'question', 'item-menu-scrolled': 'question', 'item-properties': 'question',
+  'item-stats': 'question', 'refresh-item-sheet': 'question', 'edit-item-settings': 'question',
+  'all-comments': 'comments', 'item-comments': 'comments'
 };
-export const screenCategory = key => SCREEN_CATEGORY[key] || (key.startsWith('document-') ? 'document' : 'general');
+export const screenCategory = key => SCREEN_CATEGORY[key] || (key.startsWith('detail-') ? 'document' : 'general');
+
+/** The v1 prototype folder still uses its original screen / element keys; the library uses the generic ones below. */
+const V1_SCREEN_KEYS = {
+  'ai-model-metrics': 'item-stats',
+  'edit-model-config': 'edit-item-settings',
+  'page-comments': 'item-comments',
+  'project-comments': 'all-comments',
+  'scan-list': 'item-list',
+  'scan-actions': 'item-actions',
+  'document-analyze': 'detail-main',
+  'document-radial-actions': 'detail-radial-actions',
+  'document-bottom-actions': 'detail-bottom-actions',
+  'document-share-ring': 'detail-share-ring',
+  'booklet-analyzed': 'collection-complete',
+  'booklet-new-pages': 'collection-new-items',
+  'analyzed-images': 'collection-gallery',
+  're-analyze-page': 'refresh-item-sheet',
+  'question-detail': 'item-detail',
+  'question-menu': 'item-menu',
+  'question-menu-scrolled': 'item-menu-scrolled',
+  'question-parameters': 'item-properties'
+};
+const V1_ELEMENT_KEYS = {
+  'analysis-menu': 'options-menu',
+  'folder-header': 'item-header',
+  'folder-row': 'item-row',
+  'header-logo': 'brand-header',
+  'logo-background': 'brand-background',
+  'metrics-popup': 'stats-popup',
+  'model-form': 'config-form',
+  'model-select': 'option-select',
+  'params-popup': 'details-popup',
+  'question-card': 'article-card',
+  'scan-preview': 'image-preview'
+};
+export const libraryScreenKey = key => V1_SCREEN_KEYS[key] || key;
+export const libraryElementKey = key => V1_ELEMENT_KEYS[key] || key;

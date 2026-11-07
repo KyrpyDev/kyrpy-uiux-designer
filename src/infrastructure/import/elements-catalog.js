@@ -360,7 +360,7 @@ export const BUTTON_ELEMENTS = [
   item('html-card-actions', 'Card with action buttons', 'surfaces', 'article', 320, 150, [R(0, 0, 320, 150, { role: 'card', rx: 20, name: 'surface' }), T(20, 40, 'Card title', { size: 17, weight: 700, name: 'title' }),
     T(20, 64, 'Short supporting text goes here.', { size: 13, fill: '{{muted}}', name: 'body' }),
     ...['share', 'edit', 'delete-scan'].map((k, i) => B(`${k}-button`, 20 + i * 64, 84, 52, { name: `${k}-button` }))], { dev: 'Card whose actions are icon buttons.' }),
-  item('html-radial-actions', 'Radial action button', 'navigation', 'nav', 96, 96, [B('document-radial-menu', 16, 16, 64, { name: 'radial-menu' })],
+  item('html-radial-actions', 'Radial action button', 'navigation', 'nav', 96, 96, [B('item-radial-menu', 16, 16, 64, { name: 'radial-menu' })],
     { dev: 'Rotating menu button: click opens the actions on an arc, click an item with sub items to go deeper, click the centre to go back.' }),
   item('html-popup-actions', 'Popup menu button', 'navigation', 'nav', 96, 96, [B('more-popup-button', 16, 16, 64, { name: 'popup-menu' })],
     { dev: 'Popup menu button: opens a list above the button; nested items expand in place.' })

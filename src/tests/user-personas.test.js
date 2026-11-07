@@ -315,7 +315,7 @@ test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clo
     assert.equal(lineageRes.body.chain.length, 3);
 
     // 4. Kyrpy creates a project and invites Burak as editor
-    const proj = await req('POST', '/api/projects', { name: 'Untrap Shared Redesign', visibility: 'public' });
+    const proj = await req('POST', '/api/projects', { name: 'Sample Shared Redesign', visibility: 'public' });
     assert.equal(proj.status, 200);
     const invite = await req('POST', `/api/projects/${proj.body.id}/members`, {
       usernameOrEmail: 'burak_ux',
@@ -615,8 +615,8 @@ test('Persona 6 (@kyrpy-uiux-designer): Import from SVG Folder and Fonts into Cu
     const sampleSvgFont = `
       <svg xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <font id="UntrapGlyphs" horiz-adv-x="1000">
-            <font-face font-family="UntrapGlyphs" units-per-em="1000" ascent="800" descent="-200" />
+          <font id="SampleGlyphs" horiz-adv-x="1000">
+            <font-face font-family="SampleGlyphs" units-per-em="1000" ascent="800" descent="-200" />
             <glyph glyph-name="home-glyph" unicode="H" d="M100 0 L500 700 L900 0 Z" />
             <glyph glyph-name="diamond-glyph" unicode="D" d="M500 800 L900 400 L500 0 L100 400 Z" />
           </font>
@@ -625,7 +625,7 @@ test('Persona 6 (@kyrpy-uiux-designer): Import from SVG Folder and Fonts into Cu
     `;
     const svgFontRes = await req('POST', '/api/import/font', {
       as: 'path',
-      fontName: 'UntrapGlyphs',
+      fontName: 'SampleGlyphs',
       category: 'font-paths',
       visibility: 'public',
       fontSvg: sampleSvgFont
@@ -750,8 +750,8 @@ test('Persona 8 (@kyrpy-gru & @kyrpy-testusers-team): Workflow Filters, Copy/Mov
     // 1. Verify Scan list screen is present as a public default built-in screen
     const screensList = await req('GET', '/api/screens');
     assert.equal(screensList.status, 200);
-    const scanList = screensList.body.find(s => s.key === 'scan-list');
-    assert.ok(scanList, 'Scan list screen must exist in default public library');
+    const scanList = screensList.body.find(s => s.key === 'item-list');
+    assert.ok(scanList, 'Item list screen must exist in default public library');
     assert.equal(scanList.visibility, 'public');
     assert.equal(scanList.builtin, true);
 

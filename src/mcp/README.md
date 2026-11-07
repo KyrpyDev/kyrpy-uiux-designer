@@ -225,12 +225,22 @@ Project tools get a required `project` argument for account keys (injected into 
 project with role, `canClone` / `canEdit`, head and recent versions, a ready `question`, and `askHuman` rules (the agent
 must stop and ask the human; MCP elicitation or a chat question). The second call carries the human's answer:
 
+- `{ mode: "download", project }` → a read-only local copy of any visible project (nothing is created or changed on the
+  server); `.uiux/config.json` gets `origin` and `selection.mode = "download"`. To build on it later, call `clone`.
 - `{ mode: "clone", project, newProjectName? }` → a new private project of the user, copied from the source head
   (the source is never changed), then the normal install plan for the new project; `.uiux/config.json` gets
   `project` (new key), `origin { project, name, version }` and `selection`.
 - `{ mode: "edit", project, version? }` → an owned project. At the head: normal install. At an older version: the plan
   records `selection.baseVersion`, reports what changed since (`sinceChosen`), and with `restore: true` submits a restore
   changeset back to that version for the owner's approval.
+
+**All styles in the repository** — every `uiux_init` bundle now carries *all* design styles (`tokens/<style>.{json,css,ts}`
+and `adapters/web/<style>/` for each) plus all button styles (`tokens/button-styles.{json,css,ts}`,
+`tokens/button-templates.json`, `styles.json`). `node uiux/source/switch-style.mjs --list` shows them;
+`node uiux/source/switch-style.mjs <design-style> [<button-style>]` (or `--button <style>`) copies that style into
+`uiux/active/` and writes `uiux/active/active.json`; set `<html data-button-style="…">` for the button style. Per-item SVG
+files exist for the default style pair; very large projects (icons × styles above `SWITCH_SPRITE_BUDGET`) get icon
+sprites for the default pair only (tokens still ship for every style; `styles.json.spriteStyles` says which).
 
 Then push with the changeset tools (`project`: the key from config) and approve in the designer. Sensors:
 `tests/mcp-account.test.js` (visibility, scopes, selection list, clone → stage → submit → approve, edit at a version).

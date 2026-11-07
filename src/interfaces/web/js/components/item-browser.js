@@ -5,6 +5,7 @@
  * and Trash Management Modal (Restore / Purge / Empty with Admin guard on public items).
  */
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
+import { visClass } from '/domain/entities.js';
 import { api } from '../api.js';
 import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
 import { h, clear, modal, toast, confirmBox, promptBox } from '../dom.js';
@@ -350,7 +351,9 @@ export function buildItemBrowserElement({
         out.push({ type: t, item });
       }
     }
-    return out;
+    // project-scope items first, then the user's own private items, then public ones; each group keeps its order
+    const rank = ({ item }) => (item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : 2);
+    return out.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
   }
 
   function renderTypeTabs() {
@@ -652,7 +655,7 @@ export function buildItemBrowserElement({
       );
 
       const card = h('div', {
-        class: `lib-card ib-card${isChecked ? ' checked' : ''}`,
+        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item)}`,
         dataset: { ibCardType: type, ibCardId: String(item.id) },
         onclick: () => {
           const next = !selectedKeys.has(k);
