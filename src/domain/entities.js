@@ -420,7 +420,11 @@ export const DEFAULT_MENU = {
   sweep: 140,           // fan/radial: angle covered by the items
   itemScale: 0.75,      // item size / button size
   gap: 0.2,             // list/slider/carousel gap / button size
-  hubScale: 0.8,        // hub: small side button size / button size (the centre button is twice as big)
+  hubScale: 0.8,        // hub: small side button size / button size
+  centerScale: 0,       // hub: centre button size / button size (0 = twice the side buttons)
+  distance: null,       // list/slider/drawer/carousel: distance of the first item from its parent / button size (null = same as gap)
+  keepInside: true,     // keep the opened menu inside the device screen (shifts it back when it would leave the screen)
+  itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

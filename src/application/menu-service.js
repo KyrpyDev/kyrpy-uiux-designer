@@ -75,6 +75,7 @@ export class MenuService {
     const b = this.#button(buttonIdOrKey);
     if (cfg.kind !== undefined && !MENU_KINDS.includes(cfg.kind)) throw new ValidationError(`kind must be one of ${MENU_KINDS.join(', ')}`);
     if (cfg.layout !== undefined && !MENU_LAYOUTS.includes(cfg.layout)) throw new ValidationError(`layout must be one of ${MENU_LAYOUTS.join(', ')}`);
+    if (cfg.itemButtonId != null && !this.buttons.get(Number(cfg.itemButtonId))) throw new ValidationError(`button ${cfg.itemButtonId} does not exist`);
     const merged = { ...(b.meta.menu || {}), ...cfg };
     this.buttons.update(b.id, { meta: { ...b.meta, menu: merged } });
     return menuConfig({ menu: merged });

@@ -46,3 +46,11 @@ test('online icons: collections, search, paged listing, import (idempotent, capp
     assert.equal(MAX_IMPORT, 10000);
   } finally { c.close(); }
 });
+
+test('inlineSymbols turns <symbol>/<use> into plain groups (Meteocons style)', async () => {
+  const { inlineSymbols } = await import('../application/online-icon-service.js');
+  const r = inlineSymbols('<svg viewBox="0 0 512 512"><defs><symbol id="a" viewBox="0 0 100 50"><path d="M0 0h100"/></symbol></defs><use href="#a" x="10" y="20" width="200" height="100"/></svg>');
+  assert.doesNotMatch(r, /<symbol|<use/);
+  assert.match(r, /translate\(10 20\) scale\(2 2\)/);
+  assert.equal(inlineSymbols('<svg><use href="#nope"/></svg>'), '<svg></svg>');
+});

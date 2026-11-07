@@ -33,6 +33,37 @@ export function stripAnimation(svg) {
   return { svg: out, animated: true };
 }
 
+/**
+ * Inlines `<symbol>` + `<use href="#id">` (Meteocons, many colour sets): the parser skips defs / symbols, so every use becomes a
+ * `<g transform>` holding the symbol's content scaled into the use box. Unknown references are dropped.
+ */
+export function inlineSymbols(svg) {
+  const syms = new Map();
+  for (const m of svg.matchAll(/<symbol\b([^>]*)>([\s\S]*?)<\/symbol>/g)) {
+    const id = /\sid="([^"]+)"/.exec(m[1])?.[1];
+    if (!id) continue;
+    const vb = /viewBox="([^"]+)"/.exec(m[1])?.[1]?.trim().split(/[\s,]+/).map(Number);
+    syms.set(id, { body: m[2], vb: vb?.length === 4 && vb.every(Number.isFinite) ? vb : null });
+  }
+  if (!syms.size && !/<use\b/.test(svg)) return svg;
+  let out = svg;
+  for (let pass = 0; pass < 3 && /<use\b/.test(out); pass++) {
+    out = out.replace(/<use\b([^>]*?)\/?>(?:<\/use>)?/g, (all, attrs) => {
+      const ref = /(?:xlink:)?href="#([^"]+)"/.exec(attrs)?.[1], sym = ref && syms.get(ref);
+      if (!sym) return '';
+      const num = n => parseFloat(new RegExp(`\\s${n}="([^"]*)"`).exec(attrs)?.[1]) || 0;
+      const x = num('x'), y = num('y'), tf = /\stransform="([^"]*)"/.exec(attrs)?.[1] || '';
+      let inner = `translate(${x} ${y})`;
+      if (sym.vb) {
+        const w = num('width') || sym.vb[2], h = num('height') || sym.vb[3];
+        inner += ` scale(${w / sym.vb[2]} ${h / sym.vb[3]}) translate(${-sym.vb[0]} ${-sym.vb[1]})`;
+      }
+      return `<g transform="${tf ? `${tf} ` : ''}${inner}">${sym.body}</g>`;
+    });
+  }
+  return out.replace(/<symbol\b[\s\S]*?<\/symbol>/g, '').replace(/<use\b[^>]*\/?>/g, '');
+}
+
 export class OnlineIconService {
   constructor({ services, fetchImpl = globalThis.fetch, transaction = fn => fn(), backoffMs = 1500 }) {
     Object.assign(this, { services, fetchImpl, transaction, backoffMs });
@@ -143,7 +174,7 @@ export class OnlineIconService {
             if (!ic?.body) { res.failed++; continue; }
             if (this.services.icon.designs.keyExists(key, pid)) { res.skipped++; continue; }
             const w = ic.width || defW, h = ic.height || defH;
-            const { svg, animated } = stripAnimation(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${ic.body}</svg>`);
+            const { svg, animated } = stripAnimation(inlineSymbols(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${ic.body}</svg>`));
             const nodes = packSvgToNodes(svg, { paintMode: 'theme' });
             const rec = this.services.icon.create({
               key, name: human(name), label: human(name), category: `pack-${prefix}`, tags: [...new Set([prefix, ...words(name)])].slice(0, 12),

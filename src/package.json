@@ -14,6 +14,7 @@
     "db:publish": "node --disable-warning=ExperimentalWarning scripts/publish-from-pg.js",
     "db:export-public": "node --disable-warning=ExperimentalWarning scripts/export-public-db.js",
     "icons:import": "node --disable-warning=ExperimentalWarning scripts/import-icon-packs.js",
+    "icons:online": "node --disable-warning=ExperimentalWarning scripts/import-online-sets.js",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js mcp/tests/*.test.js"
   }
 }

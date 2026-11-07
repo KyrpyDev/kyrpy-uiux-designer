@@ -31,6 +31,7 @@ export function buildMenuTree(rows, { includeHidden = false } = {}) {
 /** Item centres relative to the button centre (px), for n items. */
 export function layoutItems(cfg, n, size) {
   const s = (cfg.itemScale || 0.75) * size, gap = (cfg.gap ?? 0.2) * size, out = [];
+  const dist = (cfg.distance ?? cfg.gap ?? 0.2) * size;      // distance of the first item from its parent (the button)
   const effLayout = cfg.layout || (
     cfg.kind === 'radial' ? 'fan'
       : cfg.kind === 'drawer' ? 'drawer'
@@ -45,23 +46,23 @@ export function layoutItems(cfg, n, size) {
       out.push({ x: R * Math.cos(a), y: R * Math.sin(a), s });
     } else if (effLayout === 'slider-horizontal') {
       const dirSign = cfg.direction === 'left' ? -1 : 1;
-      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const d = size / 2 + dist + s / 2 + i * (s + gap);
       out.push({ x: dirSign * d, y: 0, s });
     } else if (effLayout === 'slider-vertical') {
       const dirSign = cfg.direction === 'up' ? -1 : 1;
-      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const d = size / 2 + dist + s / 2 + i * (s + gap);
       out.push({ x: 0, y: dirSign * d, s });
     } else if (effLayout === 'carousel') {
       const isVert = cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down';
-      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const d = size / 2 + dist + s / 2 + i * (s + gap);
       out.push({ x: isVert ? 0 : d, y: isVert ? d : 0, s });
     } else if (effLayout === 'drawer') {
       const side = cfg.side || cfg.direction || 'right';
-      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const d = size / 2 + dist + s / 2 + i * (s + gap);
       const dir = { up: [0, -1], top: [0, -1], down: [0, 1], bottom: [0, 1], left: [-1, 0], right: [1, 0] }[side] || [1, 0];
       out.push({ x: dir[0] * d, y: dir[1] * d, s });
     } else {
-      const d = size / 2 + gap + s / 2 + i * (s + gap);
+      const d = size / 2 + dist + s / 2 + i * (s + gap);
       const dir = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[cfg.direction] || [0, -1];
       out.push({ x: dir[0] * d, y: dir[1] * d, s });
     }
@@ -74,7 +75,8 @@ const round = v => Math.round(v * 100) / 100;
 /** Hub menu geometry (px): small = side button diameter, big = centre button (twice as big), gap between buttons, vertical flag. */
 export function hubGeometry(cfg, size) {
   const small = size * (Number(cfg.hubScale) > 0 ? Number(cfg.hubScale) : 0.8);
-  return { small, big: small * 2, gap: (cfg.gap ?? 0.2) * size, vertical: cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down' };
+  const big = Number(cfg.centerScale) > 0 ? size * Number(cfg.centerScale) : small * 2;
+  return { small, big, k: small / big, gap: (cfg.gap ?? 0.2) * size, vertical: cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down' };
 }
 
 /**
@@ -104,7 +106,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   // body of one item, drawn around its own centre (0,0): a referenced library button (its own icon unless the item has one), else circle + icon
   const itemBody = (it, r, iconSz) => {
     // the slot shows the item's own library button; without one it shows this menu button's own body (never a bare placeholder shell)
-    const slotButton = it.refButtonId ?? hostButtonId;
+    const slotButton = it.refButtonId ?? cfg.itemButtonId ?? hostButtonId;
     const btn = slotButton != null && renderButton ? renderButton(slotButton, r * 2, Boolean(it.iconId) || slotButton === hostButtonId) : '';
     if (btn) return `${btn}<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
     return `<circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
@@ -117,14 +119,14 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
       if (isHubRoot) {
         // one pre-rendered button per ring item; the runtime places it (left / centre / right / hidden) with --x --y --k --o
         const r = hub.big / 2;
-        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
+        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
           + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, hub.big * 0.62)}</g>`;
       }
       const p = pos[i], r = p.s / 2;
       const popupAttr = (it.targetElementKey || it.targetElementId)
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
         : '';
-      return `<g class="rm-item" data-item="${esc(it.path)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${popupAttr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
+      return `<g class="rm-item" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${popupAttr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
         + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, iconSize)}</g>`;
     });
     const innerItems = isCarousel
@@ -142,8 +144,8 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   walk(tree, '', null);
   const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
   const hit = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
-  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}"` : '';
-  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}</g>`;
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}"` : '';
+  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}</g>`;
 }
 
 /** Stylesheet shared by the designer canvas and exported pages (transitions of the menu). */
@@ -151,13 +153,13 @@ export const MENU_CSS = `
 .ud-btn .rm-level{visibility:hidden;pointer-events:none}
 .ud-btn .rm-item{transform-box:view-box;transform-origin:0 0;transform:translate(var(--cx,0px),var(--cy,0px)) scale(.2);opacity:0;cursor:pointer;transition:transform .32s cubic-bezier(.2,.9,.3,1.2),opacity .2s ease;transition-delay:0ms}
 .ud-btn .rm-level.is-active{visibility:visible;pointer-events:auto}
-.ud-btn .rm-level.is-active .rm-item{transform:translate(var(--x),var(--y)) scale(1);opacity:1;transition-delay:calc(var(--i)*35ms)}
+.ud-btn .rm-level.is-active .rm-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(1);opacity:1;transition-delay:calc(var(--i)*35ms)}
 .ud-btn .rm-item:hover circle:first-of-type{stroke-opacity:1}
 .ud-btn .rm-center{visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s}
 .ud-btn .rm-center.is-active{visibility:visible;opacity:1}
 .ud-btn .rm-hit{cursor:pointer}
 .ud-btn .rm-item.rm-hub-item{transition:transform .35s cubic-bezier(.3,.8,.3,1),opacity .25s ease}
-.ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(var(--x),var(--y)) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
+.ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
 .ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
 .ud-btn .rm-hub-icon{transform-box:fill-box;transform-origin:center;transition:transform .3s ease}
 .ud-btn[data-open="1"] .rm-hub-icon{transform:rotate(var(--rot,0deg))}

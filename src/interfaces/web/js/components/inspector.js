@@ -3,7 +3,7 @@ import { h, clear, toast, confirmBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
-import { menuActions } from './menu-editor.js';
+import { menuActions, pickButton } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES } from '/domain/entities.js';
 import { buildMenuTree } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
@@ -230,6 +230,21 @@ export class Inspector {
     return this.section(`${type} · ${doc.key}${doc.builtin ? ' · built-in' : ''}`, ...kids);
   }
 
+  /** Button style tool: one library button used as the frame of EVERY menu item (items with their own button can be reset to follow it). */
+  menuStyleTool(bid, cfg, rows, set) {
+    const cur = cfg.itemButtonId ? findDesign('button', cfg.itemButtonId) : null;
+    const own = rows.filter(r => r.refButtonId).length;
+    return h('div', { class: 'row wrap', style: { gap: '6px', alignItems: 'center' } },
+      cur ? h('img', { class: 'thumb small', alt: cur.label || cur.key, src: api.svgUrl('button', cur.id, { theme: state.themeKey, animated: 0, size: 48 }), style: { width: '36px', height: '36px', objectFit: 'contain' } }) : null,
+      h('span', { class: 'grow', style: { fontSize: '12px' } }, cur ? `Item style: ${cur.label || cur.key}` : 'Item style: this button\'s own body'),
+      ibtn('search', 'Pick the button style of all menu items', async () => { const r = await pickButton(cfg.itemButtonId, bid); if (r !== null) await set({ itemButtonId: r || null }); }, { desc: 'Every menu item is drawn with this button (items keep their own icon)', cls: 'primary' }),
+      cur ? ibtn('close', 'Back to the default style', () => set({ itemButtonId: null })) : null,
+      own ? ibtn('copy', `Apply to all items (clears ${own} item button${own === 1 ? '' : 's'})`, async () => {
+        for (const r of rows.filter(x => x.refButtonId)) await api.updateMenuItem(bid, r.id, { refButtonId: null });
+        await menuActions.refresh(this.d, bid); toast('All items now follow the menu button style', 'ok', 1600);
+      }, { desc: 'Items that picked their own button switch to the menu button style' }) : null);
+  }
+
   /** Buttons & Button Instances: action/menu modes (radial, drawer, vertical/horizontal slider, carousel animated roll, show element) and nested menu items. */
   menuSection(buttonId = null) {
     const d = this.d;
@@ -279,23 +294,28 @@ export class Inspector {
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
             this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set({ direction: v }))),
-            num('hubScale', 'Side button × button'), num('gap', 'Gap × button'), num('radius', 'Sub fan radius × centre'), num('itemScale', 'Sub item × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5))
+            num('hubScale', 'Small items size × button'), num('centerScale', 'Centre item size × button (0 = 2 × small)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5))
         : (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
-        ? h('div', { class: 'grid2' }, num('radius', 'Radius × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
+        ? h('div', { class: 'grid2' }, num('radius', 'Distance from parent (radius) × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
         : (cfg.layout === 'carousel' || cfg.kind === 'carousel')
           ? h('div', { class: 'grid2' },
               this.field('Roll Dimension', this.select(`mc-${bid}-dim`, cfg.dimension || '3d', [['3d', '3D Perspective Roll'], ['2d', '2D Flat Roll']], v => set({ dimension: v }))),
               this.field('Roll Direction', this.select(`mc-${bid}-dir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal Roll'], ['vertical', 'Vertical Roll']], v => set({ direction: v }))),
               num('itemScale', 'Item size × button'),
-              num('gap', 'Gap × button')
+              num('distance', 'Distance from parent × button'),
+              num('gap', 'Gap between items × button')
             )
           : (cfg.layout === 'drawer' || cfg.kind === 'drawer')
             ? h('div', { class: 'grid2' },
                 this.field('Drawer Side', this.select(`mc-${bid}-side`, cfg.side || 'right', DRAWER_SIDES, v => set({ side: v, direction: v }))),
                 num('itemScale', 'Item size × button'),
-                num('gap', 'Gap × button')
+                num('distance', 'Distance from parent × button'),
+                num('gap', 'Gap between items × button')
               )
-            : h('div', { class: 'grid2' }, this.field('Direction', this.select(`mc-${bid}-dir`, cfg.direction, ['up', 'down', 'left', 'right'], v => set({ direction: v }))), num('itemScale', 'Item size × button'), num('gap', 'Gap × button')),
+            : h('div', { class: 'grid2' }, this.field('Direction', this.select(`mc-${bid}-dir`, cfg.direction, ['up', 'down', 'left', 'right'], v => set({ direction: v }))), num('itemScale', 'Item size × button'), num('distance', 'Distance from parent × button'), num('gap', 'Gap between items × button')),
+      this.menuStyleTool(bid, cfg, rows, set),
+      h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the opened menu would leave the device screen it is shifted back inside' },
+        h('input', { type: 'checkbox', checked: cfg.keepInside !== false, 'data-f': `mc-${bid}-keep`, onchange: e => set({ keepInside: e.target.checked }) }), h('span', {}, 'Keep the menu inside the device screen')),
       this.field('Centre icon turns while open (°, 0 = off)', this.num(`mc-${bid}-rot`, cfg.rotateOnOpen, v => set({ rotateOnOpen: v }), { step: 5 }))
     ];
     const tree = buildMenuTree(rows, { includeHidden: true });

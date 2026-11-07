@@ -28,18 +28,48 @@ export function bindMenus(root, opts) {
   function layoutHub(btn, st) {
     var m = btn.querySelector('.ud-menu'), items = hubItems(btn), n = items.length, c = st.c || 0;
     var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), small = +m.getAttribute('data-hub-small'), gap = +m.getAttribute('data-hub-gap');
-    var vert = m.getAttribute('data-hub-vertical') === '1', off = small + gap + small / 2, fan = st.path.length > 0;
+    var big = +m.getAttribute('data-hub-big') || small * 2, hk = +m.getAttribute('data-hub-k') || 0.5;
+    var vert = m.getAttribute('data-hub-vertical') === '1', off = big / 2 + gap + small / 2, fan = st.path.length > 0;
     items.forEach(function (el, i) {
       var d = (i - c + n) % n, dx = 0, k = 0, o = 0, pos = 'hidden';
       if (d === 0) { k = 1; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
-      else if (d === 1) { dx = off; k = 0.5; o = fan ? 0 : 1; pos = 'next'; }
-      else if (d === n - 1) { dx = -off; k = 0.5; o = fan ? 0 : 1; pos = 'prev'; }
+      else if (d === 1) { dx = off; k = hk; o = fan ? 0 : 1; pos = 'next'; }
+      else if (d === n - 1) { dx = -off; k = hk; o = fan ? 0 : 1; pos = 'prev'; }
       el.style.setProperty('--x', (cx + (vert ? 0 : dx)) + 'px');
       el.style.setProperty('--y', (cy + (vert ? dx : 0)) + 'px');
       el.style.setProperty('--k', String(k));
       el.style.setProperty('--o', String(o));
       el.setAttribute('data-hub-pos', pos);
     });
+  }
+  /* keep the opened menu inside the device screen: shift it (all items together) back by the part that sticks out */
+  function px(v) { return parseFloat(v) || 0; }
+  function fit(btn) {
+    var m = btn.querySelector('.ud-menu');
+    if (!m || !m.style) return;
+    m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px');
+    if (m.getAttribute('data-keep') !== '1') return;
+    var svg = btn.ownerSVGElement;
+    if (!svg || !btn.getScreenCTM || !svg.createSVGPoint) return;
+    var ctm = btn.getScreenCTM(), sr = svg.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    if (!ctm || !ctm.a || !sr.width || br.width >= sr.width * 0.8) return;     // the button designer shows the button alone: nothing to keep inside
+    var inv = ctm.inverse(), p1 = svg.createSVGPoint(), p2 = svg.createSVGPoint();
+    p1.x = sr.left; p1.y = sr.top; p2.x = sr.right; p2.y = sr.bottom;
+    var a = p1.matrixTransform(inv), b = p2.matrixTransform(inv), pad = 4;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    btn.querySelectorAll('.rm-level.is-active .rm-item').forEach(function (el) {
+      if (el.getAttribute('data-hub-pos') === 'hidden') return;
+      var k = el.hasAttribute('data-hub-index') ? (parseFloat(el.style.getPropertyValue('--k')) || 1) : 1;
+      if (k === 0) return;
+      var r = (+el.getAttribute('data-r') || 0) * k, x = px(el.style.getPropertyValue('--x')), y = px(el.style.getPropertyValue('--y'));
+      x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); y0 = Math.min(y0, y - r); y1 = Math.max(y1, y + r);
+    });
+    if (x0 === Infinity) return;
+    var L = Math.min(a.x, b.x) + pad, R = Math.max(a.x, b.x) - pad, T = Math.min(a.y, b.y) + pad, B = Math.max(a.y, b.y) - pad;
+    var dx = x0 < L ? L - x0 : (x1 > R ? R - x1 : 0), dy = y0 < T ? T - y0 : (y1 > B ? B - y1 : 0);
+    if (x1 - x0 > R - L) dx = (L + R) / 2 - (x0 + x1) / 2;
+    if (y1 - y0 > B - T) dy = (T + B) / 2 - (y0 + y1) / 2;
+    m.style.setProperty('--sx', dx + 'px'); m.style.setProperty('--sy', dy + 'px');
   }
   function apply(btn, st) {
     var menu = btn.querySelector('.ud-menu');
@@ -52,6 +82,7 @@ export function bindMenus(root, opts) {
     btn.querySelectorAll('.rm-level').forEach(function (l) { var lv = l.getAttribute('data-level'); l.classList.toggle('is-active', st.open && (lv === key || (hub && lv === ''))); });
     if (hub) layoutHub(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
+    fit(btn);
   }
   function set(btn, st) { states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {

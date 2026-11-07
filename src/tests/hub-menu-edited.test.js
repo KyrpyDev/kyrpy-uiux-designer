@@ -7,7 +7,7 @@ import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, scopeFirst, visClass, isEdited } from '../domain/entities.js';
-import { renderMenu, buildMenuTree, menuExtent, hubGeometry, MENU_CSS } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS } from '../domain/menu.js';
 import { createContext } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
 import { bindMenus } from '../domain/menu-runtime.js';
@@ -193,4 +193,20 @@ test('menu item can show a library button besides its icon (refButtonId): stored
     assert.match(hosted, /class="host-btn"/);
     assert.equal(hostCalls[0][0], host.id);
   } finally { c.close(); }
+});
+
+test('menu settings: distance from parent, hub centre size, item button style, keep-inside flag', () => {
+  const base = { kind: 'popup', layout: 'list', direction: 'up', itemScale: 0.75, gap: 0.2, rotateOnOpen: 0 };
+  const near = layoutItems({ ...base }, 2, 64), far = layoutItems({ ...base, distance: 0.6 }, 2, 64);
+  assert.ok(Math.abs(far[0].y) - Math.abs(near[0].y) > 20, 'distance moves the first item away from its parent');
+  assert.equal(Math.round(far[1].y - far[0].y), Math.round(near[1].y - near[0].y), 'the gap between items is unchanged');
+  const g = hubGeometry({ hubScale: 0.5, centerScale: 1.5 }, 64);
+  assert.deepEqual([g.small, g.big], [32, 96]);
+  assert.equal(hubGeometry({ hubScale: 0.5 }, 64).big, 64, 'centre defaults to twice the small items');
+  const rows = [{ id: 1, parentId: null, ord: 0, name: 'a', label: 'A', iconId: null, refButtonId: null, visible: true }];
+  const calls = [];
+  const svg = renderMenu({ button: { key: 'h', width: 64, height: 64 }, cfg: { ...base, itemButtonId: 77, keepInside: false }, tree: buildMenuTree(rows), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null, hostButtonId: 5, renderButton: (id) => { calls.push(id); return '<g/>'; } });
+  assert.equal(calls[0], 77, 'the menu button style is used for items without their own button');
+  assert.match(svg, /data-keep="0"/);
+  assert.match(svg, /data-r="/);
 });
