@@ -12,7 +12,7 @@ import { ensureIconSymbols } from '../icon-store.js';
 
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
-import { buildMenuTree } from '/domain/menu.js';
+import { buildMenuTree, menuConfig } from '/domain/menu.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
@@ -298,6 +298,7 @@ export class MenuEditor {
     this.toolbar.addEventListener('pointerleave', () => this.scheduleHide());
     designer.viewport.appendChild(this.toolbar);
     // same behaviour as the exported page; leaf clicks keep the menu open while editing, or trigger actions/routes in Test mode
+    designer.stage.addEventListener('dblclick', ev => this.onDblClick(ev), true);
     this.ctl = bindMenus(designer.stage, {
       keepOpen: true,
       onState: (_, st) => { this.menuState = st; },
@@ -326,6 +327,24 @@ export class MenuEditor {
   }
 
   get active() { return this.d.type === 'button'; }
+
+  /** The button an item is drawn with: its own pick, else the menu's button style (null = the open button's own body). */
+  itemButtonId(item, buttonId) {
+    const host = this.d.doc?.id === buttonId ? this.d.doc : state.library.buttons.find(b => b.id === buttonId);
+    return item?.refButtonId ?? menuConfig(host?.meta).itemButtonId ?? null;
+  }
+
+  /** Double-click a menu item placeholder in the editor: it acts as a button and opens the edit page of the button inside it. */
+  onDblClick(ev) {
+    if (!this.active || this.d.actionsLive || this.d.menuLive) return;
+    const hit = this.itemAtEvent(ev);
+    if (!hit) return;
+    ev.stopPropagation(); ev.preventDefault();
+    const it = hit.item || (hit.menuItems || [])[0];
+    const bid = it ? this.itemButtonId(it, hit.buttonId) : null;
+    if (bid && bid !== this.d.doc?.id && this.d.opts.openDesign) return this.d.opts.openDesign('button', bid);
+    if (it) return menuActions.edit(this.d, it.id, hit.buttonId);
+  }
 
   /** Called after every stage render: the DOM was replaced, restore the open/level state. */
   afterRender() {
@@ -397,7 +416,7 @@ export class MenuEditor {
     } else if (hit.item) {
       const it = hit.item;
       this.toolbar.append(
-        btn('✎ Edit menu item', `Edit menu item “${it.label || it.name}”`, () => menuActions.edit(this.d, it.id, hit.buttonId), 'btn small primary'),
+        btn('✎ Edit menu item', `Edit menu item “${it.label || it.name}” (double-click the item to open its button)`, () => menuActions.edit(this.d, it.id, hit.buttonId), 'btn small primary'),
         btn('＋', `Add a sub item to “${it.label || it.name}”`, () => menuActions.add(this.d, it.id, hit.buttonId)),
         btn(it.visible === false ? '—' : '👁', it.visible === false ? 'Show menu item' : 'Hide menu item', () => menuActions.toggleVisible(this.d, it.id, hit.buttonId)),
         btn('←', 'Move earlier', () => menuActions.move(this.d, it.id, -1, hit.buttonId)),

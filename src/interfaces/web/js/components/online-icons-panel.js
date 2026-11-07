@@ -10,7 +10,7 @@ import { reloadLibrary } from '../actions.js';
 const PAGE = 60, PREV = 2, NEXT = 1, SET_CAP = 10000;
 const svgSrc = (prefix, name) => `/api/online/svg?prefix=${encodeURIComponent(prefix)}&name=${encodeURIComponent(name)}&color=79C8FF`;
 
-export function buildOnlinePanel({ onImported = () => {} } = {}) {
+export function buildOnlinePanel({ onImported = () => {}, onUnavailable = () => {} } = {}) {
   let sets = [], prefix = '', q = '', page = 0, total = 0, seq = 0;
   const cache = new Map();                  // page -> Promise<{icons,total}> ; pruned to [page-PREV, page+NEXT]
   const picked = new Set();                 // "prefix:name"
@@ -121,6 +121,6 @@ export function buildOnlinePanel({ onImported = () => {} } = {}) {
     info, pager, status, h('div', { class: 'lib-scroll' }, grid)
   );
   paintInfo(); paintPager(); paintGrid([]);
-  api.get('/api/online/collections').then(r => { sets = r.collections || []; paintSets(); paintInfo(); }).catch(e => { status.textContent = 'online source unreachable'; toast(e.message || 'online source unreachable', 'error'); });
+  api.get('/api/online/collections').then(r => { sets = r.collections || []; paintSets(); paintInfo(); }).catch(() => { toast('Online icon source is unavailable: it was removed from the library', 'info', 3000); onUnavailable(); });
   return root;
 }

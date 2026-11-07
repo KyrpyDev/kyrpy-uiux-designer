@@ -120,7 +120,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
         // one pre-rendered button per ring item; the runtime places it (left / centre / right / hidden) with --x --y --k --o
         const r = hub.big / 2;
         return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
-          + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, hub.big * 0.62)}</g>`;
+          + `<title>${esc(it.label || it.name)}</title>${ctx.editor ? `<g class="rm-item-body">${itemBody(it, r, hub.big * 0.62)}</g>` : itemBody(it, r, hub.big * 0.62)}</g>`;
       }
       const p = pos[i], r = p.s / 2;
       const popupAttr = (it.targetElementKey || it.targetElementId)

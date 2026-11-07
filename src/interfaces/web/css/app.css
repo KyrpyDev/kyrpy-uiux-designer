@@ -818,3 +818,18 @@ input.doc-title { font: inherit; font-weight: 700; color: inherit; background: t
 input.doc-title:hover { border-color: var(--line); }
 input.doc-title:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
 .lib-card .tb button.tb-order-front, .lib-card .tb button.tb-order-back, .cell .tb button.tb-order-front, .cell .tb button.tb-order-back { font-size: 10px; }
+
+/* selection bar buttons show a short text label next to their icon */
+.sel-bar .btn.ib:has(.ib-lbl) { width: auto; padding: 0 8px; gap: 5px; }
+.ib-lbl { font-size: 11px; font-weight: 600; }
+
+/* collapsed tool rows (path tools + drawing tools) in every designer */
+body.dz-tools-collapsed .dz-pathbar, body.dz-tools-collapsed .dz-bar { display: none; }
+
+/* hub designer: the open button's own body is the centre button; the centre menu item keeps only its hit area (no second button on top) */
+.dz-stage:not(.menu-live) .rm-hub-item[data-hub-pos="center"] .rm-item-body > :not(circle[fill="transparent"]) { opacity: 0; }
+
+/* library cells: the hover toolbar sits OUTSIDE the item (below it) so the item stays selectable; the checkbox moves to the bottom-right corner */
+.cell .tb, .lib-card .tb { top: 100%; right: 0; left: auto; width: max-content; max-width: 90vw; flex-wrap: wrap; justify-content: flex-end; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); z-index: 30; }
+.cell:hover, .lib-card:hover { z-index: 30; }
+.cell .chk, .lib-card .chk { top: auto; left: auto; bottom: 5px; right: 5px; }

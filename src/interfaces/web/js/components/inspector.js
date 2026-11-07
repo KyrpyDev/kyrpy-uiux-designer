@@ -4,7 +4,7 @@ import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton } from './menu-editor.js';
-import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES } from '/domain/entities.js';
+import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
 import { buildMenuTree } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
@@ -176,14 +176,34 @@ export class Inspector {
     this.tokenList();
     clear(root);
     const sel = d.selectedNodes();
+    this.lowSections = [];
+    if (d.type === 'button') root.append(this.buttonStyleSection());
     if (sel.length === 1) root.append(...this.nodeSections(sel[0]));
     else if (sel.length > 1) root.append(this.multiSection(sel));
     if (d.type === 'button') root.append(this.menuSection(d.doc.id));
     root.append(this.designSection());
     root.append(this.nodesList());
+    if (this.lowSections.length) root.append(...this.lowSections);
     root.scrollTop = scroll;
     if (wasIn && focusKey) { const f = root.querySelector(`[data-f="${focusKey}"]`); f?.focus(); f?.select?.(); }
     d.fitInspectorToContent?.();   // first render only: fit the panel to its content
+  }
+
+  /** Top of the button inspector: change the button style (shape) of the open button. */
+  buttonStyleSection() {
+    const d = this.d, doc = d.doc;
+    const surface = d.nodes.find(n => n.role === 'button' || n.name === 'surface');
+    const minDim = Math.min(doc.width, doc.height) || 64;
+    const rx = Number(surface?.attrs?.rx) || (surface?.tag === 'circle' ? minDim / 2 : 0);
+    const guess = surface?.attrs?.fill === 'none' ? 'outline' : [...BUTTON_STYLES].sort((a, b) => Math.abs(a.rxRatio * minDim - rx) - Math.abs(b.rxRatio * minDim - rx))[0]?.key;
+    const cur = doc.meta?.buttonStyle || guess || 'circle';
+    const sel = this.select('btn-style', cur, BUTTON_STYLES.map(b => [b.key, b.label]), async v => {
+      const nodes = applyButtonStyleAndIconSizeToNodes(d.nodes.map(n => ({ ...n })), { width: doc.width, height: doc.height, buttonStyle: v, buttonIconSizePct: 100 * (d.nodes.find(n => n.refType === 'icon')?.attrs?.width || minDim) / minDim });
+      await d.mutate(async () => { await api.replaceNodes('button', doc.id, nodes); await api.updateDesign?.('button', doc.id, { meta: { ...doc.meta, buttonStyle: v } }); });
+      await d.reload();
+      toast(`Button style: ${BUTTON_STYLES.find(b => b.key === v)?.label || v}`, 'ok', 1400);
+    });
+    return this.section('', this.field('Button style', sel));
   }
 
   designSection() {
@@ -603,10 +623,8 @@ export class Inspector {
     secs.push(this.section('Content & style', ...style));
 
     // events & click action (every element on any design can have click, mouseover, release, drag&drop events)
-    secs.push(this.clickSection(e));
-
-    // animations
-    secs.push(this.animationSection(e));
+    // (shown at the bottom of the inspector, below the design / menu / layers sections)
+    this.lowSections = [this.clickSection(e), this.animationSection(e)];
     return secs;
   }
 

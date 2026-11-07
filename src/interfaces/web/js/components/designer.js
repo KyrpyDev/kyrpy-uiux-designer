@@ -646,7 +646,16 @@ export class Designer {
   }
 
   /* ================= toolbar ================= */
+  /** Collapses / expands the two tool rows (path tools and drawing tools) to save screen space; remembered in the browser. */
+  toolsCollapsedGet() { try { return localStorage.getItem('ud_tools_collapsed') === '1'; } catch { return false; } }
+  applyToolsCollapsed(v) {
+    document.body.classList.toggle('dz-tools-collapsed', !!v);
+    try { localStorage.setItem('ud_tools_collapsed', v ? '1' : '0'); } catch { /* storage blocked */ }
+    this.fitted = false;
+  }
+
   buildBar() {
+    document.body.classList.toggle('dz-tools-collapsed', this.toolsCollapsedGet());
     clear(this.bar);
     this.buildDocBar();
     const s = state.settings;
@@ -685,6 +694,11 @@ export class Designer {
         desc: 'Interactive mode: test buttons, animations, edit forms, popups/drawers/toolbars and workflow routing (off = edit mode)',
         active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
       }));
+    }
+    {
+      const col = this.toolsCollapsedGet();
+      const b = ibtn(col ? 'chevDown' : 'chevUp', col ? 'Expand the tool rows' : 'Collapse the tool rows', () => { this.applyToolsCollapsed(!this.toolsCollapsedGet()); this.buildBar(); }, { desc: 'Show / hide the path tools and drawing tools rows to save screen space', active: col, dataset: { view: '1' } });
+      kids.push(b);
     }
     kids.push(h('span', { class: 'grow' }),
       ibtn('book', 'Guide', () => openGuide(this.type), { desc: `How to use the ${NAMES[this.type].toLowerCase()}`, kbd: 'F1', dataset: { view: '1' } }),

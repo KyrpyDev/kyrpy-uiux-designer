@@ -89,6 +89,8 @@ const P = {
   ruler: '<path d="M2 16L16 2l6 6L8 22z"/><path d="M6 12l2 2M10 8l2 2M14 4l2 2"/>',
   pen2: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>',
   arrowUp: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  chevUp: '<path d="M6 15l6-6 6 6"/>',
+  chevDown: '<path d="M6 9l6 6 6-6"/>',
   arrowDown: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   arrowLeft: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   arrowRight: '<path d="M5 12h14M12 5l7 7-7 7"/>',

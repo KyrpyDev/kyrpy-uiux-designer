@@ -13,6 +13,9 @@ import { buildOnlinePanel } from './online-icons-panel.js';
 
 const ONLINE_KEY = 'ud_online_icons';
 const onlineShown = () => { try { return localStorage.getItem(ONLINE_KEY) === '1'; } catch { return false; } };
+/** The online source is probed once per page load; when its API fails the Online switch is removed and the panel stays hidden. */
+let onlineOk = null, onlineProbe = null;
+const probeOnline = () => onlineProbe || (onlineProbe = api.get('/api/online/sources').then(() => api.get('/api/online/search?prefix=tabler&start=0&limit=1')).then(() => { onlineOk = true; }, () => { onlineOk = false; }));
 const setOnlineShown = v => { try { localStorage.setItem(ONLINE_KEY, v ? '1' : '0'); } catch { /* storage blocked: toggle lasts for this view only */ } };
 import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
 import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, scopeFirst, visClass } from '/domain/entities.js';
@@ -218,14 +221,14 @@ export class LibraryPanel {
       });
     };
     const bar = h('div', { class: 'sel-bar', style: { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
-      ibtn('pointer', 'Select all', () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }, { desc: 'Select all visible items', cls: 'lib-sel-all-btn' }),
-      ibtn('close', 'Deselect all', () => { selSet.clear(); updateInfo(); }, { desc: 'Clear the selection', cls: 'lib-sel-none-btn' }),
+      ibtn('pointer', 'Select all', () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }, { desc: 'Select all visible items', cls: 'lib-sel-all-btn', extra: [h('span', { class: 'ib-lbl' }, 'All')] }),
+      ibtn('close', 'Deselect all', () => { selSet.clear(); updateInfo(); }, { desc: 'Clear the selection', cls: 'lib-sel-none-btn', extra: [h('span', { class: 'ib-lbl' }, 'None')] }),
       ibtn('rotate', 'Reverse selection', () => {
         getVisible().forEach(r => (selSet.has(r.id) ? selSet.delete(r.id) : selSet.add(r.id)));
         updateInfo();
-      }, { desc: 'Invert the selection of visible items', cls: 'lib-sel-invert-btn' }),
-      ibtn('copy', 'Copy to…', () => openBrowserWithSelection('copy'), { desc: 'Open the wide Item Browser to copy selected items to project(s)', cls: 'lib-copy-to-btn' }),
-      ibtn('import', 'Move to…', () => openBrowserWithSelection('move'), { desc: 'Open the wide Item Browser to move selected items to project(s)', cls: 'lib-move-to-btn' }),
+      }, { desc: 'Invert the selection of visible items', cls: 'lib-sel-invert-btn', extra: [h('span', { class: 'ib-lbl' }, 'Invert')] }),
+      ibtn('copy', 'Copy to…', () => openBrowserWithSelection('copy'), { desc: 'Open the wide Item Browser to copy selected items to project(s)', cls: 'lib-copy-to-btn', extra: [h('span', { class: 'ib-lbl' }, 'Copy')] }),
+      ibtn('import', 'Move to…', () => openBrowserWithSelection('move'), { desc: 'Open the wide Item Browser to move selected items to project(s)', cls: 'lib-move-to-btn', extra: [h('span', { class: 'ib-lbl' }, 'Move')] }),
       ibtn('export', 'Export / import', () => {
           const preselected = [...selSet].map(id => ({ type, id }));
           openLibraryExportImportModal({
@@ -238,7 +241,7 @@ export class LibraryPanel {
               this.renderBody();
             }
           });
-        }, { desc: 'Export or import paths, icons, buttons, elements, screens and workflows as HTML, SVG or JSON', cls: 'lib-export-import-btn' }),
+        }, { desc: 'Export or import paths, icons, buttons, elements, screens and workflows as HTML, SVG or JSON', cls: 'lib-export-import-btn', extra: [h('span', { class: 'ib-lbl' }, 'Export')] }),
       ibtn('trash', 'Empty private library', async () => {
           const pid = Number(state.activeProjectId || state.currentProjectId || 1);
           const proj = (state.projects || []).find(p => p.id === pid);
@@ -254,7 +257,7 @@ export class LibraryPanel {
           } catch (err) {
             toast(err.message, 'err');
           }
-        }, { desc: 'Empty the active project’s private library (default libraries are immutable)', cls: 'lib-empty-private-btn' }),
+        }, { desc: 'Empty the active project’s private library (default libraries are immutable)', cls: 'lib-empty-private-btn', extra: [h('span', { class: 'ib-lbl' }, 'Empty')] }),
       info
     );
     bar._updateInfo = updateInfo;
@@ -429,13 +432,15 @@ export class LibraryPanel {
   /* ---------- icons (drawn from the shared sprite; virtualized for libraries with thousands of pack icons) ---------- */
   /** Show / hide switch of the online icon sources (free Iconify API sets); remembered in the browser. */
   onlineToggle() {
+    if (onlineOk === null) { probeOnline().then(() => { if (onlineOk === false) this.renderBody(); }); return null; }
+    if (onlineOk === false) return null;       // API failing: the online source is removed from the library
     const on = onlineShown();
     return h('button', { class: `btn small${on ? ' active' : ''}`, 'aria-pressed': on, title: on ? 'Hide online icon sources' : 'Show online icon sources: search and import SVG icons from free APIs (Tabler, Lucide, Line MD, Spinners, Meteocons, Devicon, brands…)', onclick: () => { setOnlineShown(!on); this.renderBody(); } }, on ? '🌐 Online: shown' : '🌐 Online');
   }
 
   iconsTab() {
-    if (onlineShown()) {
-      this.bodyEl.append(h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, this.onlineToggle(), h('span', { class: 'dim', style: { fontSize: '11px' } }, 'Imported icons land in your active project (SVG only).')), buildOnlinePanel());
+    if (onlineShown() && onlineOk !== false) {
+      this.bodyEl.append(h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, this.onlineToggle(), h('span', { class: 'dim', style: { fontSize: '11px' } }, 'Imported icons land in your active project (SVG only).')), buildOnlinePanel({ onUnavailable: () => { onlineOk = false; setOnlineShown(false); this.renderBody(); } }));
       return;
     }
     const list = state.library.icons;
