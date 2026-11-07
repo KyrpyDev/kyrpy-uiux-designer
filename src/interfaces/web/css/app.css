@@ -812,3 +812,9 @@ button.profile-stat:hover { border-color: var(--accent); }
 .proj-trigger-wrap.proj-none { animation: proj-none-pulse 2.2s ease-in-out infinite; }
 @keyframes proj-none-pulse { 50% { box-shadow: 0 0 0 3px rgba(168, 85, 247, 1), 0 0 18px rgba(168, 85, 247, .75); } }
 @media (prefers-reduced-motion: reduce) { .proj-trigger-wrap.proj-none { animation: none; } }
+
+/* editable item name in the designer bar */
+input.doc-title { font: inherit; font-weight: 700; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px; min-width: 0; max-width: 300px; }
+input.doc-title:hover { border-color: var(--line); }
+input.doc-title:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
+.lib-card .tb button.tb-order-front, .lib-card .tb button.tb-order-back, .cell .tb button.tb-order-front, .cell .tb button.tb-order-back { font-size: 10px; }

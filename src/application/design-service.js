@@ -274,6 +274,27 @@ export class DesignService {
     });
   }
 
+  /**
+   * Display order of the library: move an item to the front / back, or one step forward / backward.
+   * Items are ordered by (position, name); positions are renumbered densely 1..n, only changed rows are written.
+   * Allowed for the item's creator and the superadmin (public-library items: superadmin only).
+   * @returns {{id:number, mode:string, position:number, moved:boolean}}
+   */
+  reorder(id, mode, { actor = null } = {}) {
+    if (!['front', 'back', 'forward', 'backward'].includes(mode)) throw new ValidationError('mode must be one of front, back, forward, backward');
+    const d = this.#require(id);
+    if (actor && actor.role !== 'superadmin' && Number(d.creatorId) !== Number(actor.id)) throw new ForbiddenError('Only the owner (or the superadmin for public-library items) can change the display order');
+    return this.transaction(() => {
+      const rows = this.designs.list({}).map(r => ({ id: r.id, position: r.position }));
+      const from = rows.findIndex(r => r.id === d.id);
+      const to = mode === 'front' ? 0 : mode === 'back' ? rows.length - 1 : Math.min(rows.length - 1, Math.max(0, from + (mode === 'forward' ? -1 : 1)));
+      if (to !== from) { const [it] = rows.splice(from, 1); rows.splice(to, 0, it); }
+      let touched = 0;
+      rows.forEach((r, i) => { if (r.position !== i + 1) { this.designs.setPosition(r.id, i + 1); touched++; } });
+      return { id: d.id, mode, position: to + 1, moved: to !== from, touched };
+    });
+  }
+
   remove(id, { actor = null, permanent = false } = {}) {
     const d = this.#require(id);
     if (d.locked) throw new ConflictError(`${this.ownerType} "${d.name || d.key}" is locked; unlock it before deleting`);

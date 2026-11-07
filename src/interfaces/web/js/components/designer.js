@@ -615,6 +615,30 @@ export class Designer {
   get isGlyph() { return GLYPH.has(this.type); }
   get boxResizable() { return !TYPES[this.type]?.fixedSize && this.type !== 'screen'; }
 
+  /** The item name in the bar: editable by whoever may edit the item (Enter / blur saves, Escape reverts). */
+  titleField() {
+    const name = this.doc.name;
+    if (!this.isOwnedByCurrentUser(this.doc)) {
+      return h('b', { style: { padding: '0 8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
+    }
+    const input = h('input', { class: 'doc-title', type: 'text', value: name, title: `Click to rename · variable name: ${this.doc.key}`, 'aria-label': 'Item name', maxlength: '80', spellcheck: 'false' });
+    const fit = () => { input.style.width = `${Math.min(36, Math.max(12, input.value.length + 2))}ch`; };
+    const commit = async () => {
+      const v = input.value.trim();
+      if (!v || v === this.doc.name) { input.value = this.doc.name; fit(); return; }
+      await this.updateDoc({ name: v });
+    };
+    input.addEventListener('input', fit);
+    input.addEventListener('keydown', e => {
+      e.stopPropagation();                               // typing must not trigger tool shortcuts
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = this.doc.name; fit(); input.blur(); }
+    });
+    input.addEventListener('blur', commit);
+    fit();
+    return input;
+  }
+
   /* ================= toolbar ================= */
   buildBar() {
     clear(this.bar);
@@ -626,7 +650,7 @@ export class Designer {
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
     const kids = [
       h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
-      h('b', { style: { padding: '0 8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: this.doc.key }, this.doc.name),
+      this.titleField(),
       h('span', { class: 'sep-v' }), ...tools.map(tool), h('span', { class: 'sep-v' }),
       ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
       ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),

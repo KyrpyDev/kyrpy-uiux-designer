@@ -107,6 +107,12 @@ export class DesignRepository {
     return rec;
   }
 
+  /** Display order only: no updated_at bump (an order change is not a content edit); still synced. */
+  setPosition(id, position) {
+    this.db.prepare(`UPDATE ${this.table} SET position = ? WHERE id = ?`).run(Number(position), id);
+    this.sync?.enqueue(this.table, id, 'upsert', this.get(id));
+  }
+
   update(id, patch) {
     const map = { key: 'key', name: 'name', label: 'label', descriptionDev: 'description_dev', category: 'category',
       width: 'width', height: 'height', position: 'position', projectId: 'project_id', visibility: 'visibility',

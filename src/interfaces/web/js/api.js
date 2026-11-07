@@ -237,6 +237,8 @@ export const api = {
   getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
   createDesign: (type, body) => api.post(`/api/${PLURAL[type]}`, body),
   updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body).then(r => { markEdited(type, id); return r; }),
+  /** Display order in the library: mode = front | back | forward | backward. */
+  reorderDesign: (type, id, mode) => api.post(`/api/${PLURAL[type]}/${id}/order`, { mode }),
   deleteDesign: (type, id) => api.del(`/api/${PLURAL[type]}/${id}`),
   cloneDesign: (type, id, nameOrBody) =>
     api.post(

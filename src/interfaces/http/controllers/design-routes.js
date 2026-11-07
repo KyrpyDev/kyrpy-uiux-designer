@@ -73,6 +73,8 @@ export function designRoutes(router, c) {
   });
   router.get(`/api/${T}/:id/lineage`, ({ params }) => svc(params).getLineage(params.id));
   router.put(`/api/${T}/:id`, ({ params, body, actor }) => svc(params).update(params.id, body, { actor }));
+  // display order: { mode: front | back | forward | backward }
+  router.post(`/api/${T}/:id/order`, ({ params, body, actor }) => svc(params).reorder(params.id, body?.mode, { actor }));
   router.delete(`/api/${T}/:id`, ({ params, actor, query }) =>
     svc(params).remove(params.id, { actor, permanent: query.get('permanent') === '1' })
   );

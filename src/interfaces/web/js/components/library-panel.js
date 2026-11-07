@@ -260,6 +260,10 @@ export class LibraryPanel {
     const canMove = !rec.builtin && canEditOwned(rec);   // owner, or the superadmin curating a public-library item
     return h('div', { class: 'tb' },
       ibtn('pencil', 'Open in designer', e => { e.stopPropagation(); this.app.openDesign(type, rec.id); }),
+      ...['path', 'icon', 'button', 'element', 'screen'].includes(type) ? [
+        h('button', { class: 'tb-order-front', disabled: !canMove, title: canMove ? 'Move forward in the display order (Shift: to the very front)' : 'Only your own items can be reordered', onclick: e => { e.stopPropagation(); this.reorder(type, rec, e.shiftKey ? 'front' : 'forward'); } }, '◀'),
+        h('button', { class: 'tb-order-back', disabled: !canMove, title: canMove ? 'Move back in the display order (Shift: to the very back)' : 'Only your own items can be reordered', onclick: e => { e.stopPropagation(); this.reorder(type, rec, e.shiftKey ? 'back' : 'backward'); } }, '▶')
+      ] : [],
       h('button', {
         title: 'Copy to projects… (cascades sub-items)',
         onclick: e => {
@@ -295,6 +299,17 @@ export class LibraryPanel {
       ] : []),
       ibtn('trash', 'Move to trash', async e => { e.stopPropagation(); await deleteDesign(type, rec); })
     );
+  }
+
+  /** Moves an item in the display order (position); the grouping (edited / own / used / public) is kept by the panel. */
+  async reorder(type, rec, mode) {
+    try {
+      const r = await api.reorderDesign(type, rec.id, mode);
+      if (!r.moved) { toast(mode === 'front' || mode === 'forward' ? 'Already at the front' : 'Already at the back', 'info', 1400); return; }
+      await reloadLibrary({ silent: true });
+      if (type === 'screen') this.screensList = null;
+      this.renderBody();
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   dragData(type, rec) {
