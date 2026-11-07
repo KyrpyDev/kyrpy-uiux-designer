@@ -120,8 +120,11 @@ export class WorkflowService {
     this.#assertStaysPublic(w, clean.visibility, clean.projectId);
     const data = normalizeWorkflow(clean, { partial: true });
     // an admin publishing an existing default-project workflow hands it to the `public` library user (as on create)
-    if (data.visibility === 'public' && (w.visibility || 'public') !== 'public') {
-      const pubOwner = this.#publicOwnership({ visibility: 'public', projectId: data.projectId ?? w.projectId ?? 1 }, effActorId, actor);
+    // (also when a public item of another project is brought into the default project)
+    const becomesLibrary = (data.visibility === 'public' && (w.visibility || 'public') !== 'public')
+      || (data.projectId !== undefined && Number(data.projectId) === 1 && Number(w.projectId ?? 1) !== 1);
+    if (becomesLibrary) {
+      const pubOwner = this.#publicOwnership({ visibility: data.visibility ?? w.visibility ?? 'public', projectId: data.projectId ?? w.projectId ?? 1 }, effActorId, actor);
       if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     }
     if (data.key && data.key !== w.key && this.workflows.keyExists(data.key, data.projectId ?? w.projectId)) throw new ConflictError(`workflow key "${data.key}" exists`);

@@ -215,8 +215,11 @@ export class DesignService {
     this.#assertStaysPublic(d, rest.visibility, rest.projectId);
     const data = normalizeDesign(this.ownerType, { ...rest }, { partial: true });
     // an admin publishing an existing default-project item hands it to the `public` library user (as on create)
-    if (data.visibility === 'public' && (d.visibility || 'public') !== 'public') {
-      const pubOwner = this.#publicOwnership({ visibility: 'public', projectId: data.projectId ?? d.projectId ?? 1 }, effActorId, actor);
+    // (also when a public item of another project is brought into the default project)
+    const becomesLibrary = (data.visibility === 'public' && (d.visibility || 'public') !== 'public')
+      || (data.projectId !== undefined && Number(data.projectId) === 1 && Number(d.projectId ?? 1) !== 1);
+    if (becomesLibrary) {
+      const pubOwner = this.#publicOwnership({ visibility: data.visibility ?? d.visibility ?? 'public', projectId: data.projectId ?? d.projectId ?? 1 }, effActorId, actor);
       if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     }
     if (data.key && data.key !== d.key && this.designs.keyExists(data.key, data.projectId ?? d.projectId)) throw new ConflictError(`key "${data.key}" already exists`);

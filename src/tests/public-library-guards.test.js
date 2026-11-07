@@ -90,3 +90,48 @@ test('updateUser validates the email like register / profile', () => {
     c.close();
   }
 });
+
+test('an admin "moving" a public-library item clones it into the target project; the library source stays', () => {
+  const { c, pub, kyrpy } = setup();
+  try {
+    const icon = c.icon.create({ name: 'Lib Move Icon', visibility: 'public' }, { actorId: kyrpy.id });
+    const wf = c.workflows.create({ name: 'Lib Move Flow', visibility: 'public' }, { actorId: kyrpy.id });
+    assert.equal(icon.creatorId, pub);
+    const kyrpyProj = c.projects.create({ name: 'Kyrpy Target', visibility: 'private' }, { actor: kyrpy });
+    const res = c.libraryTransfer.moveToProjects({ items: [{ type: 'icon', id: icon.id }, { type: 'workflow', id: wf.id }], projectIds: [kyrpyProj.id], actor: kyrpy });
+    assert.equal(res.copiedCount, 2);
+    assert.deepEqual(res.removedSourceIds, []);
+    assert.deepEqual(res.keptSourceIds.map(x => x.type).sort(), ['icon', 'workflow']);
+    const kept = c.icon.get(icon.id);
+    assert.equal(kept.projectId, 1); assert.equal(kept.visibility, 'public'); assert.equal(kept.creatorId, pub);
+    assert.equal(c.workflows.get(wf.id).creatorId, pub, 'library workflow kept');
+    assert.ok(c.icon.list({ projectId: kyrpyProj.id }).some(x => x.projectId === kyrpyProj.id && x.name.startsWith('Lib Move Icon')), 'copy lands in the target project');
+    // an admin's own item is still really moved
+    const own = c.icon.create({ name: 'Kyrpy Own Icon', visibility: 'private' }, { actorId: kyrpy.id });
+    const res2 = c.libraryTransfer.moveToProjects({ items: [{ type: 'icon', id: own.id }], projectIds: [kyrpyProj.id], actor: kyrpy });
+    assert.equal(res2.removedSourceIds.length, 1);
+    assert.throws(() => c.icon.get(own.id));
+  } finally {
+    c.close();
+  }
+});
+
+test('an admin bringing a public item of another project into the default project re-owns it to public', () => {
+  const { c, pub, kyrpy, bob, bobProj } = setup();
+  try {
+    const kyrpyProj = c.projects.create({ name: 'Kyrpy Proj', visibility: 'private' }, { actor: kyrpy });
+    const icon = c.icon.create({ name: 'Kyrpy Proj Public Icon', visibility: 'public', projectId: kyrpyProj.id }, { actorId: kyrpy.id });
+    assert.equal(icon.creatorId, kyrpy.id, 'public items outside the default project keep their owner');
+    const moved = c.icon.update(icon.id, { projectId: 1 }, { actorId: kyrpy.id });
+    assert.equal(moved.projectId, 1);
+    assert.equal(moved.creatorId, pub);
+    assert.equal(moved.rootOwnerId, pub);
+    const wf = c.workflows.create({ name: 'Kyrpy Proj Public Flow', visibility: 'public', projectId: kyrpyProj.id }, { actorId: kyrpy.id });
+    assert.equal(c.workflows.update(wf.id, { projectId: 1 }, { actorId: kyrpy.id }).creatorId, pub);
+    // a non-admin doing the same keeps ownership (not a library item)
+    const bobIcon = c.icon.create({ name: 'Bob Proj Public Icon', visibility: 'public', projectId: bobProj.id }, { actorId: bob.id });
+    assert.equal(c.icon.update(bobIcon.id, { projectId: 1 }, { actorId: bob.id }).creatorId, bob.id);
+  } finally {
+    c.close();
+  }
+});

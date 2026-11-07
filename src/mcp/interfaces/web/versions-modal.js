@@ -6,7 +6,7 @@
  * Requests use a direct fetch (no GET cache, no offline replay of approvals).
  */
 import { h, modal, toast } from '/js/dom.js';
-import { api } from '/js/api.js';
+import { api, httpErrorMessage } from '/js/api.js';
 import { state } from '/js/state.js';
 
 async function request(method, url, body) {
@@ -15,7 +15,7 @@ async function request(method, url, body) {
   if (token) headers.authorization = `Bearer ${token}`;
   const r = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
   const data = await r.json().catch(() => null);
-  if (!r.ok) throw new Error(data?.error?.message || r.statusText);
+  if (!r.ok) throw new Error(httpErrorMessage(r, data));
   return data;
 }
 
@@ -215,7 +215,7 @@ export async function downloadProjectApp() {
   if (token) headers.authorization = `Bearer ${token}`;
   toast('Building the HTML app export…', 'ok');
   const r = await fetch(`/api/projects/${projectId}/app-export`, { headers, cache: 'no-store' });
-  if (!r.ok) { const d = await r.json().catch(() => null); toast(d?.error?.message || r.statusText, 'error'); return; }
+  if (!r.ok) { const d = await r.json().catch(() => null); toast(httpErrorMessage(r, d), 'error'); return; }
   const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `project-${projectId}-app.tar.gz`;
   const url = URL.createObjectURL(await r.blob());
   const a = document.createElement('a');

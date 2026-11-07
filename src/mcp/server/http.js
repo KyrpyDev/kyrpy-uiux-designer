@@ -180,6 +180,13 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
   };
   handle.notify = notify;
   handle.sessions = sessions;
+  /** Public, secret-free counters for GET /api/health/mcp. */
+  handle.status = () => {
+    sweep();
+    let openStreams = 0;
+    for (const s of sessions.values()) openStreams += s.streams?.size || 0;
+    return { activeSessions: sessions.size, openStreams };
+  };
   handle.stop = () => { if (poller) clearInterval(poller); for (const s of sessions.values()) closeStreams(s); };
   return handle;
 }

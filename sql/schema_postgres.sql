@@ -613,3 +613,6 @@ CREATE TABLE IF NOT EXISTS version_items (
   PRIMARY KEY (item_uid, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_version_items_project ON version_items(project_id);
+-- ===== account (user-wide) API keys (m11): kind + project_id nullable for kind = 'account' =====
+ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'project';
+ALTER TABLE IF EXISTS api_keys ALTER COLUMN project_id DROP NOT NULL;

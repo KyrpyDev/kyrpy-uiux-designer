@@ -11,6 +11,7 @@ import { openExportDialog } from './components/export-dialog.js';
 import { openThemeEditor } from './components/theme-editor.js';
 import { pairThemeKey } from '/domain/theme.js';
 import { iconEl, iconForLabel, ibtn } from './icons.js';
+import { healthIndicators } from './health-status.js';
 
 // icon for each top-level menu header (tooltip = the menu name)
 const MENU_ICONS = { Project: 'file', Design: 'design', Edit: 'edit', Insert: 'insert', Tools: 'tools', Path: 'path', 'Events & Anim': 'events', Collaborate: 'collab', View: 'view', Theme: 'theme', Export: 'export', Trash: 'trash', Help: 'help' };
@@ -693,7 +694,9 @@ function renderTopbar() {
     () => { const targetKey = pairThemeKey(state.themeKey, state.themes); if (targetKey) setTheme(targetKey); });
   // Theme style button sits in the top-left slot, right after the menu heads
   bar.append(buildThemeMenu());
-  bar.append(h('div', { class: 'top-right' }, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
+  // API / MCP health dots (links to /docs/api and /docs/mcp in a new tab; polling lives in health-status.js)
+  const healthGroup = h('div', { class: 'tb-health-group', role: 'group', 'aria-label': 'Service health' }, healthIndicators());
+  bar.append(h('div', { class: 'top-right' }, healthGroup, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
   buildTypeBar();
 }
 /* Designer-page section: switch between path / icon / button / element / screen / workflow / item browser,

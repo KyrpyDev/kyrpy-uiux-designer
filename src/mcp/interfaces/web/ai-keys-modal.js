@@ -6,7 +6,7 @@
  * failed POSTs for offline replay, which would create keys whose plaintext nobody ever sees.
  */
 import { h, modal, toast, confirmBox } from '/js/dom.js';
-import { api } from '/js/api.js';
+import { api, httpErrorMessage } from '/js/api.js';
 import { state } from '/js/state.js';
 import { connectPanel } from './connect-panel.js';
 
@@ -50,7 +50,7 @@ async function secretRequest(method, url, body) {
   if (token) headers.authorization = `Bearer ${token}`;
   const r = await fetch(url, { method, headers, body: JSON.stringify(body ?? {}), cache: 'no-store' });
   const data = await r.json().catch(() => null);
-  if (!r.ok) throw new Error(data?.error?.message || r.statusText);
+  if (!r.ok) throw new Error(httpErrorMessage(r, data));
   return data;
 }
 

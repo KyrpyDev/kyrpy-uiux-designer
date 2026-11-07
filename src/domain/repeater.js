@@ -159,9 +159,12 @@ export function repeaterPlan(cfg, inner, item) {
   if (layout === 'carousel' || layout === 'roll') {
     // the loop shifts by one set (n·step); the clone sets must still cover the view at the end of the shift, so a short
     // set gets more than one clone set (capped at ~400 copies for absurdly small items)
-    var L = n * stepA, sets = Math.max(2, Math.min(Math.ceil((view + L + gap) / L), Math.max(2, Math.ceil(400 / n))));
-    for (var m = 1; m < sets; m++) for (i = 0; i < n; i++) { var q = place(m * n + i); copies.push({ i: i, x: q.x, y: q.y, t: '', o: 1, clone: true }); }
-    track = { kind: 'loop', axis: axis, distance: r(n * stepA), period: cfg.speed * n };
+    var L = n * stepA, need = Math.max(2, Math.ceil((view + L + gap) / L)), cap = Math.max(2, Math.ceil(400 / n));
+    // past the cap the loop could not stay covered: hold the static first frame instead of showing a blank band
+    if (need <= cap) {
+      for (var m = 1; m < need; m++) for (i = 0; i < n; i++) { var q = place(m * n + i); copies.push({ i: i, x: q.x, y: q.y, t: '', o: 1, clone: true }); }
+      track = { kind: 'loop', axis: axis, distance: r(n * stepA), period: cfg.speed * n };
+    }
   } else if (layout === 'scroll') {
     var overflow = n * stepA - gap - view;
     if (overflow > 0) track = { kind: 'scroll', axis: axis, distance: r(overflow), period: Math.max(cfg.speed, cfg.speed * n / 2) };

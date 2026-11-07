@@ -6,10 +6,21 @@
  *    Lineage, Editable Templates (Devices & Buttons), Translations, and PostgreSQL Sync.
  */
 export class ApiError extends Error {
-  constructor(message, info) {
+  constructor(message, info, status = 0) {
     super(message);
     this.info = info;
+    this.status = status;
   }
+}
+
+/**
+ * Human-readable message for a failed response. A proxy answers 502/503/504 with no JSON body while the
+ * server is restarting or down; say so instead of showing a bare "Bad Gateway".
+ */
+export function httpErrorMessage(r, data) {
+  if (data?.error?.message) return data.error.message;
+  if ([502, 503, 504].includes(r.status)) return `The designer server is not reachable right now (HTTP ${r.status}); it may be restarting. Try again in a few seconds.`;
+  return r.statusText || `HTTP ${r.status}`;
 }
 
 const STORAGE_TOKEN = 'ud_auth_token';
@@ -111,7 +122,7 @@ async function req(method, url, body) {
     }
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
-    if (!r.ok) throw new ApiError(data?.error?.message || r.statusText, data?.error);
+    if (!r.ok) throw new ApiError(httpErrorMessage(r, data), data?.error, r.status);
 
     // an `icons: null` answer ("your list is current") must not replace the cached full list
     if (method === 'GET' && ct.includes('json') && !(data && data.iconSummary && data.icons === null)) {
@@ -150,7 +161,7 @@ async function iconGet(url, text = false) {
   const r = await fetch(url, { headers });
   if (!r.ok) {
     const data = await r.json().catch(() => null);
-    throw new ApiError(data?.error?.message || r.statusText, data?.error);
+    throw new ApiError(httpErrorMessage(r, data), data?.error, r.status);
   }
   return text ? r.text() : r.json();
 }

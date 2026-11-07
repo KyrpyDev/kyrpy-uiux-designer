@@ -17,7 +17,9 @@
  *   With `--paint theme` (default) `currentColor` becomes the theme gradient `url(#lgS)`, so pack icons recolor
  *   with every theme like the built-in ones; `--paint current` keeps `currentColor` verbatim.
  * - Idempotent: keys (`<pack>-<slug>`) that already exist in project 1 are skipped. One transaction per pack.
- * - Brand / trademark logos are filtered out (Tabler `brand-*`, Phosphor `*-logo*`, an explicit Bootstrap deny-list).
+ * - Brand / trademark logos are filtered out: one cross-pack deny-list (`isBrandSlug`: vendor / product names such as
+ *   `bluetooth*`, `xbox-*`, `playstation-*`, `steam*`, `device-ipad*`) applied to EVERY pack, plus the per-pack rules
+ *   (Tabler `brand-*`, Phosphor `*-logo*`, an explicit Bootstrap deny-list).
  * - Copies each pack's LICENSE verbatim to `src/third_party/icons/<pack>/LICENSE` and regenerates
  *   `src/THIRD_PARTY_NOTICES.md` from the pinned pack table below.
  */
@@ -51,8 +53,34 @@ export const BOOTSTRAP_BRANDS = new Set([
   'pinterest', 'playstation', 'quora', 'reddit', 'sina-weibo', 'skype', 'slack', 'snapchat', 'sourceforge', 'spotify',
   'stack-overflow', 'steam', 'strava', 'stripe', 'substack', 'telegram', 'tencent-qq', 'threads', 'tiktok', 'trello',
   'tux', 'twitch', 'twitter', 'twitter-x', 'typescript', 'ubuntu', 'unity', 'vimeo', 'wechat', 'whatsapp', 'wikipedia',
-  'windows', 'wordpress', 'xbox', 'yelp', 'youtube'
+  'windows', 'wordpress', 'xbox', 'yelp', 'youtube', 'line', 'thunderbolt'
 ]);
+
+/**
+ * Cross-pack deny-list, applied to EVERY pack before its own rule: vendor, product and trademark names matched as a
+ * whole `-`-separated segment (or segment run) anywhere in the slug, so `bluetooth-off`, `earphone-bluetooth`,
+ * `xbox-a`, `playstation-x`, `device-ipad-horizontal` and `device-nintendo` are all caught. Built from scanning the
+ * name lists of the pinned tarballs; generic words that a vendor also uses (`apple` the fruit, `line` the shape,
+ * `git-branch`, `zoom-in`, `signal`, `switch`, `edge`, `medium`) are deliberately NOT here.
+ */
+export const BRAND_TERMS = [
+  'airplay', 'airpods', 'airtag', 'alexa', 'alipay', 'amazon', 'amd', 'android', 'anthropic', 'apple-music',
+  'apple-podcasts', 'behance', 'bing', 'bluesky', 'bluetooth', 'chatgpt', 'chromium', 'claude', 'codepen', 'codesandbox',
+  'discord', 'dribbble', 'dropbox', 'facebook', 'figma', 'github', 'gitlab', 'google', 'imac', 'instagram', 'ipad',
+  'iphone', 'jeep', 'lego', 'linkedin', 'macbook', 'mastodon', 'messenger', 'microsoft', 'nintendo', 'nvidia',
+  'olympics', 'openai', 'pacman', 'paypal', 'perplexity', 'pinterest', 'playstation', 'pokeball', 'polaroid', 'reddit',
+  'segway', 'skype', 'slack', 'snapchat', 'spotify', 'stripe', 'telegram', 'thunderbolt', 'tiktok', 'trello', 'tux',
+  'twitch', 'twitter', 'ubuntu', 'vimeo', 'vision-pro', 'wechat', 'whatsapp', 'windows', 'wordpress', 'xbox', 'yelp',
+  'youtube'
+];
+/** Brand words that only count at the START of a slug (later in a name they are generic: `ironing-steam`, `bowl-steam`). */
+export const BRAND_PREFIXES = ['steam', 'markdown'];
+const BRAND_RE = new RegExp(`(^|-)(${BRAND_TERMS.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(-|$)`);
+/** True when an icon slug names a vendor / product / trademark (cross-pack rule, see BRAND_TERMS / BRAND_PREFIXES). */
+export function isBrandSlug(slug) {
+  const s = String(slug).toLowerCase();
+  return BRAND_RE.test(s) || BRAND_PREFIXES.some(p => s === p || s.startsWith(`${p}-`));
+}
 const bootstrapBase = slug => { let s = slug, prev; do { prev = s; s = s.replace(/-(fill|square|circle)$/, ''); } while (s !== prev); return s; };
 
 export const PACKS = {
@@ -63,7 +91,7 @@ export const PACKS = {
     copyright: 'Copyright (c) 2026 Lucide Icons and Contributors (icons derived from Feather: Copyright (c) 2013-present Cole Bemis, MIT)',
     homepage: 'https://lucide.dev', iconUrl: s => `https://lucide.dev/icons/${s}`,
     variants: [{ dir: 'package/icons', suffix: '' }],
-    imported: 'All `icons/*.svg` (24x24 outline, stroke 2). The pack has no brand logos.',
+    imported: 'All `icons/*.svg` (24x24 outline, stroke 2) except the cross-pack brand deny-list (`bluetooth*`, `airplay`).',
     tagsFile: 'package/tags.json', readTags: (json, slug) => json[slug] || []
   },
   tabler: {
@@ -74,7 +102,7 @@ export const PACKS = {
     homepage: 'https://tabler.io/icons', iconUrl: s => `https://tabler.io/icons/icon/${s}`,
     variants: [{ dir: 'package/icons/outline', suffix: '' }],
     exclude: slug => slug.startsWith('brand-'),
-    imported: '`icons/outline/*.svg` only (24x24 outline, stroke 2); the filled set is not imported. All `brand-*` icons are excluded.',
+    imported: '`icons/outline/*.svg` only (24x24 outline, stroke 2); the filled set is not imported. All `brand-*` icons are excluded, and so is the cross-pack brand deny-list (`bluetooth*`, `xbox-*`, `playstation-*`, `steam`, `device-ipad*` / `device-imac*` / `airpods*`, `device-nintendo*`, `lego*`, `pokeball*`, `pacman`, `olympics*`, `markdown*`, ...).',
     tagsFile: 'package/icons.json', readTags: (json, slug) => json[slug]?.tags || [],
     readCategory: (json, slug) => json[slug]?.category || ''
   },
@@ -85,7 +113,7 @@ export const PACKS = {
     copyright: 'Copyright (c) Tailwind Labs, Inc.',
     homepage: 'https://heroicons.com', iconUrl: () => 'https://heroicons.com',
     variants: [{ dir: 'package/24/outline', suffix: '', style: 'outline' }, { dir: 'package/24/solid', suffix: '-solid', style: 'solid' }],
-    imported: '`24/outline/*.svg` (stroke 1.5) and `24/solid/*.svg` (keys end in `-solid`); the 20 px and 16 px sets are not imported. The pack has no brand logos.'
+    imported: '`24/outline/*.svg` (stroke 1.5) and `24/solid/*.svg` (keys end in `-solid`); the 20 px and 16 px sets are not imported. The pack has no brand logos (the cross-pack deny-list matches none of its names).'
   },
   phosphor: {
     title: 'Phosphor Icons', npm: '@phosphor-icons/core', version: '2.1.1',
@@ -95,7 +123,7 @@ export const PACKS = {
     homepage: 'https://phosphoricons.com', iconUrl: s => `https://phosphoricons.com/?q=${encodeURIComponent(s)}`,
     variants: [{ dir: 'package/assets/regular', suffix: '' }],
     exclude: slug => slug.includes('-logo'),
-    imported: '`assets/regular/*.svg` only (viewBox 256, fill), scaled into the 24 grid; the thin, light, bold, fill and duotone weights are not imported. All `*-logo*` icons are excluded.'
+    imported: '`assets/regular/*.svg` only (viewBox 256, fill), scaled into the 24 grid; the thin, light, bold, fill and duotone weights are not imported. All `*-logo*` icons are excluded, and so is the cross-pack brand deny-list (`bluetooth*`, `airplay`, `jeep`, `lego*`).'
   },
   bootstrap: {
     title: 'Bootstrap Icons', npm: 'bootstrap-icons', version: '1.13.2',
@@ -265,7 +293,7 @@ ${details.join('\n\n')}
 
 ## Brand and logo icons
 
-Company and product logos are trademarks even when the drawing is under an open-source license, so they are never imported: Tabler \`brand-*\`, Phosphor \`*-logo*\` and the explicit Bootstrap Icons deny-list (\`BOOTSTRAP_BRANDS\` in the import script: ${[...BOOTSTRAP_BRANDS].join(', ')}). Lucide and Heroicons contain no brand logos.
+Company and product logos are trademarks even when the drawing is under an open-source license, so they are never imported. One cross-pack deny-list is applied to EVERY pack (\`isBrandSlug\` in the import script): a slug is excluded when one of its \`-\`-separated segments is a vendor, product or trademark name (\`BRAND_TERMS\`: ${BRAND_TERMS.join(', ')}) or when it starts with ${BRAND_PREFIXES.map(p => `\`${p}\``).join(' / ')} (\`BRAND_PREFIXES\`; later in a name these are generic, e.g. \`ironing-steam\`). Generic words a vendor also uses (\`apple\` the fruit, \`line\` the shape, \`git-branch\`, \`zoom-in\`, \`signal\`) are kept. On top of that each pack keeps its own rule: Tabler \`brand-*\`, Phosphor \`*-logo*\` and the explicit Bootstrap Icons deny-list (\`BOOTSTRAP_BRANDS\`: ${[...BOOTSTRAP_BRANDS].join(', ')}).
 
 ## Packs deliberately not bundled
 
@@ -315,7 +343,7 @@ async function main() {
         const dir = join(pkgDir, v.dir);
         for (const file of listSvgs(dir)) {
           const slug = toSlug(file);
-          if (pack.exclude?.(slug)) { r.excluded++; continue; }
+          if (isBrandSlug(slug) || pack.exclude?.(slug)) { r.excluded++; continue; }
           work.push({ v, dir, file, slug });
         }
       }

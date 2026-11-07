@@ -229,9 +229,13 @@ export async function openProfilePage({ tab = 'profile' } = {}) {
     data = await api.profile();
   } catch (err) {
     head.replaceChildren();
+    // only an auth failure means "sign in"; a missing route, 5xx or network error gets a retry instead
+    const needsLogin = err.status === 401 || err.status === 403;
     body.replaceChildren(h('div', { class: 'profile-empty' },
-      h('p', {}, err.message || 'Could not load your profile.'),
-      h('button', { class: 'btn primary', onclick: () => { m.close(); openAuthModal(); } }, 'Sign In…')));
+      h('p', {}, needsLogin ? (err.message || 'Please sign in to see your profile.') : `Could not load your profile: ${err.message || 'unknown error'}`),
+      needsLogin
+        ? h('button', { class: 'btn primary', onclick: () => { m.close(); openAuthModal(); } }, 'Sign In…')
+        : h('button', { class: 'btn primary', onclick: () => { m.close(); openProfilePage({ tab }); } }, 'Retry')));
     return m;
   }
   setUser(data.user);

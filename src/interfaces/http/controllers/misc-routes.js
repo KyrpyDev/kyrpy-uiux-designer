@@ -1,7 +1,5 @@
 /** Routes of themes, workflows, settings and project export. */
 export function miscRoutes(router, c) {
-  router.get('/api/health', () => ({ ok: true, time: new Date().toISOString() }));
-
   router.get('/api/settings', () => c.settings.get());
   router.put('/api/settings', ({ body }) => c.settings.update(body));
 

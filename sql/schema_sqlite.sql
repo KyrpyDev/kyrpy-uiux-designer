@@ -37,11 +37,12 @@ CREATE TABLE "animations" (
   enabled     INTEGER NOT NULL DEFAULT 1
 , mcp_context TEXT NOT NULL DEFAULT '{}');
 
-CREATE TABLE api_keys (
+CREATE TABLE "api_keys" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   uid             TEXT NOT NULL UNIQUE,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  project_id      INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'project' CHECK (kind IN ('project','account')),
   name            TEXT NOT NULL,
   prefix          TEXT NOT NULL,
   key_hash        TEXT NOT NULL UNIQUE,
@@ -54,7 +55,8 @@ CREATE TABLE api_keys (
   rotated_from_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
   rotated_to_id   INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  mcp_context     TEXT NOT NULL DEFAULT '{}'
+  mcp_context     TEXT NOT NULL DEFAULT '{}',
+  CHECK ((kind = 'project' AND project_id IS NOT NULL) OR (kind = 'account' AND project_id IS NULL))
 );
 
 CREATE TABLE "buttons" (

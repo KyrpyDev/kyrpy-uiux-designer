@@ -6,6 +6,8 @@ import { extname, join, normalize, sep } from 'node:path';
 import { Router } from './router.js';
 import { designRoutes } from './controllers/design-routes.js';
 import { miscRoutes } from './controllers/misc-routes.js';
+import { healthRoutes, mcpHealth } from './controllers/health-routes.js';
+import { renderApiDocs, renderMcpDocs, mcpReadme } from './docs-pages.js';
 import { collabRoutes } from './controllers/collab-routes.js';
 import { profileRoutes } from './controllers/profile-routes.js';
 import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
@@ -44,6 +46,7 @@ async function serveFile(res, root, rel) {
 export function createHttpServer(container, { webRoot, domainRoot }) {
   const mcpWebRoot = fileURLToPath(new URL('../../mcp/interfaces/web/', import.meta.url));
   const router = new Router();
+  healthRoutes(router, container);
   designRoutes(router, container);
   miscRoutes(router, container);
   collabRoutes(router, container);
@@ -121,6 +124,15 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
             res.writeHead(200, { ...h, 'content-encoding': 'gzip', vary: 'Accept-Encoding' }).end(gzipSync(json, { level: 4 }));
           } else res.writeHead(200, h).end(json);
         }
+        return;
+      }
+      // reference pages (opened from the topbar API / MCP status icons)
+      if ((url.pathname === '/docs/api' || url.pathname === '/docs/mcp') && req.method === 'GET') {
+        const baseUrl = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+        const html = url.pathname === '/docs/api'
+          ? renderApiDocs(router.list())
+          : renderMcpDocs({ baseUrl, status: mcpHealth(container), tools: container.mcp?.protocol?.tools ? [...container.mcp.protocol.tools.values()] : undefined, readme: mcpReadme() });
+        res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }).end(html);
         return;
       }
       if (url.pathname === '/favicon.ico') {

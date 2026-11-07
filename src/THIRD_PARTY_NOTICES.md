@@ -16,40 +16,40 @@ The icon library bundles SVG icons from the open-source packs below. Each one is
 
 - Package: `lucide-static@1.70.0` (integrity `sha512-A9UgY98g94IuHQY7rl7/AFwHX7T1qNpzryim+Kw5CGhdV2STobtBY+ib/Z44ohyqXEJB88gvXFAeJ87uOOHKLw==`)
 - License: ISC (https://github.com/lucide-icons/lucide/blob/main/LICENSE), Copyright (c) 2026 Lucide Icons and Contributors (icons derived from Feather: Copyright (c) 2013-present Cole Bemis, MIT)
-- Imported: All `icons/*.svg` (24x24 outline, stroke 2). The pack has no brand logos.
+- Imported: All `icons/*.svg` (24x24 outline, stroke 2) except the cross-pack brand deny-list (`bluetooth*`, `airplay`).
 - Stored as: public builtin icons in project 1, category `pack-lucide`, key `lucide-<file name>`; every icon's `meta` carries `pack`, `packVersion`, `license`, `licenseUrl`, `sourceUrl` and `file`.
 
 ### Tabler Icons (`tabler-*` keys)
 
 - Package: `@tabler/icons@3.50.0` (integrity `sha512-HflLxyrH1cqC7s7jzQGSjpsTAVIoaf7+/yHjbdM59rJQBMjliibp+LYhDPFxOMcwa1M8DNpOk6ENzQiWn9a1Dg==`)
 - License: MIT (https://github.com/tabler/tabler-icons/blob/main/LICENSE), Copyright (c) 2020-2026 Paweł Kuna
-- Imported: `icons/outline/*.svg` only (24x24 outline, stroke 2); the filled set is not imported. All `brand-*` icons are excluded.
+- Imported: `icons/outline/*.svg` only (24x24 outline, stroke 2); the filled set is not imported. All `brand-*` icons are excluded, and so is the cross-pack brand deny-list (`bluetooth*`, `xbox-*`, `playstation-*`, `steam`, `device-ipad*` / `device-imac*` / `airpods*`, `device-nintendo*`, `lego*`, `pokeball*`, `pacman`, `olympics*`, `markdown*`, ...).
 - Stored as: public builtin icons in project 1, category `pack-tabler`, key `tabler-<file name>`; every icon's `meta` carries `pack`, `packVersion`, `license`, `licenseUrl`, `sourceUrl` and `file`.
 
 ### Heroicons (`heroicons-*` keys)
 
 - Package: `heroicons@2.2.0` (integrity `sha512-yOwvztmNiBWqR946t+JdgZmyzEmnRMC2nxvHFC90bF1SUttwB6yJKYeme1JeEcBfobdOs827nCyiWBS2z/brog==`)
 - License: MIT (https://github.com/tailwindlabs/heroicons/blob/master/LICENSE), Copyright (c) Tailwind Labs, Inc.
-- Imported: `24/outline/*.svg` (stroke 1.5) and `24/solid/*.svg` (keys end in `-solid`); the 20 px and 16 px sets are not imported. The pack has no brand logos.
+- Imported: `24/outline/*.svg` (stroke 1.5) and `24/solid/*.svg` (keys end in `-solid`); the 20 px and 16 px sets are not imported. The pack has no brand logos (the cross-pack deny-list matches none of its names).
 - Stored as: public builtin icons in project 1, category `pack-heroicons`, key `heroicons-<file name>`; every icon's `meta` carries `pack`, `packVersion`, `license`, `licenseUrl`, `sourceUrl` and `file`.
 
 ### Phosphor Icons (`phosphor-*` keys)
 
 - Package: `@phosphor-icons/core@2.1.1` (integrity `sha512-v4ARvrip4qBCImOE5rmPUylOEK4iiED9ZyKjcvzuezqMaiRASCHKcRIuvvxL/twvLpkfnEODCOJp5dM4eZilxQ==`)
 - License: MIT (https://github.com/phosphor-icons/core/blob/main/LICENSE), Copyright (c) 2023 Phosphor Icons
-- Imported: `assets/regular/*.svg` only (viewBox 256, fill), scaled into the 24 grid; the thin, light, bold, fill and duotone weights are not imported. All `*-logo*` icons are excluded.
+- Imported: `assets/regular/*.svg` only (viewBox 256, fill), scaled into the 24 grid; the thin, light, bold, fill and duotone weights are not imported. All `*-logo*` icons are excluded, and so is the cross-pack brand deny-list (`bluetooth*`, `airplay`, `jeep`, `lego*`).
 - Stored as: public builtin icons in project 1, category `pack-phosphor`, key `phosphor-<file name>`; every icon's `meta` carries `pack`, `packVersion`, `license`, `licenseUrl`, `sourceUrl` and `file`.
 
 ### Bootstrap Icons (`bootstrap-*` keys)
 
 - Package: `bootstrap-icons@1.13.2` (integrity `sha512-fAU1Ly3dH7hwRg+CB8EZ0Vl0fF80zgXHeUVJyfUOKzoURr+TbwISbCW5tKUoQLERaWYG2emTCybcPbD96hdD1A==`)
 - License: MIT (https://github.com/twbs/icons/blob/main/LICENSE), Copyright (c) 2019-2024 The Bootstrap Authors
-- Imported: All `icons/*.svg` (viewBox 16, fill), scaled into the 24 grid, except company and product logos (an explicit deny-list of 82 base names in `scripts/import-icon-packs.js`, matched together with their `-fill`, `-square` and `-circle` variants).
+- Imported: All `icons/*.svg` (viewBox 16, fill), scaled into the 24 grid, except company and product logos (an explicit deny-list of 84 base names in `scripts/import-icon-packs.js`, matched together with their `-fill`, `-square` and `-circle` variants).
 - Stored as: public builtin icons in project 1, category `pack-bootstrap`, key `bootstrap-<file name>`; every icon's `meta` carries `pack`, `packVersion`, `license`, `licenseUrl`, `sourceUrl` and `file`.
 
 ## Brand and logo icons
 
-Company and product logos are trademarks even when the drawing is under an open-source license, so they are never imported: Tabler `brand-*`, Phosphor `*-logo*` and the explicit Bootstrap Icons deny-list (`BOOTSTRAP_BRANDS` in the import script: alexa, alipay, amazon, amd, android, android2, anthropic, apple, apple-music, behance, bing, bluesky, bluetooth, bootstrap, bootstrap-reboot, browser-chrome, browser-edge, browser-firefox, browser-safari, claude, css, discord, dribbble, dropbox, facebook, git, github, gitlab, google, google-play, instagram, javascript, linkedin, markdown, mastodon, medium, messenger, meta, microsoft, microsoft-teams, nintendo-switch, nvidia, openai, opencollective, paypal, perplexity, pinterest, playstation, quora, reddit, sina-weibo, skype, slack, snapchat, sourceforge, spotify, stack-overflow, steam, strava, stripe, substack, telegram, tencent-qq, threads, tiktok, trello, tux, twitch, twitter, twitter-x, typescript, ubuntu, unity, vimeo, wechat, whatsapp, wikipedia, windows, wordpress, xbox, yelp, youtube). Lucide and Heroicons contain no brand logos.
+Company and product logos are trademarks even when the drawing is under an open-source license, so they are never imported. One cross-pack deny-list is applied to EVERY pack (`isBrandSlug` in the import script): a slug is excluded when one of its `-`-separated segments is a vendor, product or trademark name (`BRAND_TERMS`: airplay, airpods, airtag, alexa, alipay, amazon, amd, android, anthropic, apple-music, apple-podcasts, behance, bing, bluesky, bluetooth, chatgpt, chromium, claude, codepen, codesandbox, discord, dribbble, dropbox, facebook, figma, github, gitlab, google, imac, instagram, ipad, iphone, jeep, lego, linkedin, macbook, mastodon, messenger, microsoft, nintendo, nvidia, olympics, openai, pacman, paypal, perplexity, pinterest, playstation, pokeball, polaroid, reddit, segway, skype, slack, snapchat, spotify, stripe, telegram, thunderbolt, tiktok, trello, tux, twitch, twitter, ubuntu, vimeo, vision-pro, wechat, whatsapp, windows, wordpress, xbox, yelp, youtube) or when it starts with `steam` / `markdown` (`BRAND_PREFIXES`; later in a name these are generic, e.g. `ironing-steam`). Generic words a vendor also uses (`apple` the fruit, `line` the shape, `git-branch`, `zoom-in`, `signal`) are kept. On top of that each pack keeps its own rule: Tabler `brand-*`, Phosphor `*-logo*` and the explicit Bootstrap Icons deny-list (`BOOTSTRAP_BRANDS`: alexa, alipay, amazon, amd, android, android2, anthropic, apple, apple-music, behance, bing, bluesky, bluetooth, bootstrap, bootstrap-reboot, browser-chrome, browser-edge, browser-firefox, browser-safari, claude, css, discord, dribbble, dropbox, facebook, git, github, gitlab, google, google-play, instagram, javascript, linkedin, markdown, mastodon, medium, messenger, meta, microsoft, microsoft-teams, nintendo-switch, nvidia, openai, opencollective, paypal, perplexity, pinterest, playstation, quora, reddit, sina-weibo, skype, slack, snapchat, sourceforge, spotify, stack-overflow, steam, strava, stripe, substack, telegram, tencent-qq, threads, tiktok, trello, tux, twitch, twitter, twitter-x, typescript, ubuntu, unity, vimeo, wechat, whatsapp, wikipedia, windows, wordpress, xbox, yelp, youtube, line, thunderbolt).
 
 ## Packs deliberately not bundled
 

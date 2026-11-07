@@ -207,8 +207,11 @@ test('icon version notices icon writes made by another connection / process', ()
     other.prepare("INSERT INTO nodes (owner_type, owner_id, tag) VALUES ('icon', ?, 'rect')").run(home.id);
     const v2 = c.iconCatalog.version();
     assert.notEqual(v2, v1, 'an icon node added by another connection moves the version');
+    other.prepare("UPDATE icons SET name = 'Home renamed', updated_at = '2999-01-01T00:00:00.000Z' WHERE id = ?").run(home.id);
+    const v3 = c.iconCatalog.version();
+    assert.notEqual(v3, v2, 'an external icon update moves the version');
     other.prepare('DELETE FROM icons WHERE key = ?').run('ext-icon');
-    assert.notEqual(c.iconCatalog.version(), v2, 'an external delete moves the version');
+    assert.notEqual(c.iconCatalog.version(), v3, 'an external delete moves the version');
   } finally { other.close(); c.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

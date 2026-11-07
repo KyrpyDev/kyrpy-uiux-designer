@@ -1,0 +1,18 @@
+/* Topbar API / MCP health indicators (js/health-status.js). Links to /docs/api and /docs/mcp. */
+.tb-health-group { display: inline-flex; gap: 4px; align-items: center; }
+.tb-health {
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border-radius: 7px;
+  border: 1px solid var(--line2); background: var(--panel2); color: var(--muted); text-decoration: none;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .03em;
+}
+.tb-health:hover, .tb-health:focus-visible { color: var(--text); border-color: var(--accent); }
+.tb-health .ico { display: inline-flex; }
+.tb-health-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim, #8a97a8); flex: 0 0 auto; box-shadow: 0 0 0 2px rgba(0, 0, 0, .15); }
+.tb-health[data-status="ok"] .tb-health-dot { background: var(--ok, #22c55e); box-shadow: 0 0 6px var(--ok, #22c55e); }
+.tb-health[data-status="slow"] .tb-health-dot,
+.tb-health[data-status="degraded"] .tb-health-dot { background: var(--warn, #f59e0b); }
+.tb-health[data-status="down"] .tb-health-dot { background: var(--danger, #ef4444); }
+.tb-health[data-status="unknown"] .tb-health-dot { animation: tb-health-pulse 1.2s ease-in-out infinite; }
+@keyframes tb-health-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .tb-health[data-status="unknown"] .tb-health-dot { animation: none; } }
+@media (max-width: 640px) { .tb-health-label { display: none; } .tb-health { padding: 0 6px; } }

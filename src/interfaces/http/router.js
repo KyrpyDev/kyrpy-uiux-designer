@@ -5,7 +5,7 @@ export class Router {
   add(method, pattern, handler) {
     const names = [];
     const src = pattern.replace(/\/:(\w+)(?:\(([^)]+)\))?/g, (_, name, re) => { names.push(name); return `/(${re || '[^/]+'})`; });
-    this.routes.push({ method, re: new RegExp(`^${src}$`), names, handler });
+    this.routes.push({ method, pattern, re: new RegExp(`^${src}$`), names, handler });
     return this;
   }
   get(p, h) { return this.add('GET', p, h); }
@@ -13,6 +13,9 @@ export class Router {
   put(p, h) { return this.add('PUT', p, h); }
   patch(p, h) { return this.add('PATCH', p, h); }
   delete(p, h) { return this.add('DELETE', p, h); }
+
+  /** Route table for docs: [{ method, pattern }] in registration order. */
+  list() { return this.routes.map(({ method, pattern }) => ({ method, pattern })); }
 
   match(method, path) {
     for (const r of this.routes) {

@@ -75,7 +75,7 @@ call uiux_get_manifest with ifNoneMatch = manifestHash from .uiux/uiux.lock.json
   }
 ];
 
-const RESOURCES = [
+export const RESOURCES = [
   { uri: 'uiux://schema', name: 'schema', title: 'Design-system schema', mimeType: 'application/json', description: 'Hierarchy, naming, geometry, styles and all table/column descriptions.' },
   { uri: 'uiux://project/manifest', name: 'manifest', title: 'Project manifest', mimeType: 'application/json', description: 'Every item the project uses with uid, key and contentHash.' },
   { uri: 'uiux://requests/open', name: 'requests', title: 'Open item requests', mimeType: 'application/json', description: 'Item requests waiting for the designer agent (open and claimed).' },
@@ -84,7 +84,7 @@ const RESOURCES = [
 /** Resources that send notifications/resources/updated to subscribed sessions. */
 export const SUBSCRIBABLE = ['uiux://project/manifest', 'uiux://project/versions', 'uiux://requests/open'];
 
-const RESOURCE_TEMPLATES = [
+export const RESOURCE_TEMPLATES = [
   { uriTemplate: 'uiux://schema/{table}', name: 'schema-table', title: 'Schema of one table', mimeType: 'application/json' },
   { uriTemplate: 'uiux://item/{type}/{ref}', name: 'item', title: 'One item as JSON (ref = uid or key)', mimeType: 'application/json' },
   { uriTemplate: 'uiux://item/{type}/{ref}/svg', name: 'item-svg', title: 'One item rendered as SVG in the default style', mimeType: 'image/svg+xml' },

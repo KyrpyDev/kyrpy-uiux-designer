@@ -1369,7 +1369,8 @@ export class TrashService {
  *    all referenced sub-items (`screen -> element -> button -> icon -> path`) into each target project's
  *    private sub-item libraries and rewiring `refId`s.
  *  - `moveToProjects`: copies items (and cascading sub-items) into target projects as private items, then
- *    removes the source item (enforcing admin guard on public items and immutability on built-in default items).
+ *    removes the source item (enforcing admin guard on public items and immutability on built-in default items);
+ *    a public-library source (owned by the `public` system user, admins only) is cloned and kept (`keptSourceIds`).
  *  - `emptyProjectLibrary`: moves a project's private (`visibility === 'project'`, non-builtin) library items
  *    to Trash while rejecting attempts to empty immutable default/public libraries.
  */
@@ -1746,13 +1747,16 @@ export class LibraryTransferService {
       if (ownerId !== effActorId && !publicCurator) {
         throw new ForbiddenError(`Item "${record.name || record.key}" is owned by another user and cannot be moved; it can only be copied`);
       }
-      return { ...it, record };
+      // the public library is immutable: an admin "moving" a public-library item clones it (the source stays)
+      return { ...it, record, keepSource: publicCurator };
     });
 
     return this.transaction(() => {
       const copyResult = this.copyToProjects({ items: cleanItems, projectIds: targetProjectIds, actor: actor || { id: effActorId } });
       const removedSourceIds = [];
+      const keptSourceIds = [];
       for (const src of sources) {
+        if (src.keepSource) { keptSourceIds.push({ type: src.type, id: src.id }); continue; }
         if (src.type === 'workflow') {
           this.workflows.remove(src.id, { actor, permanent: true });
         } else {
@@ -1764,7 +1768,8 @@ export class LibraryTransferService {
         ...copyResult,
         movedCount: copyResult.copiedCount,
         moved: copyResult.copied,
-        removedSourceIds
+        removedSourceIds,
+        keptSourceIds
       };
     });
   }

@@ -673,7 +673,6 @@ export function buildItemBrowserElement({
       )
       );
       gridEl.append(card);
-      gridEl.append(card);
     }
     };
     appendCards(0, gridLimit);

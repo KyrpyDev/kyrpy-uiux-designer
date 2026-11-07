@@ -233,6 +233,11 @@ test('repeater: 2D carousel / roll loops cover the whole view at every point of 
   // a set that already overflows the view keeps exactly one clone set
   const big = repeaterPlan(repeaterConfig({ attrs: repeaterDefaultAttrs({ layout: 'carousel', itemCount: 10 }) }), { x: 0, y: 0, w: 300, h: 100 }, { w: 60, h: 40 });
   assert.equal(big.copies.length, 20);
+  // absurdly small items in a huge view would need more than the ~400-copy cap: no loop (static), never a blank band
+  const tiny = repeaterConfig({ attrs: repeaterDefaultAttrs({ layout: 'carousel', itemCount: 50, gap: 0 }) });
+  const tp = repeaterPlan(tiny, { x: 0, y: 0, w: 6000, h: 100 }, { w: 2, h: 2 });
+  assert.equal(tp.track, null); assert.equal(tp.copies.length, 50);
+  assert.ok(!repeaterMarkup('t', tiny, { x: 0, y: 0, w: 6000, h: 100 }, { w: 2, h: 2 }, '<rect/>', 'animate').css.includes('-track'));
 });
 
 test('repeater: render ignores extra children deterministically (first by ord is the template)', () => {
