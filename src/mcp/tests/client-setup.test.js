@@ -109,3 +109,28 @@ test('plain HTTP to a non-local host gets a warning', () => {
   assert.ok(!buildClientSetup({ client: 'cursor', url: 'https://design.example.com/mcp' }).notes.some(n => /HTTPS/.test(n)));
   assert.ok(!buildClientSetup({ client: 'cursor', url: URL }).notes.some(n => /HTTPS/.test(n)));
 });
+
+test('"Copy all steps" is a pasteable script: CLI check first, config files and in-app steps commented, bash parses it', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const hasBash = spawnSync('bash', ['-c', 'true']).status === 0;
+  for (const c of CLIENTS) for (const [shell] of SHELLS) for (const keyKind of ['project', 'account']) for (const key of ['', KEY]) {
+    const s = buildClientSetup({ client: c.id, url: URL, key, shell, keyKind, projectKey: 'demo' });
+    const text = setupAsText(s);
+    const cm = shell === 'cmd' ? /^\s*(rem\b|$)/ : /^\s*(#|$)/;
+    const live = text.split('\n').filter(l => !cm.test(l) && !/^\}( else \{)?$/.test(l));   // PowerShell's own if / else braces
+    // a JSON / TOML block pasted into a shell runs "mcpServers:" as a command (the reported bug)
+    assert.ok(!live.some(l => /^\s*("|\{$|\}[,\]]*$)|^\s*mcpServers|^\s*\[mcp_servers|^\/mcp$/.test(l)), `${c.id}/${shell}: config text left runnable:\n${live.join('\n')}`);
+    assert.ok(!live.some(l => /<your-repository>/.test(l)), `${c.id}/${shell}: placeholder cd`);
+    s.steps.forEach((st, i) => assert.ok(st.title.startsWith(`${i + 1}. `), `${c.id}: step ${i + 1} numbered "${st.title}"`));
+    if (s.prereq) assert.ok(text.includes(s.prereq.cmd) && text.includes(s.prereq.docs), `${c.id}/${shell}: prerequisite check`);
+    if (shell === 'posix' && hasBash) {
+      const r = spawnSync('bash', ['-n'], { input: text });
+      assert.equal(r.status, 0, `${c.id}/${keyKind}: bash -n\n${r.stderr}`);
+    }
+  }
+  const cc = setupAsText(buildClientSetup({ client: 'claude-code', url: URL, key: KEY, keyKind: 'account' }));
+  assert.match(cc, /^# Requires Claude Code CLI[\s\S]*if ! command -v claude /);
+  // a stale entry with the same name in a narrower scope would shadow the new key
+  assert.ok(cc.indexOf('claude mcp remove kyrpy-uiux -s local') < cc.indexOf('claude mcp add'));
+  assert.ok(cc.includes('claude mcp remove kyrpy-uiux -s user'));
+});

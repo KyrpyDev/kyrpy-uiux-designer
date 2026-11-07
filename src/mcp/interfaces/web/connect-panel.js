@@ -76,7 +76,14 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
   const draw = () => {
     const setup = buildClientSetup({ client, url, key, keyMode, shell, serverName: serverName.value, envVar: envVar.value, projectKey: proj?.key || '', keyKind });
     const copyBtn = (text, what) => h('button', { type: 'button', class: 'btn sm', onclick: () => copy(text, what) }, 'Copy');
+    const pr = setup.prereq;
     out.replaceChildren(
+      pr ? h('div', { class: 'aic-step aic-prereq' },
+        h('div', { class: 'aic-step-head' },
+          h('div', {}, h('div', {}, `Needs ${pr.name} — check with: `, h('code', {}, `${pr.cmd} --version`)),
+            h('div', { class: 'aic-path' }, 'Not installed? Run one of these, then open a new terminal. "Copy all steps" checks it for you and stops with this hint.')),
+          pr.install.length ? copyBtn(pr.install[0], 'Install command') : ''),
+        h('pre', {}, [...pr.install, ...(pr.note ? [`# ${pr.note}`] : []), `# docs: ${pr.docs}`].join('\n'))) : '',
       ...setup.steps.map(s => h('div', { class: 'aic-step' },
         h('div', { class: 'aic-step-head' },
           h('div', {}, h('div', {}, s.title), s.path ? h('div', { class: 'aic-path' }, s.path) : null),

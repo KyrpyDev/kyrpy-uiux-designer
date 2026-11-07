@@ -224,13 +224,51 @@ The profile icon (top right) opens **My Profile**: edit display name and email (
 
 The designer ships an **MCP server** (Streamable HTTP, protocol 2025-06-18) so coding agents such as Claude Code, Antigravity and Cursor can use a project's design system, propose changes to it, and push the app's current UI back for human review. The implementation and developer notes are in [`src/mcp/README.md`](src/mcp/README.md).
 
-**Connect an agent** (Profile ▸ *AI Access Keys (MCP)…* creates a project key, or an account key for all your projects):
+### Connect your AI coding agent
+
+**There is no `kyrpy-uiux` program to download or compile.** `kyrpy-uiux` is only the *name* your agent gives to this designer's MCP endpoint (`https://<your-designer-host>/mcp`, or `http://127.0.0.1:5180/mcp` locally). On your machine you need just two things:
+
+1. **Your agent's own CLI** (only for the terminal-based clients; IDE clients such as Cursor, Windsurf, Cline or Claude Desktop are configured in their settings):
+
+   | Client | Command | Install | Docs |
+   |---|---|---|---|
+   | Claude Code | `claude` | `curl -fsSL https://claude.ai/install.sh \| bash` (macOS / Linux / WSL) · `irm https://claude.ai/install.ps1 \| iex` (PowerShell) · or `npm install -g @anthropic-ai/claude-code` | [setup](https://docs.anthropic.com/en/docs/claude-code/setup) |
+   | Codex CLI | `codex` | `npm install -g @openai/codex` | [openai/codex](https://github.com/openai/codex) |
+   | Gemini CLI | `gemini` | `npm install -g @google/gemini-cli` | [gemini-cli](https://github.com/google-gemini/gemini-cli) |
+   | opencode | `opencode` | `npm install -g opencode-ai` | [opencode.ai](https://opencode.ai/docs) |
+   | VS Code (Copilot) | `code` | macOS: Command Palette ▸ *Shell Command: Install 'code' command in PATH* | [VS Code setup](https://code.visualstudio.com/docs/setup/setup-overview) |
+   | Claude Desktop, Zed, any stdio client | `npx` | [Node.js 18+](https://nodejs.org) (the `mcp-remote` bridge runs through `npx`) | — |
+
+   `npm install -g …` needs [Node.js 18+](https://nodejs.org). Check with `claude --version` (or `codex --version`, …), and open a new terminal after installing.
+2. **An API key** from the designer: **Profile ▸ *AI Access Keys (MCP)…*** creates a **project key** (one project, stored per repository) or an **account key** (all your projects, stored once per user). The key is shown only once.
+
+The *AI Access Keys* window then shows a **Connect an AI coder** panel: pick your client and shell and press **Copy all steps**. The copied text is a script you can paste straight into that shell. It:
+
+- **checks first that your agent's CLI is installed.** If it is missing, it changes nothing and prints the install commands above.
+- removes an older `kyrpy-uiux` entry that would shadow the new key (Claude Code: `local` beats `project` beats `user` scope), then adds the server and checks the connection.
+- keeps config-file contents (`.mcp.json`, `settings.json`, `config.toml`) and in-app steps such as `/mcp` as **comments**. Save or merge those by hand if you want them.
+
+What it runs for Claude Code with an account key (bash / zsh):
 
 ```bash
-# inside the repository (project key, stored for this repo only):
-claude mcp add --transport http --scope local kyrpy-uiux http://127.0.0.1:5180/mcp --header "Authorization: Bearer $KYRPY_UIUX_API_KEY"
-# then, in the app repository:  "init uiux"   ·   "pull design updates"   ·   "push the existing app version"
+export KYRPY_UIUX_API_KEY='kud_live_…'            # the key from AI Access Keys
+claude mcp remove kyrpy-uiux -s local 2>/dev/null || true
+claude mcp remove kyrpy-uiux -s user  2>/dev/null || true
+claude mcp add --transport http --scope user kyrpy-uiux https://<your-designer-host>/mcp --header "Authorization: Bearer $KYRPY_UIUX_API_KEY"
+claude mcp get kyrpy-uiux                        # should say: ✔ Connected
+# project key instead: run inside the repository with --scope local (and remove only the local entry)
 ```
+
+Then, in the app repository, tell your agent: *"Run uiux_init …"* (the panel shows the exact sentence), or later *"pull design updates"* · *"push the existing app version"*.
+
+**Troubleshooting**
+
+| Symptom | Cause and fix |
+|---|---|
+| `mcpServers:: command not found`, `syntax error near unexpected token '}'` | A JSON config block was pasted into the shell (older copy text). Copy the steps again: config files are now comments. |
+| `claude: command not found` | The Claude Code CLI is not installed. See the table above. |
+| `claude mcp get` → `✘ Failed to connect … HTTP 401 … invalid, expired or revoked API key` | The entry that wins holds an old key. `claude mcp get` shows its scope. Create a new key and run the copied steps again; they remove the stale entry first. By hand: `claude mcp remove kyrpy-uiux -s local` (or `-s project` / `-s user`). |
+| `direnv is not installed` | On bash / zsh / fish, project keys for opencode, Antigravity, Cursor, Windsurf, Cline, Zed and the stdio bridge use [direnv](https://direnv.net/docs/installation.html) to load the key per repository. Install it, or use an account key. |
 
 | Area | What you get |
 |---|---|
