@@ -72,9 +72,13 @@ export class DesignQueryService {
     throw new ForbiddenError(`${row.type} "${row.key}" is not visible to this project`);
   }
 
-  /** Written by someone other than the key owner. Items of the key's own project made by the AI agent were approved by a human. */
+  /**
+   * Written by someone other than the key owner. Items of the key's own project made by the AI agent were approved by a human;
+   * items of the immutable `public` library user are curated by admins, so they are trusted too.
+   */
   #untrusted(principal, row) {
     if (row.builtin || row.creator_id === principal.user.id) return false;
+    if (this.publicUserId && row.creator_id != null && row.creator_id === this.publicUserId()) return false;
     return !(row.project_id === principal.project.id && this.agentUserId && row.creator_id === this.agentUserId());
   }
 

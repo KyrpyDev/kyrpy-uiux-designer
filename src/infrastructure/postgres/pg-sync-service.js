@@ -13,6 +13,11 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { healForeignKeys } from '../sqlite/database.js';
 import { MCP_PG_SCHEMA_SQL, MCP_SYNC_TABLES } from '../../mcp/infrastructure/postgres/mcp-pg-schema.js';
+import { PUBLIC_USERNAME, DESIGN_TABLES } from '../../domain/system-users.js';
+import { AGENT_USERNAME } from '../../mcp/domain/agent-user.js';
+
+const SYSTEM_OWNER_TABLES = [...DESIGN_TABLES, 'trash_items'];
+const userIdByName = (db, name) => { try { return db.prepare('SELECT id FROM users WHERE username = ?').get(name)?.id ?? null; } catch { return null; } };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -656,6 +661,10 @@ export class PostgresSyncService {
     }
 
     const pulledCounts = {};
+    // system users (public library owner, AI agent) are matched by username: when the remote copy has another id,
+    // local-only rows they own must follow the new id (see #remapSystemOwners)
+    const systemBefore = this.#captureSystemOwners();
+    const pulledIds = {};
     this.db.exec('PRAGMA foreign_keys = OFF;');
     try {
       for (const tbl of SYNC_TABLES) {
@@ -696,7 +705,9 @@ export class PostgresSyncService {
 
         this.db.exec('BEGIN');
         try {
+          const ids = (pulledIds[tbl.name] ||= new Set());
           for (const r of rows) {
+            if (r.id != null) ids.add(Number(r.id));
             for (const u of findUniqueStmts) {
               if (r[u.col] !== undefined && r[u.col] !== null) {
                 const oldRows = u.find.all(r[u.col], r.id);
@@ -723,6 +734,7 @@ export class PostgresSyncService {
           return { ok: false, status: this.status(), error: `Pull failed on ${tbl.name}: ${e.message}` };
         }
       }
+      this.#remapSystemOwners(systemBefore, pulledIds);
       healForeignKeys(this.db);
     } finally {
       try { this.db.exec('PRAGMA foreign_keys = ON;'); } catch { /* ignore */ }
@@ -742,6 +754,51 @@ export class PostgresSyncService {
       pulledProjects: pulledCounts.projects ?? 0,
       status: this.status()
     };
+  }
+
+  /** Local ids of the system users and, per table, the ids of rows they own (creator or root owner). */
+  #captureSystemOwners() {
+    const out = [];
+    for (const username of [PUBLIC_USERNAME, AGENT_USERNAME]) {
+      const id = userIdByName(this.db, username);
+      if (id == null) continue;
+      const rows = {};
+      for (const t of SYSTEM_OWNER_TABLES) {
+        try {
+          rows[t] = this.db.prepare(`SELECT id, creator_id, root_owner_id FROM ${t} WHERE creator_id = ? OR root_owner_id = ?`).all(id, id);
+        } catch { /* table or column missing */ }
+      }
+      out.push({ username, id: Number(id), rows });
+    }
+    return out;
+  }
+
+  /**
+   * After a pull: a system user whose local id changed (the remote row won the username) keeps owning its local-only
+   * rows. Rows that came from PostgreSQL already carry the remote ids and are left alone.
+   */
+  #remapSystemOwners(before, pulledIds) {
+    for (const { username, id: oldId, rows } of before) {
+      const newId = userIdByName(this.db, username);
+      if (newId == null || Number(newId) === oldId) continue;
+      this.db.exec('BEGIN');
+      try {
+        for (const [t, list] of Object.entries(rows)) {
+          const pulled = pulledIds[t] || new Set();
+          const setCreator = this.db.prepare(`UPDATE ${t} SET creator_id = ? WHERE id = ? AND creator_id = ?`);
+          const setRoot = this.db.prepare(`UPDATE ${t} SET root_owner_id = ? WHERE id = ? AND root_owner_id = ?`);
+          for (const r of list) {
+            if (pulled.has(Number(r.id))) continue;
+            if (Number(r.creator_id) === oldId) setCreator.run(newId, r.id, oldId);
+            if (Number(r.root_owner_id) === oldId) setRoot.run(newId, r.id, oldId);
+          }
+        }
+        this.db.exec('COMMIT');
+      } catch (e) {
+        try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+        this.lastError = `remap of system user ${username} failed: ${e.message}`;
+      }
+    }
   }
 
   /** Bi-directional sync: pushes local state & outbox to PostgreSQL, ensuring both DBs match. */

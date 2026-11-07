@@ -2,6 +2,7 @@
  * SQLite repositories for Users, Sessions, Projects, Project Members, Collaborative Change Requests,
  * Editable Template Devices & Button Types, and Multi-language Translations.
  */
+import { publicUserId as publicUserIdOf } from '../../../domain/system-users.js';
 
 const toUser = r => r && ({
   id: r.id,
@@ -36,6 +37,8 @@ export class UserRepository {
   findByUsernameOrEmail(identifier) {
     return this.getByUsernameOrEmail(identifier);
   }
+  /** Id of the immutable `public` system user (owner of the public library), or null. */
+  publicUserId() { return publicUserIdOf(this.db); }
 
   create(u) {
     const r = this.db.prepare(`INSERT INTO users (username,email,password_hash,salt,display_name,role,status,permissions,avatar_color)
@@ -211,20 +214,53 @@ const toChange = r => r && ({
 export class ChangeRequestRepository {
   constructor(db, sync = null) { this.db = db; this.sync = sync; }
 
-  list({ projectId = null, status = '', targetType = '', targetId = null, ownerId = null, authorId = null } = {}) {
+  /** WHERE clause shared by list / matchingIds / countByStatus; `q` is a case-insensitive text search. */
+  #where({ projectId = null, status = '', targetType = '', targetId = null, ownerId = null, authorId = null, q = '' } = {}, { skipStatus = false } = {}) {
     const where = [], args = [];
     if (projectId != null && projectId !== '') { where.push('c.project_id = ?'); args.push(Number(projectId)); }
-    if (status) { where.push('c.status = ?'); args.push(status); }
+    if (status && !skipStatus) { where.push('c.status = ?'); args.push(status); }
     if (targetType) { where.push('c.target_type = ?'); args.push(targetType); }
     if (targetId != null && targetId !== '') { where.push('c.target_id = ?'); args.push(Number(targetId)); }
     if (ownerId != null && ownerId !== '') { where.push('c.owner_id = ?'); args.push(Number(ownerId)); }
     if (authorId != null && authorId !== '') { where.push('c.author_id = ?'); args.push(Number(authorId)); }
-    const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const text = String(q || '').trim().toLowerCase();
+    if (text) {
+      const like = `%${text.replace(/[\\%_]/g, m => `\\${m}`)}%`;
+      where.push(`(lower(c.target_name) LIKE ? ESCAPE '\\' OR lower(c.target_key) LIKE ? ESCAPE '\\'
+        OR lower(c.summary) LIKE ? ESCAPE '\\' OR lower(COALESCE(ua.username, '')) LIKE ? ESCAPE '\\')`);
+      args.push(like, like, like, like);
+    }
+    return { w: where.length ? `WHERE ${where.join(' AND ')}` : '', args };
+  }
+
+  list(filter = {}) {
+    const { w, args } = this.#where(filter);
     return this.db.prepare(`SELECT c.*, ua.username AS author_username, ur.username AS reviewer_username
       FROM change_requests c
       LEFT JOIN users ua ON ua.id = c.author_id
       LEFT JOIN users ur ON ur.id = c.reviewer_id
       ${w} ORDER BY c.id DESC`).all(...args).map(toChange);
+  }
+
+  /** Ids of the matching change requests (newest first), without parsing their snapshots. */
+  matchingIds(filter = {}) {
+    const { w, args } = this.#where(filter);
+    return this.db.prepare(`SELECT c.id FROM change_requests c
+      LEFT JOIN users ua ON ua.id = c.author_id
+      ${w} ORDER BY c.id DESC`).all(...args).map(r => Number(r.id));
+  }
+
+  /** { pending, approved, rejected, all } for the filter, ignoring its `status`. */
+  countByStatus(filter = {}) {
+    const { w, args } = this.#where(filter, { skipStatus: true });
+    const out = { pending: 0, approved: 0, rejected: 0, all: 0 };
+    for (const r of this.db.prepare(`SELECT c.status AS status, COUNT(*) AS n FROM change_requests c
+      LEFT JOIN users ua ON ua.id = c.author_id
+      ${w} GROUP BY c.status`).all(...args)) {
+      out[r.status] = Number(r.n);
+      out.all += Number(r.n);
+    }
+    return out;
   }
 
   get(id) {

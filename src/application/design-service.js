@@ -2,6 +2,7 @@ import { NotFoundError, ConflictError, ValidationError, ForbiddenError } from '.
 import { normalizeDesign, normalizeNode, canContain, TYPES } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { validateAnimation } from '../domain/animation.js';
+import { stripOwnership } from '../domain/system-users.js';
 import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScreenBox, resizeAttrs, nodeBBox } from '../domain/geometry.js';
 
 /**
@@ -111,11 +112,49 @@ export class DesignService {
     return this.lineage(idOrKey);
   }
 
+  /** Id of the immutable `public` library owner, or null when unknown (no users repository). */
+  #publicUserId() { return this.users?.publicUserId?.() ?? null; }
+
+  #isAdminId(actorId, actor = null) {
+    const u = actor?.role ? actor : (actorId != null && this.users ? this.users.get(Number(actorId)) : null);
+    if (!u) return false;
+    return this.collaboration?.auth ? this.collaboration.auth.isAdmin(u) : ['admin', 'superadmin'].includes(u.role);
+  }
+
+  /**
+   * Public-library items (owned by the `public` system user) stay public and stay in the default project (id 1);
+   * users — admins included — clone them instead (moveToProjects / copyToProjects already copy, never re-home).
+   */
+  #assertStaysPublic(d, visibility, projectId) {
+    const pub = this.#publicUserId();
+    if (pub == null || Number(d.creatorId) !== Number(pub) || (d.visibility || 'public') !== 'public') return;
+    if (visibility !== undefined && visibility !== 'public') {
+      throw new ValidationError(`${this.ownerType} "${d.name || d.key}" belongs to the immutable public library and must stay public; clone it instead`);
+    }
+    const target = Number(projectId);   // same fallback as normalize* (posNum(projectId, 1))
+    if (projectId !== undefined && (Number.isFinite(target) && target > 0 ? target : 1) !== Number(d.projectId ?? 1)) {
+      throw new ConflictError(`${this.ownerType} "${d.name || d.key}" belongs to the public library of the default project and cannot be moved to another project; clone it instead`);
+    }
+  }
+
+  /** New public items of the default project created by an admin belong to the `public` library user. */
+  #publicOwnership(data, actorId, actor) {
+    const pub = this.#publicUserId();
+    if (pub == null || data.visibility !== 'public' || Number(data.projectId ?? 1) !== 1 || !this.#isAdminId(actorId, actor)) return null;
+    return Number(pub);
+  }
+
   #maybeRecordCollabChange(beforeDoc, afterDoc, { actorId = null, action = 'update', summary = '', forceRecord = false } = {}) {
     if (!this.collaboration || !beforeDoc || !afterDoc) return null;
-    const ownerId = beforeDoc.creatorId || beforeDoc.rootOwnerId || 1;
-    const isCollaborator = actorId != null && Number(actorId) !== Number(ownerId);
-    if (!forceRecord && !isCollaborator) return null;
+    let ownerId = beforeDoc.creatorId || beforeDoc.rootOwnerId || 1;
+    if (this.collaboration.changeReviewer) {
+      const r = this.collaboration.changeReviewer(beforeDoc, actorId, { force: forceRecord });
+      if (!r) return null;
+      ownerId = r.ownerId;
+    } else {
+      const isCollaborator = actorId != null && Number(actorId) !== Number(ownerId);
+      if (!forceRecord && !isCollaborator) return null;
+    }
     return this.collaboration.recordEdit({
       projectId: afterDoc.projectId || beforeDoc.projectId || 1,
       targetType: this.ownerType,
@@ -149,6 +188,8 @@ export class DesignService {
   create(input, { nodes = [], actor = null, actorId = null } = {}) {
     const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
     const data = normalizeDesign(this.ownerType, { ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
+    const pubOwner = this.#publicOwnership(data, actorId ?? actor?.id ?? null, actor);
+    if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     // keys are unique per project (src/mcp: per-project keys)
     if (input.key && this.designs.keyExists(data.key, data.projectId)) throw new ConflictError(`${this.ownerType} key "${data.key}" already exists in this project`);
     if (!input.key) data.key = uniqueKey(data.name, k => this.designs.keyExists(k, data.projectId));
@@ -170,8 +211,14 @@ export class DesignService {
     const effActorId = actorId ?? actor?.id ?? null;
     const d = this.#require(id);
     const beforeDoc = (effActorId || recordChange) ? this.get(d.id) : null;
-    const { scaleContent, ...rest } = patch;
+    const { scaleContent, ...rest } = stripOwnership(patch);   // ownership and lineage are never changed by an edit
+    this.#assertStaysPublic(d, rest.visibility, rest.projectId);
     const data = normalizeDesign(this.ownerType, { ...rest }, { partial: true });
+    // an admin publishing an existing default-project item hands it to the `public` library user (as on create)
+    if (data.visibility === 'public' && (d.visibility || 'public') !== 'public') {
+      const pubOwner = this.#publicOwnership({ visibility: 'public', projectId: data.projectId ?? d.projectId ?? 1 }, effActorId, actor);
+      if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
+    }
     if (data.key && data.key !== d.key && this.designs.keyExists(data.key, data.projectId ?? d.projectId)) throw new ConflictError(`key "${data.key}" already exists`);
     const resized = (data.width !== undefined && data.width !== d.width) || (data.height !== undefined && data.height !== d.height);
     const updated = this.transaction(() => {
@@ -210,7 +257,8 @@ export class DesignService {
   restore(id, snap) {
     const d = this.#require(id);
     if (!snap || !Array.isArray(snap.nodes)) throw new ValidationError('restore needs a saved version: { record, nodes, menuItems }');
-    const rec = normalizeDesign(this.ownerType, { ...(snap.record || {}) }, { partial: true });
+    const rec = normalizeDesign(this.ownerType, stripOwnership(snap.record || {}), { partial: true });
+    this.#assertStaysPublic(d, rec.visibility, rec.projectId);
     if (rec.key && rec.key !== d.key && this.designs.keyExists(rec.key, d.projectId)) throw new ConflictError(`key "${rec.key}" already exists`);
     const nodes = (snap.nodes || []).map(e => ({ ...normalizeNode(e), id: e.id, animations: Array.isArray(e.animations) ? e.animations : [] }));
     this.#assertInstances(nodes, d.id);
@@ -271,7 +319,12 @@ export class DesignService {
     const newName = name || `${src.name} copy`;
     const rootItemId = src.rootItemId || src.id;
     const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
-    const effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    let effRootOwnerId = rootOwnerId;
+    const pubOwner = creatorId == null
+      ? this.#publicOwnership({ visibility: visibility ?? src.visibility ?? 'public', projectId: projectId ?? src.projectId ?? 1 }, actorId ?? actor?.id ?? null, actor)
+      : null;
+    if (pubOwner != null) { effCreatorId = pubOwner; effRootOwnerId = pubOwner; }
     return this.transaction(() => {
       const copy = this.designs.create({
         ...src,
@@ -285,7 +338,7 @@ export class DesignService {
         creatorId: effCreatorId,
         clonedFromId: src.id,
         rootItemId,
-        rootOwnerId
+        rootOwnerId: effRootOwnerId
       });
       const idMap = new Map();
       const byDepth = [...src.nodes].sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));

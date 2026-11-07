@@ -1,6 +1,7 @@
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from '../domain/errors.js';
 import { normalizeWorkflow, normalizeLink } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
+import { stripOwnership } from '../domain/system-users.js';
 
 /** Workflows: screens placed on an infinite canvas plus named links between them (optionally from a specific element). */
 export class WorkflowService {
@@ -13,6 +14,37 @@ export class WorkflowService {
     const creator = this.users ? this.users.get(w.creatorId || 1) : null;
     const rootOwner = this.users ? this.users.get(w.rootOwnerId || w.creatorId || 1) : null;
     return { ...w, creatorUsername: creator?.username || 'kyrpy', rootOwnerUsername: rootOwner?.username || 'kyrpy' };
+  }
+
+  #publicUserId() { return this.users?.publicUserId?.() ?? null; }
+
+  #isAdminId(actorId, actor = null) {
+    const u = actor?.role ? actor : (actorId != null && this.users ? this.users.get(Number(actorId)) : null);
+    if (!u) return false;
+    return this.collaboration?.auth ? this.collaboration.auth.isAdmin(u) : ['admin', 'superadmin'].includes(u.role);
+  }
+
+  /**
+   * Public-library workflows (owned by the `public` system user) stay public and stay in the default project (id 1);
+   * users — admins included — clone them instead (moveToProjects / copyToProjects already copy, never re-home).
+   */
+  #assertStaysPublic(w, visibility, projectId) {
+    const pub = this.#publicUserId();
+    if (pub == null || Number(w.creatorId) !== Number(pub) || (w.visibility || 'public') !== 'public') return;
+    if (visibility !== undefined && visibility !== 'public') {
+      throw new ValidationError(`workflow "${w.name || w.key}" belongs to the immutable public library and must stay public; clone it instead`);
+    }
+    const target = Number(projectId);   // same fallback as normalize* (posNum(projectId, 1))
+    if (projectId !== undefined && (Number.isFinite(target) && target > 0 ? target : 1) !== Number(w.projectId ?? 1)) {
+      throw new ConflictError(`workflow "${w.name || w.key}" belongs to the public library of the default project and cannot be moved to another project; clone it instead`);
+    }
+  }
+
+  /** New public workflows of the default project created by an admin belong to the `public` library user. */
+  #publicOwnership(data, actorId, actor) {
+    const pub = this.#publicUserId();
+    if (pub == null || data.visibility !== 'public' || Number(data.projectId ?? 1) !== 1 || !this.#isAdminId(actorId, actor)) return null;
+    return Number(pub);
   }
 
   list(query = {}) { return this.workflows.list(query).map(w => this.#enrichUsernames(w)); }
@@ -73,6 +105,8 @@ export class WorkflowService {
   create(input, { actor = null, actorId = null } = {}) {
     const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
     const data = normalizeWorkflow({ ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
+    const pubOwner = this.#publicOwnership(data, actorId ?? actor?.id ?? null, actor);
+    if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     if (input.key && this.workflows.keyExists(data.key, data.projectId)) throw new ConflictError(`workflow key "${data.key}" exists in this project`);
     if (!input.key) data.key = uniqueKey(data.name, k => this.workflows.keyExists(k, data.projectId));
     return this.get(this.workflows.create(data).id);
@@ -82,11 +116,24 @@ export class WorkflowService {
     const effActorId = actorId ?? actor?.id ?? null;
     const w = this.#require(id);
     const beforeDoc = (effActorId || recordChange) ? this.get(w.id) : null;
-    const data = normalizeWorkflow({ ...patch }, { partial: true });
+    const clean = stripOwnership(patch);   // ownership and lineage are never changed by an edit
+    this.#assertStaysPublic(w, clean.visibility, clean.projectId);
+    const data = normalizeWorkflow(clean, { partial: true });
+    // an admin publishing an existing default-project workflow hands it to the `public` library user (as on create)
+    if (data.visibility === 'public' && (w.visibility || 'public') !== 'public') {
+      const pubOwner = this.#publicOwnership({ visibility: 'public', projectId: data.projectId ?? w.projectId ?? 1 }, effActorId, actor);
+      if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
+    }
     if (data.key && data.key !== w.key && this.workflows.keyExists(data.key, data.projectId ?? w.projectId)) throw new ConflictError(`workflow key "${data.key}" exists`);
     this.workflows.update(w.id, data);
     const afterDoc = this.get(w.id);
-    if (beforeDoc && this.collaboration && (recordChange || (effActorId && Number(effActorId) !== Number(w.creatorId || 1)))) {
+    let review = null;
+    if (beforeDoc && this.collaboration) {
+      review = this.collaboration.changeReviewer
+        ? this.collaboration.changeReviewer(beforeDoc, effActorId, { force: recordChange })
+        : ((recordChange || (effActorId && Number(effActorId) !== Number(w.creatorId || 1))) ? { ownerId: w.creatorId || 1 } : null);
+    }
+    if (review) {
       this.collaboration.recordEdit({
         projectId: afterDoc.projectId || 1,
         targetType: 'workflow',
@@ -94,7 +141,7 @@ export class WorkflowService {
         targetKey: afterDoc.key,
         targetName: afterDoc.name,
         authorId: effActorId ?? 1,
-        ownerId: w.creatorId || 1,
+        ownerId: review.ownerId,
         action: 'update',
         beforeDoc,
         afterDoc
@@ -144,7 +191,12 @@ export class WorkflowService {
     const src = this.get(id);
     const rootItemId = src.rootItemId || src.id;
     const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
-    const effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    let effRootOwnerId = rootOwnerId;
+    const pubOwner = creatorId == null
+      ? this.#publicOwnership({ visibility: visibility ?? src.visibility ?? 'public', projectId: projectId ?? src.projectId ?? 1 }, actorId ?? actor?.id ?? null, actor)
+      : null;
+    if (pubOwner != null) { effCreatorId = pubOwner; effRootOwnerId = pubOwner; }
     return this.transaction(() => {
       const copy = this.workflows.create({
         ...src,
@@ -156,7 +208,7 @@ export class WorkflowService {
         creatorId: effCreatorId,
         clonedFromId: src.id,
         rootItemId,
-        rootOwnerId
+        rootOwnerId: effRootOwnerId
       });
       for (const n of src.nodes) this.workflows.upsertNode({ ...n, workflowId: copy.id });
       for (const l of src.links) this.workflows.createLink(copy.id, l);
@@ -168,7 +220,8 @@ export class WorkflowService {
   restore(id, snap) {
     const w = this.#require(id);
     if (!snap || !Array.isArray(snap.nodes) || !Array.isArray(snap.links)) throw new ValidationError('restore needs a saved version: { record, nodes, links }');
-    const rec = normalizeWorkflow({ ...(snap.record || {}) }, { partial: true });
+    const rec = normalizeWorkflow(stripOwnership(snap.record || {}), { partial: true });
+    this.#assertStaysPublic(w, rec.visibility, rec.projectId);
     if (rec.key && rec.key !== w.key && this.workflows.keyExists(rec.key, w.projectId)) throw new ConflictError(`workflow key "${rec.key}" exists`);
     return this.transaction(() => {
       this.workflows.update(w.id, rec);

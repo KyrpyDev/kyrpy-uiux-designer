@@ -23,6 +23,10 @@ import { ThemeService } from './application/theme-service.js';
 import { WorkflowService } from './application/workflow-service.js';
 import { SettingsService } from './application/settings-service.js';
 import { MenuService } from './application/menu-service.js';
+import { ProfileService } from './application/profile-service.js';
+import { ProfileRepository } from './infrastructure/sqlite/repositories/profile-repository.js';
+import { IconCatalogService } from './application/icon-catalog-service.js';
+import { installIconVersion } from './infrastructure/sqlite/icon-version.js';
 import {
   AuthService,
   ProjectService,
@@ -38,6 +42,25 @@ import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
 import { buildMcpModule } from './mcp/composition.js';
+import { publicUserId } from './domain/system-users.js';
+
+/**
+ * Built-in presets added after a database was first seeded reach it once (ledger row in the local `mcp_migrations`
+ * table, so a preset the user later deletes is not re-added). Fresh, empty databases get them from the full import.
+ */
+const NEW_PRESETS = [{ id: 'preset-001-html-repeater', keys: ['html-repeater'] }];
+function seedNewPresets(db, services, importer) {
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_migrations'").get()) return;
+    if (!services.element.list().length) return;
+    const done = new Set(db.prepare('SELECT id FROM mcp_migrations').all().map(r => r.id));
+    for (const p of NEW_PRESETS) {
+      if (done.has(p.id)) continue;
+      importer.ensurePresets(p.keys);
+      db.prepare('INSERT OR IGNORE INTO mcp_migrations (id) VALUES (?)').run(p.id);
+    }
+  } catch (e) { console.warn('preset seeding skipped:', e.message); }
+}
 
 export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } = {}) {
   const resolvedDbFile = dbFile || dbPath || './data/designer.db';
@@ -138,9 +161,12 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   projects.libraryTransfer = libraryTransfer;
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
-  const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log });
+  // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
+  const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
+  seedNewPresets(db, services, importer);
   // MCP layer (src/mcp): API keys, schema registry, content hashes
   const mcp = buildMcpModule({
+    projectService: projects,
     db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
     services, workflows, exporter, settings, collaboration, parseSvg: svgTextToNodes,
     allowedOrigins: String(process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -149,10 +175,15 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   // Ensure all built-in themes (all 15 design style families in dark & light modes) exist and are up to date
   themes.seedBuiltins();
 
+  const profile = new ProfileService({ users: userRepo, profiles: new ProfileRepository(db), auth, transaction });
+  // large icon libraries (pack imports): summary lists, paged search, sprites by id; version bumps on icon changes
+  const iconCatalog = new IconCatalogService({ designs: designs.icon, nodes, render, version: installIconVersion(db) });
+
   return {
     db,
     pgSync,
     auth,
+    profile,
     users: userRepo,
     projects,
     collaboration,
@@ -169,10 +200,13 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     settings,
     menus: menuService,
     render,
+    iconCatalog,
     exporter,
     svgImport,
     importer,
     mcp,
+    /** Id of the immutable `public` system user that owns the public library. */
+    publicUserId: () => publicUserId(db),
     close: () => db.close()
   };
 }

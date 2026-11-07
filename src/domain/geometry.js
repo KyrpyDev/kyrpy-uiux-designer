@@ -199,9 +199,9 @@ export function scaleNodeSet(nodes, sx, sy) {
 /** Returns true if a node is a Container or Carousel Container (shell / outer box of sub-elements). */
 export function isContainerNode(el, libElements = null) {
   if (!el) return false;
-  if (el.role === 'container' || el.role === 'carousel-container') return true;
+  if (el.role === 'container' || el.role === 'carousel-container' || el.role === 'repeater-container') return true;
   const dc = el.attrs?.['data-container'];
-  if (dc === 'true' || dc === 'container' || dc === 'carousel') return true;
+  if (dc === 'true' || dc === 'container' || dc === 'carousel' || dc === 'repeater') return true;
   if (el.kind === 'instance' && el.refType === 'element') {
     const name = String(el.name || '').toLowerCase();
     if (name.startsWith('html-container') || name.startsWith('html-carousel-container') || name.startsWith('container') || name.startsWith('carousel-container')) {
@@ -211,7 +211,7 @@ export function isContainerNode(el, libElements = null) {
       const target = typeof libElements.get === 'function'
         ? libElements.get(el.refId)
         : Array.isArray(libElements) ? libElements.find(x => x.id === el.refId) : null;
-      if (target && (target.key === 'html-container' || target.key === 'html-carousel-container' || target.category === 'containers' || target.meta?.isContainer)) {
+      if (target && (target.key === 'html-container' || target.key === 'html-carousel-container' || target.key === 'html-repeater' || target.category === 'containers' || target.meta?.isContainer)) {
         return true;
       }
     }

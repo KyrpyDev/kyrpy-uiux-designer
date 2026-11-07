@@ -1,5 +1,12 @@
 /**
- * API key rules (pure). Keys let an AI coding agent act for one user on one project through MCP.
+ * API key rules (pure). Keys let an AI coding agent act for one user through MCP.
+ *
+ * Kinds:
+ *  - `project` key: bound to one project the user owns (default; least privilege for one repository).
+ *  - `account` key (user-wide): not bound to a project. Each call names its project. It can read / clone
+ *    every project the user can see, create new projects owned by the user (`create`), and propose or
+ *    request only on projects the user owns. Meant for "clone a design → build an app → push it back as a
+ *    new project" workflows. It never approves anything.
  *
  * Format: `kud_<env>_<32 base62 chars>` (≈190 bits), for example `kud_live_3fA9…`.
  *  - the `kud_` prefix makes leaked keys easy to find for secret scanners
@@ -12,9 +19,19 @@ export const KEY_ENVS = ['live', 'test'];
 export const KEY_RE = /^kud_(live|test)_[0-9A-Za-z]{32}$/;
 export const KEY_PREFIX_LENGTH = 13;
 
-/** `read` is always granted; `request` creates item requests; `propose` stages changesets (never approves). */
-export const SCOPES = ['read', 'request', 'propose'];
+/** `read` is always granted; `request` creates item requests; `propose` stages changesets (never approves);
+ *  `create` (account keys only) creates new projects owned by the key's user. */
+export const SCOPES = ['read', 'request', 'propose', 'create'];
 export const DEFAULT_SCOPES = ['read', 'request', 'propose'];
+export const KEY_KINDS = ['project', 'account'];
+export const SCOPES_BY_KIND = { project: ['read', 'request', 'propose'], account: ['read', 'request', 'propose', 'create'] };
+export const DEFAULT_SCOPES_BY_KIND = { project: ['read', 'request', 'propose'], account: ['read', 'request', 'propose', 'create'] };
+
+export function normalizeKind(kind) {
+  const k = kind === undefined || kind === null || kind === '' ? 'project' : String(kind);
+  if (!KEY_KINDS.includes(k)) throw new ValidationError(`key kind must be one of ${KEY_KINDS.join(', ')}`);
+  return k;
+}
 
 export const EXPIRY_PRESETS_DAYS = [30, 90, 365];
 export const DEFAULT_EXPIRY_DAYS = 90;
@@ -41,14 +58,15 @@ export function generateKey(randomBytes, env = 'live') {
 export const isKeyFormat = v => typeof v === 'string' && KEY_RE.test(v);
 export const keyPrefix = key => String(key).slice(0, KEY_PREFIX_LENGTH);
 
-/** Normalizes requested scopes: unknown → error, `read` always included, stable order. */
-export function normalizeScopes(input) {
-  const list = input === undefined || input === null ? DEFAULT_SCOPES : input;
+/** Normalizes requested scopes for a key kind: unknown → error, `read` always included, stable order. */
+export function normalizeScopes(input, kind = 'project') {
+  const allowed = SCOPES_BY_KIND[kind] || SCOPES_BY_KIND.project;
+  const list = input === undefined || input === null ? (DEFAULT_SCOPES_BY_KIND[kind] || DEFAULT_SCOPES) : input;
   if (!Array.isArray(list)) throw new ValidationError('scopes must be an array');
-  const bad = list.filter(s => !SCOPES.includes(s));
-  if (bad.length) throw new ValidationError(`unknown scope(s): ${bad.join(', ')}; allowed: ${SCOPES.join(', ')}`);
+  const bad = list.filter(s => !allowed.includes(s));
+  if (bad.length) throw new ValidationError(`unknown scope(s) for a ${kind} key: ${bad.join(', ')}; allowed: ${allowed.join(', ')}`);
   const set = new Set(['read', ...list]);
-  return SCOPES.filter(s => set.has(s));
+  return allowed.filter(s => set.has(s));
 }
 
 /** `null` / 'never' → no expiry; a number of days → ISO time. */

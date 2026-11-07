@@ -23,7 +23,7 @@ export class RenderService {
   }
 
   /** Builds a render context holding every design referenced (transitively) by `nodes`. */
-  context(theme, nodes, { editor = false, emitIds = false } = {}) {
+  context(theme, nodes, { editor = false, emitIds = false, repeaterMode = 'animate' } = {}) {
     const lib = { path: new Map(), icon: new Map(), button: new Map(), element: new Map() };
     const queue = [...nodes];
     const need = (type, id) => {
@@ -47,27 +47,28 @@ export class RenderService {
       const n = queue.pop();
       if (n.kind === 'instance' && n.refType) need(n.refType, n.refId);
     }
-    return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds });
+    return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds, repeaterMode });
   }
 
-  screenSvg(id, themeKey, { editor = false, emitIds = false, standalone = true, background = true } = {}) {
+  /** repeaterMode: 'animate' (default), 'static' (first frame) or 'runtime' (template once, expanded by the html runtime). */
+  screenSvg(id, themeKey, { editor = false, emitIds = false, standalone = true, background = true, repeaterMode } = {}) {
     const screen = this.#full('screen', id);
-    const ctx = this.context(this.theme(themeKey), screen.nodes, { editor, emitIds });
+    const ctx = this.context(this.theme(themeKey), screen.nodes, { editor, emitIds, repeaterMode });
     return renderDocument({ owner: screen, nodes: screen.nodes, ctx, background, standalone });
   }
 
   /** Element or button as a standalone svg (a button includes its menu, with the viewBox padded to hold it). */
-  boxSvg(type, id, themeKey, { editor = false, emitIds = false, background = false, standalone = true } = {}) {
+  boxSvg(type, id, themeKey, { editor = false, emitIds = false, background = false, standalone = true, repeaterMode } = {}) {
     const d = this.#full(type, id);
     const theme = this.theme(themeKey);
     if (type === 'button') {
       const items = this.menus.list(d.id);
       const nodes = [{ id: -1, kind: 'instance', tag: 'use', refType: 'button', refId: d.id, parentId: null, ord: 0, visible: true, attrs: { x: 0, y: 0, width: d.width, height: d.height } }];
-      const ctx = this.context(theme, nodes, { editor, emitIds });
+      const ctx = this.context(theme, nodes, { editor, emitIds, repeaterMode });
       const viewBox = items.length ? menuExtent(d, menuConfig(d.meta), buildMenuTree(items)) : null;
       return renderDocument({ owner: d, nodes, ctx, background, viewBox, standalone });
     }
-    const ctx = this.context(theme, d.nodes, { editor, emitIds });
+    const ctx = this.context(theme, d.nodes, { editor, emitIds, repeaterMode });
     return renderDocument({ owner: d, nodes: d.nodes, ctx, background, standalone });
   }
 

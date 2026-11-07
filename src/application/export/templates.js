@@ -59,7 +59,7 @@ a { color: var(--ud-accent); }
 @media (prefers-reduced-motion: reduce) { [class*="ud-e"], .ud-overlay, .ud-overlay * { animation: none !important; } }
 `;
 
-export function appJs(menuRuntime = 'function bindMenus() {}') {
+export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime = 'function bindRepeaters() {}') {
   return `/* Generated. Plain-JS twin of ts/app.ts (same behaviour, no build step needed). */
 (function () {
   'use strict';
@@ -136,6 +136,10 @@ export function appJs(menuRuntime = 'function bindMenus() {}') {
   var bindMenus = ${menuRuntime};
   bindMenus(document, { onAction: function (a) { if (a.target) location.href = a.target + '.html'; else document.dispatchEvent(new CustomEvent('ud-menu-action', { detail: a })); } });
 
+  // repeater containers: each .ud-repeater holds its template once; repeat it itemCount times with its layout / 2D-3D effect
+  ${repeaterRuntime}
+  bindRepeaters(document);
+
   // hotspots: navigate on click (they are real links; this adds the click animation hook for the target element)
   document.querySelectorAll('.ud-hotspot').forEach(function (a) { a.addEventListener('click', function () { a.classList.add('ud-on'); }); });
 })();
@@ -146,6 +150,7 @@ export function appTs() {
   return `/* Generated. Compile with: npx tsc -p tsconfig.json  (outputs to js/). A precompiled js/app.js is already included. */
 import type { ThemeInfo } from './types';
 import { bindMenus } from './menu';
+import { bindRepeaters } from './repeater';
 
 declare global { interface Window { UD_THEMES?: ThemeInfo[]; } }
 
@@ -206,6 +211,8 @@ search?.addEventListener('input', () => {
 
 bindMenus(document, { onAction: a => { if (a.target) location.href = a.target + '.html'; else document.dispatchEvent(new CustomEvent('ud-menu-action', { detail: a })); } });
 
+bindRepeaters(document);
+
 document.querySelectorAll<HTMLAnchorElement>('.ud-hotspot').forEach(a => a.addEventListener('click', () => a.classList.add('ud-on')));
 export {};
 `;
@@ -215,6 +222,14 @@ export function menuTs(menuRuntime) {
   return `// @ts-nocheck  (the same self-contained function the designer preview runs; its header comment documents the markup contract)
 /** Behaviour of popup / rotating button menus. */
 export ${menuRuntime}
+`;
+}
+
+export function repeaterTs(repeaterRuntime) {
+  const exported = String(repeaterRuntime).replace(/^function /gm, 'export function ');
+  return `// @ts-nocheck  (the same self-contained functions the designer renderer uses: domain/repeater.js)
+/** Repeater containers: expands each .ud-repeater template itemCount times (vertical, horizontal, carousel, roll, slide, scroll; 2D / 3D). */
+${exported}
 `;
 }
 

@@ -3,6 +3,8 @@
  * Every colour is a theme token, surfaces use roles (card / button / field) so they look right in all themes.
  * `refKey` on an instance is resolved by the importer (to an icon, or to a button when refType is 'button').
  */
+import { repeaterDefaultAttrs } from '../../domain/repeater.js';
+
 const base = (tag, kind, o, attrs) => ({ tag, kind, role: o.role ?? null, name: o.name ?? '', descriptionDev: o.dev ?? '', attrs, ...(o.anim ? { animations: o.anim } : {}) });
 
 const R = (x, y, w, h, o = {}) => base('rect', 'shape', o, { x, y, width: w, height: h, rx: o.rx ?? 0,
@@ -336,7 +338,17 @@ export const HTML_ELEMENTS = [
     C(163, 196, 4, { fill: '{{accent}}', name: 'dot-1' }),
     C(179, 196, 3.5, { fill: '{{line}}', name: 'dot-2' }),
     C(195, 196, 3.5, { fill: '{{line}}', name: 'dot-3' })
-  ], { dev: 'Specialized Carousel Container in which sub-elements roll with 3D perspective or 2D flat horizontal/vertical animated roll effects.' })
+  ], { dev: 'Specialized Carousel Container in which sub-elements roll with 3D perspective or 2D flat horizontal/vertical animated roll effects.' }),
+
+  // repeater: drop ONE item on it (its template) and set the item count; the copies are simulated at render time
+  item('html-repeater', 'Repeater (Repeating Item List)', 'containers', 'div', 358, 220, [
+    R(0, 0, 358, 220, {
+      role: 'repeater-container',
+      rx: 18,
+      name: 'repeater-shell',
+      extraAttrs: { ...repeaterDefaultAttrs() }
+    })
+  ], { dev: 'Repeating item list: the dropped item is the template, rendered itemCount times. Layouts: vertical, horizontal, carousel, roll, slide, scroll; 2D or 3D (perspective ring / picker-wheel cylinder). Export: the template once plus js/app.js (bindRepeaters) repeats it; map to a list (<ul>/v-for/map()) over your data.', meta: { containerType: 'repeater', isContainer: true } })
 ];
 
 /** Elements that contain buttons (and therefore icons): they show the whole hierarchy in use. */

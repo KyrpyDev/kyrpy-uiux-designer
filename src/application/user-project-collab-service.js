@@ -22,6 +22,8 @@ import {
 } from '../domain/entities.js';
 import { isValidKey, slugify, uniqueKey } from '../domain/naming.js';
 import { restoreBody, workflowRestoreBody } from '../domain/doc-fingerprint.js';
+import { passwordMatches, hashUserPassword, assertNewPassword } from './passwords.js';
+import { isSystemUser, isSystemUsername, isReservedEmail, PUBLIC_USERNAME, DESIGN_TABLES } from '../domain/system-users.js';
 
 /** Gives a restored row back its stable uid (MCP identity), when the snapshot has one and it is still free. */
 function restoreUid(db, table, id, uid) {
@@ -144,17 +146,27 @@ export class AuthService {
   resolveActor({ token = null, userId = null, allowDefault = true } = {}) {
     if (token) {
       const sess = this.users.getSession(token);
-      if (sess?.user && sess.user.status === 'active') return sess.user;
+      if (sess?.user && sess.user.status === 'active' && !isSystemUser(sess.user)) return sess.user;
     }
     if (userId) {
       const u = this.users.get(Number(userId));
-      if (u && u.status === 'active') return u;
+      if (u && u.status === 'active' && !isSystemUser(u)) return u;   // system accounts are never impersonated (x-user-id)
     }
     return allowDefault ? this.defaultAdmin() : null;
   }
 
   resolveToken(token) {
     return this.resolveActor({ token, allowDefault: false });
+  }
+
+  /** True for the immutable non-human accounts (`public`, `kyrpy-agent-designer`). */
+  isSystemUser(user) { return isSystemUser(user); }
+
+  /** Id of the `public` system user (owner of the public library), or null. */
+  publicUserId() { return this.users.publicUserId ? this.users.publicUserId() : (this.users.getByUsernameOrEmail(PUBLIC_USERNAME)?.id ?? null); }
+
+  #assertNotSystem(user, what = 'modified') {
+    if (isSystemUser(user)) throw new ForbiddenError(`System account "${user.username}" is immutable and cannot be ${what}`);
   }
 
   isAdmin(user) {
@@ -180,10 +192,12 @@ export class AuthService {
     if (!uname || uname.length < 2) throw new ValidationError('Username must be at least 2 characters (a-z, 0-9, _, ., -)');
     if (!mail || !mail.includes('@')) throw new ValidationError('A valid email address is required');
     if (!password || String(password).length < 4) throw new ValidationError('Password must be at least 4 characters');
+    if (isSystemUsername(uname)) throw new ConflictError(`Username "${uname}" is reserved for a system account`);
+    if (isReservedEmail(mail)) throw new ConflictError(`Email "${mail}" is reserved for a system account`);
     if (this.users.getByUsernameOrEmail(uname)) throw new ConflictError(`Username "${uname}" is already registered`);
     if (this.users.getByUsernameOrEmail(mail)) throw new ConflictError(`Email "${mail}" is already registered`);
     const cleanRole = USER_ROLES.includes(role) && role !== 'superadmin' ? role : 'designer';
-    const { salt, passwordHash } = hashPassword(password);
+    const { salt, passwordHash } = hashUserPassword(password);
     const color = AVATAR_COLORS[this.users.list().length % AVATAR_COLORS.length];
     const user = this.users.create({
       username: uname,
@@ -205,10 +219,10 @@ export class AuthService {
     if (!idStr || !password) throw new ValidationError('Username/email and password are required');
     const u = this.users.getByUsernameOrEmail(idStr);
     if (!u) throw new UnauthorizedError('Invalid username/email or password');
+    this.#assertNotSystem(u, 'signed in to');
     if (u.status !== 'active') throw new ForbiddenError(`Account "${u.username}" is ${u.status}`);
-    const ok = verifyPassword(password, u.passwordHash, u.salt)
-      || (u.username === 'kyrpy' && ['kyrpy', 'kyrpy123', 'admin', 'admin123'].includes(String(password)))
-      || (u.username === 'admin' && ['admin', 'admin123'].includes(String(password)));
+    // legacy default-admin passwords only work until the account's password is changed (see passwords.js)
+    const ok = passwordMatches(u, password);
     if (!ok) throw new UnauthorizedError('Invalid username/email or password');
     this.users.update(u.id, { lastLoginAt: new Date().toISOString() });
     const session = this.#issueSession(u.id);
@@ -221,13 +235,19 @@ export class AuthService {
   }
 
   #issueSession(userId) {
+    this.#assertNotSystem(this.users.get(Number(userId)), 'given a session');   // last line of defence
     const token = `ud_${randomBytes(24).toString('hex')}`;
     const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
     return this.users.createSession(token, userId, expiresAt);
   }
 
   /* ---------- Admin & User Management ---------- */
-  listUsers() { return this.users.list(); }
+  /** Every user; system accounts are flagged `{ system: true, readOnly: true }` so UIs can hide or lock them. */
+  listUsers({ includeSystem = true } = {}) {
+    return this.users.list()
+      .filter(u => includeSystem || !isSystemUser(u))
+      .map(u => (isSystemUser(u) ? { ...u, system: true, readOnly: true } : u));
+  }
 
   getUser(id) {
     const u = this.users.get(Number(id));
@@ -271,14 +291,28 @@ export class AuthService {
       patch = arg3 || {};
     }
     const target = this.getUser(id);
+    this.#assertNotSystem(target, 'updated');
     const isSelf = actor && Number(actor.id) === Number(target.id);
     if (!this.isAdmin(actor) && !isSelf) throw new ForbiddenError('Only admins or the account owner can update this user');
     const clean = {};
     if (patch.displayName !== undefined) clean.displayName = String(patch.displayName).trim();
-    if (patch.email !== undefined) clean.email = String(patch.email).trim().toLowerCase();
+    if (patch.email !== undefined) {
+      // same rules as register / ProfileService: a real address, never a system account's, never another user's
+      const mail = String(patch.email).trim().toLowerCase();
+      if (!mail || !mail.includes('@')) throw new ValidationError('A valid email address is required');
+      if (isReservedEmail(mail)) throw new ConflictError(`Email "${mail}" is reserved for a system account`);
+      const holder = this.users.getByUsernameOrEmail(mail);
+      if (holder && Number(holder.id) !== Number(target.id)) throw new ConflictError(`Email "${mail}" is already registered`);
+      clean.email = mail;
+    }
     if (patch.avatarColor !== undefined) clean.avatarColor = String(patch.avatarColor).trim();
     if (patch.password && String(patch.password).length >= 4) {
-      const { salt, passwordHash } = hashPassword(patch.password);
+      // own password: prove the current one (the profile page does the same); admins resetting others don't
+      if (isSelf && !passwordMatches(this.users.getWithAuth(target.id), patch.currentPassword)) {
+        throw new ValidationError('Current password is incorrect (change your own password on the profile page)');
+      }
+      if (isSelf) assertNewPassword(patch.password, { username: target.username, email: target.email });
+      const { salt, passwordHash } = hashUserPassword(patch.password);
       clean.salt = salt;
       clean.passwordHash = passwordHash;
     }
@@ -307,6 +341,7 @@ export class AuthService {
     this.assertAdmin(effActor);
     const target = this.getUser(id);
     if (target.id === 1 || target.username === 'kyrpy') throw new ValidationError('Default admin user kyrpy cannot be deleted');
+    this.#assertNotSystem(target, 'deleted');
     this.users.delete(target.id);
     return { deleted: true, id: target.id };
   }
@@ -402,6 +437,7 @@ export class ProjectService {
     if (!isValidKey(key)) throw new ValidationError('Project key must be dashed lowercase words');
     if (this.projects.keyExists(key)) throw new ConflictError(`Project key "${key}" already exists`);
     const ownerId = actor?.id ?? Number(optsOrActor?.actorId || input.ownerId || 1);
+    if (isSystemUser(this.users.get(ownerId))) throw new ValidationError('A system account cannot own a project');
     const rawVis = input.visibility === 'project' ? 'private' : input.visibility;
     const visibility = ['public', 'private'].includes(rawVis) ? rawVis : 'public';
     return this.transaction(() => {
@@ -589,7 +625,12 @@ export class ProjectService {
   setAllItemsVisibility(projectId, visibility) {
     if (!VISIBILITY_LEVELS.includes(visibility)) throw new ValidationError(`visibility must be one of ${VISIBILITY_LEVELS.join(', ')}`);
     const pid = Number(projectId);
-    for (const tbl of ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows']) {
+    const pub = this.auth?.publicUserId?.() ?? null;
+    if (visibility !== 'public' && pub != null) {
+      const locked = DESIGN_TABLES.reduce((n, tbl) => n + this.db.prepare(`SELECT COUNT(*) AS n FROM ${tbl} WHERE project_id = ? AND creator_id = ? AND visibility = 'public'`).get(pid, pub).n, 0);
+      if (locked) throw new ValidationError(`${locked} item(s) of this project belong to the immutable public library and must stay public; clone them instead`);
+    }
+    for (const tbl of DESIGN_TABLES) {
       this.db.prepare(`UPDATE ${tbl} SET visibility = ?, updated_at = datetime('now') WHERE project_id = ?`).run(visibility, pid);
     }
     return { projectId: pid, visibility, updated: true };
@@ -612,6 +653,7 @@ export class ProjectService {
     if (!PROJECT_ROLES.includes(role)) throw new ValidationError(`Project role must be one of ${PROJECT_ROLES.join(', ')}`);
     const targetUser = userId ? this.users.get(Number(userId)) : this.users.getByUsernameOrEmail(usernameOrEmail);
     if (!targetUser) throw new NotFoundError('user', userId || usernameOrEmail);
+    if (isSystemUser(targetUser)) throw new ValidationError(`System account "${targetUser.username}" cannot be invited to a project`);
     return this.projects.upsertMember({
       projectId: p.id,
       userId: targetUser.id,
@@ -655,8 +697,30 @@ export class ProjectService {
 }
 
 export class CollaborationService {
-  constructor({ changes, projects, users, auth, services = {}, workflows = null }) {
-    Object.assign(this, { changes, projects, users, auth, services, workflows });
+  constructor({ changes, projects, users, auth, services = {}, workflows = null, transaction = null }) {
+    Object.assign(this, { changes, projects, users, auth, services, workflows, transaction });
+  }
+
+  /**
+   * Decides whether an edit of `doc` by `actorId` files a change request, and who reviews it.
+   * Returns null when no request is needed: the owner edits their own item, or an admin curates an item of the
+   * immutable `public` library user. Collaborator edits of public-library items are reviewed by the owner of the
+   * default project (a real person), never by the `public` user, which cannot act.
+   */
+  changeReviewer(doc, actorId, { force = false } = {}) {
+    if (!doc) return null;
+    const ownerId = Number(doc.creatorId || doc.rootOwnerId || 1);
+    const pub = this.auth?.publicUserId?.() ?? null;
+    if (pub != null && ownerId === Number(pub)) {
+      const actor = actorId != null ? this.users?.get(Number(actorId)) : null;
+      if (!force && actor && this.auth?.isAdmin(actor)) return null;
+      if (!force && actorId == null) return null;
+      let reviewer = 1;
+      try { reviewer = Number(this.projects?.get(1)?.ownerId || 1); } catch { /* no default project */ }
+      return { ownerId: reviewer };
+    }
+    const isCollaborator = actorId != null && Number(actorId) !== ownerId;
+    return force || isCollaborator ? { ownerId } : null;
   }
 
   bindServices({ services, workflows }) {
@@ -802,6 +866,54 @@ export class CollaborationService {
 
   rejectChange({ id, reviewerId = 1, reviewNote = '', comment = '' } = {}) {
     return this.reject(id, { reviewerId, reviewNote: reviewNote || comment });
+  }
+
+  /** Change counts per status ({ pending, approved, rejected, all }) for the list filters, ignoring `status`. */
+  counts(filter = {}) {
+    if (typeof this.changes.countByStatus === 'function') return this.changes.countByStatus(filter);
+    const out = { pending: 0, approved: 0, rejected: 0, all: 0 };
+    for (const c of this.changes.list({ ...filter, status: '' })) { out[c.status] = (out[c.status] || 0) + 1; out.all++; }
+    return out;
+  }
+
+  /**
+   * Approves or rejects many change requests at once (the change list's "Approve selected" / "Approve all").
+   * `ids` names them, or `filter` ({ projectId, targetType, authorId, q }) selects every *pending* match.
+   * The batch runs in one transaction and each review in its own savepoint, so one refusal (permission, missing
+   * target) neither rolls back nor stops the others. Non-pending changes are skipped. Same permission rules as
+   * approve() / reject().
+   */
+  bulkReview(ids, action, { actor = null, comment = '', filter = null } = {}) {
+    if (action !== 'approve' && action !== 'reject') throw new ValidationError("Bulk review action must be 'approve' or 'reject'");
+    let list = Array.isArray(ids) ? ids : [];
+    if (filter && typeof filter === 'object') {
+      const f = { ...filter, status: 'pending' };
+      list = typeof this.changes.matchingIds === 'function' ? this.changes.matchingIds(f) : this.changes.list(f).map(c => c.id);
+    }
+    list = [...new Set(list.map(Number).filter(n => Number.isInteger(n) && n > 0))];
+    if (!list.length && !filter) throw new ValidationError('No change ids given');
+    const tx = this.transaction || (fn => fn());
+    const one = typeof this.transaction === 'function' ? fn => this.transaction(fn) : fn => fn();
+    const out = { action, results: [], approved: 0, rejected: 0, skipped: 0, failed: 0 };
+    tx(() => {
+      for (const id of list) {
+        const ch = this.changes.get(id);
+        if (!ch) { out.failed++; out.results.push({ id, ok: false, status: null, error: 'Change not found' }); continue; }
+        if (ch.status !== 'pending') { out.skipped++; out.results.push({ id, ok: false, skipped: true, status: ch.status, error: `Already ${ch.status}` }); continue; }
+        try {
+          const saved = one(() => action === 'approve' ? this.approve(id, { actor, comment }) : this.reject(id, { actor, comment }));
+          const status = saved?.status || (action === 'approve' ? 'approved' : 'rejected');
+          if (status === 'approved') out.approved++;
+          else if (status === 'rejected') out.rejected++;
+          out.results.push({ id, ok: true, status });
+        } catch (e) {
+          out.failed++;
+          out.results.push({ id, ok: false, status: 'pending', error: e?.message || String(e) });
+        }
+      }
+    });
+    out.counts = this.counts(filter ? { projectId: filter.projectId ?? null } : {});
+    return out;
   }
 }
 
@@ -1630,7 +1742,8 @@ export class LibraryTransferService {
         throw new ForbiddenError(`Default basic item "${record.name || record.key}" cannot be moved; it can only be copied`);
       }
       const ownerId = Number(record.creatorId || record.rootOwnerId || 1);
-      if (ownerId !== effActorId) {
+      const publicCurator = ownerId === Number(this.auth?.publicUserId?.()) && this.auth?.isAdmin(actor || this.projects?.users?.get(effActorId));
+      if (ownerId !== effActorId && !publicCurator) {
         throw new ForbiddenError(`Item "${record.name || record.key}" is owned by another user and cannot be moved; it can only be copied`);
       }
       return { ...it, record };

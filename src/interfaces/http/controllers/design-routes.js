@@ -12,12 +12,37 @@ import {
   CLICK_ACTIONS,
   TOOLBAR_POSITIONS
 } from '../../../domain/entities.js';
+import { compactIconSummary } from '../../../domain/icon-summary.js';
+import { createHash } from 'node:crypto';
 
 const T = ':types(paths|icons|buttons|elements|screens)';
 
 /** Routes of paths, icons, buttons, elements and screens: CRUD, nodes, animations, svg export, menus, import, lineage. */
 export function designRoutes(router, c) {
   const svc = p => c.services[PLURAL_TO_TYPE[p.types]];
+
+  // icon catalog for large libraries (registered before `/api/icons/:id`): paged search, full records and sprites by id
+  const libFilter = (query, actor) => ({
+    projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
+    projectIds: query.get('projectIds') || null,
+    visibility: query.get('visibility') || '',
+    creatorId: query.get('creatorId') ? Number(query.get('creatorId')) : null,
+    actorId: actor?.id ?? null,
+    includePublic: query.get('includePublic') !== '0',
+    includePrivate: query.get('includePrivate') !== '0'
+  });
+  router.get('/api/icons/search', ({ query, actor }) => c.iconCatalog.search({
+    ...libFilter(query, actor),
+    q: query.get('q') || '', category: query.get('category') || '', pack: query.get('pack') || '',
+    offset: Number(query.get('offset')) || 0, limit: Number(query.get('limit')) || 200
+  }));
+  router.get('/api/icons/full', ({ query }) => ({ version: c.iconCatalog.version(), items: c.iconCatalog.full(query.get('ids')) }));
+  const iconSprite = (themeKey, ids) => {
+    const { svg, etag } = c.iconCatalog.sprite(themeKey || c.settings.get().theme, ids);
+    return { raw: svg, contentType: 'image/svg+xml', etag, cacheControl: 'private, no-cache' };
+  };
+  router.get('/api/icons/sprite', ({ query }) => iconSprite(query.get('theme'), query.get('ids')));
+  router.post('/api/icons/sprite', ({ body }) => iconSprite(body?.theme, body?.ids));
 
   router.get(`/api/${T}`, ({ params, query, actor }) =>
     svc(params).list({
@@ -94,13 +119,32 @@ export function designRoutes(router, c) {
       includePublic: query.get('includePublic') !== '0',
       includePrivate: query.get('includePrivate') !== '0'
     };
-    return {
-      paths: c.services.path.listFull(filter),
-      icons: c.services.icon.listFull(filter),
-      buttons: c.services.button.listFull(filter),
-      elements: c.services.element.listFull(filter),
-      animations: c.animationList()
-    };
+    if (query.get('iconSummary') !== '1') {
+      return {
+        paths: c.services.path.listFull(filter),
+        icons: c.services.icon.listFull(filter),
+        buttons: c.services.button.listFull(filter),
+        elements: c.services.element.listFull(filter),
+        animations: c.animationList()
+      };
+    }
+    // large-library mode: icons as compact summaries (domain/icon-summary.js; no nodes) except the ones the other library items draw;
+    // `icons: null` when the client's `iconsSince` is still current (it keeps its cached list)
+    // the version a client echoes back is only valid for the same actor and filter (it differs per user / visibility)
+    const scope = createHash('sha1').update(JSON.stringify(filter)).digest('hex').slice(0, 10);
+    const iconsVersion = `${c.iconCatalog.version()}~${scope}`;
+    const paths = c.services.path.listFull(filter), buttons = c.services.button.listFull(filter), elements = c.services.element.listFull(filter);
+    let icons = null;
+    if (query.get('iconsSince') !== iconsVersion) {
+      const used = new Set();
+      for (const d of [...paths, ...buttons, ...elements]) {
+        for (const n of d.nodes || []) if (n.refType === 'icon' && n.refId) used.add(n.refId);
+        for (const m of d.menuItems || []) if (m.iconId) used.add(m.iconId);
+      }
+      const full = new Map(c.iconCatalog.full([...used], { max: Infinity }).map(i => [i.id, i.nodes]));
+      icons = c.iconCatalog.summaries(filter).map(i => compactIconSummary(full.has(i.id) ? { ...i, nodes: full.get(i.id) } : i));
+    }
+    return { paths, icons, iconsVersion, iconSummary: true, buttons, elements, animations: c.animationList() };
   });
   router.get('/api/sprite', ({ query }) => ({ raw: c.render.sprite(query.get('theme') || c.settings.get().theme), contentType: 'image/svg+xml' }));
   router.get('/api/import/folders', () => ({ folders: c.svgImport.listSuggestedFolders() }));
@@ -137,6 +181,8 @@ export function designRoutes(router, c) {
       menu: { defaults: DEFAULT_MENU, layouts: MENU_LAYOUTS, kinds: MENU_KINDS },
       user: actor,
       currentUser: actor,
+      // owner of the immutable public library (system user `public`); admins may edit its items directly
+      publicUserId: typeof c.publicUserId === 'function' ? c.publicUserId() : (c.auth?.publicUserId?.() ?? null),
       authenticated: Boolean(token && actor),
       authConfig,
       projects,
@@ -153,7 +199,7 @@ export function designRoutes(router, c) {
         ...Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].list().length])),
         workflows: c.workflows.list().length,
         projects: projects.length,
-        users: c.auth ? c.auth.listUsers().length : 1,
+        users: c.auth ? c.auth.listUsers({ includeSystem: false }).length : 1,
         pendingChanges: pendingChangesCount,
         trash: c.trash ? c.trash.count() : 0
       },

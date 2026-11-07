@@ -8,6 +8,7 @@ import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate } from './repeater.js';
 
 export const CAROUSEL_CSS = [
   '@keyframes ud-roll-2d-horizontal{0%,20%{transform:translateX(0)}33%,53%{transform:translateX(-18px)}66%,86%{transform:translateX(18px)}100%{transform:translateX(0)}}',
@@ -31,7 +32,7 @@ const round = v => Math.round(v * 100) / 100;
  * Fresh render context.
  * @param lib  { path, icon, button, element }: Maps id -> { key, width, height, nodes, menu? } (menu: {cfg, items})
  */
-export function createContext({ theme, lib = {}, animations = [], editor = false, emitIds = false } = {}) {
+export function createContext({ theme, lib = {}, animations = [], editor = false, emitIds = false, repeaterMode = 'animate' } = {}) {
   const anims = new Map();
   for (const a of animations) {
     if (a.nodeId == null) continue;
@@ -39,7 +40,9 @@ export function createContext({ theme, lib = {}, animations = [], editor = false
     anims.get(a.nodeId).push(a);
   }
   const L = { path: new Map(), icon: new Map(), button: new Map(), element: new Map(), ...lib };
-  return { theme, lib: L, anims, editor, emitIds, depth: 0, usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false };
+  return { theme, lib: L, anims, editor, emitIds, depth: 0, usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
+    // repeaters: 'animate' (canvas preview), 'static' (first frame, svg export) or 'runtime' (template once + data for the html runtime)
+    repeaterMode: ['animate', 'static', 'runtime'].includes(repeaterMode) ? repeaterMode : 'animate', repeaterCss: new Set(), hasRepeaterRuntime: false };
 }
 
 function childrenIndex(nodes) {
@@ -70,7 +73,41 @@ function commonAttrs(el, a, ctx, all) {
   return a;
 }
 
+/** Repeater container: its template child drawn itemCount times (copies exist only in the markup, never as nodes). */
+function renderRepeater(el, ctx, idx, all) {
+  // only the first child by ord (ties: id) is the template; any extra children are deterministically ignored
+  const tplNode = repeaterTemplate(idx.get(el.id) || [], el.id);
+  if (!tplNode && (!ctx.editor || ctx.depth > 0)) return '';   // empty slots are an editing aid of the open design only
+  const cfg = repeaterConfig(el);
+  const inner = containerInnerBox(el, all, ctx.lib.element);
+  let tb = tplNode ? nodeBBox(tplNode, all) : null;
+  if (tb && (!(tb.w > 0) || !(tb.h > 0))) tb = { x: tb.x, y: tb.y, w: tb.w > 0 ? tb.w : 24, h: tb.h > 0 ? tb.h : 24 };
+  const item = { w: cfg.itemWidth || tb?.w || 64, h: cfg.itemHeight || tb?.h || 64 };
+  let tpl;
+  if (tplNode) {
+    const s = cfg.itemWidth || cfg.itemHeight ? Math.min(item.w / tb.w, item.h / tb.h) : 1;
+    tpl = `<g transform="translate(${round((item.w - tb.w * s) / 2)} ${round((item.h - tb.h * s) / 2)}) scale(${round(s * 1000) / 1000}) translate(${round(-tb.x)} ${round(-tb.y)})">${renderNode(tplNode, ctx, idx, all)}</g>`;
+  } else {
+    tpl = `<rect width="${round(item.w)}" height="${round(item.h)}" rx="10" fill="none" stroke="#10B981" stroke-dasharray="5 4" opacity="0.7"/>`;
+  }
+  const clipId = `ud-clip-rpt-${el.id}`;
+  const clip = `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>`;
+  const key = String(el.id).replace(/[^a-zA-Z0-9_-]/g, '');
+  const box = { x: inner.x, y: inner.y, w: inner.w, h: inner.h };
+  if (ctx.repeaterMode === 'runtime' && tplNode) {
+    ctx.hasRepeaterRuntime = true;
+    const first = repeaterPlan(cfg, box, item).copies[0];
+    const data = JSON.stringify({ id: key, cfg, inner: box, item });
+    return clip + `<g${attrString({ class: 'ud-container-children ud-repeater', 'data-container-for': el.id, 'clip-path': `url(#${clipId})`, 'data-rpt': data })}>` +
+      `<g transform="translate(${first.x} ${first.y})"><g class="ud-rpt-tpl">${tpl}</g></g></g>`;
+  }
+  const out = repeaterMarkup(key, cfg, box, item, tpl, ctx.repeaterMode === 'static' ? 'static' : 'animate');
+  if (out.css) ctx.repeaterCss.add(out.css);
+  return clip + `<g class="ud-container-children ud-repeater" data-container-for="${el.id}" data-repeater-for="${el.id}" clip-path="url(#${clipId})">${out.markup}</g>`;
+}
+
 function renderContainerChildren(el, ctx, idx, all) {
+  if (isRepeaterNode(el, ctx.lib.element)) return renderRepeater(el, ctx, idx, all);
   const childList = idx.get(el.id) || [];
   const isCar = isCarouselContainerNode(el, ctx.lib.element);
   if (!childList.length && !isCar) return '';
@@ -171,7 +208,8 @@ function collectDefs(ctx) {
   let symbols = '';
   const done = new Set();
   for (let guard = 0; guard < 4; guard++) {   // menu items may pull in more icons
-    const todo = [...ctx.usedIcons].filter(i => !done.has(i) && ctx.lib.icon.has(i));
+    // icons whose geometry is not loaded yet (client-side lazy library) resolve through the shared page sprite
+    const todo = [...ctx.usedIcons].filter(i => !done.has(i) && ctx.lib.icon.get(i)?.nodes);
     if (!todo.length) break;
     for (const id of todo) { done.add(id); symbols += symbolFor(id, ctx); }
   }
@@ -187,7 +225,7 @@ function usedAnimationCss(ctx) {
 /** Wraps rendered content into a complete <svg>. */
 function assemble(ctx, { width, height, viewBox, body, standalone = true, fontFamily, label, background }) {
   const symbols = collectDefs(ctx);
-  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '') + (ctx.hasCarousel ? CAROUSEL_CSS : '');
+  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '') + (ctx.hasCarousel ? CAROUSEL_CSS : '') + [...(ctx.repeaterCss || [])].join('');
   const reduced = css ? '@media (prefers-reduced-motion:reduce){[class*="ud-e"]{animation:none!important}}' : '';
   const attrs = {
     xmlns: standalone ? 'http://www.w3.org/2000/svg' : null,

@@ -22,6 +22,8 @@ const sha = s => createHash('sha256').update(s).digest('hex');
 export const LOCKFILE_PATH = '.uiux/uiux.lock.json';
 export const CONFIG_PATH = '.uiux/config.json';
 export const GITIGNORE_LINES = ['.uiux/cache/', '*.uiux-new'];
+/** Default MCP client recipe for a pack platform (see interfaces/web/client-setup.js CLIENTS). */
+export const PLATFORM_CLIENT = { claude: 'claude-code', antigravity: 'antigravity', cursor: 'cursor', 'agents-md': 'codex', generic: 'generic' };
 
 export class AiPackService {
   /** @param {{artifacts: import('../infrastructure/sqlite/ai-artifact-repository.js').AiArtifactRepository, query: any, bundles: any, projects: any, auth: any}} d */
@@ -86,17 +88,32 @@ export class AiPackService {
 
   /**
    * @param {object} args { platform, framework, uiuxRoot, styles, installed: [{path, recordedChecksum, currentChecksum}],
-   *                       manifestHash, includeBundle }
+   *                       manifestHash, includeBundle,
+   *                       client, shell, serverName, envVar   (MCP client configuration of this repository),
+   *                       origin  (true, or { project, name, version }: the repository is a clone of that design),
+   *                       selection ({ mode: 'clone'|'edit', baseVersion, headVersion }: account-key init choice) }
    */
   init(principal, args = {}, { baseUrl, createBundle }) {
     const pack = this.render(principal, args, { baseUrl });
     const o = pack.options;
     const installed = new Map((args.installed || []).map(i => [i.path, i]));
 
+    // how this repository talks to the server: the agent (and the next one) reads it from .uiux/config.json
+    const keyKind = principal.kind === 'account' ? 'account' : 'project';
+    const serverName = String(args.serverName || 'kyrpy-uiux').replace(/[^A-Za-z0-9_.-]/g, '-');
+    const envVar = String(args.envVar || 'KYRPY_UIUX_API_KEY').replace(/[^A-Za-z0-9_]/g, '_');
+    const client = args.client || PLATFORM_CLIENT[o.platform] || 'generic';
+    const mcpSetup = this.clientSetup
+      ? this.clientSetup({ client, url: `${baseUrl}/mcp`, shell: args.shell || 'posix', serverName, envVar, projectKey: principal.project.key, keyKind })
+      : null;
     const config = {
       server: baseUrl, mcp: `${baseUrl}/mcp`, project: principal.project.key, projectName: principal.project.name,
       styles: o.styles, defaultStyle: o.styles[0], uiuxRoot: o.uiuxRoot, adapters: ['web'], platform: o.platform,
-      ...(o.framework ? { framework: o.framework } : {}), apiKeyEnv: 'KYRPY_UIUX_API_KEY'
+      ...(o.framework ? { framework: o.framework } : {}), apiKeyEnv: envVar,
+      mcpClient: { client, serverName, keyKind, keyStorage: keyKind === 'account' ? 'user' : 'repository' },
+      ...(args.origin ? { origin: typeof args.origin === 'object' ? args.origin : { project: principal.project.key, name: principal.project.name } } : {}),
+      // account-key init: what the human chose (clone → new project, or edit an owned project at a version)
+      ...(args.selection ? { selection: args.selection } : {})
     };
     const configContent = `${JSON.stringify(config, null, 2)}\n`;
     const candidates = [...pack.files, { path: CONFIG_PATH, mode: 'file', content: configContent, checksum: sha(configContent) }];
@@ -138,6 +155,9 @@ export class AiPackService {
       `Write every entry of files[] whose action is "create" or "update" to its path with exactly the given content (create folders as needed). For mode "section", replace the text between "<!-- ${SECTION_MARKER}:start -->" and "<!-- ${SECTION_MARKER}:end -->" in that file, or append the block (create the file if it does not exist). Skip "skip" entries.`,
       'For every "conflict" entry write the content to writeTo instead, do not touch the original file, and tell the human which files need a manual merge.',
       `Add the lines of gitignore[] to .gitignore if they are missing.`,
+      ...(mcpSetup ? [keyKind === 'account'
+        ? `This is an ACCOUNT key (one key for all of the user's projects). Pass "project": "${principal.project.key}" (from .uiux/config.json → project) on every uiux_* call made for this repository.`
+        : `MCP client for this repository: mcpSetup.steps show how the human keeps THIS project's key per repository (${mcpSetup.keyKind === 'project' ? 'local scope / .envrc / .gemini/.env' : 'user scope'}). You never see or write the key: show the steps to the human if the connection must be set up for teammates or another client.`] : []),
       ...(bundle ? [
         `Download and unpack the design bundle by running bundle.install in order (it replaces ${root}/source/). On macOS use "shasum -a 256 -c" instead of "sha256sum -c".`,
         `For each style in ${JSON.stringify(o.styles)}: copy ${root}/source/adapters/web/<style>/ to ${root}/<style>/ (for example: mkdir -p ${root}/<style> && cp -R ${root}/source/adapters/web/<style>/. ${root}/<style>/). For non-web stacks follow the skill's "convert for this app" procedure instead.`
@@ -154,7 +174,8 @@ export class AiPackService {
         skip: files.filter(f => f.action === 'skip').length, conflict: files.filter(f => f.action === 'conflict').length,
         bundle: bundle ? `${bundle.files} files, ${bundle.bytes} bytes` : 'not needed'
       },
-      files, gitignore: GITIGNORE_LINES, bundle, lockfile, steps,
+      files, gitignore: [...new Set([...GITIGNORE_LINES, ...(mcpSetup?.gitignore || [])])], bundle, lockfile, steps,
+      ...(mcpSetup ? { mcpSetup: { client: mcpSetup.client, label: mcpSetup.label, keyKind, serverName, envVar, steps: mcpSetup.steps.map(({ title, path, lang, text }) => ({ title, path, lang, text })), notes: mcpSetup.notes } } : {}),
       notes: [
         'Keep the API key out of the repository: it belongs in the MCP client configuration or the KYRPY_UIUX_API_KEY environment variable.',
         'Run uiux_init again at any time; it only returns what changed and never overwrites files you edited.'

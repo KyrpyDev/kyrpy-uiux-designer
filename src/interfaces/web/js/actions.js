@@ -1,11 +1,14 @@
 /** App-level actions shared by menus, panels and the designers. Components call these instead of each other. */
 import { api } from './api.js';
-import { state, emit, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign } from './state.js';
+import { state, emit, on, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign } from './state.js';
+import { syncIconVersion, cachedIcon, resetSprite, appendSymbols, markSymbols } from './icon-store.js';
+import { expandIconSummary } from '/domain/icon-summary.js';
 import { renderSprite } from '/domain/svg.js';
 import { h, toast, confirmBox, promptBox, modal } from './dom.js';
 import { DEVICES, TYPES } from '/domain/entities.js';
 
 export const LABEL = Object.fromEntries(TYPE_LIST.map(t => [t, TYPES[t].label.toLowerCase()]));
+let lastIconKey = '', lastPathsSig = '', spriteBuilt = false;
 
 export async function reloadLibrary({ silent = false } = {}) {
   const libParams = {};
@@ -19,7 +22,22 @@ export async function reloadLibrary({ silent = false } = {}) {
     libParams.visibility = 'project';
     libParams.includePublic = false;
   }
-  const [lib, boot] = await Promise.all([api.library(libParams), api.bootstrap()]);
+  // icons come as summaries (no nodes) and are only re-sent when the server's icon version moved on; the visible
+  // icon set depends on the signed-in user too, so the cache key carries the actor (and whether a token is sent)
+  const actorSig = iconActorSig();
+  const iconKey = JSON.stringify({ ...libParams, actor: actorSig });
+  const prev = state.library;
+  const since = prev?.iconsVersion && lastIconKey === iconKey && Array.isArray(prev.icons) ? prev.iconsVersion : '';
+  const [lib, boot] = await Promise.all([api.library({ ...libParams, iconSummary: 1, iconsSince: since }), api.bootstrap()]);
+  const iconsChanged = Array.isArray(lib.icons);
+  lib.icons = iconsChanged ? lib.icons.map(expandIconSummary) : (prev?.icons || []);
+  // geometry caches only depend on the catalog part (the `~scope` suffix is per user/filter)
+  syncIconVersion(String(lib.iconsVersion || '').split('~')[0]);
+  lastIconKey = iconKey;
+  lastIconActor = actorSig;
+  const pathsSig = JSON.stringify(lib.paths || []);
+  const spriteStale = iconsChanged || pathsSig !== lastPathsSig || !spriteBuilt;
+  lastPathsSig = pathsSig;
   state.library = lib;
   state.counts = boot.counts;
   if (boot.user) state.user = boot.user;
@@ -30,10 +48,22 @@ export async function reloadLibrary({ silent = false } = {}) {
   state.pendingChangesCount = boot.pendingChangesCount ?? 0;
   state.trashCount = boot.trashCount ?? boot.counts?.trash ?? 0;
   if (boot.syncStatus) state.syncStatus = boot.syncStatus;
-  refreshSprite();
+  if (spriteStale) refreshSprite();
   if (!silent) emit('library:changed');
   emit('trash:changed', state.trashCount);
 }
+
+const iconActorSig = () => `${state.user?.id ?? ''}:${api.getSession()?.token ? 1 : 0}`;
+let lastIconActor = '';
+
+/** Forgets the cached icon list so the next reloadLibrary downloads it again (auth changes, unfiltered fetches). */
+export function resetLibraryIconCache() {
+  lastIconKey = '';
+  if (state.library) state.library.iconsVersion = '';
+}
+
+// a different user (or signing in/out) sees a different icon set: never reuse the previous user's list
+on('auth:changed', () => { if (iconActorSig() !== lastIconActor) resetLibraryIconCache(); });
 
 export async function setActiveProject(projectId) {
   const pid = Number(projectId) || 1;
@@ -49,10 +79,26 @@ export async function setVisibilityFilter(filter) {
   emit('project:changed', state.activeProjectId);
 }
 
+/**
+ * Rebuilds the shared sprite with the icons whose geometry is known locally (the ones library items draw, plus
+ * the lazily cached ones). Icon-grid cells fetch the symbols they show through icon-store.ensureIconSymbols.
+ */
 export function refreshSprite() {
   const ctx = renderContext();
-  document.getElementById('sprite-host').innerHTML = renderSprite({ iconIds: state.library.icons.map(i => i.id), ctx });
+  const ids = state.library.icons.filter(i => i.nodes || cachedIcon(i.id)).map(i => i.id);
+  document.getElementById('sprite-host').innerHTML = renderSprite({ iconIds: ids, ctx });
+  spriteBuilt = true;
+  resetSprite(ids, state.themeKey);
 }
+
+// icons fetched lazily for a render: add their symbols to the shared sprite as well
+on('icons:loaded', ids => {
+  const ctx = renderContext();
+  const keep = (ids || []).filter(id => ctx.lib.icon.get(id)?.nodes);
+  if (!keep.length) return;
+  appendSymbols(renderSprite({ iconIds: keep, ctx }));
+  markSymbols(keep);
+});
 
 export function applyThemeChrome() {
   const t = currentTheme();

@@ -16,6 +16,8 @@ import { iconEl, iconForLabel, ibtn } from './icons.js';
 const MENU_ICONS = { Project: 'file', Design: 'design', Edit: 'edit', Insert: 'insert', Tools: 'tools', Path: 'path', 'Events & Anim': 'events', Collaborate: 'collab', View: 'view', Theme: 'theme', Export: 'export', Trash: 'trash', Help: 'help' };
 // icon-only topbar button with a hover tooltip and optional count badge
 /** Profile → AI Access Keys (MCP layer module, loaded on demand from src/mcp/interfaces/web). */
+/** Topbar profile icon → My Profile page (details, password, sessions, activity). */
+const openProfile = (opts) => import('./components/profile-page.js').then(m => m.openProfilePage(opts)).catch(e => toast(`Profile: ${e.message}`, 'error'));
 const openAiKeys = () => import('/mcp-web/ai-keys-modal.js').then(m => m.openAiKeysModal()).catch(e => toast(`AI Access Keys: ${e.message}`, 'error'));
 /** Collaborate → Versions & AI Changesets (MCP layer module, M4). */
 const downloadAppExport = () => import('/mcp-web/versions-modal.js').then(m => m.downloadProjectApp()).catch(e => toast(`App export: ${e.message}`, 'error'));
@@ -309,6 +311,7 @@ function menuDef() {
     ['Insert', [
       ['Container (Shell Box — Inner/Outer Margins, Clamps Children)', () => insertPresetElement('html-container')],
       ['Carousel Container (2D/3D Horizontal & Vertical Roll)', () => insertPresetElement('html-carousel-container')],
+      ['Repeater (Repeating Item List · Vertical/Horizontal/Carousel/Roll/Slide/Scroll · 2D/3D)', () => insertPresetElement('html-repeater')],
       '-',
       ['Flip Box (3D Interactive Card)', () => insertPresetElement('html-flip-box')],
       ['Carousel Slider', () => insertPresetElement('html-carousel')],
@@ -415,6 +418,7 @@ function menuDef() {
       ['Download Project as HTML App (for AI agents)…', () => downloadAppExport()],
       ['Projects & Collaborator Invitations…', () => openProjectsModal()],
       ['Admin & User Management Panel (ACL)…', () => openAdminUsersModal()],
+      ['My Profile (Details, Password, Sessions)…', () => openProfile()],
       ['Sign In / Register / Switch Account…', () => openAuthModal()],
       ['AI Access Keys (MCP)…', () => openAiKeys()],
       '-',
@@ -615,7 +619,33 @@ function buildThemeMenu() {
   return ddWrap;
 }
 
+/* Topbar rebuilds are deferred while the pointer is pressed on the top rows or a topbar menu is open.
+   Sync events (any write on the server → SSE → library:changed) used to replace every button between
+   mousedown and mouseup, so the browser never fired the click (Trash / Changes / Profile "did nothing")
+   and open menus vanished mid-use. The pending rebuild runs right after the click has been delivered. */
+let topbarPress = false, topbarPending = false, topbarRetry = null;
+document.addEventListener('pointerdown', e => { if (e.target?.closest?.('#topbar, #typebar')) topbarPress = true; }, true);
+const releaseTopbarPress = () => {
+  if (!topbarPress) return;
+  topbarPress = false;
+  if (topbarPending) setTimeout(() => buildTopbar(), 0);   // after the click event of this press
+};
+document.addEventListener('pointerup', releaseTopbarPress, true);
+document.addEventListener('pointercancel', releaseTopbarPress, true);
+window.addEventListener('blur', releaseTopbarPress);
+
 function buildTopbar() {
+  const busy = topbarPress || document.querySelector('#topbar .open, #typebar .open');
+  if (busy) {
+    topbarPending = true;
+    if (!topbarPress && !topbarRetry) topbarRetry = setTimeout(() => { topbarRetry = null; if (topbarPending) buildTopbar(); }, 400);
+    return;
+  }
+  topbarPending = false;
+  renderTopbar();
+}
+
+function renderTopbar() {
   const bar = $('#topbar'); clear(bar);
   bar.append(h('div', { class: 'brand' }, h('span', { style: { color: '#2e9bff' } }, '◈'), 'UI/UX Designer'));
   for (const [title, items] of menuDef()) {
@@ -653,14 +683,8 @@ function buildTopbar() {
   // User / Admin button
   const curUser = state.user || { username: 'kyrpy', role: 'admin' };
   const userBtn = tbIcon('', 'user',
-    `Signed in as @${curUser.username} (${curUser.role}) — account, AI access keys`,
-    e => {
-      const r = e.currentTarget.getBoundingClientRect();
-      contextMenu(r.right - 220, r.bottom + 4, [
-        { label: `Account — @${curUser.username}…`, fn: () => openAuthModal() },
-        { label: 'AI Access Keys (MCP)…', fn: () => openAiKeys() }
-      ]);
-    });
+    `My profile — @${curUser.username} (${curUser.role}): details, password, sessions, AI access keys`,
+    () => openProfile());
 
   const curThemeObj = state.themes.find(t => t.key === state.themeKey) || state.themes[0];
   const isLightMode = curThemeObj?.tokens?.mode === 'light' || String(state.themeKey).endsWith('-light');
@@ -783,6 +807,7 @@ async function boot() {
     api.setSession({ token: null, userId: b.user?.id || 1 });
   }
   if (b.user) state.user = b.user;
+  state.publicUserId = b.publicUserId ?? null;
   state.settings = b.settings; state.themes = b.themes; state.devices = b.devices; state.counts = b.counts; state.themeKey = b.settings.theme;
   state.authConfig = b.authConfig || { appMode: 'dev', bypassLogin: true, requireAuth: false };
   state.trashCount = b.trashCount ?? b.counts?.trash ?? 0;
@@ -819,6 +844,8 @@ async function boot() {
   on('workflow:select', id => app.openWorkflow(id));
   on('auth:changed', () => { refreshCounts(); buildTopbar(); });
   on('project:changed', () => { refreshCounts(); buildTopbar(); app.library.renderBody(); });
+  // the change list reviews in place: only the pending badge (topbar + status bar) follows each review
+  on('changes:count', () => { refreshCounts(); buildTopbar(); });
   on('change:reviewed', async () => {
     refreshCounts();
     buildTopbar();
@@ -827,6 +854,8 @@ async function boot() {
   on('theme:changed', () => { refreshCounts(); buildTopbar(); app.designer.doc && app.designer.renderAll(); if (state.mode === 'workflow' && app.workflow.wf) app.workflow.refresh(); });
   on('workflows:changed', async () => { await app.library.loadWorkflows(); refreshCounts(); });
   on('settings:changed', () => app.designer.renderOverlay());
+  // icon geometry fetched lazily (large libraries): redraw open canvases that drew those icons as placeholders
+  on('icons:loaded', debounce(() => { for (const d of [app.designer, ...app.modals]) if (d?.doc && d.renderStage) d.renderStage(); }, 60));
   on('design:deleted', ({ type, id }) => { if (app.current && app.current.type === type && app.current.id === id) { app.current = null; app.designer.doc = null; app.designer.baseline = null; app.designer.dirty = false; app.designer.updateDocBar(); clear(app.designer.stage); app.designer.renderOverlay(); toast('The open design was deleted'); } });
   refreshCounts();
 

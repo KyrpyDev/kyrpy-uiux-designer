@@ -12,6 +12,218 @@ const typesProp = { type: 'array', items: { type: 'string', enum: ITEM_TYPES }, 
 const styleProp = str('Style key (for example "liquid" or "liquid-light"); see uiux_get_schema → styles. Default: the designer\'s current style.', { maxLength: 80 });
 
 const PLATFORM_PROP = { type: 'string', enum: ['claude', 'antigravity', 'agents-md', 'cursor', 'generic'], description: 'Your client: claude (Claude Code), antigravity, agents-md (AGENTS.md section), cursor, generic (docs/uiux/*.md). Default claude.' };
+const CLIENT_IDS = ['claude-code', 'codex', 'gemini', 'antigravity', 'cursor', 'vscode', 'windsurf', 'cline', 'opencode', 'zed', 'claude-desktop', 'bridge', 'generic'];
+
+/* ---------- account (user-wide) keys: clone a design → build an app → push it back as a new project ---------- */
+
+const ACCOUNT_TOOLS = [
+  {
+    name: 'uiux_list_projects',
+    title: 'List my projects',
+    description: 'Account keys only. Lists the projects the key\'s user can see — owned, shared with them, and public — with role and what this key may do on each (canClone, canPropose). Use a project key from here as "project" in other tools.',
+    inputSchema: { type: 'object', properties: { query: str('Filter by key, name or description.', { maxLength: 120 }), owned: { type: 'boolean', description: 'Only projects the user owns.' }, limit: { type: 'integer', minimum: 1, maximum: 500 } }, additionalProperties: false },
+    scope: 'read', account: 'none', accountOnly: true,
+    run: ({ principal, accounts }, args) => {
+      const data = accounts.listProjects(principal, args);
+      return { summary: `${data.total} project(s) visible; ${data.projects.filter(p => p.role === 'owner').length} owned. ${data.projects.slice(0, 8).map(p => `${p.key} (${p.role})`).join(', ')}`, data };
+    }
+  },
+  {
+    name: 'uiux_clone_project',
+    title: 'Clone a project\'s design into this repository',
+    description: 'Account keys only. Pulls the full design of a project you can see (yours, shared, or public) into the current repository as a local copy: the same install plan as uiux_init (agent/skill pack, .uiux/config.json with "origin", bundle with shell steps, lockfile) plus the workflow to build an app from it and push the result back as a NEW project of yours (uiux_create_project). The source project is never changed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        platform: PLATFORM_PROP,
+        framework: str('The app stack you will build, for example "react", "flutter".', { maxLength: 40 }),
+        uiuxRoot: { type: 'string', enum: ['uiux', 'themes'], description: 'Output folder in the repository (default "uiux").' },
+        styles: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40, description: 'Style keys (default: the designer\'s current style and its twin).' },
+        client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client (for mcpSetup).' },
+        shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'] }
+      },
+      additionalProperties: false
+    },
+    scope: 'read', accountOnly: true,
+    run: ({ principal, aiPack, bundles, limiter, baseUrl, versions }, args) => {
+      versions?.ensureHead(principal.project.id);
+      const data = aiPack.init(principal, { ...args, origin: true }, {
+        baseUrl,
+        createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
+      });
+      if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
+      const src = principal.project.key;
+      data.workflow = [
+        `1. Install: follow steps[] (writes the design of "${src}" into this repository; .uiux/config.json keeps origin = "${src}").`,
+        '2. Build the app from the design: use only uiux/<style>/ outputs and the kyrpy-uiux-designer agent / skill rules; search before inventing items (uiux_search_items { project }).',
+        `3. Create your own project from it: uiux_create_project { name, fromProject: "${src}" } — it starts as a copy of this design and is owned by you.`,
+        '4. Set "project" in .uiux/config.json to the new project key (keep "origin").',
+        '5. Push what the app added or changed: uiux_begin_changeset { project: <new key> } → uiux_stage_item … → uiux_diff_changeset → uiux_submit_changeset. The user approves it in the designer.'
+      ];
+      data.steps = [...data.steps, ...data.workflow.slice(2)];
+      return { summary: `Clone plan for "${src}" (${principal.accountRole || 'read'} access): ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[], then workflow[] to build and push as a new project.`, data };
+    }
+  },
+  {
+    name: 'uiux_create_project',
+    title: 'Create a project of my own',
+    description: 'Account keys with the "create" scope only. Creates a NEW project owned by the key\'s user (private by default). With fromProject (a project you can see, for example the one you cloned), it starts as a full copy of that design. Then push the app\'s changes into it with the changeset tools ("project": the new key); the user approves them in the designer. Never changes the source project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: str('Project name.', { minLength: 1, maxLength: 120 }),
+        key: str('Optional project key (dashed lowercase words); default from the name.', { maxLength: 80 }),
+        description: str('What the project / app is.', { maxLength: 2000 }),
+        fromProject: str('Project key to copy the design from (see uiux_list_projects).', { maxLength: 80 }),
+        visibility: { type: 'string', enum: ['private', 'public'], description: 'Default private.' }
+      },
+      required: ['name'], additionalProperties: false
+    },
+    scope: 'create', account: 'none', accountOnly: true, readOnly: false,
+    run: ({ principal, accounts }, args) => {
+      const data = accounts.createProject(principal, args);
+      return { summary: `Created project "${data.project.key}" owned by @${data.project.owner}${data.source ? ` as a copy of "${data.source.key}" (${data.copiedItems} item(s))` : ''}. Next: ${data.next[0]}`, data };
+    }
+  }
+];
+
+/* ---------- account-key init: list projects + versions → the human chooses clone or edit@version ---------- */
+
+const INIT_ACCOUNT_PROPERTIES = {
+  mode: { type: 'string', enum: ['clone', 'edit'], description: 'Account keys: what the HUMAN chose after the selection list. clone = copy a visible project into a NEW project of theirs; edit = work on one of their own projects at a version. Omit on the first call to get the list.' },
+  project: str('Account keys: the chosen project key (source for clone, target for edit).', { maxLength: 80 }),
+  version: { type: 'integer', minimum: 1, description: 'Account keys: the chosen version number (default: head). clone copies the head; edit at an older version records it as baseVersion (restore:true brings the project back to it, reviewed).' },
+  newProjectName: str('clone: name of the new project (default "<source name> app").', { maxLength: 120 }),
+  newProjectKey: str('clone: optional key of the new project.', { maxLength: 80 }),
+  newProjectDescription: str('clone: description of the new project.', { maxLength: 2000 }),
+  visibility: { type: 'string', enum: ['private', 'public'], description: 'clone: visibility of the new project (default private).' },
+  restore: { type: 'boolean', description: 'edit at an older version: submit a restore changeset that brings the project back to that version (the owner approves it in the designer). Needs the propose scope.' },
+  versionsPerProject: { type: 'integer', minimum: 1, maximum: 50, description: 'Selection list: versions shown per project (default 10).' }
+};
+const ACCOUNT_ONLY_INIT = Object.keys(INIT_ACCOUNT_PROPERTIES);
+
+const versionRow = v => ({ number: v.number, status: v.status, source: v.source, label: v.label || '', message: v.message || '', items: v.items, createdAt: v.createdAt });
+
+/** First account-key call: everything the human needs to choose, and how the agent must ask. */
+function initSelection({ principal, accounts, versions }, args) {
+  const per = Math.min(Math.max(1, Number(args.versionsPerProject) || 10), 50);
+  const list = accounts.listProjects(principal, { limit: 200 });
+  const canCreate = principal.scopes.includes('create');
+  const canPropose = principal.scopes.includes('propose');
+  const projects = list.projects.map(p => {
+    let vs = null;
+    try {
+      const r = accounts.resolve(principal, p.key, 'read');
+      const l = versions ? versions.list(r.id, { limit: per }) : null;
+      vs = l ? { head: l.head, versions: l.versions.filter(v => v.number != null).map(versionRow) } : null;
+    } catch { vs = null; }
+    return { ...p, canClone: p.canClone && canCreate, canEdit: p.role === 'owner', head: vs?.head ?? null, versions: vs?.versions || [] };
+  });
+  const lines = projects.slice(0, 30).map(p => `- ${p.key} — ${p.name} (${p.role}${p.role === 'owner' ? '' : `, by @${p.owner}`}) · head v${p.head ?? '?'}${p.versions.length > 1 ? ` · versions ${p.versions.map(v => v.number).join(', ')}` : ''}${p.canEdit ? '' : ' · clone only'}`);
+  const question = [
+    'Which design should this repository use?',
+    '  1) CLONE a project into a NEW project of yours (the source is never changed)',
+    '  2) EDIT one of your own projects, at a version you choose',
+    '', ...lines
+  ].join('\n');
+  return {
+    needsSelection: true,
+    question,
+    options: [
+      { mode: 'clone', available: canCreate, label: 'Clone a project and create a new project', needs: ['project', 'newProjectName (optional)'], note: canCreate ? 'Copies the head version of any project you can see into a new private project owned by you.' : 'This key has no "create" scope: create an account key with "create" in the designer (AI Access Keys).' },
+      { mode: 'edit', available: projects.some(p => p.canEdit), label: 'Edit an existing project at a version', needs: ['project (owned)', 'version (default head)'], note: canPropose ? 'Pushes go to that project as changesets; the owner approves them.' : 'This key has no "propose" scope: it can pull the design but not push changes.' }
+    ],
+    projects,
+    total: list.total,
+    askHuman: [
+      'STOP and ask the human before writing any file. Do not choose for them.',
+      'Show them `question` (or the projects[] table: key, name, role, head, versions) and ask: clone or edit? which project? which version? For clone also ask the new project name.',
+      'If your client supports MCP elicitation or a choice prompt, use it; otherwise ask in chat and wait for the answer.',
+      'Then call uiux_init again with { mode, project, version?, newProjectName? } plus your usual platform / framework / client arguments.'
+    ],
+    examples: [
+      { mode: 'clone', project: projects.find(p => p.canClone)?.key || '<project-key>', newProjectName: 'My app' },
+      { mode: 'edit', project: projects.find(p => p.canEdit)?.key || '<owned-project-key>', version: projects.find(p => p.canEdit)?.head || 1 }
+    ]
+  };
+}
+
+function runInit({ principal, aiPack, bundles, limiter, baseUrl, versions }, args) {
+  versions?.ensureHead(principal.project.id);
+  const data = aiPack.init(principal, args, {
+    baseUrl,
+    createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
+  });
+  if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
+  return data;
+}
+
+/** Account keys: uiux_init without a choice returns the selection list; with a choice it runs clone / edit. */
+function accountInit(ctx, args) {
+  const { principal, accounts, versions, changesets } = ctx;
+  if (!accounts) throw new DomainError('account keys are not enabled on this server', 'NOT_FOUND', 404);
+  const own = Object.fromEntries(ACCOUNT_ONLY_INIT.map(k => [k, args[k]]));
+  const pass = Object.fromEntries(Object.entries(args).filter(([k]) => !ACCOUNT_ONLY_INIT.includes(k)));
+  if (!own.mode || !own.project) {
+    const data = initSelection(ctx, own);
+    return { summary: `ASK THE HUMAN: clone or edit, which project and version? ${data.total} project(s) visible, ${data.projects.filter(p => p.canEdit).length} editable. Then call uiux_init again with { mode, project, version }.\n\n${data.question}`, data };
+  }
+
+  if (own.mode === 'clone') {
+    if (!principal.scopes.includes('create')) throw Object.assign(new DomainError('clone creates a new project: this account key needs the "create" scope', 'SCOPE_DENIED', 403));
+    const src = accounts.resolve(principal, own.project, 'read');
+    const head = versions ? versions.ensureHead(src.id).number : null;
+    if (own.version && head != null && Number(own.version) !== head) {
+      versions.get(src.id, Number(own.version)); // NOT_FOUND for unknown versions
+      throw new DomainError(`clone copies the current design (head v${head}), not version ${own.version}. Choose the head, or ask the owner of "${src.key}" to restore version ${own.version} first.`, 'VALIDATION', 422);
+    }
+    const created = accounts.createProject(principal, {
+      name: own.newProjectName || `${src.name} app`, key: own.newProjectKey, description: own.newProjectDescription || `App built from the design of "${src.key}" (v${head ?? '?'}).`,
+      fromProject: src.key, visibility: own.visibility || 'private'
+    });
+    const target = accounts.resolve(principal, created.project.key, 'propose');
+    const bound = accounts.bind(principal, target);
+    const newHead = versions ? versions.ensureHead(target.id).number : null;
+    const data = runInit({ ...ctx, principal: bound }, {
+      ...pass, origin: { project: src.key, name: src.name, version: head },
+      selection: { mode: 'clone', source: src.key, sourceVersion: head, baseVersion: newHead, headVersion: newHead }
+    });
+    data.selection = { mode: 'clone', source: { key: src.key, name: src.name, version: head }, project: created.project, copiedItems: created.copiedItems };
+    data.steps = [...data.steps,
+      `This repository now works on the NEW project "${created.project.key}" (a copy of "${src.key}" v${head}). Pass "project": "${created.project.key}" on every uiux_* call.`,
+      `Push what the app adds or changes: uiux_begin_changeset { project: "${created.project.key}" } → uiux_stage_item … → uiux_submit_changeset; the human approves in the designer.`];
+    return { summary: `Cloned "${src.key}" v${head} into the new project "${created.project.key}" (${created.copiedItems} item(s)). Install plan: ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[].`, data };
+  }
+
+  // edit: owned project at a version
+  const target = accounts.resolve(principal, own.project, 'propose');
+  const bound = accounts.bind(principal, target);
+  const head = versions ? versions.ensureHead(target.id).number : null;
+  const chosen = own.version ? Number(own.version) : head;
+  if (versions && chosen != null) versions.get(target.id, chosen);
+  const older = head != null && chosen != null && chosen < head;
+  let restore = null;
+  if (older && own.restore) {
+    if (!principal.scopes.includes('propose')) throw new DomainError('restore needs the "propose" scope on this account key', 'SCOPE_DENIED', 403);
+    const r = changesets.restoreVersion(bound, { version: chosen, message: `Restore version ${chosen} (chosen at uiux_init)` });
+    restore = { changeset: r.changeset, status: r.status, unchanged: !!r.unchanged, opCount: r.opCount, skipped: r.skipped?.length || 0, resultVersion: r.resultVersion };
+  }
+  const data = runInit({ ...ctx, principal: bound }, { ...pass, selection: { mode: 'edit', baseVersion: chosen, headVersion: head } });
+  const delta = older && versions ? versions.delta(target.id, chosen) : null;
+  data.selection = {
+    mode: 'edit', project: { key: target.key, name: target.name }, version: chosen, head,
+    ...(delta ? { sinceChosen: { added: delta.added.length, changed: delta.changed.length, removed: delta.removed.length } } : {}),
+    ...(restore ? { restore } : {})
+  };
+  if (older) {
+    data.steps = [...data.steps, restore
+      ? `A restore to version ${chosen} was submitted (changeset ${restore.changeset}, ${restore.status}). Ask the human to approve it in the designer (Collaborate → Versions & AI Changesets), then call uiux_init { mode: "edit", project: "${target.key}" } again to pull the restored design.`
+      : `The human chose version ${chosen}; the head is v${head} (${delta.added.length} added, ${delta.changed.length} changed, ${delta.removed.length} removed since). The files above are the HEAD design. To see what changed: uiux_get_manifest { project: "${target.key}", sinceVersion: ${chosen} }. To go back to v${chosen}: uiux_init { mode: "edit", project: "${target.key}", version: ${chosen}, restore: true }.`];
+  }
+  data.steps = [...data.steps, `Pass "project": "${target.key}" on every uiux_* call for this repository; changesets start from the head (v${head}).`];
+  return { summary: `Edit "${target.key}" at v${chosen}${older ? ` (head v${head}${restore ? `, restore ${restore.status}` : ''})` : ' (head)'}. Install plan: ${data.summary.create} create, ${data.summary.update} update; bundle: ${data.summary.bundle}. Follow steps[].`, data };
+}
+
 const takeBundle = (limiter, principal) => {
   const rl = limiter.hit('bundles', principal.apiKeyId);
   if (!rl.ok) throw Object.assign(new DomainError(`bundle limit reached; retry in ${rl.retryAfterSec}s`, 'RATE_LIMITED', 429), { retryAfterSec: rl.retryAfterSec });
@@ -270,7 +482,7 @@ export const TOOLS = [
   {
     name: 'uiux_init',
     title: 'Install / update the UI/UX design pack',
-    description: 'Call this first in a new repository, and again whenever you want to update. Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
+    description: 'Call this first in a new repository, and again whenever you want to update. ACCOUNT keys: the first call (no mode/project) returns every project you can see with its versions and a question — ask the human whether to CLONE a project into a new one of theirs or EDIT one of their own projects at a chosen version, then call again with { mode, project, version }. Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -284,18 +496,19 @@ export const TOOLS = [
           description: 'Pack files already in the repository (from .uiux/uiux.lock.json → pack.files).'
         },
         manifestHash: str('manifestHash from the lockfile; skips the bundle when the design is unchanged.', { maxLength: 64 }),
-        includeBundle: { type: 'boolean', description: 'Include a design bundle (default true).' }
+        includeBundle: { type: 'boolean', description: 'Include a design bundle (default true).' },
+        client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client, for mcpSetup (per-repository key storage + config). Default from platform: claude → claude-code, antigravity, cursor, agents-md → codex, generic.' },
+        shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'], description: 'The human\'s shell for mcpSetup commands (default posix).' },
+        serverName: str('MCP server name used in the client config (default "kyrpy-uiux"). Use one name per project when a client keeps several projects at user level.', { maxLength: 60 }),
+        envVar: str('Environment variable holding the key (default KYRPY_UIUX_API_KEY).', { maxLength: 60 })
       },
       additionalProperties: false
     },
-    scope: 'read',
-    run: ({ principal, aiPack, bundles, limiter, baseUrl, versions }, args) => {
-      versions?.ensureHead(principal.project.id);
-      const data = aiPack.init(principal, args, {
-        baseUrl,
-        createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
-      });
-      if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
+    scope: 'read', account: 'select', accountProperties: INIT_ACCOUNT_PROPERTIES,
+    run: (ctx, args) => {
+      if (ctx.principal.kind === 'account') return accountInit(ctx, args);
+      const { principal } = ctx;
+      const data = runInit(ctx, args);
       const s = data.summary;
       return { summary: `Install plan for "${principal.project.key}" (${data.platform}, pack v${data.packVersion}): ${s.create} create, ${s.update} update, ${s.skip} unchanged, ${s.conflict} conflict; bundle: ${s.bundle}. Follow steps[] in order.`, data };
     }
@@ -319,19 +532,22 @@ export const TOOLS = [
   {
     name: 'uiux_whoami',
     title: 'Who am I',
-    description: 'Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. Call it to check the connection.',
+    description: 'Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. Call it to check the connection. Account keys (kind "account") act for the user on every project: pass "project" to project tools.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    scope: 'read',
+    scope: 'read', account: 'none',
     run: ({ principal, limiter }) => ({
-      summary: `Key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} on project "${principal.project.name}" (${principal.project.key}) with scopes ${principal.scopes.join(', ')}.`,
+      summary: principal.kind === 'account'
+        ? `Account key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} on every project they can see (scopes ${principal.scopes.join(', ')}). Call uiux_list_projects, then pass "project" to project tools.`
+        : `Key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} on project "${principal.project.name}" (${principal.project.key}) with scopes ${principal.scopes.join(', ')}.`,
       data: {
-        user: principal.user, project: principal.project, key: { name: principal.keyName, prefix: principal.prefix, scopes: principal.scopes, expiresAt: principal.expiresAt, status: principal.status },
+        user: principal.user, project: principal.project, key: { kind: principal.kind || 'project', name: principal.keyName, prefix: principal.prefix, scopes: principal.scopes, expiresAt: principal.expiresAt, status: principal.status },
         rateLimits: { calls: limiter.status('calls', principal.apiKeyId), bundles: limiter.status('bundles', principal.apiKeyId) }
       }
     })
   },
   {
     name: 'uiux_get_schema',
+    account: 'none',
     title: 'Design-system schema',
     description: 'Returns the design-system rules: the item hierarchy (path → icon → button → element → screen → workflow), naming, geometry and ratio rules, interaction vocabulary, available styles and devices, and the purpose of every table. Read this before creating or converting items. Pass `table` to get one table with every column explained.',
     inputSchema: {
@@ -479,5 +695,6 @@ export const TOOLS = [
       return { summary: `Bundle ready: ${data.files} files, ${(data.bytes / 1024).toFixed(0)} KB, styles ${data.styles.join(', ')}. Run the install steps; the link works once and expires ${data.expiresAt}.`, data };
     }
   },
-  ...M4_TOOLS
+  ...M4_TOOLS,
+  ...ACCOUNT_TOOLS
 ];

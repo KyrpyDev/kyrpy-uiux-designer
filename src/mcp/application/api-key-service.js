@@ -4,13 +4,15 @@
  *
  * Rules (docs/project-definition/project-definition-mcp.md §5, §8, §15):
  *  - only the project owner creates keys for a project; admins may list and revoke any key
- *  - a key is bound to one user × one project; it stops working when the user no longer owns the project
+ *  - a project key is bound to one user × one project; it stops working when the user no longer owns the project
+ *  - an account key is bound to one user only; access is checked per call (AccountService)
  *  - no caching: a revoked key fails on the very next call
  *  - every lifecycle event and authentication is written to `mcp_audit_log`
  */
 import { DomainError, ForbiddenError, NotFoundError, ValidationError, ConflictError } from '../../domain/errors.js';
+import { isSystemUser } from '../../domain/system-users.js';
 import {
-  generateKey, isKeyFormat, keyPrefix, normalizeScopes, expiryFrom, normalizeName, keyStatus,
+  generateKey, isKeyFormat, keyPrefix, normalizeScopes, normalizeKind, expiryFrom, normalizeName, keyStatus,
   ROTATION_GRACE_HOURS, MAX_ACTIVE_KEYS_PER_USER, MAX_EXPIRY_DAYS, normalizeAiSettings, DEFAULT_AI_SETTINGS
 } from '../domain/api-key.js';
 
@@ -48,6 +50,7 @@ export class ApiKeyService {
 
   #assertActor(actor) {
     if (!actor?.id) throw new DomainError('sign in to manage API keys', 'UNAUTHORIZED', 401);
+    if (isSystemUser(actor) || isSystemUser(this.users?.get?.(Number(actor.id)))) throw new ForbiddenError(`system account "${actor.username || actor.id}" cannot own or manage API keys`);
   }
 
   #isOwner(project, actor) { return Number(project.ownerId) === Number(actor?.id); }
@@ -76,7 +79,7 @@ export class ApiKeyService {
   /** Public view of a key: never includes the hash. */
   view(k) {
     return {
-      id: k.id, uid: k.uid, name: k.name, prefix: k.prefix, scopes: k.scopes,
+      id: k.id, uid: k.uid, kind: k.kind || 'project', name: k.name, prefix: k.prefix, scopes: k.scopes,
       projectId: k.projectId, projectKey: k.projectKey, projectName: k.projectName,
       userId: k.userId, username: k.username,
       createdAt: k.createdAt, expiresAt: k.expiresAt, lastUsedAt: k.lastUsedAt, lastUsedIp: k.lastUsedIp,
@@ -85,11 +88,11 @@ export class ApiKeyService {
     };
   }
 
-  #issue({ userId, projectId, name, scopes, expiresAt, rotatedFromId = null }) {
+  #issue({ userId, projectId = null, kind = 'project', name, scopes, expiresAt, rotatedFromId = null }) {
     const plaintext = generateKey(this.randomBytes, this.keyEnv);
     const row = this.keys.insert({
-      uid: this.newUid(), userId, projectId, name, prefix: keyPrefix(plaintext),
-      keyHash: this.hashKey(plaintext), scopes, expiresAt, rotatedFromId
+      uid: this.newUid(), userId, projectId: kind === 'account' ? null : projectId, kind, name, prefix: keyPrefix(plaintext),
+      keyHash: this.hashKey(plaintext), scopes, expiresAt, rotatedFromId, createdAt: this.now().toISOString()
     });
     return { plaintext, row };
   }
@@ -116,18 +119,24 @@ export class ApiKeyService {
   create(input = {}, actor, { ip = '' } = {}) {
     this.#assertActor(actor);
     if (!this.auth.canWrite(actor)) throw new ForbiddenError('read-only accounts cannot create API keys');
-    if (input.projectId === undefined || input.projectId === null || input.projectId === '') throw new ValidationError('projectId is required');
-    const project = this.#project(input.projectId);
-    if (!this.#isOwner(project, actor)) throw new ForbiddenError('API keys can only be created for projects you own');
+    const kind = normalizeKind(input.kind);
+    let project = null;
+    if (kind === 'project') {
+      if (input.projectId === undefined || input.projectId === null || input.projectId === '') throw new ValidationError('projectId is required');
+      project = this.#project(input.projectId);
+      if (!this.#isOwner(project, actor)) throw new ForbiddenError('API keys can only be created for projects you own');
+    } else if (input.projectId !== undefined && input.projectId !== null && input.projectId !== '') {
+      throw new ValidationError('an account key is not bound to a project; leave projectId empty');
+    }
     const name = normalizeName(input.name);
-    const scopes = normalizeScopes(input.scopes);
+    const scopes = normalizeScopes(input.scopes, kind);
     const expiresAt = expiryFrom(input.expiresInDays, this.now());
     return this.transaction(() => {
       if (this.keys.countActiveByUser(actor.id, this.now().toISOString()) >= MAX_ACTIVE_KEYS_PER_USER) {
         throw new ConflictError(`you already have ${MAX_ACTIVE_KEYS_PER_USER} active keys; revoke unused ones first`);
       }
-      const { plaintext, row } = this.#issue({ userId: actor.id, projectId: project.id, name, scopes, expiresAt });
-      this.audit.record({ apiKeyId: row.id, userId: actor.id, projectId: project.id, event: 'key.create', ip });
+      const { plaintext, row } = this.#issue({ userId: actor.id, projectId: project?.id ?? null, kind, name, scopes, expiresAt });
+      this.audit.record({ apiKeyId: row.id, userId: actor.id, projectId: project?.id ?? null, event: kind === 'account' ? 'key.create_account' : 'key.create', ip });
       return { key: plaintext, apiKey: this.view(row) };
     });
   }
@@ -141,8 +150,10 @@ export class ApiKeyService {
     this.#assertCanManageKey(old, actor);
     const status = keyStatus(old, this.now());
     if (status !== 'active') throw new ConflictError(`only active keys can be rotated (this key is ${status})`);
-    const project = this.#project(old.projectId);
-    if (Number(project.ownerId) !== Number(old.userId)) throw new ConflictError('the key owner no longer owns this project; create a new key instead');
+    if ((old.kind || 'project') === 'project') {
+      const project = this.#project(old.projectId);
+      if (Number(project.ownerId) !== Number(old.userId)) throw new ConflictError('the key owner no longer owns this project; create a new key instead');
+    }
 
     let days = expiresInDays;
     if (days === undefined) {
@@ -156,7 +167,7 @@ export class ApiKeyService {
 
     return this.transaction(() => {
       const { plaintext, row } = this.#issue({
-        userId: old.userId, projectId: old.projectId, name: old.name, scopes: old.scopes, expiresAt, rotatedFromId: old.id
+        userId: old.userId, projectId: old.projectId, kind: old.kind || 'project', name: old.name, scopes: old.scopes, expiresAt, rotatedFromId: old.id
       });
       this.keys.markRotated(old.id, { rotatedToId: row.id, expiresAt: oldEnd });
       this.audit.record({ apiKeyId: old.id, userId: actor.id, projectId: old.projectId, event: 'key.rotate', ip });
@@ -209,6 +220,18 @@ export class ApiKeyService {
     if (status === 'expired') throw fail(k.id, 'EXPIRED', ctx);
     const user = this.users.get(k.userId);
     if (!user || user.status !== 'active') throw fail(k.id, 'USER_INACTIVE', ctx);
+    if (isSystemUser(user)) throw fail(k.id, 'SYSTEM_USER', ctx);
+    const base = {
+      apiKeyId: k.id, keyUid: k.uid, keyName: k.name, prefix: k.prefix, scopes: k.scopes, expiresAt: k.expiresAt, status,
+      user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role }
+    };
+    if (k.kind === 'account') {
+      // user-wide key: no project here; the MCP layer resolves and checks the project of every call
+      const at = this.now().toISOString();
+      this.keys.touch(k.id, { at, ip });
+      this.audit.record({ apiKeyId: k.id, userId: k.userId, event: 'auth.ok', ip });
+      return { ...base, kind: 'account', project: null };
+    }
     const project = this.projects.get(k.projectId);
     if (!project) throw fail(k.id, 'PROJECT_GONE', ctx);
     if (Number(project.ownerId) !== Number(user.id)) throw fail(k.id, 'NOT_OWNER', ctx);
@@ -216,17 +239,7 @@ export class ApiKeyService {
     const at = this.now().toISOString();
     this.keys.touch(k.id, { at, ip });
     this.audit.record({ apiKeyId: k.id, ...ctx, event: 'auth.ok', ip });
-    return {
-      apiKeyId: k.id,
-      keyUid: k.uid,
-      keyName: k.name,
-      prefix: k.prefix,
-      scopes: k.scopes,
-      expiresAt: k.expiresAt,
-      status,
-      user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role },
-      project: { id: project.id, key: project.key, name: project.name }
-    };
+    return { ...base, kind: 'project', project: { id: project.id, key: project.key, name: project.name } };
   }
 
   hasScope(principal, scope) { return Array.isArray(principal?.scopes) && principal.scopes.includes(scope); }

@@ -83,8 +83,9 @@ test('Persona 1 (@kyrpy-test-ux-coverage): Full coverage of 6 item types, 15 int
     for (const key of expectedInteractiveKeys) {
       const found = allElements.body.find(e => e.key === key);
       assert.ok(found, `Interactive HTML element "${key}" should be seeded in catalog`);
-      assert.equal(found.creatorId, 1, `"${key}" creatorId should be kyrpy (#1)`);
-      assert.equal(found.rootOwnerId, 1, `"${key}" rootOwnerId should be kyrpy (#1)`);
+      assert.equal(found.creatorId, c.publicUserId(), `"${key}" creatorId should be the public library user`);
+      assert.equal(found.rootOwnerId, c.publicUserId(), `"${key}" rootOwnerId should be the public library user`);
+      assert.equal(found.creatorUsername, 'public');
       assert.equal(found.visibility, 'public', `"${key}" should be public by default`);
     }
 
@@ -248,7 +249,8 @@ test('Persona 1 (@kyrpy-test-ux-coverage): Full coverage of 6 item types, 15 int
 });
 
 test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clone root-owner lineage, node-level HTTP change requests & Owner Approve/Reject rollback', async () => {
-  await withServer(async ({ req }) => {
+  await withServer(async ({ c, req }) => {
+    const pub = c.publicUserId();
     // 1. Register 2 collaborators: Burak (designer) and Can (designer)
     const burakReg = await req('POST', '/api/auth/register', {
       username: 'burak_ux',
@@ -277,10 +279,11 @@ test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clo
       nodes: [{ tag: 'rect', name: 'base', attrs: { x: 0, y: 0, width: 240, height: 120, rx: 16 } }]
     });
     assert.equal(rootEl.status, 200);
-    assert.equal(rootEl.body.creatorId, 1);
-    assert.equal(rootEl.body.rootOwnerId, 1);
+    // admin-made public items of project 1 join the public library, owned by the immutable `public` user
+    assert.equal(rootEl.body.creatorId, pub);
+    assert.equal(rootEl.body.rootOwnerId, pub);
 
-    // 3. Burak clones Kyrpy's public element, then Can clones Burak's clone -> Root Owner must stay kyrpy (#1)
+    // 3. Burak clones the public element, then Can clones Burak's clone -> Root Owner must stay the public user
     const burakClone = await req(
       'POST',
       `/api/elements/${rootEl.body.id}/clone`,
@@ -289,7 +292,7 @@ test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clo
     );
     assert.equal(burakClone.status, 200);
     assert.equal(burakClone.body.creatorId, burakId);
-    assert.equal(burakClone.body.rootOwnerId, 1);
+    assert.equal(burakClone.body.rootOwnerId, pub);
     assert.equal(burakClone.body.rootItemId, rootEl.body.id);
 
     const canClone = await req(
@@ -302,12 +305,12 @@ test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clo
     assert.equal(canClone.body.creatorId, canId);
     assert.equal(canClone.body.clonedFromId, burakClone.body.id);
     assert.equal(canClone.body.rootItemId, rootEl.body.id);
-    assert.equal(canClone.body.rootOwnerId, 1);
+    assert.equal(canClone.body.rootOwnerId, pub);
 
     const lineageRes = await req('GET', `/api/elements/${canClone.body.id}/lineage`);
     assert.equal(lineageRes.status, 200);
     assert.equal(lineageRes.body.itemName, 'Can Card Remix');
-    assert.equal(lineageRes.body.rootOwner.username, 'kyrpy');
+    assert.equal(lineageRes.body.rootOwner.username, 'public');
     assert.equal(lineageRes.body.creator.username, 'can_ux');
     assert.equal(lineageRes.body.chain.length, 3);
 

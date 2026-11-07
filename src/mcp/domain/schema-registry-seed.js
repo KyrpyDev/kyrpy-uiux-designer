@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 7;
+export const SEED_VERSION = 8;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -340,17 +340,18 @@ export const SCHEMA_REGISTRY_SEED = {
     }
   },
   api_keys: {
-    purpose: 'Secret API keys that let an AI coding agent act for one user on one project through MCP.',
+    purpose: 'Secret API keys that let an AI coding agent act for one user through MCP: on one project (kind project) or on every project the user can see / owns (kind account).',
     usage: 'Created by the project owner from Profile → AI Access Keys. The plaintext is shown once; only an HMAC is stored.',
     constraints: ['Never return key_hash or any plaintext key through MCP or exports.', 'Local to this instance: not synced to PostgreSQL (the HMAC pepper is per instance).', 'An API key can never approve its own changes.'],
     columns: {
       id: C.id, uid: C.uid,
       user_id: 'User the key acts for (`users.id`); must still own the project for the key to work.',
-      project_id: 'The single project the key is bound to (`projects.id`).',
+      project_id: 'The single project a project key is bound to (`projects.id`); NULL for account keys.',
+      kind: 'project (bound to one owned project) or account (user-wide: each call names its project; read = projects the user can see, propose/request = owned projects, create = new projects).',
       name: 'Human name of the key, for example "Claude Code — laptop".',
       prefix: 'First 13 characters of the key (kud_live_xxxx), stored in clear for display and lookup.',
       key_hash: 'HMAC-SHA256(pepper, key) as hex. Secret.',
-      scopes: 'JSON array of granted scopes: read (always), request (create item requests), propose (stage changesets).',
+      scopes: 'JSON array of granted scopes: read (always), request (create item requests), propose (stage changesets), create (account keys: create projects).',
       expires_at: 'ISO expiry time, NULL = never expires.',
       last_used_at: 'ISO time of the last successful authentication.',
       last_used_ip: 'Client IP of the last successful authentication.',

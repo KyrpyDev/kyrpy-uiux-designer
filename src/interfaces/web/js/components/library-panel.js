@@ -5,13 +5,19 @@
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
 import { ibtn } from '../icons.js';
 import { api } from '../api.js';
-import { state, on, emit, libOf, PLURAL } from '../state.js';
+import { state, on, emit, libOf, PLURAL, canEditOwned } from '../state.js';
 import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog, reloadLibrary } from '../actions.js';
 import { openExportDialog } from './export-dialog.js';
 import { openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
 import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS } from '/domain/entities.js';
+import { iconPack, expandIconSummary } from '/domain/icon-summary.js';
+import { ensureIconSymbols, loadIcons } from '../icon-store.js';
 
+/** Above this many icons the icons tab searches on the server (the grid itself is always virtualized). */
+const LARGE_ICON_LIBRARY = 1500;
+/** Known icon packs (scripts/import-icon-packs.js) in chip order; any other pack gets a chip after them. */
+const ICON_PACKS = [['lucide', 'Lucide'], ['tabler', 'Tabler'], ['heroicons', 'Heroicons'], ['phosphor', 'Phosphor'], ['bootstrap', 'Bootstrap']];
 const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
 const HINT = {
   path: 'Reusable vector path groups. Drag into an icon.',
@@ -208,7 +214,7 @@ export class LibraryPanel {
   }
 
   toolbar(type, rec) {
-    const canMove = !rec.builtin && Number(rec.creatorId || 1) === Number(state.user?.id || 1);
+    const canMove = !rec.builtin && canEditOwned(rec);   // owner, or an admin curating a public-library item
     return h('div', { class: 'tb' },
       ibtn('pencil', 'Open in designer', e => { e.stopPropagation(); this.app.openDesign(type, rec.id); }),
       h('button', {
@@ -353,14 +359,22 @@ export class LibraryPanel {
     );
   }
 
-  /* ---------- icons (drawn from the shared sprite) ---------- */
+  /* ---------- icons (drawn from the shared sprite; virtualized for libraries with thousands of pack icons) ---------- */
   iconsTab() {
     const list = state.library.icons;
-    const grid = h('div', { class: 'grid-icons' });
+    const large = list.length > LARGE_ICON_LIBRARY;
     const selSet = state.libSel.icon;
-    const cells = new Map();
+    const cells = new Map();          // id -> cell of the rows currently on screen
     const sw = String(state.themes.find(t => t.key === state.themeKey)?.tokens.sw ?? 1.4);
-    const getVisible = () => this.filtered('icon', list);
+    const scroller = h('div', { class: 'lib-scroll icon-virt-scroll' });
+    const spacer = h('div', { class: 'icon-virt-spacer' });
+    const grid = h('div', { class: 'grid-icons icon-virt-window' });
+    scroller.append(spacer, grid);
+    const count = h('span', { class: 'dim', style: { fontSize: '11px' } });
+    // rows: local filter over the summaries, or (large library + search text) pages of the server search
+    let rows = [], total = 0, remote = null, searchSeq = 0;
+    const packOk = d => !this.iconPack || (this.iconPack === 'builtin' ? !iconPack(d) : iconPack(d) === this.iconPack);
+    const getVisible = () => rows;
     const syncCells = () => {
       cells.forEach((c, id) => {
         const onChk = selSet.has(id);
@@ -370,49 +384,151 @@ export class LibraryPanel {
       });
     };
     const selBar = this.selectionBar('icon', getVisible, syncCells);
-    const fill = () => {
+    const cellFor = ic => {
+      const chk = h('input', {
+        type: 'checkbox',
+        class: 'chk',
+        checked: selSet.has(ic.id),
+        onclick: e => {
+          e.stopPropagation();
+          if (e.target.checked) selSet.add(ic.id);
+          else selSet.delete(ic.id);
+          selBar._updateInfo?.();
+        }
+      });
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'ico');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#i-${ic.key}`);
+      for (const [k, v] of Object.entries({ fill: 'none', stroke: 'url(#lgS)', 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) use.setAttribute(k, v);
+      svg.appendChild(use);
+      const drag = this.dragData('icon', ic);
+      return h('div', {
+        class: `cell${this.accepts('icon') ? '' : ' dim-cell'}${selSet.has(ic.id) ? ' sel' : ''}`,
+        draggable: 'true',
+        title: `${ic.label} · ${ic.key}${ic.meta?.pack ? ` · ${ic.meta.pack}` : ''}\n(drag onto the canvas, double-click to add, click to edit)`,
+        // the drop renders the icon: start loading its geometry while it is dragged
+        ondragstart: e => { drag(e); loadIcons([ic.id]).catch(() => {}); },
+        ondblclick: () => this.app.addInstance('icon', ic.id),
+        onclick: () => this.app.openDesign('icon', ic.id)
+      }, chk, this.toolbar('icon', ic), svg, h('div', { class: 'lbl' }, ic.key));
+    };
+    // geometry of the virtual grid: fixed cell height, column count from the scroller width
+    const CELL_W = 72, CELL_H = 70, GAP = 6, PAD = 8, BUFFER_ROWS = 4;
+    let cols = 1, lastKey = '';
+    const layout = () => {
+      const w = Math.max(0, scroller.clientWidth - PAD * 2);
+      cols = Math.max(1, Math.floor((w + GAP) / (CELL_W + GAP)));
+      grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      const nRows = Math.ceil(rows.length / cols);
+      spacer.style.height = `${Math.max(0, nRows * (CELL_H + GAP) - GAP)}px`;
+    };
+    const paint = (force = false) => {
+      const rowH = CELL_H + GAP;
+      const first = Math.max(0, Math.floor((scroller.scrollTop - PAD) / rowH) - BUFFER_ROWS);
+      const visRows = Math.ceil((scroller.clientHeight || 600) / rowH) + BUFFER_ROWS * 2;
+      const start = first * cols, end = Math.min(rows.length, (first + visRows) * cols);
+      const key = `${start}:${end}:${cols}:${rows.length}`;
+      if (!force && key === lastKey) return;
+      lastKey = key;
       clear(grid);
       cells.clear();
-      const rows = getVisible();
-      if (!rows.length) grid.append(h('div', { class: 'empty', style: { gridColumn: '1/-1' } }, 'No icons match.'));
-      for (const ic of rows) {
-        const chk = h('input', {
-          type: 'checkbox',
-          class: 'chk',
-          checked: selSet.has(ic.id),
-          onclick: e => {
-            e.stopPropagation();
-            if (e.target.checked) selSet.add(ic.id);
-            else selSet.delete(ic.id);
-            selBar._updateInfo?.();
-          }
-        });
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'ico');
-        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', `#i-${ic.key}`);
-        for (const [k, v] of Object.entries({ fill: 'none', stroke: 'url(#lgS)', 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) use.setAttribute(k, v);
-        svg.appendChild(use);
-        const cell = h('div', {
-          class: `cell${this.accepts('icon') ? '' : ' dim-cell'}${selSet.has(ic.id) ? ' sel' : ''}`,
-          draggable: 'true',
-          title: `${ic.label} · ${ic.key}\n(drag onto the canvas, double-click to add, click to edit)`,
-          ondragstart: this.dragData('icon', ic),
-          ondblclick: () => this.app.addInstance('icon', ic.id),
-          onclick: () => this.app.openDesign('icon', ic.id)
-        }, chk, this.toolbar('icon', ic), svg, h('div', { class: 'lbl' }, ic.key));
+      grid.style.transform = `translateY(${first * rowH}px)`;
+      if (!rows.length) grid.append(h('div', { class: 'empty', style: { gridColumn: '1/-1' } }, remote && remote.loading ? 'Searching…' : 'No icons match.'));
+      const frag = document.createDocumentFragment();
+      const ids = [];
+      for (let i = start; i < end; i++) {
+        const ic = rows[i];
+        const cell = cellFor(ic);
         cells.set(ic.id, cell);
-        grid.append(cell);
+        frag.append(cell);
+        ids.push(ic.id);
       }
+      grid.append(frag);
+      ensureIconSymbols(ids);
+      // server search: fetch the next page when the window reaches the end of what is loaded
+      // (paged by the server's own offset: client-side filtering drops rows, so rows.length is not a server offset)
+      if (remote && !remote.loading && !remote.done && end >= rows.length - cols * BUFFER_ROWS) loadPage(remote.offset);
+    };
+    const updateCount = () => { count.textContent = remote ? `${rows.length < total ? `${rows.length} of ` : ''}${total} found` : `${rows.length} of ${list.length}`; };
+    const loadPage = async offset => {
+      const seq = searchSeq;
+      remote.loading = true;
+      try {
+        const r = await api.iconSearch({ ...remote.params, offset, limit: 500 });
+        if (seq !== searchSeq) return;
+        // the server applied text, pack, category and the library filter; keep the panel's own visibility rules
+        const raw = (r.items || []).map(expandIconSummary);
+        const keepQ = this.q.icon; this.q.icon = '';
+        let items;
+        try { items = this.filtered('icon', raw); } finally { this.q.icon = keepQ; }
+        const seen = new Set(offset ? rows.map(x => x.id) : []);
+        const fresh = items.filter(x => !seen.has(x.id) && seen.add(x.id));
+        rows = offset ? rows.concat(fresh) : fresh;
+        remote.offset = offset + raw.length;
+        remote.dropped = (offset ? remote.dropped : 0) + (raw.length - fresh.length);
+        remote.done = !raw.length || remote.offset >= Number(r.total);
+        total = remote.done ? rows.length : Math.max(rows.length, Number(r.total) - remote.dropped);
+      } catch (e) {
+        if (seq === searchSeq) toast(`Icon search failed: ${e.message}`, 'error');
+      } finally {
+        if (seq === searchSeq) { remote.loading = false; updateCount(); layout(); paint(true); selBar._updateInfo?.(); }
+      }
+    };
+    const fill = () => {
+      searchSeq++;
+      const q = (this.q.icon || '').trim();
+      if (large && q) {
+        // large library: the search runs on the server (key, name, label, tags; pack and category filters)
+        const params = { q, category: this.cat.icon || '', pack: this.iconPack || '' };
+        if (state.activeProjectId) params.projectId = state.activeProjectId;
+        if (state.visibilityFilter && state.visibilityFilter !== 'all') params.visibility = state.visibilityFilter;
+        if (state.visibilityFilter === 'private' || state.visibilityFilter === 'project') params.includePublic = '0';
+        remote = { params, loading: false, offset: 0, dropped: 0, done: false };
+        rows = []; total = 0;
+        scroller.scrollTop = 0;
+        loadPage(0);
+      } else {
+        remote = null;
+        rows = this.filtered('icon', list).filter(packOk);
+        total = rows.length;
+      }
+      updateCount();
+      layout();
+      paint(true);
       selBar._updateInfo?.();
     };
+    // pack filter chips: All / Built-in / one per imported pack
+    const packCounts = new Map();
+    for (const d of list) { const p = iconPack(d) || 'builtin'; packCounts.set(p, (packCounts.get(p) || 0) + 1); }
+    const packs = [['', 'All', list.length], ['builtin', 'Built-in', packCounts.get('builtin') || 0],
+      ...ICON_PACKS.map(([k, label]) => [k, label, packCounts.get(k) || 0]).filter(([, , n]) => n),
+      ...[...packCounts.keys()].filter(k => k !== 'builtin' && !ICON_PACKS.some(([p]) => p === k)).sort().map(k => [k, k, packCounts.get(k)])];
+    const packBar = h('div', { class: 'cats', role: 'group', 'aria-label': 'Icon pack' });
+    const paintPacks = () => {
+      clear(packBar);
+      for (const [k, label, n] of packs) {
+        packBar.append(h('button', { class: `cat${(this.iconPack || '') === k ? ' on' : ''}`, 'aria-pressed': (this.iconPack || '') === k, title: `${n} icons`, onclick: () => { this.iconPack = k; paintPacks(); scroller.scrollTop = 0; fill(); } }, `${label} ${n}`));
+      }
+    };
+    paintPacks();
+    if (this.iconPack && !packs.some(([k]) => k === this.iconPack)) this.iconPack = '';
+    let raf = 0;
+    scroller.addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); }, { passive: true });
+    this._iconResize?.disconnect();
+    this._iconResize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { const c = cols; layout(); if (c !== cols || !grid.childElementCount) paint(true); else paint(); }) : null;
+    this._iconResize?.observe(scroller);
+    // the sprite was rebuilt (theme / icon changes): fetch the symbols of the cells on screen again
+    this._offSpriteReset?.();
+    this._offSpriteReset = on('sprite:reset', () => { if (scroller.isConnected) ensureIconSymbols([...cells.keys()]); });
     this.bodyEl.append(
       this.head('icon', list, fill, [
         h('button', { class: 'btn small', title: 'Import single SVG file or markup', onclick: async () => { const r = await importSvgDialog('icon'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, 'Import SVG'),
         h('button', { class: 'btn small', title: 'Batch import from an SVG folder into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '📁 Folder'),
         h('button', { class: 'btn small', title: 'Import glyphs from Fonts (.svg / .ttf / .woff / symbols) into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '🔤 Fonts')
       ], selBar),
-      h('div', { class: 'lib-scroll' }, grid)
+      h('div', { class: 'row', style: { alignItems: 'center', gap: '6px' } }, packBar, h('span', { class: 'grow' }), count),
+      scroller
     );
     fill();
   }
@@ -599,13 +715,13 @@ export class LibraryPanel {
         }, '📥'),
         h('button', {
           class: 'icon-btn',
-          disabled: Number(w.creatorId || 1) !== Number(state.user?.id || 1),
-          title: Number(w.creatorId || 1) === Number(state.user?.id || 1)
+          disabled: !canEditOwned(w),
+          title: canEditOwned(w)
             ? 'Move workflow (and its screens + sub-items) to your projects…'
             : 'Workflows owned by other users cannot be moved (only copied)',
           onclick: e => {
             e.stopPropagation();
-            if (Number(w.creatorId || 1) !== Number(state.user?.id || 1)) return;
+            if (!canEditOwned(w)) return;
             openCopyMoveToProjectsModal({
               items: [{ type: 'workflow', id: w.id, name: w.name, key: w.key, creatorId: w.creatorId }],
               mode: 'move',

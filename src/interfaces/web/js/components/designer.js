@@ -7,7 +7,7 @@
 import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
-import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel } from '../state.js';
+import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import {
@@ -16,6 +16,7 @@ import {
   clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, createEmptyItem } from '../actions.js';
@@ -164,11 +165,9 @@ export class Designer {
     this.dirty = dirty; this.updateDocBar(); this.emit('dirty', dirty);
   }
 
+  /** The owner, or an admin curating a public-library item (owned by the `public` system user). */
   isOwnedByCurrentUser(rec = this.doc) {
-    if (!rec) return true;
-    const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
-    const curUserId = Number(state.user?.id || 1);
-    return ownerId === curUserId;
+    return canEditOwned(rec);
   }
 
   canMoveRecord(rec = this.doc) {
@@ -391,7 +390,7 @@ export class Designer {
     this.saveBtn = ibtn('save', 'Save', () => this.save(), {
       desc: ownedByMe
         ? 'Keep the current version (and save to any selected Multi-Targets).'
-        : `Disabled: owned by @${d.creatorUsername || 'another user'}. Use Save as… to save a copy.`,
+        : `Disabled: owned by ${ownerLabel(d.creatorUsername, d.creatorId)}. Use Save as… to save a copy.`,
       kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save'
     });
     this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to the active project or all selected Multi-Target projects.' });
@@ -425,7 +424,7 @@ export class Designer {
     }, { desc: 'Lock / unlock positions on this design', active: !!d.locked });
 
     const lineageBtn = ibtn('collab', 'Lineage', () => this.doc && openLineageModal(this.type, this.doc.id),
-      { desc: `Root owner: @${d.rootOwnerUsername || d.creatorUsername || 'kyrpy'}${d.clonedFromId ? ` · cloned from #${d.clonedFromId}` : ''}\nView the creator & root owner lineage chain` });
+      { desc: `Root owner: ${ownerLabel(d.rootOwnerUsername || d.creatorUsername || 'kyrpy', d.rootOwnerId)}${d.clonedFromId ? ` · cloned from #${d.clonedFromId}` : ''}\nView the creator & root owner lineage chain` });
 
     const copyToProjBtn = ibtn('copy', 'Copy to…', () => this.doc && openCopyMoveToProjectsModal({
       items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
@@ -480,7 +479,7 @@ export class Designer {
     this.resetBtn.disabled = !this.dirty;
     this.docState.classList.toggle('dirty', this.dirty);
     if (!ownedByMe) {
-      this.docState.textContent = `🔒 Owned by @${this.doc?.creatorUsername || 'other user'} — use Save as…`;
+      this.docState.textContent = `🔒 Owned by ${ownerLabel(this.doc?.creatorUsername, this.doc?.creatorId)} — use Save as…`;
     } else {
       this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
     }
@@ -687,7 +686,8 @@ export class Designer {
 
   renderStage() {
     if (!this.doc) return;
-    const d = this.doc, ctx = renderContext({ editor: true, animations: this.animationsForRender() });
+    // repeaters simulate their item count on the canvas; with "Animate" off they hold their first frame
+    const d = this.doc, ctx = renderContext({ editor: true, animations: this.animationsForRender(), repeaterMode: state.playAnimations ? 'animate' : 'static' });
     const theme = currentTheme();
     let svg;
     if (this.isGlyph) svg = renderIconDocument({ icon: d, nodes: d.nodes, ctx, size: 24 });
@@ -1423,12 +1423,25 @@ export class Designer {
       const dropPt = ev ? this.worldPoint(ev) : null;
       this.pushUndo(op.snap);
       try {
-        await Promise.all(ids.map(async id => {
+        // a node moved onto a repeater becomes its template (one per drop); the old template is parked beside it
+        let adopted = null;
+        if (op.kind === 'move' && dropPt) {
+          const cand = ids.map(id => this.byId(id)).find(n => n && n.parentId == null && !isContainerNode(n, state.library.elements));
+          const hitCont = cand ? this.containerAtPoint(dropPt, cand.id) : null;
+          const hb = hitCont ? nodeBBox(hitCont, this.nodes) : null;
+          if (hitCont && isRepeaterNode(hitCont, state.library.elements) && dropPt.x >= hb.x && dropPt.x <= hb.x + hb.w && dropPt.y >= hb.y && dropPt.y <= hb.y + hb.h) {
+            const { patches, parkedIds } = repeaterAdoptOps(this.nodes, hitCont, cand, containerInnerBox(hitCont, this.nodes, state.library.elements));
+            for (const { id, patch } of patches) Object.assign(this.byId(id), await api.patchNode(this.type, this.doc.id, id, patch));
+            adopted = { id: cand.id, rep: hitCont, parked: parkedIds.length };
+          }
+        }
+        await Promise.all(ids.filter(id => id !== adopted?.id).map(async id => {
           const node = this.byId(id);
           const patch = { attrs: node.attrs };
           if (op.kind === 'move' && node.parentId == null && !isContainerNode(node, state.library.elements) && dropPt) {
             const hitCont = this.containerAtPoint(dropPt, node.id);
-            if (hitCont) {
+            if (hitCont && isRepeaterNode(hitCont, state.library.elements)) { /* only one template per repeater: stays top-level */ }
+            else if (hitCont) {
               node.parentId = hitCont.id;
               node.attrs = clampNodeToContainer(node, hitCont, this.nodes, state.library.elements);
               patch.parentId = hitCont.id;
@@ -1438,6 +1451,7 @@ export class Designer {
           const saved = await api.patchNode(this.type, this.doc.id, id, patch);
           Object.assign(node, saved);
         }));
+        if (adopted) toast(`"${this.byId(adopted.id)?.name || 'node'}" is now the template of repeater "${adopted.rep.name || 'repeater'}"${adopted.parked ? ' (the previous template was moved out beside it)' : ''}`, 'ok', 2200);
       }
       catch (e) { toast(e.message, 'error'); await this.reload(); return; }
       this.changed();
@@ -1567,7 +1581,15 @@ export class Designer {
     let pl = this.placement(refType, lib, at);
     const isContainerItem = refType === 'element' && (lib.key === 'html-container' || lib.key === 'html-carousel-container' || lib.category === 'containers');
     const isCarouselItem = refType === 'element' && (lib.key === 'html-carousel-container' || lib.meta?.containerType === 'carousel');
-    const targetContainer = this.containerAtPoint(at);
+    const isRepeaterItem = refType === 'element' && (lib.key === REPEATER_KEY || lib.meta?.containerType === 'repeater');
+    let targetContainer = this.containerAtPoint(at);
+    // dropping onto a repeater sets / replaces its template (the item it repeats) instead of adding a sibling; a drop
+    // that lands outside it (containerAtPoint falls back to the selected container) is a normal top-level drop
+    if (targetContainer && isRepeaterNode(targetContainer, state.library.elements)) {
+      const b = at ? nodeBBox(targetContainer, this.nodes) : null;
+      if (!at || (at.x >= b.x && at.x <= b.x + b.w && at.y >= b.y && at.y <= b.y + b.h)) return this.setRepeaterTemplate(targetContainer, refType, id, lib, pl);
+      targetContainer = null;
+    }
     let parentId = null;
     const extraAttrs = {};
 
@@ -1584,6 +1606,7 @@ export class Designer {
         extraAttrs['data-carousel-autoroll'] = 'true';
         extraAttrs['data-carousel-index'] = 0;
       }
+      if (isRepeaterItem) Object.assign(extraAttrs, repeaterDefaultAttrs());
       if (this.type === 'screen' && !targetContainer) {
         const om = 16;
         pl = {
@@ -1606,11 +1629,34 @@ export class Designer {
       refType,
       refId: id,
       parentId,
-      role: isCarouselItem ? 'carousel-container' : isContainerItem ? 'container' : null,
+      role: isRepeaterItem ? 'repeater-container' : isCarouselItem ? 'carousel-container' : isContainerItem ? 'container' : null,
       name: this.uniqueName(lib.key),
       attrs: { x: pl.x, y: pl.y, width: pl.w, height: pl.h, ...extraAttrs }
     });
     if (el) toast(parentId ? `Added ${refType} "${lib.key}" inside container "${targetContainer.name}" (clamped to inner margin)` : `added ${refType} ${lib.key}`, 'ok', 1800);
+  }
+
+  /** The library item becomes the repeater's template (replacing the previous one), placed on the first slot and fitted inside it. */
+  async setRepeaterTemplate(rep, refType, refId, lib, pl) {
+    const inner = containerInnerBox(rep, this.nodes, state.library.elements);
+    const k = Math.min(1, inner.w / Math.max(1, pl.w), inner.h / Math.max(1, pl.h));
+    const w = Math.max(4, Math.round(pl.w * k)), hh = Math.max(4, Math.round(pl.h * k));
+    const cfg = repeaterConfig(rep);
+    const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || hh }).copies[0];
+    const def = { tag: 'use', kind: 'instance', refType, refId, role: null, name: this.uniqueName(lib.key), attrs: { x: first.x, y: first.y, width: w, height: hh } };
+    const { removeIds, node } = repeaterTemplateOps(this.nodes, rep, def);
+    const el = await this.mutate(async () => {
+      for (const rid of removeIds) await api.deleteNode(this.type, this.doc.id, rid);
+      const made = await api.addNode(this.type, this.doc.id, node);
+      await this.reload(false);
+      this.selected = new Set([rep.id]);
+      return made;
+    });
+    if (el) {
+      this.emit('selection', this.selectedNodes());
+      toast(`${removeIds.length ? 'Replaced' : 'Set'} the template of repeater "${rep.name || 'repeater'}": ${lib.key} × ${cfg.itemCount}`, 'ok', 1800);
+    }
+    return el;
   }
 
   async createShape(g) {
@@ -1735,7 +1781,7 @@ export class Designer {
     try {
       const saved = await api.patchNode(this.type, this.doc.id, id, patch);
       Object.assign(e, saved);
-      if (isContainerNode(e, state.library.elements)) {
+      if (isContainerNode(e, state.library.elements) && !isRepeaterNode(e, state.library.elements)) {   // a repeater's template keeps its own size
         for (const ch of this.nodes.filter(c => c.parentId === e.id)) {
           ch.attrs = clampNodeToContainer(ch, e, this.nodes, state.library.elements);
         }

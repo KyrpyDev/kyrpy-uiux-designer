@@ -10,7 +10,7 @@
  *  - Offline-First PostgreSQL Sync & Translations (`openSyncModal`)
  */
 import { api } from '../api.js';
-import { state, emit, projectLabel } from '../state.js';
+import { state, emit, projectLabel, ownerLabel } from '../state.js';
 import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
@@ -41,6 +41,7 @@ export async function openAuthModal() {
   } catch {
     users = [state.user];
   }
+  users = users.filter(u => u && !u.system);   // system accounts (public library owner, AI agent) cannot sign in
 
   let mode = 'login'; // 'login' | 'register'
   const usernameInput = h('input', { type: 'text', placeholder: 'Username or email (default: admin)', value: '' });
@@ -409,7 +410,9 @@ export async function openAdminUsersModal() {
     // Users table
     const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '320px', overflow: 'auto' } });
     for (const u of users) {
+      const sys = !!(u.system || u.readOnly);   // immutable system account: shown, never editable
       const roleSel = h('select', {
+        disabled: sys,
         onchange: async e => {
           try {
             await api.updateUser(u.id, { role: e.target.value });
@@ -422,7 +425,7 @@ export async function openAdminUsersModal() {
       }, Object.keys(ROLE_LABELS).map(r => h('option', { value: r, selected: u.role === r }, r)));
 
       const statusSel = h('select', {
-        disabled: u.id === 1,
+        disabled: sys || u.id === 1,
         onchange: async e => {
           try {
             await api.updateUser(u.id, { status: e.target.value });
@@ -460,12 +463,13 @@ export async function openAdminUsersModal() {
             }
           }, (u.username || 'U')[0].toUpperCase()),
           h('div', { style: { flex: '1', minWidth: '140px' } },
-            h('div', { style: { fontWeight: '700' } }, `${u.displayName || u.username} (@${u.username})${u.id === 1 ? ' ★ Root Admin' : ''}`),
-            h('div', { class: 'muted' }, `${u.email} · ID #${u.id}`)
+            h('div', { style: { fontWeight: '700' } }, `${u.displayName || u.username} (@${u.username})${u.id === 1 ? ' ★ Root Admin' : ''}`,
+              sys ? h('span', { class: 'badge', style: { marginLeft: '6px' }, title: u.username === 'public' ? 'Owner of the public library. Cannot sign in; admins curate its items, users clone them.' : 'System account. Cannot sign in.' }, 'System · Immutable') : null),
+            h('div', { class: 'muted' }, `${u.email} · ID #${u.id}${u.username === 'public' ? ' · Public library' : ''}`)
           ),
           h('label', { class: 'field', style: { margin: 0 } }, h('span', {}, 'ACL Role'), roleSel),
           h('label', { class: 'field', style: { margin: 0 } }, h('span', {}, 'Status'), statusSel),
-          h('button', {
+          sys ? null : h('button', {
             class: 'btn sm',
             onclick: async () => {
               api.setSession({ token: null, userId: u.id });
@@ -476,7 +480,7 @@ export async function openAdminUsersModal() {
               await refresh();
             }
           }, u.id === state.user?.id ? 'Active' : 'Use Account'),
-          u.id !== 1 ? h('button', {
+          u.id !== 1 && !sys ? h('button', {
             class: 'btn sm danger',
             onclick: async () => {
               if (!await confirmBox(`Delete user @${u.username}? Their items will be reassigned to @kyrpy.`)) return;
@@ -596,7 +600,7 @@ export async function openProjectsModal() {
       // Invite collaborator controls
       const inviteUserSel = h('select', {}, [
         h('option', { value: '' }, 'Select user to invite...'),
-        ...allUsers.map(u => h('option', { value: u.username }, `@${u.username} (${u.displayName || u.role})`))
+        ...allUsers.filter(u => !u.system).map(u => h('option', { value: u.username }, `@${u.username} (${u.displayName || u.role})`))
       ]);
       const inviteRoleSel = h('select', {}, Object.entries(PROJECT_ROLE_LABELS).map(([k, v]) => h('option', { value: k, selected: k === 'contributor' }, v)));
 
@@ -773,107 +777,379 @@ export async function openProjectsModal() {
  * 4. Collaborative Change List & Owner Approve / Reject Modal
  * ========================================================================== */
 export async function openChangesModal() {
-  const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '420px' } });
-  let statusFilter = '';
+  const host = h('div', { class: 'chg-modal' });
+  const TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
+  const PAGE = 100;            // cards rendered per step (lists can hold several hundred changes)
+  const CHUNK = 50;            // ids per bulk request, so a long selection shows progress
+  let statusFilter = 'pending';
+  let typeFilter = '', authorFilter = '', query = '';
+  let rows = [];               // the matching changes (lite, newest first)
+  let counts = { pending: 0, approved: 0, rejected: 0, all: 0 };
+  let shown = 0;               // rows[0..shown) have a card
+  let gen = 0;                 // refresh generation: drops stale responses
+  let busy = false;            // a bulk review is running
+  let loadDeferred = false;    // load() was asked for while busy: run it once the bulk review ends
+  let built = false;
+  const cards = new Map();     // id -> card parts
+  const selected = new Set();
+  const authors = new Map();   // authorId -> name, collected from every list loaded
+  let reloadTimer = null, reloadDirty = false, searchTimer = null;
 
-  const refresh = async () => {
-    const changes = await api.changes({ status: statusFilter });
-    state.pendingChangesCount = changes.filter(c => c.status === 'pending').length;
-    host.replaceChildren();
+  // one library reload after a burst of reviews (or when the modal closes), never one per click
+  const flushReload = async () => {
+    clearTimeout(reloadTimer); reloadTimer = null;
+    if (!reloadDirty) return;
+    reloadDirty = false;
+    try {
+      await reloadLibrary({ silent: false });
+      emit('change:reviewed', { deferred: true });
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  const scheduleReload = () => { reloadDirty = true; clearTimeout(reloadTimer); reloadTimer = setTimeout(flushReload, 1500); };
+  const filters = () => ({ targetType: typeFilter, authorId: authorFilter, q: query });
+  const hasFilters = () => Boolean(typeFilter || authorFilter || query);
+  const pendingRows = () => rows.filter(r => r.status === 'pending');
+  const verbOf = st => st === 'approved' ? 'approved' : st === 'rejected' ? 'rejected' : st;
 
-    host.append(
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-        h('div', { class: 'muted' }, 'All collaborative edits are recorded with before/after snapshots. Project Owners & Admins can Approve (apply) or Reject (roll back to previous version).'),
-        h('div', { class: 'row' },
-          ['', 'pending', 'approved', 'rejected'].map(st =>
-            h('button', {
-              class: `btn sm${statusFilter === st ? ' primary' : ''}`,
-              onclick: () => { statusFilter = st; refresh(); }
-            }, st ? st.toUpperCase() : 'ALL')
-          )
-        )
-      )
-    );
-
-    const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '380px', overflow: 'auto' } });
-    if (!changes.length) {
-      list.append(h('div', { class: 'muted', style: { padding: '24px', textAlign: 'center' } }, 'No change requests matching this filter.'));
+  // ---- toolbar ----
+  const tabBtns = {};
+  const tabs = h('div', { class: 'chg-tabs', role: 'tablist' },
+    [['pending', 'PENDING'], ['approved', 'APPROVED'], ['rejected', 'REJECTED'], ['', 'ALL']].map(([st, label]) => {
+      const badge = h('span', { class: `chg-count chg-count-${st || 'all'}` }, '0');
+      const b = h('button', { class: 'btn sm', role: 'tab', onclick: () => { if (statusFilter !== st && !busy) { statusFilter = st; load(); } } }, label, badge);
+      tabBtns[st] = { b, badge };
+      return b;
+    }));
+  const typeSel = h('select', { 'aria-label': 'Item type', onchange: () => { typeFilter = typeSel.value; load(); } },
+    h('option', { value: '' }, 'All item types'), TYPES.map(t => h('option', { value: t }, t)));
+  const authorSel = h('select', { 'aria-label': 'Author', onchange: () => { authorFilter = authorSel.value; load(); } },
+    h('option', { value: '' }, 'All authors'));
+  const search = h('input', {
+    type: 'search', placeholder: 'Search name, key, summary, author…', 'aria-label': 'Search changes',
+    oninput: () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { if (search.value.trim() !== query) { query = search.value.trim(); load(); } }, 300); }
+  });
+  const selectAll = h('input', {
+    type: 'checkbox', 'aria-label': 'Select every pending change in the list',
+    onchange: () => {
+      if (selectAll.checked) for (const r of pendingRows()) selected.add(r.id);
+      else selected.clear();
+      for (const card of cards.values()) if (card.box) card.box.checked = selected.has(card.ch.id);
+      updateToolbar();
     }
+  });
+  const selectAllText = h('span', {}, 'Select all');
+  const bulkNote = h('input', { type: 'text', placeholder: 'Note for bulk review (optional)', 'aria-label': 'Note for bulk review', class: 'chg-note' });
+  const approveSelBtn = h('button', { class: 'btn sm primary', onclick: () => reviewSelected('approve') }, '✓ Approve selected');
+  const rejectSelBtn = h('button', { class: 'btn sm danger', onclick: () => reviewSelected('reject') }, '✕ Reject selected');
+  const approveAllBtn = h('button', { class: 'btn sm chg-approve-all', onclick: () => approveAllMatching() }, '✓✓ Approve all');
+  const progress = h('span', { class: 'chg-progress muted', 'aria-live': 'polite' });
 
-    for (const ch of changes) {
-      const commentInput = h('input', { type: 'text', placeholder: 'Review note (optional)', value: ch.reviewComment || '', style: { width: '180px' } });
-      const statusColor = ch.status === 'approved' ? '#10b981' : ch.status === 'rejected' ? '#ef4444' : '#f59e0b';
-
-      list.append(
-        h('div', {
-          style: {
-            padding: '10px 12px',
-            border: '1px solid var(--line)',
-            borderLeft: `4px solid ${statusColor}`,
-            borderRadius: '10px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px'
-          }
-        },
-          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-            h('div', {},
-              h('strong', {}, `#${ch.id} [${ch.targetType.toUpperCase()}] ${ch.targetName || ch.targetKey}`),
-              h('span', { class: 'muted', style: { marginLeft: '8px' } }, `by @${ch.authorName} · ${ch.action} · ${ch.createdAt}`)
-            ),
-            h('span', { style: { color: statusColor, fontWeight: '700', fontSize: '11px', textTransform: 'uppercase' } }, ch.status)
-          ),
-          h('div', { style: { fontSize: '12px' } }, ch.title || ch.summary || (typeof ch.diffSummary === 'string' ? ch.diffSummary : '')),
-          ch.diffSummary && typeof ch.diffSummary === 'object'
-            ? h('div', { class: 'muted', style: { fontSize: '11px' } }, `Nodes: +${ch.diffSummary.addedNodes ?? 0} / ~${ch.diffSummary.modifiedNodes ?? 0} / -${ch.diffSummary.removedNodes ?? 0}${(ch.diffSummary.changedFields || []).length ? ` · Fields: ${ch.diffSummary.changedFields.join(', ')}` : ''}`)
-            : (ch.diffSummary && ch.diffSummary !== ch.title ? h('div', { class: 'muted', style: { fontSize: '11px' } }, String(ch.diffSummary)) : null),
-          ch.reviewedByName ? h('div', { class: 'muted', style: { fontSize: '11px' } }, `Reviewed by @${ch.reviewedByName} at ${ch.reviewedAt}${ch.reviewComment ? `: "${ch.reviewComment}"` : ''}`) : null,
-          ch.status === 'pending'
-            ? h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '4px' } },
-                commentInput,
-                h('button', {
-                  class: 'btn sm primary',
-                  onclick: async () => {
-                    try {
-                      await api.approveChange(ch.id, commentInput.value);
-                      await reloadLibrary();
-                      emit('change:reviewed', { id: ch.id, status: 'approved' });
-                      toast(`Change #${ch.id} approved and applied`, 'ok');
-                      await refresh();
-                    } catch (e) {
-                      toast(e.message, 'error');
-                    }
-                  }
-                }, '✓ Approve'),
-                h('button', {
-                  class: 'btn sm danger',
-                  onclick: async () => {
-                    try {
-                      await api.rejectChange(ch.id, commentInput.value);
-                      await reloadLibrary();
-                      emit('change:reviewed', { id: ch.id, status: 'rejected' });
-                      toast(`Change #${ch.id} rejected and rolled back`, 'ok');
-                      await refresh();
-                    } catch (e) {
-                      toast(e.message, 'error');
-                    }
-                  }
-                }, '✕ Reject & Rollback')
-              )
-            : null
-        )
-      );
+  const updateToolbar = () => {
+    for (const [st, { b, badge }] of Object.entries(tabBtns)) {
+      b.classList.toggle('primary', st === statusFilter);
+      b.setAttribute('aria-selected', String(st === statusFilter));
+      badge.textContent = String(counts[st || 'all'] ?? 0);
     }
-    host.append(list);
+    const pend = pendingRows();
+    const nSel = selected.size;
+    selectAll.disabled = busy || !pend.length;
+    selectAll.checked = pend.length > 0 && nSel >= pend.length && pend.every(r => selected.has(r.id));
+    selectAll.indeterminate = nSel > 0 && !selectAll.checked;
+    selectAllText.textContent = nSel ? `${nSel} selected` : `Select all (${pend.length})`;
+    approveSelBtn.textContent = `✓ Approve selected${nSel ? ` (${nSel})` : ''}`;
+    rejectSelBtn.textContent = `✕ Reject selected${nSel ? ` (${nSel})` : ''}`;
+    approveSelBtn.disabled = rejectSelBtn.disabled = busy || !nSel;
+    approveAllBtn.textContent = `✓✓ Approve all (${counts.pending || 0} matching)`;
+    approveAllBtn.disabled = busy || !counts.pending;
+    // filters stay put while a bulk review runs (a reload would rebuild the cards mid-run)
+    typeSel.disabled = authorSel.disabled = search.disabled = busy;
   };
 
-  await refresh();
+  // topbar badge + status bar follow every review at once
+  let countQueued = false;
+  const syncPendingCount = (delta = 0) => {
+    if (delta) state.pendingChangesCount = Math.max(0, (state.pendingChangesCount || 0) + delta);
+    if (countQueued) return;       // coalesce a bulk run's many updates into one topbar rebuild per frame
+    countQueued = true;
+    requestAnimationFrame(() => { countQueued = false; emit('changes:count', state.pendingChangesCount); });
+  };
+
+  // ---- list (rendered incrementally) ----
+  const list = h('div', { class: 'chg-list' });
+  const moreBtn = h('button', { class: 'btn sm', onclick: () => renderMore() }, 'Show more');
+  const sentinel = h('div', { class: 'chg-more' }, moreBtn);
+  const emptyMsg = h('div', { class: 'muted chg-empty' }, 'No change requests matching these filters.');
+  const io = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) renderMore(); }, { root: list, rootMargin: '300px' })
+    : null;
+
+  const setCardBusy = (card, on, action = '') => {
+    card.busy = on;
+    card.approveBtn.disabled = card.rejectBtn.disabled = on;
+    if (card.box) card.box.disabled = on;
+    card.el.classList.toggle('is-busy', on);
+    if (on) {
+      if (!action || action === 'approve') card.approveBtn.textContent = '…';
+      if (!action || action === 'reject') card.rejectBtn.textContent = '…';
+    } else {
+      card.approveBtn.textContent = '✓ Approve';
+      card.rejectBtn.textContent = '✕ Reject & Rollback';
+    }
+  };
+
+  const renderCard = ch => {
+    const pending = ch.status === 'pending';
+    const card = { ch, busy: false };
+    card.badge = h('span', { class: 'chg-badge' }, ch.status);
+    card.comment = h('input', { type: 'text', placeholder: 'Review note (optional)', 'aria-label': `Review note for change #${ch.id}`, value: ch.reviewComment || '', class: 'chg-note' });
+    card.approveBtn = h('button', { class: 'btn sm primary', onclick: () => reviewOne(ch.id, 'approve') }, '✓ Approve');
+    card.rejectBtn = h('button', { class: 'btn sm danger', onclick: () => reviewOne(ch.id, 'reject') }, '✕ Reject & Rollback');
+    card.box = pending ? h('input', {
+      type: 'checkbox', class: 'chg-check', 'aria-label': `Select change #${ch.id}`, checked: selected.has(ch.id),
+      onchange: () => { if (card.box.checked) selected.add(ch.id); else selected.delete(ch.id); updateToolbar(); }
+    }) : null;
+    card.actions = pending ? h('div', { class: 'row chg-actions' }, card.comment, card.approveBtn, card.rejectBtn) : null;
+    const diff = ch.diffSummary;
+    card.el = h('div', { class: `chg-card is-${ch.status}`, dataset: { id: String(ch.id) } },
+      h('div', { class: 'chg-head' },
+        card.box,
+        h('div', { class: 'chg-title' },
+          h('strong', {}, `#${ch.id} [${String(ch.targetType || '').toUpperCase()}] ${ch.targetName || ch.targetKey || ''}`),
+          h('span', { class: 'muted' }, `by @${ch.authorName} · ${ch.action} · ${ch.createdAt}`)),
+        card.badge),
+      h('div', { class: 'chg-summary' }, ch.title || ch.summary || (typeof diff === 'string' ? diff : '')),
+      diff && typeof diff === 'object'
+        ? h('div', { class: 'muted chg-meta' }, `Nodes: +${diff.addedNodes ?? 0} / ~${diff.modifiedNodes ?? 0} / -${diff.removedNodes ?? 0}${(diff.changedFields || []).length ? ` · Fields: ${diff.changedFields.join(', ')}` : ''}`)
+        : (diff && diff !== ch.title ? h('div', { class: 'muted chg-meta' }, String(diff)) : null),
+      ch.reviewedByName ? h('div', { class: 'muted chg-meta' }, `Reviewed by @${ch.reviewedByName} at ${ch.reviewedAt}${ch.reviewComment ? `: "${ch.reviewComment}"` : ''}`) : null,
+      card.actions);
+    cards.set(ch.id, card);
+    return card.el;
+  };
+
+  const updateMore = () => {
+    const left = rows.length - shown;
+    sentinel.hidden = left <= 0;
+    moreBtn.textContent = `Show more (${left} remaining)`;
+    emptyMsg.hidden = rows.length > 0 || cards.size > 0;
+  };
+  function renderMore() {
+    const next = rows.slice(shown, shown + PAGE);
+    if (!next.length) return updateMore();
+    const frag = document.createDocumentFragment();
+    for (const ch of next) frag.append(renderCard(ch));
+    shown += next.length;
+    list.insertBefore(frag, sentinel);
+    updateMore();
+  }
+
+  // a review landed: recolor the card in place; on the PENDING tab fade it out and drop it (no list re-render)
+  const markReviewed = (id, status) => {
+    const idx = rows.findIndex(r => r.id === id);
+    const row = idx >= 0 ? rows[idx] : null;
+    const was = row ? row.status : 'pending';
+    if (status === was) return false;
+    if (row) row.status = status;
+    if (was === 'pending') {
+      counts.pending = Math.max(0, (counts.pending || 0) - 1);
+      counts[status] = (counts[status] || 0) + 1;
+      syncPendingCount(-1);
+    }
+    selected.delete(id);
+    const card = cards.get(id);
+    if (card) {
+      card.el.classList.remove(`is-${was}`, 'is-busy');
+      card.el.classList.add(`is-${status}`, 'just-reviewed');
+      card.badge.textContent = status;
+      card.box?.remove(); card.box = null;
+      card.actions?.remove();
+    }
+    if (statusFilter === 'pending' && idx >= 0) {
+      rows.splice(idx, 1);
+      if (idx < shown) shown--;
+      if (card) {
+        cards.delete(id);
+        const el = card.el;
+        el.style.maxHeight = `${el.scrollHeight}px`;
+        requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('chg-leaving')));
+        setTimeout(() => { el.remove(); updateMore(); }, 450);
+      }
+    }
+    return true;
+  };
+
+  const applyResults = res => {
+    let ok = 0, failed = 0, skipped = 0;
+    const errors = [];
+    for (const r of res?.results || []) {
+      const card = cards.get(r.id);
+      if (r.ok) { ok++; markReviewed(r.id, r.status); continue; }
+      if (r.skipped) { skipped++; if (r.status) markReviewed(r.id, r.status); continue; }
+      failed++;
+      if (errors.length < 3) errors.push(`#${r.id}: ${r.error}`);
+      if (card) { setCardBusy(card, false); card.el.classList.add('has-error'); card.el.title = r.error || 'Review failed'; }
+    }
+    return { ok, failed, skipped, errors };
+  };
+
+  const refreshCounts = async () => {
+    try { counts = await api.changeCounts(filters()); } catch { /* keep the local counts */ }
+    if (!hasFilters()) { state.pendingChangesCount = counts.pending; syncPendingCount(); }
+    updateToolbar();
+  };
+
+  async function reviewOne(id, action) {
+    const card = cards.get(id);
+    if (!card || card.busy || busy) return;
+    setCardBusy(card, true, action);
+    card.el.classList.remove('has-error');
+    try {
+      const saved = action === 'approve' ? await api.approveChange(id, card.comment.value) : await api.rejectChange(id, card.comment.value);
+      const status = saved?.status || (action === 'approve' ? 'approved' : 'rejected');
+      if (status === 'pending') { setCardBusy(card, false); progress.textContent = `#${id} is still pending`; return; }
+      markReviewed(id, status);
+      progress.textContent = `#${id} ${verbOf(status)}`;
+      updateToolbar();
+      scheduleReload();
+    } catch (e) {
+      setCardBusy(card, false);
+      card.el.classList.add('has-error');
+      toast(e.message, 'error');
+    }
+  }
+
+  // reviews in chunks of CHUNK ids so a long run (a screen approval can take ~0.1 s server side) shows progress
+  async function runBulk(ids, action) {
+    busy = true;
+    const verb = action === 'approve' ? 'Approving' : 'Rejecting';
+    const targets = ids.map(id => cards.get(id)).filter(Boolean);
+    for (const card of targets) setCardBusy(card, true);
+    updateToolbar();
+    const sum = { ok: 0, failed: 0, skipped: 0, errors: [] };
+    const add = r => { sum.ok += r.ok; sum.failed += r.failed; sum.skipped += r.skipped; sum.errors.push(...r.errors); };
+    try {
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        progress.textContent = `${verb}… ${i}/${ids.length}`;
+        add(applyResults(await api.bulkReviewChanges({ ids: ids.slice(i, i + CHUNK), action, comment: bulkNote.value })));
+        updateToolbar();
+      }
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      busy = false;
+      for (const card of targets) if (card.busy && cards.get(card.ch.id) === card) setCardBusy(card, false);
+      const done = action === 'approve' ? 'Approved' : 'Rejected';
+      progress.textContent = `${done} ${sum.ok}${sum.skipped ? ` · ${sum.skipped} already reviewed` : ''}${sum.failed ? ` · ${sum.failed} failed` : ''}`;
+      if (sum.failed) toast(`${sum.failed} change(s) could not be ${action === 'approve' ? 'approved' : 'rejected'}: ${sum.errors.join('; ')}`, 'error');
+      else if (sum.ok) toast(`${done} ${sum.ok} change${sum.ok === 1 ? '' : 's'}`, 'ok');
+      updateToolbar();
+      if (sum.ok || sum.skipped) {
+        scheduleReload();
+        // approved/rejected tabs do not hold the reviewed pending rows: reload that list once
+        if (loadDeferred || statusFilter === 'approved' || statusFilter === 'rejected') { loadDeferred = false; load(); }
+        else refreshCounts();
+      } else if (loadDeferred) { loadDeferred = false; load(); }
+    }
+  }
+
+  async function reviewSelected(action) {
+    const ids = [...selected];
+    if (!ids.length || busy) return;
+    if (ids.length > 1) {
+      const ok = await confirmBox(`${action === 'approve' ? 'Approve' : 'Reject and roll back'} ${ids.length} selected changes?`,
+        { okLabel: `${action === 'approve' ? 'Approve' : 'Reject'} ${ids.length}`, danger: action === 'reject' });
+      if (!ok) return;
+    }
+    await runBulk(ids, action);
+  }
+
+  async function approveAllMatching() {
+    const n = counts.pending || 0;
+    if (!n || busy) return;
+    if (n > 1) {
+      const ok = await confirmBox(`Approve all ${n} pending changes matching the current filters? Each one is applied to its item.`,
+        { okLabel: `Approve ${n}`, danger: false });
+      if (!ok) return;
+    }
+    // the PENDING tab already holds every match; elsewhere fetch the pending ids (lite) for the same filters
+    let ids = statusFilter === 'pending' ? rows.map(r => r.id) : null;
+    if (!ids) {
+      progress.textContent = 'Collecting matching changes…';
+      try { ids = (await api.changes({ status: 'pending', lite: 1, ...filters() })).map(r => r.id); } catch (e) { progress.textContent = ''; toast(e.message, 'error'); return; }
+    }
+    if (ids.length) await runBulk(ids, 'approve');
+  }
+
+  const fillAuthors = changes => {
+    let grew = false;
+    for (const c of changes) {
+      if (c.authorId != null && !authors.has(String(c.authorId))) { authors.set(String(c.authorId), c.authorName || c.authorUsername || `user ${c.authorId}`); grew = true; }
+    }
+    if (!grew) return;
+    const cur = authorSel.value;
+    authorSel.replaceChildren(h('option', { value: '' }, 'All authors'),
+      ...[...authors].sort((a, b) => a[1].localeCompare(b[1])).map(([id, name]) => h('option', { value: id }, `@${name}`)));
+    authorSel.value = cur;
+  };
+
+  const build = () => {
+    built = true;
+    host.replaceChildren(
+      h('div', { class: 'muted' }, 'All collaborative edits are recorded with before/after snapshots. Project Owners & Admins can Approve (apply) or Reject (roll back to previous version).'),
+      h('div', { class: 'chg-toolbar' }, tabs, h('div', { class: 'chg-filters' }, typeSel, authorSel, search)),
+      h('div', { class: 'chg-toolbar chg-bulk' },
+        h('label', { class: 'chg-selall' }, selectAll, selectAllText),
+        bulkNote, approveSelBtn, rejectSelBtn, approveAllBtn, progress),
+      list);
+    io?.observe(sentinel);
+  };
+
+  // (re)load the list for the current tab and filters; reviews never call this
+  const refresh = async () => {
+    const my = ++gen;
+    if (built) progress.textContent = 'Loading…';
+    const [changes, cnt] = await Promise.all([
+      api.changes({ status: statusFilter, lite: 1, ...filters() }),
+      api.changeCounts(filters()).catch(() => null)
+    ]);
+    if (my !== gen) return;
+    rows = changes;
+    counts = cnt || {
+      pending: changes.filter(c => c.status === 'pending').length,
+      approved: changes.filter(c => c.status === 'approved').length,
+      rejected: changes.filter(c => c.status === 'rejected').length,
+      all: changes.length
+    };
+    if (!hasFilters()) { state.pendingChangesCount = counts.pending; syncPendingCount(); }
+    for (const id of [...selected]) if (!rows.some(r => r.id === id && r.status === 'pending')) selected.delete(id);
+    fillAuthors(changes);
+    if (!built) build();
+    cards.clear();
+    shown = 0;
+    list.replaceChildren(emptyMsg, sentinel);
+    renderMore();
+    list.scrollTop = 0;
+    progress.textContent = '';
+    updateToolbar();
+  };
+  const load = () => {
+    // a filter change that slips through during a bulk run (e.g. the debounced search) reloads once it is done
+    if (busy) { loadDeferred = true; return Promise.resolve(); }
+    return refresh().catch(e => { progress.textContent = ''; toast(`Could not load change requests: ${e.message}`, 'error'); });
+  };
+
+  // open at once, then load (the list can be long)
+  host.append(h('div', { class: 'muted', style: { padding: '24px', textAlign: 'center' } }, 'Loading change requests…'));
   modal({
     title: 'Collaborative Design Change List (Approve / Reject)',
     wide: true,
     content: host,
+    onClose: () => { clearTimeout(searchTimer); io?.disconnect(); flushReload(); },
     actions: close => [h('button', { class: 'btn primary', onclick: close }, 'Close')]
   });
+  try { await refresh(); } catch (e) {
+    host.replaceChildren(h('div', { class: 'muted', style: { padding: '24px', textAlign: 'center' } }, `Could not load change requests: ${e.message}`));
+  }
 }
 
 /* ============================================================================
@@ -1227,7 +1503,7 @@ export async function openLineageModal(type, id) {
   const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     h('div', { style: { padding: '12px', border: '1px solid var(--line)', borderRadius: '10px', background: 'rgba(46,155,255,0.08)' } },
       h('div', { style: { fontWeight: '700', fontSize: '14px' } }, `${lineage.itemName || lineage.item?.name} (${lineage.itemKey || lineage.item?.key})`),
-      h('div', { class: 'muted', style: { marginTop: '4px' } }, `Current Creator: @${lineage.creator?.username || 'kyrpy'} · Root Original Owner: @${lineage.rootOwner?.username || 'kyrpy'}`),
+      h('div', { class: 'muted', style: { marginTop: '4px' } }, `Current Creator: ${ownerLabel(lineage.creator?.username || 'kyrpy')} · Root Original Owner: ${ownerLabel(lineage.rootOwner?.username || 'kyrpy')}`),
       h('div', { class: 'muted' }, `Visibility: ${lineage.visibility || lineage.item?.visibility} · Project ID: #${lineage.projectId || lineage.item?.projectId}`)
     ),
     h('div', { style: { fontWeight: '700', fontSize: '12px' } }, 'Provenance & Clone Chain (Root → Current):'),

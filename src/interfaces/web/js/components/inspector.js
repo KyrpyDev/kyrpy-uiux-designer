@@ -13,6 +13,7 @@ import {
   clampNodeToContainer, fitContainerToScreenBox
 } from '/domain/geometry.js';
 import { ANIMATION_TYPES, TRIGGERS, EASINGS } from '/domain/animation.js';
+import { isRepeaterNode, repeaterConfig, repeaterTemplate, repeaterPlan, REPEATER_ATTR, REPEATER_MAX_ITEMS } from '/domain/repeater.js';
 import { SURFACE_ROLES } from '/domain/theme.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
@@ -51,6 +52,7 @@ const TAG_TYPE_NAME = {
 
 export function elementTypeTitle(e) {
   if (!e) return 'Element';
+  if (isRepeaterNode(e, state.library?.elements)) return `Repeater · ${e.name || 'repeater'}`;
   if (isCarouselContainerNode(e, state.library?.elements)) {
     return `Carousel Container · ${e.name || 'carousel'}`;
   }
@@ -79,9 +81,11 @@ function openIconPicker(currentId, onPick) {
     clear(grid);
     const terms = query.split(/\s+/).filter(Boolean);
     const list = icons.filter(it => terms.every(t => hayOf(it).includes(t)));
-    count.textContent = `${list.length} of ${icons.length}`;
+    // thousands of pack icons: draw the first 300 matches only (each is an <img> of the icon svg)
+    const shown = list.slice(0, 300);
+    count.textContent = shown.length < list.length ? `${shown.length} shown · ${list.length} of ${icons.length}` : `${list.length} of ${icons.length}`;
     if (!list.length) grid.append(h('div', { class: 'empty', style: { gridColumn: '1 / -1' } }, 'No icon matches that search.'));
-    for (const it of list) {
+    for (const it of shown) {
       grid.append(h('button', {
         class: `icon-pick${it.id === currentId ? ' on' : ''}`,
         title: it.key,
@@ -404,8 +408,15 @@ export class Inspector {
       secs.push(this.menuSection(e.refId));
     }
 
-    if (isContainerNode(e, state.library.elements)) {
+    if (isRepeaterNode(e, state.library.elements)) {
+      secs.push(this.repeaterSection(e));
+    } else if (isContainerNode(e, state.library.elements)) {
       secs.push(...this.containerSections(e));
+    } else if (e.parentId != null && isRepeaterNode(d.byId(e.parentId), state.library.elements)) {
+      const rep = d.byId(e.parentId);
+      secs.push(this.section(`Repeater template · ${rep.name || 'repeater'}`,
+        h('div', { class: 'muted', style: { fontSize: '11px' } }, `This item is repeated ${repeaterConfig(rep).itemCount}× by its repeater; edit it once, every copy follows. Drop another item on the repeater to replace it.`),
+        h('div', { class: 'row wrap' }, ibtn('selectBox', 'Select repeater', () => d.select([rep.id])))));
     } else if (e.parentId != null) {
       const parentCont = d.byId(e.parentId);
       if (parentCont && isContainerNode(parentCont, state.library.elements)) {
@@ -469,6 +480,54 @@ export class Inspector {
     // animations
     secs.push(this.animationSection(e));
     return secs;
+  }
+
+  /** Repeater controls: layout, 2D/3D, item count, gap, slot size, speed, autoplay, perspective. Every change re-renders the canvas. */
+  repeaterSection(e) {
+    const d = this.d, cfg = repeaterConfig(e), A = REPEATER_ATTR;
+    const tpl = repeaterTemplate(d.nodes, e.id);
+    const extra = Math.max(0, d.nodes.filter(n => n.parentId === e.id).length - 1);   // children beyond the template are ignored by the renderer
+    const set = async patchAttrs => {
+      await d.patchNode(e.id, { attrs: { ...(e.attrs || {}), ...patchAttrs } });
+      // keep the stored template on the first slot so its selection box matches the first copy
+      const cur = d.byId(e.id), t = repeaterTemplate(d.nodes, e.id);
+      if (cur && t && ['use', 'rect', 'image'].includes(t.tag)) {
+        const c2 = repeaterConfig(cur), b = nodeBBox(t, d.nodes);
+        const first = repeaterPlan(c2, containerInnerBox(cur, d.nodes, state.library.elements), { w: c2.itemWidth || b.w || 64, h: c2.itemHeight || b.h || 64 }).copies[0];
+        if (Math.abs(first.x - b.x) > 0.5 || Math.abs(first.y - b.y) > 0.5) await d.patchNode(t.id, { attrs: { ...t.attrs, x: first.x, y: first.y } }, { quiet: true });
+      }
+    };
+    const ring = (cfg.layout === 'carousel' || cfg.layout === 'roll') && cfg.dimension === '3d';
+    const dimToggle = h('div', { class: 'row', role: 'group', 'aria-label': '2D or 3D' },
+      ...['2d', '3d'].map(v => h('button', { type: 'button', class: `btn small${cfg.dimension === v ? ' primary' : ''}`, 'aria-pressed': String(cfg.dimension === v), 'data-f': `rp-dim-${v}`,
+        onclick: () => set({ [A.dimension]: v }) }, v.toUpperCase())));
+    return this.section(`Repeater · ${cfg.layout} · ${cfg.dimension.toUpperCase()} · ${cfg.itemCount}×`,
+      h('div', { class: 'muted', style: { fontSize: '11px' } },
+        tpl ? `Template: ${tpl.name || tpl.refType || tpl.tag}. The canvas simulates ${cfg.itemCount} copies; drop another library item on the repeater to replace it.`
+          : 'Drop any icon, button or element onto this repeater: it becomes the template that is repeated.'),
+      extra > 0 ? h('div', { class: 'muted', role: 'note', 'data-f': `rp-extra-${e.id}`, style: { fontSize: '11px', color: 'var(--warn, #d97706)' } },
+        `This repeater holds ${extra + 1} children; only the first (by order) is repeated, the other ${extra} ${extra === 1 ? 'is' : 'are'} not drawn. Drag them out or delete them.`) : null,
+      h('div', { class: 'grid2' },
+        this.field('Layout', this.select(`rp-layout-${e.id}`, cfg.layout, [
+          ['vertical', 'Vertical list'], ['horizontal', 'Horizontal row'], ['carousel', 'Carousel'], ['roll', 'Roll (ticker / wheel)'], ['slide', 'Slide (one at a time)'], ['scroll', 'Scroll (clipped overflow)']
+        ], v => set({ [A.layout]: v }))),
+        this.field('Dimension', dimToggle)),
+      h('div', { class: 'grid2' },
+        this.field(`Item count (1–${REPEATER_MAX_ITEMS})`, this.num(`rp-count-${e.id}`, cfg.itemCount, v => set({ [A.itemCount]: Math.max(1, Math.min(REPEATER_MAX_ITEMS, Math.round(v))) }), { min: 1, max: REPEATER_MAX_ITEMS, step: 1 })),
+        this.field('Gap (px)', this.num(`rp-gap-${e.id}`, cfg.gap, v => set({ [A.gap]: Math.max(0, v) }), { min: 0, step: 2 }))),
+      h('div', { class: 'grid2' },
+        this.field('Item width (0 = template)', this.num(`rp-iw-${e.id}`, cfg.itemWidth, v => set({ [A.itemWidth]: Math.max(0, v) }), { min: 0, step: 1 })),
+        this.field('Item height (0 = template)', this.num(`rp-ih-${e.id}`, cfg.itemHeight, v => set({ [A.itemHeight]: Math.max(0, v) }), { min: 0, step: 1 }))),
+      h('div', { class: 'grid2' },
+        this.field('Speed (ms per item)', this.num(`rp-speed-${e.id}`, cfg.speed, v => set({ [A.speed]: Math.max(200, v) }), { min: 200, step: 100 })),
+        this.field('Autoplay', h('label', { class: 'row', style: { paddingTop: '5px' } },
+          h('input', { type: 'checkbox', checked: cfg.autoplay, 'data-f': `rp-auto-${e.id}`, onchange: ev => set({ [A.autoplay]: ev.target.checked ? 'true' : 'false' }) }),
+          h('span', {}, cfg.autoplay ? 'Playing' : 'Paused')))),
+      h('div', { class: 'grid2' },
+        ['slide', 'scroll'].includes(cfg.layout) ? this.field('Direction', this.select(`rp-dir-${e.id}`, cfg.direction, [['vertical', 'Vertical'], ['horizontal', 'Horizontal']], v => set({ [A.direction]: v }))) : null,
+        cfg.dimension === '3d' ? this.field('Perspective (px)', this.num(`rp-persp-${e.id}`, cfg.perspective, v => set({ [A.perspective]: Math.max(100, v) }), { min: 100, step: 50 })) : null),
+      ring ? h('div', { class: 'muted', style: { fontSize: '11px' } }, cfg.layout === 'carousel' ? '3D carousel: the copies turn on a ring around the vertical axis.' : '3D roll: the copies turn on a cylinder around the horizontal axis (picker wheel).') : null,
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Animations follow the canvas "Animate" toggle; export emits the template once plus a small runtime that repeats it.'));
   }
 
   /** Container & Carousel Container Inspector Sections (inner/outer margins, fixed/responsive, fit to device screen, sub-elements, 2D/3D roll). */

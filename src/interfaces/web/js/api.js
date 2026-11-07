@@ -36,6 +36,27 @@ function safeStorageSet(key, val) {
   }
 }
 
+// read-cache key of a GET: the icon version a client echoes back (`iconsSince`) does not change what the response
+// means, so it is left out (one entry per library query instead of one per icon version)
+export function cacheKeyFor(url) {
+  return STORAGE_CACHE_PREFIX + String(url).replace(/([?&])iconsSince=[^&]*(&|$)/, (m, a, b) => (b ? a : '')).replace(/[?&]$/, '');
+}
+
+// drop entries written under the old per-version keys
+(function pruneVersionedLibraryCache() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(STORAGE_CACHE_PREFIX) && k.includes('iconsSince=')) stale.push(k);
+    }
+    stale.forEach(k => localStorage.removeItem(k));
+  } catch {
+    // storage disabled
+  }
+})();
+
 export function getAuthSession() {
   return {
     token: safeStorageGet(STORAGE_TOKEN),
@@ -92,15 +113,16 @@ async function req(method, url, body) {
     const data = ct.includes('json') ? await r.json() : await r.text();
     if (!r.ok) throw new ApiError(data?.error?.message || r.statusText, data?.error);
 
-    if (method === 'GET' && ct.includes('json')) {
-      safeStorageSet(STORAGE_CACHE_PREFIX + url, JSON.stringify(data));
+    // an `icons: null` answer ("your list is current") must not replace the cached full list
+    if (method === 'GET' && ct.includes('json') && !(data && data.iconSummary && data.icons === null)) {
+      safeStorageSet(cacheKeyFor(url), JSON.stringify(data));
     }
     return data;
   } catch (err) {
     if (err instanceof ApiError) throw err;
     // Network / offline fallback
     if (method === 'GET') {
-      const cached = safeStorageGet(STORAGE_CACHE_PREFIX + url);
+      const cached = safeStorageGet(cacheKeyFor(url));
       if (cached) {
         try {
           return JSON.parse(cached);
@@ -108,7 +130,8 @@ async function req(method, url, body) {
           // ignore
         }
       }
-    } else {
+    } else if (!url.startsWith('/api/auth/')) {
+      // never queue sign-in / profile / password requests: they would sit in localStorage in plain text
       const box = getOfflineOutbox();
       box.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), method, url, body, queuedAt: new Date().toISOString() });
       saveOfflineOutbox(box);
@@ -118,6 +141,19 @@ async function req(method, url, body) {
 }
 
 const PLURAL = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens' };
+
+/** GET without the offline localStorage cache (icon catalog pages, sprites). `text` returns the body as text. */
+async function iconGet(url, text = false) {
+  const { token, userId, projectId } = getAuthSession();
+  const headers = { 'x-user-id': String(userId || 1), 'x-project-id': String(projectId || 1) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) {
+    const data = await r.json().catch(() => null);
+    throw new ApiError(data?.error?.message || r.statusText, data?.error);
+  }
+  return text ? r.text() : r.json();
+}
 
 export const api = {
   get: u => req('GET', u),
@@ -153,9 +189,15 @@ export const api = {
     if (params.projectIds && params.projectIds.length) qs.set('projectIds', Array.isArray(params.projectIds) ? params.projectIds.join(',') : String(params.projectIds));
     if (params.visibility) qs.set('visibility', params.visibility);
     if (params.includePublic !== undefined) qs.set('includePublic', params.includePublic ? '1' : '0');
+    if (params.iconSummary) qs.set('iconSummary', '1');
+    if (params.iconsSince) qs.set('iconsSince', String(params.iconsSince));
     const s = qs.toString();
     return api.get(`/api/library${s ? `?${s}` : ''}`);
   },
+  /* icon catalog (large libraries): uncached GETs so thousands of icon pages never land in localStorage */
+  iconSearch: (params = {}) => iconGet(`/api/icons/search?${new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''))}`),
+  iconsFull: ids => iconGet(`/api/icons/full?ids=${ids.join(',')}`),
+  iconSprite: (ids, theme) => iconGet(`/api/icons/sprite?${new URLSearchParams({ ids: ids.join(','), ...(theme ? { theme } : {}) })}`, true),
   settings: patch => api.put('/api/settings', patch),
 
   list: (type, q = '', opts = {}) => {
@@ -239,6 +281,12 @@ export const api = {
   register: body => api.post('/api/auth/register', body),
   logout: () => api.post('/api/auth/logout', {}),
   me: () => api.get('/api/auth/me'),
+  profile: () => api.get('/api/auth/profile'),
+  updateProfile: body => api.put('/api/auth/profile', body),
+  changePassword: body => api.post('/api/auth/profile/password', body),
+  profileSessions: () => api.get('/api/auth/profile/sessions'),
+  revokeSession: sid => api.del(`/api/auth/profile/sessions/${encodeURIComponent(sid)}`),
+  revokeOtherSessions: () => api.post('/api/auth/profile/sessions/revoke-others', {}),
   users: () => api.get('/api/users'),
   createUser: body => api.post('/api/users', body),
   updateUser: (id, body) => api.put(`/api/users/${id}`, body),
@@ -273,6 +321,16 @@ export const api = {
   createChange: body => api.post('/api/changes', body),
   approveChange: (id, comment = '') => api.post(`/api/changes/${id}/approve`, { comment }),
   rejectChange: (id, comment = '') => api.post(`/api/changes/${id}/reject`, { comment }),
+  changeCounts: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/changes/counts${s ? `?${s}` : ''}`);
+  },
+  /** body: { ids, action: 'approve'|'reject', comment } or { filter: { targetType, authorId, q }, action } */
+  bulkReviewChanges: body => api.post('/api/changes/bulk', body),
 
   // ---- Editable Templates (Devices & Buttons) ----
   templateDevices: (projectId = null) =>

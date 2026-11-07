@@ -3,6 +3,7 @@ import { nodeBBox } from '../../domain/geometry.js';
 import { suffixIds } from '../../domain/svg.js';
 import { TYPES } from '../../domain/entities.js';
 import { bindMenus } from '../../domain/menu-runtime.js';
+import { repeaterPlan, repeaterMarkup, bindRepeaters } from '../../domain/repeater.js';
 import * as T from './templates.js';
 
 const stripAnimations = svg => svg.replace(/<style>[\s\S]*?<\/style>/, '');
@@ -26,7 +27,8 @@ export class ExportService {
     if (!svc) throw new ValidationError(`unknown type ${type}`);
     const d = svc.get(idOrKey);
     const themeKey = theme || this.settings.get().theme;
-    let content = this.render.svg(type, d.id, themeKey, { size, frame, emitIds: true });
+    // repeaters export their static first frame (the html bundle animates them through its runtime)
+    let content = this.render.svg(type, d.id, themeKey, { size, frame, emitIds: true, repeaterMode: 'static' });
     if (!animated) content = stripAnimations(content);
     return { filename: `${d.key}${theme ? `-${theme}` : ''}.svg`, content: xml(content), contentType: 'image/svg+xml' };
   }
@@ -61,9 +63,9 @@ export class ExportService {
       const svg = {}, inline = [];
       for (const th of themes) {
         const path = `svg/screens/${th.key}/${s.key}.svg`;
-        add(path, xml(this.render.screenSvg(s.id, th.key, { emitIds: true })));
+        add(path, xml(this.render.screenSvg(s.id, th.key, { emitIds: true, repeaterMode: 'static' })));
         svg[th.key] = path;
-        inline.push(suffixIds(this.render.screenSvg(s.id, th.key, { emitIds: true, standalone: false }), th.key).replace('<svg', `<svg data-theme="${th.key}"`));
+        inline.push(suffixIds(this.render.screenSvg(s.id, th.key, { emitIds: true, standalone: false, repeaterMode: 'runtime' }), th.key).replace('<svg', `<svg data-theme="${th.key}"`));
       }
 
       const links = linkRows.filter(l => l.fromScreenId === s.id && keyById.has(l.toScreenId)).map(l => {
@@ -119,7 +121,7 @@ export class ExportService {
                 for (const t of ['button', 'element']) this.render.context(primary, full.nodes).lib[t].forEach((_, i) => used[t].add(i));
                 used.element.add(el.id);
                 overlays.set(id, { id, kind: c.type, side, key: el.key, label: el.label || el.name, width: el.width, height: el.height,
-                  svgs: themes.map(th => suffixIds(this.render.boxSvg('element', el.id, th.key, { emitIds: true, standalone: false }), `${th.key}-${id}`).replace('<svg', `<svg data-theme="${th.key}"`)) });
+                  svgs: themes.map(th => suffixIds(this.render.boxSvg('element', el.id, th.key, { emitIds: true, standalone: false, repeaterMode: 'runtime' }), `${th.key}-${id}`).replace('<svg', `<svg data-theme="${th.key}"`)) });
               }
               actions.push({ ...base, element: el.key, ...(side ? { side } : {}), overlay: id });
             } else if (c.type === 'toolbar') {
@@ -158,7 +160,7 @@ export class ExportService {
     });
     const elementInfos = [...used.element].map(id => {
       const e = S.element.get(id), file = `svg/elements/${e.key}.svg`;
-      add(file, xml(this.render.boxSvg('element', e.id, primary.key, { emitIds: true })));
+      add(file, xml(this.render.boxSvg('element', e.id, primary.key, { emitIds: true, repeaterMode: 'static' })));
       return { key: e.key, label: e.label, htmlTag: e.meta?.htmlTag || 'div', descriptionDev: e.descriptionDev, file };
     });
     if (iconIds.length) add('svg/sprite.svg', xml(this.render.sprite(primary.key, iconIds)));
@@ -175,13 +177,16 @@ export class ExportService {
       screens: screenInfos.map(({ inline, notes, overlays, actionRows, ...s }) => s), icons: iconInfos, buttons: buttonInfos, elements: elementInfos
     };
     const runtime = bindMenus.toString();
+    // repeater containers: the page holds each template once; this runtime repeats it itemCount times with the chosen effect
+    const repeaterRuntime = [repeaterPlan, repeaterMarkup, bindRepeaters].map(f => f.toString()).join('\n');
     add('index.html', T.indexHtml({ screens: manifest.screens, icons: iconInfos, themes, primary, title, thumbs }));
     add('css/themes.css', T.themesCss(themes));
     add('css/app.css', T.APP_CSS);
-    add('js/app.js', T.appJs(runtime));
+    add('js/app.js', T.appJs(runtime, repeaterRuntime));
     add('js/screens.js', T.screensJs(manifest));
     add('ts/app.ts', T.appTs());
     add('ts/menu.ts', T.menuTs(runtime));
+    add('ts/repeater.ts', T.repeaterTs(repeaterRuntime));
     add('ts/types.ts', T.TYPES_TS);
     add('ts/screens.ts', T.screensTs(manifest));
     add('tsconfig.json', T.TSCONFIG);

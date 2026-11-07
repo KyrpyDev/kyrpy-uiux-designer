@@ -17,6 +17,7 @@ import { SEED_VERSION, seedRows } from '../../domain/schema-registry-seed.js';
 import { BUILTIN_ARTIFACTS, TEMPLATE_VERSION } from '../../domain/ai-pack-templates.js';
 import { createHash } from 'node:crypto';
 import { AGENT_USERNAME, AGENT_EMAIL, AGENT_DISPLAY_NAME } from '../../domain/agent-user.js';
+import { ensurePublicUser, reownPublicRows } from '../../../domain/system-users.js';
 
 /** One-time migrations of the MCP layer. Append only; never edit a released entry. */
 export const MCP_MIGRATIONS = [
@@ -245,6 +246,53 @@ CREATE INDEX IF NOT EXISTS idx_version_items_project ON version_items(project_id
         if (columnsOf(db, t).includes('content_hash')) db.exec(`UPDATE ${t} SET content_hash = NULL`);   // fresh DBs get the column later
       }
     }
+  },
+  {
+    // the immutable `public` system user owns the whole public library (domain/system-users.js);
+    // every visibility='public' row (6 design tables + trash) is re-owned to it once. SQLite only: PG gets it by the next push.
+    id: 'm9-001-public-user', pg: false,
+    run: db => { ensureAgentUser(db); reownPublicRows(db, ensurePublicUser(db)); }   // agent first: keeps its historical id
+  },
+  {
+    // account (user-wide) API keys: `kind` column, project_id nullable. SQLite cannot relax NOT NULL in place,
+    // so the table is rebuilt (foreign keys are off during the schema pass). PG parity (kind, nullable project_id) is in postgres/mcp-pg-schema.js.
+    id: 'm11-001-account-keys', pg: false,
+    run: db => {
+      const cols = db.prepare('PRAGMA table_info(api_keys)').all();
+      if (!cols.length) return;
+      const hasKind = cols.some(c => c.name === 'kind');
+      const projectNotNull = cols.find(c => c.name === 'project_id')?.notnull === 1;
+      if (hasKind && !projectNotNull) return;
+      const keep = cols.map(c => c.name).filter(n => n !== 'kind');
+      db.exec(`
+CREATE TABLE api_keys_m11 (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid             TEXT NOT NULL UNIQUE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id      INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'project' CHECK (kind IN ('project','account')),
+  name            TEXT NOT NULL,
+  prefix          TEXT NOT NULL,
+  key_hash        TEXT NOT NULL UNIQUE,
+  scopes          TEXT NOT NULL DEFAULT '["read"]',
+  expires_at      TEXT,
+  last_used_at    TEXT,
+  last_used_ip    TEXT,
+  revoked_at      TEXT,
+  revoked_by      INTEGER,
+  rotated_from_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+  rotated_to_id   INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context     TEXT NOT NULL DEFAULT '{}',
+  CHECK ((kind = 'project' AND project_id IS NOT NULL) OR (kind = 'account' AND project_id IS NULL))
+);
+INSERT INTO api_keys_m11 (${keep.join(', ')}) SELECT ${keep.join(', ')} FROM api_keys;
+DROP TABLE api_keys;
+ALTER TABLE api_keys_m11 RENAME TO api_keys;
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, revoked_at);
+CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id, revoked_at);`);
+    }
   }
 ];
 
@@ -460,6 +508,7 @@ export function applyMcpSchema(db) {
   try {
     runMigrations(db, report);
     ensureAgentUser(db);
+    ensurePublicUser(db);
     dropGlobalKeyUnique(db, report);
     ensureMcpContextColumns(db, report);
     ensureIdentity(db, report);

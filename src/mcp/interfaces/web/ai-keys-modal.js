@@ -8,12 +8,14 @@
 import { h, modal, toast, confirmBox } from '/js/dom.js';
 import { api } from '/js/api.js';
 import { state } from '/js/state.js';
+import { connectPanel } from './connect-panel.js';
 
 const EXPIRY = [['30', '30 days'], ['90', '90 days (recommended)'], ['365', '1 year'], ['never', 'Never expires']];
 const SCOPE_INFO = {
   read: 'Read the design system, search and download items (always on)',
   request: 'Ask for missing items (item requests)',
-  propose: 'Propose new or changed items as a reviewable changeset (never approves)'
+  propose: 'Propose new or changed items as a reviewable changeset (never approves)',
+  create: 'Account keys: create new projects of yours (clone a design into a new project)'
 };
 const STATUS_LABEL = { active: 'Active', rotating: 'Rotating (grace period)', expired: 'Expired', revoked: 'Revoked' };
 
@@ -35,8 +37,6 @@ function injectStyles() {
 .aik-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .aik-chip { display: inline-block; font-size: 10px; padding: 1px 6px; margin: 1px 2px 1px 0; border-radius: 9px; background: rgba(46,155,255,.18); }
 .aik-st-active { color: #3fb950; } .aik-st-rotating { color: #f5b544; } .aik-st-expired, .aik-st-revoked { color: var(--muted); }
-.aik-snippet { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre; overflow-x: auto;
-  background: #060a13; border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 6px 0 0; color: var(--text); }
 .aik-scopes label { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; margin: 2px 0; color: var(--text); }
 .aik-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
 @media (max-width: 720px) { .aik { width: auto; } .aik-table .aik-hide-sm { display: none; } .aik .field.grow { flex: 1 1 100%; } }
@@ -69,37 +69,15 @@ async function copy(text, what) {
   catch { toast('Copy failed — select the text and copy it by hand', 'error'); }
 }
 
-function clientSnippets(key, project) {
-  const url = `${location.origin}/mcp`;
-  return [
-    ['Claude Code', `claude mcp add --transport http kyrpy-uiux ${url} \\\n  --header "Authorization: Bearer ${key}"`],
-    ['.mcp.json', JSON.stringify({ mcpServers: { 'kyrpy-uiux': { type: 'http', url, headers: { Authorization: 'Bearer ${KYRPY_UIUX_API_KEY}' } } } }, null, 2)
-      + `\n\n# shell / .env (never commit):\nKYRPY_UIUX_API_KEY=${key}`],
-    ['Generic', `MCP endpoint:  ${url}\nTransport:     Streamable HTTP\nHeader:        Authorization: Bearer ${key}\nProject:       ${project?.key || ''}`]
-  ];
-}
-
 /** One-time panel that shows a new plaintext key and ready-to-paste client configuration. */
 function revealPanel(result, project) {
   const secret = h('input', { class: 'aik-secret', type: 'text', readonly: true, value: result.key, 'aria-label': 'New API key', onfocus: e => e.target.select() });
-  const snippets = clientSnippets(result.key, project);
-  const pre = h('pre', { class: 'aik-snippet' }, snippets[0][1]);
-  const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  snippets.forEach(([label, text], i) => tabs.append(h('button', {
-    class: i === 0 ? 'on' : '', role: 'tab', 'aria-selected': i === 0 ? 'true' : 'false',
-    onclick: e => {
-      tabs.querySelectorAll('button').forEach(b => { b.classList.remove('on'); b.setAttribute('aria-selected', 'false'); });
-      e.currentTarget.classList.add('on'); e.currentTarget.setAttribute('aria-selected', 'true');
-      pre.textContent = text;
-    }
-  }, label)));
   return h('div', { class: 'aik-card aik-reveal', role: 'status', 'aria-live': 'polite' },
-    h('h4', {}, `Key "${result.apiKey.name}" for ${result.apiKey.projectName || project?.name || 'project'}`),
+    h('h4', {}, `Key "${result.apiKey.name}" for ${result.apiKey.kind === 'account' ? 'all your projects (account key)' : result.apiKey.projectName || project?.name || 'project'}`),
     h('div', { class: 'row' }, secret, h('button', { class: 'btn sm primary', onclick: () => copy(result.key, 'Key') }, 'Copy key')),
     h('div', { class: 'aik-warn' }, '⚠ Copy it now — this key is shown only once. Store it in your AI client or an environment variable, never in the repository.'),
-    h('div', { class: 'row spread' }, tabs, h('button', { class: 'btn sm', onclick: () => copy(pre.textContent, 'Configuration') }, 'Copy config')),
-    pre,
-    h('div', { class: 'muted', style: { fontSize: '12px', marginTop: '6px' } }, 'Then tell your agent: “Run uiux_init for this project.”')
+    h('h4', { style: { marginTop: '10px' } }, 'Connect your AI coder with this key'),
+    connectPanel({ key: result.key, projects: project ? [project] : [], projectId: project?.id ?? null, keyKind: result.apiKey.kind === 'account' ? 'account' : 'project' })
   );
 }
 
@@ -123,10 +101,11 @@ export async function openAiKeysModal() {
     host.replaceChildren(
       h('div', { class: 'muted', style: { fontSize: '12px' } },
         'API keys let an AI coding agent (Claude Code, Cursor, Antigravity …) read this designer’s design system for one project and propose changes. ',
-        'Each key belongs to you and one project you own. Proposals always need your approval in the designer.'),
+        'A project key belongs to one project you own. An account key works on every project you can see: on first use the agent lists them with their versions and asks you to clone one into a new project or edit one of yours at a version. Proposals always need your approval in the designer.'),
       reveal || '',
       createCard(owned),
       keysCard(keys),
+      connectCard(owned),
       owned.length ? settingsCard(owned) : ''
     );
   };
@@ -139,10 +118,9 @@ export async function openAiKeysModal() {
   };
 
   function createCard(owned) {
-    if (!owned.length) {
-      return h('div', { class: 'aik-card' }, h('h4', {}, 'Create a key'),
-        h('div', { class: 'aik-empty' }, 'You don’t own any project yet. Create one from Collaborate → Projects, then come back.'));
-    }
+    const kind = h('select', { 'aria-label': 'Key type' },
+      h('option', { value: 'project', selected: !!owned.length, disabled: !owned.length }, 'Project key — one project'),
+      h('option', { value: 'account', selected: !owned.length }, 'Account key — all my projects'));
     const name = h('input', { type: 'text', placeholder: 'e.g. Claude Code — laptop', maxlength: '80' });
     const project = h('select', {}, owned.map(p => h('option', { value: String(p.id), selected: p.id === state.activeProjectId }, `${p.name} (${p.key})`)));
     const expiry = h('select', {}, EXPIRY.map(([v, l]) => h('option', { value: v, selected: v === '90' }, l)));
@@ -150,19 +128,33 @@ export async function openAiKeysModal() {
       const box = h('input', { type: 'checkbox', checked: true, disabled: s === 'read', value: s });
       return { s, box, el: h('label', {}, box, h('span', {}, h('strong', {}, s), ` — ${info}`)) };
     });
+    const projField = h('label', { class: 'field' }, h('span', {}, 'Project'), project);
+    const syncKind = () => {
+      const acc = kind.value === 'account';
+      projField.hidden = acc;
+      for (const x of scopeBoxes) {
+        const allowed = acc || x.s !== 'create'; // "create" (new projects) only for account keys
+        x.el.hidden = !allowed;
+        if (!allowed) x.box.checked = false; else if (x.s !== 'read' && !x.box.dataset.touched) x.box.checked = true;
+      }
+    };
+    for (const x of scopeBoxes) x.box.addEventListener('change', () => { x.box.dataset.touched = '1'; });
+    kind.addEventListener('change', syncKind);
+    syncKind();
     const btn = h('button', {
       class: 'btn primary', style: { alignSelf: 'flex-end' },
       onclick: async () => {
         if (!name.value.trim()) { toast('Give the key a name so you can recognise it later', 'error'); name.focus(); return; }
         btn.disabled = true;
         try {
+          const acc = kind.value === 'account';
           const result = await secretRequest('POST', '/api/me/api-keys', {
             name: name.value.trim(),
-            projectId: Number(project.value),
+            ...(acc ? { kind: 'account' } : { projectId: Number(project.value) }),
             scopes: scopeBoxes.filter(x => x.box.checked).map(x => x.s),
             expiresInDays: expiry.value === 'never' ? null : Number(expiry.value)
           });
-          reveal = revealPanel(result, owned.find(p => p.id === Number(project.value)));
+          reveal = revealPanel(result, acc ? null : owned.find(p => p.id === Number(project.value)));
           toast('API key created — copy it now', 'ok');
           await render();
         } catch (e) { toast(e.message, 'error'); }
@@ -172,7 +164,8 @@ export async function openAiKeysModal() {
     return h('div', { class: 'aik-card' }, h('h4', {}, 'Create a key'),
       h('div', { class: 'row wrap' },
         h('label', { class: 'field grow' }, h('span', {}, 'Name'), name),
-        h('label', { class: 'field' }, h('span', {}, 'Project'), project),
+        h('label', { class: 'field' }, h('span', {}, 'Type'), kind),
+        projField,
         h('label', { class: 'field' }, h('span', {}, 'Expires'), expiry),
         btn),
       h('div', { class: 'aik-scopes', role: 'group', 'aria-label': 'Scopes' }, scopeBoxes.map(x => x.el)));
@@ -184,7 +177,7 @@ export async function openAiKeysModal() {
       const live = k.status === 'active' || k.status === 'rotating';
       return h('tr', { class: live ? '' : 'off' },
         h('td', {}, h('strong', {}, k.name), h('div', { class: 'aik-mono muted' }, `${k.prefix}…`)),
-        h('td', {}, k.projectName || k.projectKey || k.projectId),
+        h('td', {}, k.kind === 'account' ? h('em', {}, 'All my projects') : (k.projectName || k.projectKey || k.projectId)),
         h('td', { class: 'aik-hide-sm' }, k.scopes.map(s => h('span', { class: 'aik-chip' }, s))),
         h('td', { class: 'aik-hide-sm', title: k.lastUsedIp ? `from ${k.lastUsedIp}` : '' }, k.lastUsedAt ? when(k.lastUsedAt) : 'never used'),
         h('td', { class: 'aik-hide-sm' }, k.expiresAt ? when(k.expiresAt) : 'never'),
@@ -196,7 +189,7 @@ export async function openAiKeysModal() {
               if (!await confirmBox(`Rotate "${k.name}"? A new key is issued now and this one stops working in 24 hours.`, { okLabel: 'Rotate', danger: false })) return;
               try {
                 const result = await secretRequest('POST', `/api/me/api-keys/${k.id}/rotate`, {});
-                reveal = revealPanel(result, { name: k.projectName, key: k.projectKey });
+                reveal = revealPanel(result, k.kind === 'account' ? null : { name: k.projectName, key: k.projectKey });
                 toast('New key issued — copy it now', 'ok');
                 await render();
               } catch (e) { toast(e.message, 'error'); }
@@ -217,6 +210,18 @@ export async function openAiKeysModal() {
           h('thead', {}, h('tr', {}, ['Name', 'Project', 'Scopes', 'Last used', 'Expires', 'Status', ''].map((t, i) =>
             h('th', { class: [2, 3, 4].includes(i) ? 'aik-hide-sm' : '' }, t)))),
           h('tbody', {}, rows))));
+  }
+
+  /** Setup commands for every well-known AI coder; usable any time (the key itself goes into an env variable). */
+  function connectCard(owned) {
+    const body = h('div', {});
+    const det = h('details', { class: 'aik-card' },
+      h('summary', { style: { cursor: 'pointer', fontWeight: 600, fontSize: '13px' } },
+        'Connect an AI coder — commands for Claude Code, Codex, Gemini CLI, Antigravity, Cursor, VS Code, Windsurf, Cline, opencode, Zed …'),
+      body);
+    // built on first open (closed by default to keep the modal short)
+    det.addEventListener('toggle', () => { if (det.open && !body.firstChild) body.append(connectPanel({ projects: owned, projectId: state.activeProjectId })); });
+    return det;
   }
 
   function settingsCard(owned) {

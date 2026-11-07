@@ -5,6 +5,7 @@ const toKey = r => r && ({
   uid: r.uid,
   userId: r.user_id,
   projectId: r.project_id,
+  kind: r.kind || 'project',
   name: r.name,
   prefix: r.prefix,
   keyHash: r.key_hash,
@@ -39,9 +40,10 @@ export class ApiKeyRepository {
       AND (expires_at IS NULL OR expires_at > ?)`).get(Number(userId), nowIso).n;
   }
 
-  insert({ uid, userId, projectId, name, prefix, keyHash, scopes, expiresAt, rotatedFromId = null }) {
-    const r = this.db.prepare(`INSERT INTO api_keys (uid, user_id, project_id, name, prefix, key_hash, scopes, expires_at, rotated_from_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(uid, userId, projectId, name, prefix, keyHash, JSON.stringify(scopes), expiresAt, rotatedFromId);
+  insert({ uid, userId, projectId = null, kind = 'project', name, prefix, keyHash, scopes, expiresAt, rotatedFromId = null, createdAt = null }) {
+    // created_at from the service clock when given (so expiry durations are measured on one clock)
+    const r = this.db.prepare(`INSERT INTO api_keys (uid, user_id, project_id, kind, name, prefix, key_hash, scopes, expires_at, rotated_from_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now')))`).run(uid, userId, projectId, kind, name, prefix, keyHash, JSON.stringify(scopes), expiresAt, rotatedFromId, createdAt);
     return this.get(Number(r.lastInsertRowid));
   }
 

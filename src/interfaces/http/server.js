@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
@@ -6,6 +7,7 @@ import { Router } from './router.js';
 import { designRoutes } from './controllers/design-routes.js';
 import { miscRoutes } from './controllers/misc-routes.js';
 import { collabRoutes } from './controllers/collab-routes.js';
+import { profileRoutes } from './controllers/profile-routes.js';
 import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
 import { DomainError } from '../../domain/errors.js';
 
@@ -45,6 +47,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
   designRoutes(router, container);
   miscRoutes(router, container);
   collabRoutes(router, container);
+  if (container.profile) profileRoutes(router, container);
   if (container.mcp) mcpRoutes(router, container);
 
   // Sync signal: every successful write bumps the library version and tells connected clients to re-sync,
@@ -102,10 +105,22 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
         const out = await hit.handler({ params: hit.params, query: url.searchParams, body, token, actor, projectId, ip, baseUrl });
         if (MUTATIONS.includes(req.method)) broadcastSync();
         if (out && out.raw !== undefined) {
-          const h = { 'content-type': out.contentType || 'text/plain', 'cache-control': 'no-store' };
+          const h = { 'content-type': out.contentType || 'text/plain', 'cache-control': out.cacheControl || 'no-store' };
           if (out.filename) h['content-disposition'] = `attachment; filename="${out.filename}"`;
+          if (out.etag) {
+            h.etag = out.etag;
+            // conditional GET: unchanged content (e.g. an icon sprite batch) answers 304 without a body
+            if (req.method === 'GET' && String(req.headers['if-none-match'] || '').split(/\s*,\s*/).includes(out.etag)) { res.writeHead(304, h).end(); return; }
+          }
           res.writeHead(200, h).end(out.raw);
-        } else res.writeHead(200, { 'content-type': MIME['.json'], 'cache-control': 'no-store' }).end(JSON.stringify(out ?? null));
+        } else {
+          const json = JSON.stringify(out ?? null);
+          const h = { 'content-type': MIME['.json'], 'cache-control': 'no-store' };
+          // large payloads (the library list with thousands of icons) go out gzipped when the client accepts it
+          if (json.length > 64 * 1024 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+            res.writeHead(200, { ...h, 'content-encoding': 'gzip', vary: 'Accept-Encoding' }).end(gzipSync(json, { level: 4 }));
+          } else res.writeHead(200, h).end(json);
+        }
         return;
       }
       if (url.pathname === '/favicon.ico') {

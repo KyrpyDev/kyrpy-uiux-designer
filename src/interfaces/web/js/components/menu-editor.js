@@ -8,6 +8,9 @@ import { h, modal, toast, confirmBox, clear } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign } from '../state.js';
 import { reloadLibrary } from '../actions.js';
+import { ensureIconSymbols } from '../icon-store.js';
+
+const PICK_LIMIT = 300;
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
 import { buildMenuTree } from '/domain/menu.js';
@@ -24,7 +27,12 @@ export function pickIcon(currentId = null) {
     const fill = () => {
       clear(grid);
       const s = q.value.toLowerCase();
-      for (const ic of state.library.icons.filter(i => !s || `${i.key} ${i.label} ${i.category}`.toLowerCase().includes(s))) {
+      // thousands of pack icons: draw the first PICK_LIMIT matches and fetch just their sprite symbols
+      const all = state.library.icons.filter(i => !s || `${i.key} ${i.label} ${i.category} ${(i.tags || []).join(' ')}`.toLowerCase().includes(s));
+      const shown = all.slice(0, PICK_LIMIT);
+      ensureIconSymbols(shown.map(i => i.id));
+      if (all.length > shown.length) grid.append(h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px' } }, `Showing ${shown.length} of ${all.length} icons; type to narrow the search.`));
+      for (const ic of shown) {
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'ico');
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');

@@ -153,7 +153,7 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
       const sid = req.headers['mcp-session-id'] ? String(req.headers['mcp-session-id']) : null;
       if (msg?.method === 'initialize') {
         const id = randomUUID();
-        sessions.set(id, { apiKeyId: principal.apiKeyId, projectId: principal.project.id, protocolVersion: protocol.negotiate(msg.params?.protocolVersion), lastSeen: Date.now(), subscriptions: new Set(), streams: new Set() });
+        sessions.set(id, { apiKeyId: principal.apiKeyId, projectId: principal.project?.id ?? null, protocolVersion: protocol.negotiate(msg.params?.protocolVersion), lastSeen: Date.now(), subscriptions: new Set(), streams: new Set() });
         headers['mcp-session-id'] = id;
       } else if (sid) {
         const s = sessions.get(sid);

@@ -186,3 +186,51 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 
 - **Dropping the global `UNIQUE(key)`.** About a dozen core call sites (`getByKey`, `keyExists`, `uniqueKey`, PG sync `uniqueCols: ['key']`) assume keys are unique across the whole table. Making keys project-scoped needs those lookups to take a project, and is planned before M4 (push), where the same key in two projects first matters. Until then the new `(project_id, key)` index is satisfied automatically.
 - **Trash restore keeps no uid.** A restored item gets a new uid. To fix in M4 by carrying the uid in the trash snapshot.
+
+## Connect an AI coder (AI Access Keys modal)
+
+`interfaces/web/client-setup.js` (pure, tested in `tests/client-setup.test.js`) builds copy-ready setup steps for
+Claude Code, Codex CLI, Gemini CLI, Antigravity (agy), Cursor, VS Code · GitHub Copilot, Windsurf, Cline / Roo Code,
+opencode, Zed, Claude Desktop, any stdio client (`mcp-remote` bridge) and raw details/curl, for bash/zsh, PowerShell,
+fish and cmd. `interfaces/web/connect-panel.js` renders them twice: in the one-time key reveal (the key can go into an
+environment variable or inline into a user-level config) and in the always-available **Connect an AI coder** card
+(environment variable + placeholder, since keys are shown only once). Files that are usually committed (`.mcp.json`,
+`.vscode/mcp.json`, `.cursor/mcp.json`, `opencode.json`) never contain the key. Claude Code, Codex and Gemini CLI
+recipes were run against a live server (`claude mcp get` → ✔ Connected, `codex mcp list` → enabled, bearer token).
+
+### Several projects on one laptop: per-repository keys
+
+A **project key** is stored per repository so two repos never share a key: Claude Code `claude mcp add --scope local`
+(run inside the repo; Claude keeps it per path in `~/.claude.json`), Gemini CLI `.gemini/.env` + `.gemini/settings.json`
+(`Bearer $VAR`), direnv `.envrc` for the other CLIs on bash/zsh/fish, VS Code `${input:…}` prompts. Secret files are
+returned in `gitignore[]` and added to `.gitignore` by `uiux_init`. Optional per-project server names / env variables
+(`kyrpy-uiux-<project>`, `KYRPY_UIUX_API_KEY_<PROJECT>`) are available in the panel and as `uiux_init` arguments
+(`client`, `shell`, `serverName`, `envVar`); `.uiux/config.json → mcpClient` records the choice for the next agent.
+
+## Account keys (user-wide) — clone a design, build an app, push it as a new project
+
+Key `kind` is `project` (one owned project) or `account` (all projects the user can see; `api_keys.project_id` NULL,
+migration `m11-001-account-keys`, PG parity in `mcp-pg-schema.js`). Account-key rules (`application/account-service.js`):
+
+| scope | what the account key may do |
+|---|---|
+| `read` | any project the user can see (owned, accepted member, public). Others answer `NOT_FOUND`, same as unknown keys |
+| `request` / `propose` | only projects the user **owns** (`SCOPE_DENIED` with a hint to clone otherwise) |
+| `create` | `uiux_create_project` / clone: new projects owned by the user, private by default (10 per hour) |
+
+Project tools get a required `project` argument for account keys (injected into `tools/list`); account-only tools are
+`uiux_list_projects`, `uiux_clone_project`, `uiux_create_project`. System users never get keys or sessions.
+
+**Init selection flow** — `uiux_init` with an account key and no choice returns `needsSelection: true`: every visible
+project with role, `canClone` / `canEdit`, head and recent versions, a ready `question`, and `askHuman` rules (the agent
+must stop and ask the human; MCP elicitation or a chat question). The second call carries the human's answer:
+
+- `{ mode: "clone", project, newProjectName? }` → a new private project of the user, copied from the source head
+  (the source is never changed), then the normal install plan for the new project; `.uiux/config.json` gets
+  `project` (new key), `origin { project, name, version }` and `selection`.
+- `{ mode: "edit", project, version? }` → an owned project. At the head: normal install. At an older version: the plan
+  records `selection.baseVersion`, reports what changed since (`sinceChosen`), and with `restore: true` submits a restore
+  changeset back to that version for the owner's approval.
+
+Then push with the changeset tools (`project`: the key from config) and approve in the designer. Sensors:
+`tests/mcp-account.test.js` (visibility, scopes, selection list, clone → stage → submit → approve, edit at a version).

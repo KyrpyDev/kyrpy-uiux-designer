@@ -75,14 +75,24 @@ export function collabRoutes(router, c) {
   );
 
   // ---- Collaborative Change List (Owner Approve / Reject) ----
-  router.get('/api/changes', ({ query }) =>
-    c.collaboration.list({
-      projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
-      status: query.get('status') || '',
-      targetType: query.get('targetType') || '',
-      targetId: query.get('targetId') ? Number(query.get('targetId')) : null,
-      authorId: query.get('authorId') ? Number(query.get('authorId')) : null
-    })
+  const changeFilter = query => ({
+    projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
+    status: query.get('status') || '',
+    targetType: query.get('targetType') || '',
+    targetId: query.get('targetId') ? Number(query.get('targetId')) : null,
+    authorId: query.get('authorId') ? Number(query.get('authorId')) : null,
+    q: query.get('q') || ''
+  });
+  router.get('/api/changes', ({ query }) => {
+    // lite=1: list view without the before/after snapshots (they can be ~100 KB each; open one change for them)
+    const rows = c.collaboration.list(changeFilter(query));
+    return query.get('lite') === '1' ? rows.map(({ beforeSnapshot, afterSnapshot, ...r }) => r) : rows;
+  });
+  // { pending, approved, rejected, all } for the status tab badges (honours the other filters)
+  router.get('/api/changes/counts', ({ query }) => c.collaboration.counts(changeFilter(query)));
+  // body: { ids: [..], action: 'approve'|'reject', comment } or { filter: { targetType, authorId, q, projectId }, action }
+  router.post('/api/changes/bulk', ({ body, actor }) =>
+    c.collaboration.bulkReview(body?.ids, body?.action, { actor, comment: body?.comment || '', filter: body?.filter || null })
   );
   router.get('/api/changes/:id', ({ params }) => c.collaboration.get(Number(params.id)));
   router.post('/api/changes', ({ body, actor }) => c.collaboration.recordChange({ ...body, actor }));

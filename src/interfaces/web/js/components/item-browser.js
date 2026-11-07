@@ -8,6 +8,8 @@ import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import { api } from '../api.js';
 import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
 import { h, clear, modal, toast, confirmBox, promptBox } from '../dom.js';
+import { reloadLibrary } from '../actions.js';
+import { ensureIconSymbols } from '../icon-store.js';
 
 const TYPE_LABELS = {
   all: 'All Types',
@@ -21,17 +23,11 @@ const TYPE_LABELS = {
 
 /** Refreshes global library, projects, and bootstrap counts after bulk operations. */
 export async function refreshGlobalLibraryAndCounts() {
-  const [lib, projects, boot] = await Promise.all([
-    api.library(),
-    api.projects(),
-    api.bootstrap()
-  ]);
-  state.library = lib;
+  // the shared reloadLibrary keeps the active project / visibility filter and the icon-list cache key in step
+  // (a separate unfiltered fetch here used to leave an iconsVersion the next reload would trust)
+  const [projects] = await Promise.all([api.projects(), reloadLibrary({ silent: true })]);
   state.projects = projects;
-  state.counts = boot.counts || state.counts;
-  state.trashCount = boot.trashCount ?? boot.counts?.trash ?? 0;
   emit('library:changed');
-  emit('trash:changed', state.trashCount);
 }
 
 /**
@@ -528,14 +524,37 @@ export function buildItemBrowserElement({
         : renderDocument({ owner: libItem, nodes: libItem.nodes, ctx, background: type === 'screen', standalone: true });
       return h('div', { class: 'thumb', style: { height: thumbH }, html: svg });
     }
+    if (type === 'icon' && libItem?.key) {
+      // large libraries ship icon summaries (no nodes): draw from the shared sprite and fetch just this symbol
+      ensureIconSymbols([libItem.id]);
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('class', 'ico');
+      svg.style.cssText = 'width:100%;height:100%;max-width:128px;max-height:100%';
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#i-${libItem.key}`);
+      const sw = String(state.themes?.find(t => t.key === state.themeKey)?.tokens?.sw ?? 1.4);
+      for (const [k, v] of Object.entries({ fill: 'none', stroke: 'url(#lgS)', 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) use.setAttribute(k, v);
+      svg.appendChild(use);
+      return h('div', { class: 'thumb', dataset: { ibIconId: String(libItem.id) }, style: { height: thumbH, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, svg);
+    }
     return h('div', { class: 'thumb', style: { height: thumbH, display: 'flex', alignItems: 'center', justifyContent: 'center' } },
       h('img', {
         src: api.svgUrl(type, item.id, { theme: state.themeKey, size: 420 }),
+        loading: 'lazy',
         alt: item.name || item.key,
         style: { height: '100%', width: '100%', maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }
       })
     );
   }
+
+  const GRID_PAGE = 120;
+  let gridLimit = GRID_PAGE, gridSig = '';
+  // the shared sprite was rebuilt (theme / icon changes): fetch the symbols of the icon cards on screen again
+  const offSpriteReset = on('sprite:reset', () => {
+    if (!gridEl.isConnected) { offSpriteReset(); return; }
+    ensureIconSymbols([...gridEl.querySelectorAll('[data-ib-icon-id]')].map(el => Number(el.dataset.ibIconId)));
+  });
 
   function renderGrid() {
     syncSelectionToState();
@@ -552,7 +571,11 @@ export function buildItemBrowserElement({
       return;
     }
 
-    for (const { type, item } of list) {
+    // thousands of cards (icon packs) are rendered a page at a time: a sentinel loads the next page when it scrolls into view
+    const sig = JSON.stringify([typeFilter, visFilter, sourceProjectFilter, query, viewSize]);
+    if (sig !== gridSig) { gridSig = sig; gridLimit = GRID_PAGE; }
+    const appendCards = (from, to) => {
+    for (const { type, item } of list.slice(from, to)) {
       const k = `${type}:${item.id}`;
       const isChecked = selectedKeys.has(k);
       const canMoveItem = !item.builtin && Number(item.creatorId || 1) === Number(state.user?.id || 1);
@@ -650,6 +673,27 @@ export function buildItemBrowserElement({
       )
       );
       gridEl.append(card);
+      gridEl.append(card);
+    }
+    };
+    appendCards(0, gridLimit);
+    if (list.length > gridLimit) {
+      const more = h('button', { class: 'btn sm ib-show-more', style: { gridColumn: '1 / -1', justifySelf: 'center' } });
+      const label = () => { more.textContent = `Show more (${list.length - gridLimit} remaining)`; };
+      const io = typeof IntersectionObserver === 'function'
+        ? new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) showMore(); }, { root: gridEl, rootMargin: '400px' })
+        : null;
+      const showMore = () => {
+        const from = gridLimit;
+        gridLimit = Math.min(list.length, gridLimit + GRID_PAGE);
+        more.remove();
+        appendCards(from, gridLimit);
+        if (gridLimit < list.length) { label(); gridEl.append(more); } else io?.disconnect();
+      };
+      more.onclick = e => { e.stopPropagation(); showMore(); };
+      label();
+      gridEl.append(more);
+      io?.observe(more);
     }
   }
 

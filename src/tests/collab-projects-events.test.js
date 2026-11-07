@@ -104,32 +104,34 @@ test('project-based UI designs, public vs project-only visibility, and collabora
   c.close();
 });
 
-test('multi-hop clone lineage tracking traces clonedFromId, rootItemId, and rootOwnerId back to kyrpy', () => {
+test('multi-hop clone lineage tracking traces clonedFromId, rootItemId, and rootOwnerId back to the public library user', () => {
   const c = fresh();
   const userB = c.auth.register({ username: 'user_b', email: 'b@kyrpy.com', password: 'password123' }).user;
   const userC = c.auth.register({ username: 'user_c', email: 'c@kyrpy.com', password: 'password123' }).user;
 
-  // Root item created by kyrpy (id = 1)
+  // Root item created by admin kyrpy (id = 1) as a public item of project 1: it joins the public library,
+  // owned by the immutable `public` system user
+  const pub = c.publicUserId();
   const rootBtn = c.button.create({ name: 'Kyrpy Master Button', visibility: 'public' }, { actorId: 1 });
-  assert.equal(rootBtn.creatorId, 1);
-  assert.equal(rootBtn.rootOwnerId, 1);
+  assert.equal(rootBtn.creatorId, pub);
+  assert.equal(rootBtn.rootOwnerId, pub);
 
   // First clone by userB into project 1
   const clone1 = c.button.clone(rootBtn.id, { name: 'UserB Fork Button', visibility: 'public' }, { actorId: userB.id });
   assert.equal(clone1.creatorId, userB.id);
   assert.equal(clone1.clonedFromId, rootBtn.id);
   assert.equal(clone1.rootItemId, rootBtn.id);
-  assert.equal(clone1.rootOwnerId, 1, 'root owner remains kyrpy (#1)');
+  assert.equal(clone1.rootOwnerId, pub, 'root owner remains the public library user');
 
   // Second clone by userC from clone1
   const clone2 = c.button.clone(clone1.id, { name: 'UserC Remix Button', visibility: 'project' }, { actorId: userC.id });
   assert.equal(clone2.creatorId, userC.id);
   assert.equal(clone2.clonedFromId, clone1.id);
   assert.equal(clone2.rootItemId, rootBtn.id, 'root item ID still points to kyrpy original');
-  assert.equal(clone2.rootOwnerId, 1, 'root owner still points to kyrpy (#1)');
+  assert.equal(clone2.rootOwnerId, pub, 'root owner still points to the public library user');
 
   const lineage = c.button.getLineage(clone2.id);
-  assert.equal(lineage.rootOwner.username, 'kyrpy');
+  assert.equal(lineage.rootOwner.username, 'public');
   assert.equal(lineage.creator.username, 'user_c');
   assert.equal(lineage.chain.length, 3);
   assert.equal(lineage.chain[0].id, clone2.id);
@@ -293,7 +295,7 @@ test('HTTP collaboration, auth, project, lineage, template & sync routes', async
     assert.equal(clone.status, 200);
     const lineage = await req('GET', `/api/elements/${clone.body.id}/lineage`);
     assert.equal(lineage.status, 200);
-    assert.equal(lineage.body.rootOwner.username, 'kyrpy');
+    assert.equal(lineage.body.rootOwner.username, 'public', 'admin-made public items of project 1 belong to the public library');
     assert.equal(lineage.body.chain.length, 2);
   } finally {
     server.close();

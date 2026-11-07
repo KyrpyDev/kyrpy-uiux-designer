@@ -17,7 +17,13 @@ const SHARED_MIN_USES = 2;
  * Idempotent: existing keys are skipped, `reset` first removes everything built-in and re-imports.
  */
 export class LegacyImporter {
-  constructor({ themes, services, menus, workflows, log = () => {} }) { Object.assign(this, { themes, services, menus, workflows, log }); }
+  constructor({ themes, services, menus, workflows, log = () => {}, publicOwnerId = null }) { Object.assign(this, { themes, services, menus, workflows, log, publicOwnerId }); }
+
+  /** Built-ins are public-library items, owned by the immutable `public` system user when it exists. */
+  #own() {
+    const id = typeof this.publicOwnerId === 'function' ? this.publicOwnerId() : this.publicOwnerId;
+    return id ? { creatorId: id, rootOwnerId: id, visibility: 'public', projectId: 1 } : {};
+  }
 
   run({ legacyRoot, reset = false } = {}) {
     const stats = { themes: 0, paths: 0, sharedPaths: 0, icons: 0, buttons: 0, menuItems: 0, elements: 0, presets: 0, screens: 0, workflows: 0, links: 0, skipped: 0 };
@@ -70,7 +76,7 @@ export class LegacyImporter {
       usedKeys.add(key);
       const draft = { key, name: labelFromKey(key), label: labelFromKey(key) };
       const nodes = [{ id: 1, parentId: null, tag, kind: 'shape', attrs, name }];
-      const made = S.path.create({ ...draft, category: 'shared', builtin: true, meta: { source: 'v1/svg', shared: true }, descriptionDev: pathDevDescription(draft, nodes) }, { nodes });
+      const made = S.path.create({ ...draft, ...this.#own(), category: 'shared', builtin: true, meta: { source: 'v1/svg', shared: true }, descriptionDev: pathDevDescription(draft, nodes) }, { nodes });
       shared.set(sg, made.id); pathIds.set(key, made.id); stats.sharedPaths++;
     }
 
@@ -80,10 +86,10 @@ export class LegacyImporter {
       const nodes = p.nodes.map(n => (n.parentId == null && shared.has(sig(n))) ? inst(n.id, shared.get(sig(n)), n.name) : n);
       const draft = { key: p.key, name: p.label, label: p.label };
       const category = iconCategory(p.key);
-      const group = S.path.create({ ...draft, category, builtin: true, meta: { source: 'v1/svg' }, descriptionDev: pathDevDescription(draft, nodes) }, { nodes });
+      const group = S.path.create({ ...draft, ...this.#own(), category, builtin: true, meta: { source: 'v1/svg' }, descriptionDev: pathDevDescription(draft, nodes) }, { nodes });
       pathIds.set(p.key, group.id); stats.paths++;
       const iconNodes = [inst(1, group.id, 'paths')];
-      const icon = S.icon.create({ ...draft, category, builtin: true, meta: { source: 'v1/svg' }, descriptionDev: iconDevDescription(draft, iconNodes, [p.key]) }, { nodes: iconNodes });
+      const icon = S.icon.create({ ...draft, ...this.#own(), category, builtin: true, meta: { source: 'v1/svg' }, descriptionDev: iconDevDescription(draft, iconNodes, [p.key]) }, { nodes: iconNodes });
       iconIds.set(p.key, icon.id); stats.icons++;
     }
     return iconIds;
@@ -102,7 +108,7 @@ export class LegacyImporter {
       if (ids.has(key)) { stats.skipped++; return ids.get(key); }
       const nodes = frame(shape, iconKey ? iconIds.get(iconKey) : null);
       const draft = { key, name: label, label, width: 64, height: 64 };
-      const b = S.button.create({ ...draft, category, builtin: true, meta: { shape, icon: iconKey || null, ...extra.meta }, descriptionDev: buttonDevDescription(draft, nodes, iconKey ? [iconKey] : []) }, { nodes });
+      const b = S.button.create({ ...draft, ...this.#own(), category, builtin: true, meta: { shape, icon: iconKey || null, ...extra.meta }, descriptionDev: buttonDevDescription(draft, nodes, iconKey ? [iconKey] : []) }, { nodes });
       ids.set(key, b.id); stats.buttons++;
       return b.id;
     };
@@ -149,25 +155,51 @@ export class LegacyImporter {
       if (have.has(it.id)) { stats.skipped++; continue; }
       const nodes = xmlToNodes(parseXml(`<svg>${it.svg}</svg>`).children, { mapAttrs: legacyItemMapper(), resolveUse });
       const draft = { key: it.id, name: it.name, label: it.name, width: it.w, height: it.h, category: elementCategory(it.id), meta: { htmlTag: 'div' } };
-      S.element.create({ ...draft, builtin: true, meta: { ...draft.meta, source: 'v1/items' }, descriptionDev: elementDevDescription(draft, nodes, iconKeysOf(nodes)) }, { nodes });
+      S.element.create({ ...draft, ...this.#own(), builtin: true, meta: { ...draft.meta, source: 'v1/items' }, descriptionDev: elementDevDescription(draft, nodes, iconKeysOf(nodes)) }, { nodes });
       have.add(it.id); stats.elements++;
     }
 
     for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS]) {
       if (have.has(def.key)) { stats.skipped++; continue; }
-      const nodes = def.nodes.map(n => {
-        const { refKey, ...rest } = n;
-        if (n.kind !== 'instance') return rest;
-        const map = n.refType === 'button' ? buttonIds : iconIds;
-        const id = map.get(refKey);
-        if (!id) throw new Error(`preset ${def.key}: unknown ${n.refType} "${refKey}"`);
-        return { ...rest, refId: id };
-      });
-      const draft = { key: def.key, name: def.name, label: def.label, width: def.width, height: def.height, category: def.category, meta: { htmlTag: def.htmlTag } };
-      S.element.create({ ...draft, builtin: true, meta: { ...draft.meta, source: 'preset', preset: true },
-        descriptionDev: [elementDevDescription(draft, nodes, iconKeysOf(nodes)), def.dev].filter(Boolean).join('\n') }, { nodes });
+      this.#createPreset(def, iconIds, buttonIds, iconKeysOf);
       have.add(def.key); stats.presets++;
     }
+  }
+
+  #createPreset(def, iconIds, buttonIds, iconKeysOf) {
+    const nodes = def.nodes.map(n => {
+      const { refKey, ...rest } = n;
+      if (n.kind !== 'instance') return rest;
+      const map = n.refType === 'button' ? buttonIds : iconIds;
+      const id = map.get(refKey);
+      if (!id) throw new Error(`preset ${def.key}: unknown ${n.refType} "${refKey}"`);
+      return { ...rest, refId: id };
+    });
+    const draft = { key: def.key, name: def.name, label: def.label, width: def.width, height: def.height, category: def.category, meta: { htmlTag: def.htmlTag } };
+    return this.services.element.create({ ...draft, ...this.#own(), builtin: true, meta: { ...draft.meta, source: 'preset', preset: true, ...(def.meta || {}) },
+      descriptionDev: [elementDevDescription(draft, nodes, iconKeysOf(nodes)), def.dev].filter(Boolean).join('\n') }, { nodes });
+  }
+
+  /**
+   * Adds the given built-in presets to an existing library when missing (idempotent; new presets reach older databases).
+   * Presets whose icons / buttons are not in the library are skipped. Returns the keys added.
+   */
+  ensurePresets(keys) {
+    const S = this.services;
+    const have = new Set(S.element.list().map(e => e.key));
+    const iconIds = new Map(S.icon.list().map(i => [i.key, i.id]));
+    const buttonIds = new Map(S.button.list().map(b => [b.key, b.id]));
+    const keyOf = id => [...iconIds].find(([, v]) => v === id)?.[0];
+    const iconKeysOf = ns => [...new Set(ns.filter(n => n.refType === 'icon').map(n => keyOf(n.refId)).filter(Boolean))];
+    const added = [];
+    for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS]) {
+      if (!keys.includes(def.key) || have.has(def.key)) continue;
+      const refsOk = def.nodes.every(n => n.kind !== 'instance' || (n.refType === 'button' ? buttonIds : iconIds).has(n.refKey));
+      if (!refsOk) { this.log(`preset ${def.key}: missing icon/button references, skipped`); continue; }
+      this.#createPreset(def, iconIds, buttonIds, iconKeysOf);
+      added.push(def.key);
+    }
+    return added;
   }
 
   /* ---------- screens, workflows ---------- */
@@ -183,7 +215,7 @@ export class LegacyImporter {
       const root = parseXml(s.svg);
       const w = parseFloat(root.attrs.width) || 390, h = parseFloat(root.attrs.height) || 844;
       const nodes = xmlToNodes(root.children, { mapAttrs: liquidScreenMapper({ w, h }), resolveUse });
-      const created = S.screen.create({ key, name: s.caption, label: s.caption, width: w, height: h, category: screenCategory(key), builtin: true,
+      const created = S.screen.create({ ...this.#own(), key, name: s.caption, label: s.caption, width: w, height: h, category: screenCategory(key), builtin: true,
         position: s.index, visibility: 'public', projectId: 1,
         meta: { device: 'iphone-15', source: 'v1/screens/liquid', legacyIndex: s.index }, descriptionDev: `Screen "${key}".` }, { nodes });
       ids.set(key, created.id); stats.screens++;
@@ -198,7 +230,7 @@ export class LegacyImporter {
       let wf = existingByKey.get(def.key);
       const isNew = !wf;
       if (isNew) {
-        wf = this.workflows.create({ key: def.key, name: def.name, label: def.label, descriptionDev: '' });
+        wf = this.workflows.create({ ...this.#own(), key: def.key, name: def.name, label: def.label, descriptionDev: '' });
         stats.workflows++;
       } else {
         stats.skipped++;

@@ -67,4 +67,7 @@ ${PROJECT_KEY_TABLES.map(t => `ALTER TABLE IF EXISTS "${t}" DROP CONSTRAINT IF E
 CREATE UNIQUE INDEX IF NOT EXISTS ux_${t}_project_key ON "${t}"(project_id, key);`).join('\n')}
 -- ===== kyrpy-uiux-mcp (M1–M6): keys, audit, AI pack, versions, changesets, requests, bindings =====
 ${MCP_PG_TABLES_SQL}
+-- ===== account (user-wide) API keys (m11): kind + project_id nullable for kind = 'account' =====
+ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'project';
+ALTER TABLE IF EXISTS api_keys ALTER COLUMN project_id DROP NOT NULL;
 `;

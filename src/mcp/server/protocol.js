@@ -13,6 +13,7 @@ export const SERVER_INFO = { name: 'kyrpy-uiux-mcp', title: 'Kyrpy UI/UX Designe
 
 export const INSTRUCTIONS = `Kyrpy UI/UX Designer — the design system of one project, for coding agents.
 0. In a repository without .uiux/uiux.lock.json, call uiux_init and follow its steps (installs the kyrpy-uiux-designer agent and skill).
+   ACCOUNT keys (one key for all of the user's projects): the first uiux_init returns the projects with their versions — ASK THE HUMAN to choose CLONE (new project of theirs from any visible design) or EDIT (one of their own projects at a version), then call uiux_init again with { mode, project, version }.
 1. Call uiux_get_schema once to learn the rules (hierarchy, naming, ratios, styles).
 2. Before creating any UI item, call uiux_search_items; reuse or clone what exists.
 3. Download assets with uiux_create_bundle and the shell steps it returns (do not paste file contents into the chat).
@@ -161,28 +162,57 @@ export class McpProtocol {
     };
   }
 
+  /** Account keys: project-bound tools get a required `project` argument (resolved per call). */
+  #isAccount(principal) { return principal?.kind === 'account'; }
+  #needsProject(principal, tool) { return this.#isAccount(principal) && tool.account !== 'none' && tool.account !== 'select'; }
+  #schemaFor(principal, tool) {
+    // account: 'select' — the tool resolves the project itself (uiux_init: the human picks clone / edit + version)
+    if (this.#isAccount(principal) && tool.account === 'select') {
+      const s = tool.inputSchema || { type: 'object', properties: {} };
+      return { ...s, properties: { ...(tool.accountProperties || {}), ...(s.properties || {}) } };
+    }
+    if (!this.#needsProject(principal, tool)) return tool.inputSchema;
+    const s = tool.inputSchema || { type: 'object', properties: {} };
+    return {
+      ...s,
+      properties: { project: { type: 'string', minLength: 1, maxLength: 80, description: `Project key (from uiux_list_projects). Account key: ${tool.scope === 'read' ? 'any project you can see' : 'only projects you own'}.` }, ...(s.properties || {}) },
+      required: [...new Set(['project', ...(s.required || [])])]
+    };
+  }
+  #visible(principal, tool) {
+    if (tool.accountOnly && !this.#isAccount(principal)) return false;
+    if (tool.accountOnly && !this.accounts) return false;
+    return this.apiKeys.hasScope(principal, tool.scope);
+  }
+
   #toolList(principal) {
     return [...this.tools.values()]
-      .filter(t => this.apiKeys.hasScope(principal, t.scope))
-      .map(t => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema, annotations: { title: t.title, readOnlyHint: t.readOnly !== false, destructiveHint: false, idempotentHint: t.readOnly !== false, openWorldHint: false } }));
+      .filter(t => this.#visible(principal, t))
+      .map(t => ({ name: t.name, title: t.title, description: t.description, inputSchema: this.#schemaFor(principal, t), annotations: { title: t.title, readOnlyHint: t.readOnly !== false, destructiveHint: false, idempotentHint: t.readOnly !== false, openWorldHint: false } }));
   }
 
   async #callTool(id, params, ctx) {
-    const { principal } = ctx;
+    let { principal } = ctx;
     const tool = this.tools.get(params.name);
-    if (!tool) return fail(id, RPC.INVALID_PARAMS, `unknown tool: ${params.name}`);
-    const args = params.arguments ?? {};
-    const errors = validateInput(tool.inputSchema, args);
+    if (!tool || !this.#visible(principal, tool) && tool.accountOnly) return fail(id, RPC.INVALID_PARAMS, `unknown tool: ${params.name}`);
+    let args = params.arguments ?? {};
+    const errors = validateInput(this.#schemaFor(principal, tool), args);
     if (errors.length) return fail(id, RPC.INVALID_PARAMS, `invalid arguments for ${tool.name}: ${errors.join('; ')}`);
     const started = Date.now();
     const digest = createHash('sha256').update(canonicalJson(args)).digest('hex');
     const audit = (result, errorCode = '') => this.apiKeys.audit.record({
-      apiKeyId: principal.apiKeyId, userId: principal.user.id, projectId: principal.project.id, event: 'tool.call',
+      apiKeyId: principal.apiKeyId, userId: principal.user.id, projectId: principal.project?.id ?? null, event: 'tool.call',
       tool: tool.name, argsDigest: digest, result, errorCode, durationMs: Date.now() - started, ip: ctx.ip
     });
     try {
       this.apiKeys.assertScope(principal, tool.scope);
-      const { summary, data } = await tool.run({ ...ctx, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings }, args);
+      if (this.#needsProject(principal, tool)) {
+        const { project, ...rest } = args;
+        const resolved = this.accounts.resolve(principal, project, tool.scope);
+        principal = this.accounts.bind(principal, resolved);
+        args = rest;
+      }
+      const { summary, data } = await tool.run({ ...ctx, principal, accounts: this.accounts, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings }, args);
       audit('ok');
       return ok(id, { content: [{ type: 'text', text: `${summary}\n\n${JSON.stringify(data)}` }], structuredContent: data });
     } catch (e) {
@@ -197,6 +227,9 @@ export class McpProtocol {
 
   #readResource({ uri } = {}, { principal }) {
     const u = String(uri || '');
+    if (!principal.project && !u.startsWith('uiux://schema')) {
+      throw new DomainError('account keys read project resources through tools: pass "project" to uiux_get_manifest, uiux_get_item, uiux_get_tokens …', 'NOT_FOUND', 404);
+    }
     const json = (data) => ({ contents: [{ uri: u, mimeType: 'application/json', text: JSON.stringify(data) }] });
     let m;
     if (u === 'uiux://schema') return json(this.query.schema());

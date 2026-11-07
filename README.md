@@ -217,20 +217,26 @@ Export any set of screens and themes into a clean, self-contained **HTML + CSS +
 
 ---
 
+### 11. User Profile, Password & Sessions
+The profile icon (top right) opens **My Profile**: edit display name and email (an email change asks for the current password), change the password (minimum 8 characters with a letter and a digit, never the username or email; other sessions are signed out), list active sessions and revoke one or all others, and see your activity. System users (`public`, `kyrpy-agent-designer`) cannot sign in or be edited.
+
 ## 🔌 MCP Server — Design ↔ Code Sync for AI Coding Agents
 
 The designer ships an **MCP server** (Streamable HTTP, protocol 2025-06-18) so coding agents such as Claude Code, Antigravity and Cursor can use a project's design system, propose changes to it, and push the app's current UI back for human review. The implementation and developer notes are in [`src/mcp/README.md`](src/mcp/README.md).
 
-**Connect an agent** (Profile ▸ *AI Access Keys (MCP)…* creates a key for a project you own):
+**Connect an agent** (Profile ▸ *AI Access Keys (MCP)…* creates a project key, or an account key for all your projects):
 
 ```bash
-claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "Authorization: Bearer $KYRPY_UIUX_API_KEY"
+# inside the repository (project key, stored for this repo only):
+claude mcp add --transport http --scope local kyrpy-uiux http://127.0.0.1:5180/mcp --header "Authorization: Bearer $KYRPY_UIUX_API_KEY"
 # then, in the app repository:  "init uiux"   ·   "pull design updates"   ·   "push the existing app version"
 ```
 
 | Area | What you get |
 |---|---|
 | **API keys** | Per user × project, scopes `read` / `request` / `propose`, expiry, 24 h rotation grace, instant revoke, audit log. Only an HMAC hash is stored. |
+| **Account keys** | One user-wide key (scope `create` added) for every project you can see. On `uiux_init` the agent lists your projects **with their versions** and asks you: **clone** one into a new project of yours (build an app from it, push back as changesets), or **edit** one of your own projects at a chosen version (optional reviewed restore). Pushes only ever go to projects you own. |
+| **Connect any AI coder** | *AI Access Keys* generates setup for Claude Code, Codex, Gemini CLI, Antigravity, Cursor, VS Code, Windsurf, Cline, opencode, Zed, Claude Desktop and stdio bridges (bash / PowerShell / fish / cmd). Project keys stay per repository (Claude `--scope local`, `.gemini/.env`, direnv `.envrc`, VS Code input prompt), so several repos on one laptop never share a key. |
 | **Read & download** | Schema, manifest, ranked search, single items (JSON/SVG), tokens (JSON/CSS/TS), workflows, single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
 | **AI pack** | `uiux_init` installs the `kyrpy-uiux-designer` agent and `kyrpy-skill-uiux-designer` skill for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `.uiux/config.json` and a lockfile. Local edits are never overwritten. |
 | **Adapters** | `web` (tokens.css/ts, icon sprite, typed index), `react-tsx` (typed `<Icon name="…"/>`), and `flutter` / `compose` / `swiftui` (native token constants, icon catalog, SVGs). |

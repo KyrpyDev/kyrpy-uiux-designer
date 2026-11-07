@@ -6,7 +6,7 @@ import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom
 import { ibtn } from '../icons.js';
 import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprint.js';
 import { api } from '../api.js';
-import { state, emit, projectLabel } from '../state.js';
+import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { nodeBBox } from '/domain/geometry.js';
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
@@ -81,11 +81,9 @@ export class WorkflowDesigner {
   computeDirty() { this.dirty = !!this.wf && !!this.baseline && workflowFingerprint(this.wf) !== this.baselineFp; }
   checkDirty() { const before = this.dirty; this.computeDirty(); if (before !== this.dirty) this.updateDocBar(); }
 
+  /** The owner, or an admin curating a public-library workflow (owned by the `public` system user). */
   isOwnedByCurrentUser(rec = this.wf) {
-    if (!rec) return true;
-    const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
-    const curUserId = Number(state.user?.id || 1);
-    return ownerId === curUserId;
+    return canEditOwned(rec);
   }
 
   buildSaveTargetsDropdown() {
@@ -222,7 +220,7 @@ export class WorkflowDesigner {
       disabled: !ownedByMe,
       title: ownedByMe
         ? 'Save (Ctrl+S): keep the current version (and save to any selected Multi-Targets).'
-        : `Save is disabled because this workflow is owned by @${this.wf?.creatorUsername || 'another user'}. Use "Save as…" to save a copy.`,
+        : `Save is disabled because this workflow is owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)}. Use "Save as…" to save a copy.`,
       onclick: () => this.save()
     }, '💾 Save');
     this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into the active project or all selected Multi-Targets)' });
@@ -268,7 +266,7 @@ export class WorkflowDesigner {
     this.resetBtn.disabled = !this.dirty;
     this.docState.classList.toggle('dirty', this.dirty);
     if (!ownedByMe) {
-      this.docState.textContent = `🔒 Owned by @${this.wf?.creatorUsername || 'other user'} — use Save as…`;
+      this.docState.textContent = `🔒 Owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)} — use Save as…`;
     } else {
       this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
     }
@@ -862,7 +860,7 @@ export class WorkflowDesigner {
       fld('Label', txt(wf.label, async v => { await api.updateWorkflow(wf.id, { label: v }); wf.label = v; this.checkDirty(); })),
       fld('Visibility', visSel),
       h('div', { class: 'row wrap' },
-        h('span', { class: 'badge' }, `Owner #${wf.rootOwnerId || wf.creatorId || 1}`),
+        h('span', { class: 'badge' }, `Owner ${ownerLabel(wf.rootOwnerUsername || wf.creatorUsername, wf.rootOwnerId || wf.creatorId || 1)}`),
         h('button', { class: 'btn small', onclick: () => openLineageModal('workflow', wf.id) }, '🌳 Lineage & Root Owner')
       ),
       fld('description-dev (for the dev team)', area(wf.descriptionDev, async v => { await api.updateWorkflow(wf.id, { descriptionDev: v }); wf.descriptionDev = v; this.checkDirty(); }, 8))));
