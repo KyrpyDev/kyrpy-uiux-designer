@@ -111,10 +111,11 @@ export class DesignReadRepository {
         }
       }
       if (type === 'button') {
-        for (const m of this.db.prepare('SELECT icon_id, target_screen_id, target_element_id FROM menu_items WHERE button_id = ?').all(id)) {
+        for (const m of this.db.prepare('SELECT icon_id, target_screen_id, target_element_id, ref_button_id FROM menu_items WHERE button_id = ?').all(id)) {
           if (m.icon_id) out.push({ type: 'icon', id: m.icon_id });
           if (m.target_screen_id) out.push({ type: 'screen', id: m.target_screen_id });
           if (m.target_element_id) out.push({ type: 'element', id: m.target_element_id });
+          if (m.ref_button_id) out.push({ type: 'button', id: m.ref_button_id });
         }
       }
     } else if (type === 'workflow') {

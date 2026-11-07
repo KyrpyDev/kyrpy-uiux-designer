@@ -9,6 +9,7 @@ const toItem = r => r && ({
   action: r.action,
   targetScreenId: r.target_screen_id,
   targetElementId: r.target_element_id ?? null,
+  refButtonId: r.ref_button_id ?? null,
   visible: r.visible === undefined || r.visible === null ? true : Boolean(r.visible),
   descriptionDev: r.description_dev
 });
@@ -23,8 +24,8 @@ export class MenuRepository {
 
   create(buttonId, m) {
     const ord = m.ord ?? this.db.prepare('SELECT COALESCE(MAX(ord),0)+1 AS o FROM menu_items WHERE button_id = ? AND parent_id IS ?').get(buttonId, m.parentId ?? null).o;
-    const r = this.db.prepare(`INSERT INTO menu_items (button_id,parent_id,ord,name,label,icon_id,action,target_screen_id,target_element_id,visible,description_dev) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(buttonId, m.parentId ?? null, ord, m.name ?? '', m.label ?? '', m.iconId ?? null, m.action ?? '', m.targetScreenId ?? null, m.targetElementId ?? null, m.visible === false || m.visible === 0 ? 0 : 1, m.descriptionDev ?? '');
+    const r = this.db.prepare(`INSERT INTO menu_items (button_id,parent_id,ord,name,label,icon_id,action,target_screen_id,target_element_id,visible,description_dev,ref_button_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(buttonId, m.parentId ?? null, ord, m.name ?? '', m.label ?? '', m.iconId ?? null, m.action ?? '', m.targetScreenId ?? null, m.targetElementId ?? null, m.visible === false || m.visible === 0 ? 0 : 1, m.descriptionDev ?? '', m.refButtonId ?? null);
     return this.get(Number(r.lastInsertRowid));
   }
 
@@ -38,6 +39,7 @@ export class MenuRepository {
       action: 'action',
       targetScreenId: 'target_screen_id',
       targetElementId: 'target_element_id',
+      refButtonId: 'ref_button_id',
       visible: 'visible',
       descriptionDev: 'description_dev'
     };
@@ -57,12 +59,12 @@ export class MenuRepository {
   /** Makes the menu of a button equal to `items` (ids are kept so a restore is exact; a missing icon or screen becomes null). */
   replaceAll(buttonId, items) {
     this.db.prepare('DELETE FROM menu_items WHERE button_id = ?').run(buttonId);
-    const insert = this.db.prepare(`INSERT INTO menu_items (id,button_id,parent_id,ord,name,label,icon_id,action,target_screen_id,target_element_id,visible,description_dev)
-      VALUES (?,?,?,?,?,?,(SELECT id FROM icons WHERE id = ?),?,(SELECT id FROM screens WHERE id = ?),(SELECT id FROM elements WHERE id = ?),?,?)`);
+    const insert = this.db.prepare(`INSERT INTO menu_items (id,button_id,parent_id,ord,name,label,icon_id,action,target_screen_id,target_element_id,visible,description_dev,ref_button_id)
+      VALUES (?,?,?,?,?,?,(SELECT id FROM icons WHERE id = ?),?,(SELECT id FROM screens WHERE id = ?),(SELECT id FROM elements WHERE id = ?),?,?,(SELECT id FROM buttons WHERE id = ?))`);
     const level = parent => items.filter(i => (i.parentId ?? null) === parent).sort((a, b) => a.ord - b.ord || a.id - b.id);
     const walk = parent => {
       for (const i of level(parent)) {
-        insert.run(i.id, buttonId, i.parentId ?? null, i.ord, i.name ?? '', i.label ?? '', i.iconId ?? null, i.action ?? '', i.targetScreenId ?? null, i.targetElementId ?? null, i.visible === false || i.visible === 0 ? 0 : 1, i.descriptionDev ?? '');
+        insert.run(i.id, buttonId, i.parentId ?? null, i.ord, i.name ?? '', i.label ?? '', i.iconId ?? null, i.action ?? '', i.targetScreenId ?? null, i.targetElementId ?? null, i.visible === false || i.visible === 0 ? 0 : 1, i.descriptionDev ?? '', i.refButtonId ?? null);
         walk(i.id);
       }
     };

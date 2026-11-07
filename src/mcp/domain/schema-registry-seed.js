@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 8;
+export const SEED_VERSION = 9;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -144,6 +144,7 @@ export const SCHEMA_REGISTRY_SEED = {
       target_screen_id: 'Screen to route to (`screens.id`).',
       description_dev: C.description_dev,
       target_element_id: 'Element to open as popup/inline (`elements.id`).',
+      ref_button_id: 'Library button drawn as this item (`buttons.id`): its shape/style; an item icon replaces the button\'s own icon.',
       visible: '1 = shown.',
       mcp_context: C.mcp_context
     }

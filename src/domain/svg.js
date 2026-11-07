@@ -182,7 +182,14 @@ function renderInstance(el, a, ctx, all) {
   if (menu) {
     ctx.hasMenu = true;
     const iconKey = id => ctx.lib.icon.get(id)?.key ?? null;
-    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey });
+    // a menu item can draw a library button: scaled into the item box, without its own icon when the item has an icon
+    const renderButton = (id, size, withoutIcon) => {
+      const b = ctx.lib.button.get(id);
+      if (!b || !b.nodes || ctx.depth > 5) return '';
+      const nodes = withoutIcon ? b.nodes.filter(n => !(n.kind === 'instance' && n.refType === 'icon')) : b.nodes;
+      return `<g transform="translate(${round(-size / 2)} ${round(-size / 2)}) scale(${round(size / b.width)} ${round(size / b.height)})">${renderTree(nodes, ctx)}</g>`;
+    };
+    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton });
   }
   ctx.depth--;
   return `<g${attrString(attrs)}>${inner}${menuMarkup}</g>`;

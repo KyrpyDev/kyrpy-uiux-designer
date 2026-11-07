@@ -155,6 +155,7 @@ export class ExportService {
         menu: menu.items.length ? { config: menu.config, items: menu.items.map(m => ({ path: pathOf(menu.items, m), name: m.name, label: m.label, icon: iconKey(m.iconId), action: m.action,
           target: m.targetScreenId != null ? keyById.get(m.targetScreenId) ?? null : null,
           targetElement: m.targetElementId != null ? elementById.get(m.targetElementId)?.key ?? null : null,
+          button: m.refButtonId != null ? (S.button.get(m.refButtonId)?.key ?? null) : null,
           visible: m.visible !== false,
           descriptionDev: m.descriptionDev })) } : null };
     });

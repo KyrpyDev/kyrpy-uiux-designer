@@ -51,13 +51,35 @@ export function pickIcon(currentId = null) {
 }
 
 /** Add / edit dialog of one menu item. Resolves with the saved item or null. */
+/** Pick a library button for a menu item (search, thumbnails by name). Resolves to an id, 0 = no button, null = cancelled. */
+export function pickButton(currentId = null, excludeId = null) {
+  return new Promise(resolve => {
+    let done = false, m;
+    const fin = v => { if (!done) { done = true; resolve(v); } };
+    const q = h('input', { type: 'search', placeholder: 'Search buttons…' });
+    const list = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '6px', maxHeight: '360px', overflow: 'auto' } });
+    const fill = () => {
+      clear(list);
+      const s = q.value.toLowerCase();
+      const all = (state.library.buttons || []).filter(b => b.id !== excludeId && (!s || `${b.key} ${b.label} ${b.name} ${b.category}`.toLowerCase().includes(s)));
+      for (const b of all.slice(0, 120)) list.append(h('button', { class: `btn${b.id === currentId ? ' primary' : ''}`, type: 'button', title: b.key, style: { textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, onclick: () => { fin(b.id); m.close(); } }, b.label || b.name));
+      if (all.length > 120) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px' } }, `Showing 120 of ${all.length}: type to narrow the search.`));
+    };
+    q.addEventListener('input', fill);
+    m = modal({ title: 'Pick a button', wide: true, onClose: () => fin(null), content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, q, list),
+      actions: close => [h('button', { class: 'btn', onclick: () => { fin(0); close(); } }, 'No button (plain circle)'), h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
+    fill();
+    setTimeout(() => q.focus(), 30);
+  });
+}
+
 export async function menuItemDialog({ buttonId, item = null, parentId = null }) {
   const [screens, elements] = await Promise.all([
     api.list('screen'),
     state.library.elements?.length ? Promise.resolve(state.library.elements) : api.list('element')
   ]);
   return new Promise(resolve => {
-    let done = false, iconId = item?.iconId ?? null, nameTouched = !!item;
+    let done = false, iconId = item?.iconId ?? null, refButtonId = item?.refButtonId ?? null, nameTouched = !!item;
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const label = h('input', { type: 'text', value: item?.label ?? '', placeholder: 'Shown to users' });
     const name = h('input', { type: 'text', value: item?.name ?? '', placeholder: 'variable-name (dashed words)', style: { fontFamily: 'Consolas, monospace' } });
@@ -71,14 +93,18 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
     iconBtn.addEventListener('click', async () => { const r = await pickIcon(iconId); if (r !== null) { iconId = r || null; paintIcon(); } });
     label.addEventListener('input', () => { if (!nameTouched) name.value = slugify(label.value, 'item'); });
     name.addEventListener('input', () => { nameTouched = true; });
-    paintIcon();
+    const btnBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-button' }), btnLabel = h('span', { class: 'muted' });
+    const paintButton = () => { const b = findDesign('button', refButtonId); btnBtn.textContent = b ? `Button: ${b.label || b.name}` : 'Choose button…'; btnLabel.textContent = b ? b.key : 'plain circle'; };
+    btnBtn.addEventListener('click', async () => { const r = await pickButton(refButtonId, buttonId); if (r !== null) { refButtonId = r || null; paintButton(); } });
+    paintIcon(); paintButton();
     let m;
     const save = async () => {
-      if (!label.value.trim() && !iconId) return toast('Give the item a label or an icon', 'error');
+      if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
       const body = {
         label: label.value.trim(),
         name: name.value.trim() || slugify(label.value || 'item', 'item'),
         iconId,
+        refButtonId,
         action: action.value.trim(),
         targetScreenId: target.value ? Number(target.value) : null,
         targetElementId: targetElement.value ? Number(targetElement.value) : null,
@@ -97,6 +123,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
           h('div', { class: 'row' }, iconBtn, iconLabel),
           h('label', { class: 'row', style: { cursor: 'pointer' } }, visCheck, h('span', {}, 'Visible in menu'))
         ),
+        h('div', { class: 'row wrap', title: 'The item is drawn with this library button (its shape and style). The icon above replaces the button\'s own icon.' }, btnBtn, btnLabel),
         h('div', { class: 'row wrap' },
           h('label', { class: 'field grow' }, h('span', {}, 'Action (event name)'), action),
           h('label', { class: 'field grow' }, h('span', {}, 'Goes to screen'), target)

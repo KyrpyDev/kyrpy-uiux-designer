@@ -21,6 +21,7 @@ export function healForeignKeys(db) {
     `);
     try {
       db.exec(`UPDATE menu_items SET target_element_id = NULL WHERE target_element_id IS NOT NULL AND target_element_id NOT IN (SELECT id FROM elements);`);
+      db.exec(`UPDATE menu_items SET ref_button_id = NULL WHERE ref_button_id IS NOT NULL AND ref_button_id NOT IN (SELECT id FROM buttons);`);
     } catch { /* column may not exist on older v1-v5 schema */ }
     const bad = db.prepare('PRAGMA foreign_key_check').all();
     for (const b of bad) {

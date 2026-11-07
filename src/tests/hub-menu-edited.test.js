@@ -159,3 +159,33 @@ test('edited items: red edge and listed first (most recent first), before projec
   assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'button', edited), '', 'type is part of the key');
   assert.equal(isEdited({ id: 1 }, new Map(), 'icon'), false);
 });
+
+test('menu item can show a library button besides its icon (refButtonId): stored, validated, rendered, restored', async () => {
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const mkBtn = (key, w) => c.button.create({ name: key, key, projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: w, height: w }, { nodes: [{ tag: 'rect', role: 'button', name: 'surface', attrs: { x: 0, y: 0, width: w, height: w, rx: 8 } }] });
+    const host = mkBtn('host', 64), frame = mkBtn('square-frame', 64);
+    const icon = c.icon.create({ name: 'dot', key: 'dot', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub }, { nodes: [{ tag: 'circle', attrs: { cx: 12, cy: 12, r: 4 } }] });
+    const it = c.menus.addItem(host.id, { label: 'Scan', iconId: icon.id, refButtonId: frame.id });
+    assert.equal(it.refButtonId, frame.id);
+    assert.throws(() => c.menus.addItem(host.id, { label: 'Bad', refButtonId: 99999 }), /button 99999 does not exist/);
+    assert.equal(c.menus.updateItem(it.id, { refButtonId: null }).refButtonId, null);
+    c.menus.updateItem(it.id, { refButtonId: frame.id });
+    // survives a snapshot restore (replaceAll) and a clone
+    const snap = c.button.get(host.id);
+    c.menus.menus.replaceAll(host.id, snap.menuItems);
+    assert.equal(c.menus.get(host.id).items[0].refButtonId, frame.id);
+    assert.equal(c.button.clone(host.id, { name: 'host copy' }).menuItems[0].refButtonId, frame.id);
+    // markup: the referenced button's shape is drawn inside the item
+    const cfg = { kind: 'popup', layout: 'list', direction: 'up', itemScale: 0.75, gap: 0.2, rotateOnOpen: 0 };
+    const items = c.menus.get(host.id).items;
+    const ctx = createContext({ theme: BUILTIN_THEMES[0] });
+    const calls = [];
+    const svg = renderMenu({ button: { key: 'host', width: 64, height: 64 }, cfg, tree: buildMenuTree(items), ctx, iconKey: () => null, renderButton: (id, size, noIcon) => { calls.push([id, size, noIcon]); return '<g class="ref-btn"/>'; } });
+    assert.match(svg, /class="ref-btn"/);
+    assert.deepEqual(calls[0], [frame.id, 48, true], 'item size = itemScale x button; the item icon replaces the button icon');
+    const plain = renderMenu({ button: { key: 'host', width: 64, height: 64 }, cfg, tree: buildMenuTree(items.map(i => ({ ...i, refButtonId: null }))), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+    assert.doesNotMatch(plain, /ref-btn/);
+  } finally { c.close(); }
+});

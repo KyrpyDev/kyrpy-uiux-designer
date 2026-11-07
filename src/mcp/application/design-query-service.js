@@ -289,6 +289,7 @@ export class DesignQueryService {
       ...(d.menuItems ? { menuItems: d.menuItems.map(m => ({ name: m.name, label: m.label, action: m.action, ord: m.ord,
         parent: m.parentId ? d.menuItems.find(x => x.id === m.parentId)?.name ?? null : null,
         icon: ref('icon', m.iconId), targetScreen: ref('screen', m.targetScreenId), targetElement: ref('element', m.targetElementId),
+        ...(m.refButtonId ? { button: ref('button', m.refButtonId) } : {}),
         visible: m.visible !== false && m.visible !== 0, descriptionDev: m.descriptionDev })) } : {})
     };
   }

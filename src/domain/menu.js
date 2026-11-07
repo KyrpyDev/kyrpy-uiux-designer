@@ -82,7 +82,7 @@ export function hubGeometry(cfg, size) {
  * Every level is pre-rendered (hidden); the runtime only toggles classes.
  * @param {object} p {button:{key,width,height}, cfg, tree, ctx, iconKey(id)->key|null}
  */
-export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
+export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = null }) {
   const w = button.width, h = button.height, cx = w / 2, cy = h / 2, size = Math.min(w, h);
   const surface = roleAttrs(ctx.theme, 'button');
   const itemAttrs = a => attrString({ ...surface, ...a });
@@ -101,6 +101,12 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
     const stroke = resolveTokens('{{sw}}', ctx.theme.tokens);
     return `<use href="#i-${esc(key)}" x="${round(x - sz / 2)}" y="${round(y - sz / 2)}" width="${round(sz)}" height="${round(sz)}" fill="none" stroke="url(#lgS)" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>`;
   };
+  // body of one item, drawn around its own centre (0,0): a referenced library button (its own icon unless the item has one), else circle + icon
+  const itemBody = (it, r, iconSz) => {
+    const btn = it.refButtonId && renderButton ? renderButton(it.refButtonId, r * 2, Boolean(it.iconId)) : '';
+    if (btn) return `${btn}<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
+    return `<circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
+  };
   const levels = [], centers = [];
   const walk = (items, parentPath, parentNode) => {
     const pos = layoutItems(cfg, items.length, lsize);
@@ -110,15 +116,14 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
         // one pre-rendered button per ring item; the runtime places it (left / centre / right / hidden) with --x --y --k --o
         const r = hub.big / 2;
         return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
-          + `<title>${esc(it.label || it.name)}</title><circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, hub.big * 0.62)}</g>`;
+          + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, hub.big * 0.62)}</g>`;
       }
       const p = pos[i], r = p.s / 2;
       const popupAttr = (it.targetElementKey || it.targetElementId)
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
         : '';
       return `<g class="rm-item" data-item="${esc(it.path)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${popupAttr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
-        + `<title>${esc(it.label || it.name)}</title><circle r="${round(r)}"${itemAttrs({})}/>`
-        + `<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSize)}</g>`;
+        + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, iconSize)}</g>`;
     });
     const innerItems = isCarousel
       ? `<g class="ud-carousel-track ud-carousel-${carDim}-${carDir}" style="--roll-dur:2400ms">${els.join('')}</g>`

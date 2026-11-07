@@ -451,5 +451,9 @@ INSERT INTO themes_v2 (id, key, name, kind, tokens, surfaces, builtin, position)
   SELECT id, key, name, kind, tokens, surfaces, builtin, position FROM themes;
 DROP TABLE themes;
 ALTER TABLE themes_v2 RENAME TO themes;
+`,
+
+  /* 8: a menu item can show a library button (shape / style) besides its icon */ `
+ALTER TABLE menu_items ADD COLUMN ref_button_id INTEGER REFERENCES buttons(id) ON DELETE SET NULL;
 `
 ];

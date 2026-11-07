@@ -157,6 +157,7 @@ export class ChangesetService {
         parentId: m.parent ? idByName.get(m.parent) ?? null : null,
         iconId: ref(m.icon, 'icon', `menuItems[${i}].icon`), targetScreenId: ref(m.targetScreen, 'screen', `menuItems[${i}].targetScreen`),
         targetElementId: ref(m.targetElement, 'element', `menuItems[${i}].targetElement`),
+        refButtonId: m.button ? ref(m.button, 'button', `menuItems[${i}].button`) : null,
         visible: m.visible !== false, descriptionDev: m.descriptionDev || ''
       });
       idByName.set(m.name || `item-${i + 1}`, made.id);

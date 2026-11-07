@@ -205,6 +205,7 @@ try {
     DELETE FROM menu_items WHERE button_id NOT IN (SELECT id FROM buttons);
     UPDATE menu_items SET target_screen_id = NULL WHERE target_screen_id IS NOT NULL AND target_screen_id NOT IN (SELECT id FROM screens);
     UPDATE menu_items SET target_element_id = NULL WHERE target_element_id IS NOT NULL AND target_element_id NOT IN (SELECT id FROM elements);
+    UPDATE menu_items SET ref_button_id = NULL WHERE ref_button_id IS NOT NULL AND ref_button_id NOT IN (SELECT id FROM buttons);
     DELETE FROM workflow_screens WHERE workflow_id NOT IN (SELECT id FROM workflows) OR screen_id NOT IN (SELECT id FROM screens);
     DELETE FROM workflow_links WHERE workflow_id NOT IN (SELECT id FROM workflows) OR from_screen_id NOT IN (SELECT id FROM screens) OR to_screen_id NOT IN (SELECT id FROM screens);
   `);

@@ -509,6 +509,8 @@ export function normalizeMenuItem(input, { partial = false } = {}) {
   if (!partial || has('label')) out.label = str(input.label);
   if (!partial || has('name')) out.name = str(input.name || slugify(input.label || 'item'));
   if (!partial || has('iconId')) out.iconId = input.iconId == null || input.iconId === '' ? null : Number(input.iconId);
+  // a library button drawn as this item (its shape / style); with an icon set, the icon replaces the button's own
+  if (!partial || has('refButtonId')) out.refButtonId = input.refButtonId == null || input.refButtonId === '' ? null : Number(input.refButtonId);
   if (!partial || has('parentId')) out.parentId = input.parentId == null ? null : Number(input.parentId);
   if (!partial || has('ord')) out.ord = Number(input.ord) || 0;
   if (!partial || has('action')) out.action = str(input.action);

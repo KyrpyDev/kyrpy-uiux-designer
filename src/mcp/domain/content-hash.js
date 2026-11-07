@@ -92,7 +92,8 @@ function canonicalMenu(menuItems, uidOf) {
     m.icon_id != null ? uidOf('icon', m.icon_id) : null,
     m.target_screen_id != null ? uidOf('screen', m.target_screen_id) : null,
     m.target_element_id != null ? uidOf('element', m.target_element_id) : null,
-    (kids.get(m.id) || []).map(emit)
+    (kids.get(m.id) || []).map(emit),
+    ...(m.ref_button_id != null ? [uidOf('button', m.ref_button_id)] : [])   // only when set: hashes of existing menus stay as they were
   ];
   return (kids.get(null) || []).map(emit);
 }

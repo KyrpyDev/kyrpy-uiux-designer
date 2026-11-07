@@ -73,7 +73,7 @@ export class ProjectLibraryService {
         this.db.prepare('UPDATE nodes SET on_click = ?, events = ? WHERE id = ?').run(oc ? JSON.stringify(fix(oc)) : r.on_click, JSON.stringify(Array.isArray(ev) ? ev.map(fix) : ev), r.id);
       }
     }
-    const col = { icon: 'icon_id', screen: 'target_screen_id', element: 'target_element_id' }[type];
+    const col = { icon: 'icon_id', screen: 'target_screen_id', element: 'target_element_id', button: 'ref_button_id' }[type];
     if (col) this.db.prepare(`UPDATE menu_items SET ${col} = ? WHERE ${col} = ? AND button_id IN (SELECT id FROM buttons WHERE project_id = ?)`).run(toId, fromId, p);
     if (type === 'screen') {
       this.db.prepare('UPDATE OR IGNORE workflow_screens SET screen_id = ? WHERE screen_id = ? AND workflow_id IN (SELECT id FROM workflows WHERE project_id = ?)').run(toId, fromId, p);

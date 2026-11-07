@@ -28,6 +28,7 @@ export class MenuService {
 
   #check(data) {
     if (data.iconId != null && !this.icons.get(data.iconId)) throw new ValidationError(`icon ${data.iconId} does not exist`);
+    if (data.refButtonId != null && this.buttons && !this.buttons.get(data.refButtonId)) throw new ValidationError(`button ${data.refButtonId} does not exist`);
     if (data.targetScreenId != null && !this.screens.get(data.targetScreenId)) throw new ValidationError(`screen ${data.targetScreenId} does not exist`);
     if (data.targetElementId != null && this.elements && !this.elements.get(data.targetElementId)) throw new ValidationError(`element ${data.targetElementId} does not exist`);
   }
