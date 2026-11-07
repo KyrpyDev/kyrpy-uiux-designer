@@ -879,3 +879,19 @@ export class LibraryPanel {
   /** Called by the app when a screen record changed (rename, thumbnails). */
   invalidateScreens() { this.screensList = null; if (state.tab === 'screen') this.renderBody(); }
 }
+
+/* A cell's hover toolbar can be wider than the cell: nudge it back inside the library panel instead of leaving the screen. */
+if (typeof document !== 'undefined' && !window.__udCellTbFit) {
+  window.__udCellTbFit = true;
+  document.addEventListener('mouseover', e => {
+    const cell = e.target?.closest?.('.cell, .lib-card');
+    const tb = cell?.querySelector(':scope > .tb');
+    if (!tb) return;
+    tb.style.transform = '';
+    const box = (cell.closest('.lib-scroll, .lib-body, .panel') || document.documentElement).getBoundingClientRect();
+    const r = tb.getBoundingClientRect(), pad = 4;
+    const left = Math.max(box.left, 0) + pad, right = Math.min(box.right, window.innerWidth) - pad;
+    const dx = r.left < left ? left - r.left : (r.right > right ? right - r.right : 0);
+    if (dx) tb.style.transform = `translateX(${Math.round(dx)}px)`;
+  }, { passive: true });
+}
