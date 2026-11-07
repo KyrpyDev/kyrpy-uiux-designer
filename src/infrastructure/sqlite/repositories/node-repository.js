@@ -25,6 +25,21 @@ export class NodeRepository {
   }
   listAllByType(ownerType) { return this.db.prepare('SELECT * FROM nodes WHERE owner_type = ? ORDER BY owner_id, ord, id').all(ownerType).map(toElement); }
   listByRef(refType, refId) { return this.db.prepare('SELECT * FROM nodes WHERE ref_type = ? AND ref_id = ? ORDER BY id').all(refType, Number(refId)).map(toElement); }
+  /**
+   * Every item the project's own designs use, directly or through other items (screen → element → button → icon → path):
+   * `type:id` keys. The project's own items are the seeds; items other scopes own are what the library marks as "in use".
+   */
+  usedByProject(projectId) {
+    const pid = Number(projectId);
+    if (!pid) return [];
+    return this.db.prepare(`WITH RECURSIVE used(t, i) AS (
+        SELECT 'screen', id FROM screens WHERE project_id = ?1 UNION SELECT 'element', id FROM elements WHERE project_id = ?1
+        UNION SELECT 'button', id FROM buttons WHERE project_id = ?1 UNION SELECT 'icon', id FROM icons WHERE project_id = ?1
+        UNION SELECT 'path', id FROM paths WHERE project_id = ?1
+        UNION SELECT n.ref_type, n.ref_id FROM nodes n JOIN used u ON n.owner_type = u.t AND n.owner_id = u.i
+          WHERE n.ref_type IS NOT NULL AND n.ref_id IS NOT NULL)
+      SELECT t, i FROM used`).all(pid).map(r => `${r.t}:${r.i}`);
+  }
   get(id) { return toElement(this.db.prepare('SELECT * FROM nodes WHERE id = ?').get(id)); }
 
   create(ownerType, ownerId, e, { id } = {}) {

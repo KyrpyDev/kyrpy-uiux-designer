@@ -352,7 +352,9 @@ export function buildItemBrowserElement({
       }
     }
     // project-scope items first, then the user's own private items, then public ones; each group keeps its order
-    const rank = ({ item }) => (item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : 2);
+    // green (project/private/cloned) first, then purple (public items the active project uses), then plain public
+    const used = new Set(state.library?.usedKeys || []);
+    const rank = ({ type, item }) => (item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : used.has(`${type}:${item.id}`) ? 2 : 3);
     return out.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
   }
 
@@ -655,7 +657,7 @@ export function buildItemBrowserElement({
       );
 
       const card = h('div', {
-        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item)}`,
+        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item, new Set(state.library?.usedKeys || []), type)}`,
         dataset: { ibCardType: type, ibCardId: String(item.id) },
         onclick: () => {
           const next = !selectedKeys.has(k);

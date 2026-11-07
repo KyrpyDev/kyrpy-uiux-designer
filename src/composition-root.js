@@ -188,6 +188,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   return {
     db,
     pgSync,
+    nodes,
     auth,
     profile,
     users: userRepo,

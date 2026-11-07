@@ -44,20 +44,32 @@ export function privateFirst(list, userId) {
  * Library order: project-scope items first, then the user's own private items, then public items; every group keeps
  * its existing order (stable, O(n)).
  */
-export function scopeFirst(list, userId) {
+export function scopeFirst(list, userId, used = null, type = '') {
   const uid = Number(userId || 1);
-  const project = [], own = [], rest = [];
+  const project = [], own = [], inUse = [], rest = [];
   for (const d of list || []) {
     if (d.visibility === 'project') project.push(d);
     else if (d.visibility === 'private' && Number(d.creatorId || 1) === uid) own.push(d);
+    else if (isUsed(d, used, type)) inUse.push(d);
     else rest.push(d);
   }
-  return project.length || own.length ? project.concat(own, rest) : rest;
+  return project.length || own.length || inUse.length ? project.concat(own, inUse, rest) : rest;
 }
 
-/** CSS class for the card edge of a library item: project and private items get their own colour, public stay plain. */
-export function visClass(d) {
-  return d?.visibility === 'project' ? ' vis-project' : d?.visibility === 'private' ? ' vis-private' : '';
+/** True when the active project uses this item (`used` = Set of "type:id" keys from /api/library `usedKeys`). */
+export function isUsed(d, used, type) {
+  return Boolean(used && type && d && used.has(`${type}:${d.id}`));
+}
+
+/**
+ * CSS class for the card edge of a library item:
+ *   green  (vis-own)   project-scope, private or cloned items: they belong to the user's projects and are listed first
+ *   purple (vis-used)  public items the active project uses
+ *   plain              public, immutable items that are not in use
+ */
+export function visClass(d, used = null, type = '') {
+  if (d?.visibility === 'project' || d?.visibility === 'private') return ' vis-own';
+  return isUsed(d, used, type) ? ' vis-used' : '';
 }
 
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];

@@ -119,8 +119,10 @@ export function designRoutes(router, c) {
       includePublic: query.get('includePublic') !== '0',
       includePrivate: query.get('includePrivate') !== '0'
     };
+    const usedKeys = filter.projectId ? c.nodes.usedByProject(filter.projectId) : [];
     if (query.get('iconSummary') !== '1') {
       return {
+        usedKeys,
         paths: c.services.path.listFull(filter),
         icons: c.services.icon.listFull(filter),
         buttons: c.services.button.listFull(filter),
@@ -144,7 +146,7 @@ export function designRoutes(router, c) {
       const full = new Map(c.iconCatalog.full([...used], { max: Infinity }).map(i => [i.id, i.nodes]));
       icons = c.iconCatalog.summaries(filter).map(i => compactIconSummary(full.has(i.id) ? { ...i, nodes: full.get(i.id) } : i));
     }
-    return { paths, icons, iconsVersion, iconSummary: true, buttons, elements, animations: c.animationList() };
+    return { usedKeys, paths, icons, iconsVersion, iconSummary: true, buttons, elements, animations: c.animationList() };
   });
   router.get('/api/sprite', ({ query }) => ({ raw: c.render.sprite(query.get('theme') || c.settings.get().theme), contentType: 'image/svg+xml' }));
   router.get('/api/import/folders', () => ({ folders: c.svgImport.listSuggestedFolders() }));
