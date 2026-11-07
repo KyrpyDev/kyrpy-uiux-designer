@@ -142,3 +142,24 @@ test('HTTP: POST /api/changes/bulk, GET /api/changes/counts and ?q=', async () =
     c.close();
   }
 });
+
+test('approve only records the decision when the edit is live: newer edits of the item are never undone', () => {
+  const { c, screens, pending } = setup(1);
+  const actor = ownerOf(c);
+  const s = screens[0];
+  c.screen.update(s.id, { label: 'Edited again later' }, { actorId: 1 });       // the owner edited the item after the collaborator
+  c.collaboration.approve(pending[0].id, { actor });
+  assert.equal(c.collaboration.get(pending[0].id).status, 'approved');
+  assert.equal(c.screen.get(s.id).label, 'Edited again later', 'the old "after" snapshot was not restored over the newer edit');
+  c.close();
+});
+
+test('approve still applies a staged edit (the item was not touched since the change was recorded)', () => {
+  const { c, screens, pending } = setup(1);
+  const actor = ownerOf(c);
+  const s = screens[0];
+  c.db.prepare('UPDATE screens SET label = ?, updated_at = ? WHERE id = ?').run('Original 0', '2000-01-01 00:00:00', s.id);   // edit not live, item older than the change
+  c.collaboration.approve(pending[0].id, { actor });
+  assert.equal(c.screen.get(s.id).label, 'Proposed 0', 'staged edit applied on approval');
+  c.close();
+});

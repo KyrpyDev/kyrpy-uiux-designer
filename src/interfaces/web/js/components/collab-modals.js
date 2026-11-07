@@ -818,7 +818,7 @@ export async function openChangesModal() {
   const host = h('div', { class: 'chg-modal' });
   const TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
   const PAGE = 100;            // cards rendered per step (lists can hold several hundred changes)
-  const CHUNK = 50;            // ids per bulk request, so a long selection shows progress
+  const CHUNK = 20;            // ids per bulk request, so a long selection shows progress
   let statusFilter = 'pending';
   let typeFilter = '', authorFilter = '', query = '';
   let rows = [];               // the matching changes (lite, newest first)

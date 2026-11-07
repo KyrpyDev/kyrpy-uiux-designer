@@ -870,7 +870,10 @@ export class CollaborationService {
       const p = this.projects.get(ch.projectId);
       if (!p || p.ownerId !== effActor.id) throw new ForbiddenError('Only the item/project owner or admin can approve changes');
     }
-    if (ch.afterSnapshot && Array.isArray(ch.afterSnapshot.nodes)) {
+    // Edits are applied to the item the moment they are made; approving only records the decision. The stored
+    // snapshot is re-applied ONLY when the item was not touched since the change (a staged edit): restoring an old
+    // snapshot over an item that has been edited again would silently undo those newer edits.
+    if (ch.afterSnapshot && Array.isArray(ch.afterSnapshot.nodes) && !this.#editIsLive(ch)) {
       if (ch.targetType === 'workflow' && this.workflows) {
         try { this.workflows.restore(ch.targetId, ch.afterSnapshot); } catch { /* target may have been deleted */ }
       } else if (this.services[ch.targetType]) {
@@ -878,6 +881,18 @@ export class CollaborationService {
       }
     }
     return this.changes.updateStatus(ch.id, { status: 'approved', reviewerId: effActor?.id ?? reviewerId ?? ch.ownerId ?? 1, reviewComment: comment || reviewNote || '' });
+  }
+
+  /** True when the target item was modified at or after the change was recorded (or no longer exists): nothing to re-apply. */
+  #editIsLive(ch) {
+    try {
+      const svc = ch.targetType === 'workflow' ? this.workflows : this.services?.[ch.targetType];
+      const cur = svc?.designs?.get ? svc.designs.get(ch.targetId) : svc?.get?.(ch.targetId);
+      if (!cur) return true;                                        // deleted: nothing to apply
+      const at = v => (v ? Date.parse(String(v).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? '' : 'Z')) : NaN);
+      const changed = at(ch.createdAt), updated = at(cur.updatedAt);
+      return !(Number.isFinite(changed) && Number.isFinite(updated)) || updated >= changed;
+    } catch { return true; }
   }
 
   approveChange({ id, reviewerId = 1, reviewNote = '', comment = '' } = {}) {
