@@ -63088,7 +63088,7 @@ INSERT OR REPLACE INTO "template_buttons" ("id", "key", "name", "category", "sha
 INSERT OR REPLACE INTO "template_buttons" ("id", "key", "name", "category", "shape", "width", "height", "rx_ratio", "margin_ratio", "stroke_ratio", "role", "hover_effect", "indicator_effect", "nodes_template", "meta", "builtin", "created_by", "created_at", "mcp_context", "uid", "content_hash") VALUES (40, 'retro-light-btn', 'Pop & Neon Retro Arcade Button (Light)', 'retro', 'rounded', 172, 48, 0.22, 0.15, 1.8, 'button', 'glow', 'contour-blink', '[{"tag":"rect","role":"button","name":"surface","attrs":{"x":0,"y":0,"width":172,"height":48,"rx":11,"stroke-width":"{{sw*1.8}}"},"animations":[{"name":"hover-glow","type":"glow","trigger":"hover","durationMs":600,"iterations":1}]},{"tag":"text","kind":"text","name":"label","text":"Pop & Neon Retro Arcade Button (Light)","attrs":{"x":86,"y":29,"font-size":14,"font-weight":700,"text-anchor":"middle","fill":"{{text}}"}}]', '{"mode":"light","pairKey":"retro-dark-btn","themeKey":"retro-light","styleFamily":"Pop & Neon Retro UI"}', 1, 15, '2026-11-05 12:09:44', '{}', '17381d66-6567-4c47-b118-3bdd6a70e227', NULL);
 -- Table: translations (0 rows)
 -- Table: settings (4 rows)
-INSERT OR REPLACE INTO "settings" ("key", "value", "mcp_context") VALUES ('leftPanelWidth', '391', '{}');
+INSERT OR REPLACE INTO "settings" ("key", "value", "mcp_context") VALUES ('leftPanelWidth', '369', '{}');
 INSERT OR REPLACE INTO "settings" ("key", "value", "mcp_context") VALUES ('showGrid', 'false', '{}');
 INSERT OR REPLACE INTO "settings" ("key", "value", "mcp_context") VALUES ('snapToAnchors', 'true', '{}');
 INSERT OR REPLACE INTO "settings" ("key", "value", "mcp_context") VALUES ('theme', '"liquid"', '{}');
