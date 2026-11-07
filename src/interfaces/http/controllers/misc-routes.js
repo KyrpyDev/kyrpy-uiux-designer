@@ -43,6 +43,13 @@ export function miscRoutes(router, c) {
 
   // project export: either returns the files (the browser writes them to a picked folder) or writes to a server-side folder
   router.post('/api/export/bundle', ({ body }) => c.exporter.buildBundle(body));
+  // the whole project as one browsable html file (?download=1 sets Content-Disposition)
+  router.get('/api/export/project.html', ({ query, projectId }) => {
+    const pid = Number(query.get('projectId')) || projectId || 1;
+    const proj = c.projects.get(pid);
+    const f = c.exporter.buildProjectHtml({ projectId: pid, themeKeys: query.get('theme') ? [query.get('theme')] : undefined, title: proj?.name || 'Project', projectKey: proj?.key || 'project' });
+    return { raw: f.content, contentType: f.contentType, filename: query.get('download') === '1' ? f.filename : null };
+  });
   router.post('/api/export/folder', ({ body }) => {
     const { folder, ...options } = body;
     const result = c.exporter.exportToFolder(options, folder);

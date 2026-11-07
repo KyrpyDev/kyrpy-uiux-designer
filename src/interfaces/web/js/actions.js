@@ -165,6 +165,15 @@ export function downloadSvg(type, id, extra = {}) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+/** "Export all project": every workflow and screen of the active project as ONE browsable html file (download). */
+export function downloadProjectHtml() {
+  const proj = state.projects.find(p => p.id === state.activeProjectId);
+  const qs = new URLSearchParams({ projectId: String(state.activeProjectId || 1), theme: state.themeKey, download: '1' });
+  const a = h('a', { href: `/api/export/project.html?${qs}` });
+  document.body.appendChild(a); a.click(); a.remove();
+  toast(`Exporting "${proj?.name || 'project'}" as one html file…`, 'ok', 2400);
+}
+
 const BOX = (w, h2, extra = {}) => ({ tag: 'rect', role: 'card', name: 'surface', attrs: { x: 0, y: 0, width: w, height: h2, rx: 16 }, ...extra });
 
 /** silent: create an empty item of this type straight away (no dialogs, auto-named). */

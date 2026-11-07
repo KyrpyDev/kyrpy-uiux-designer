@@ -2,7 +2,7 @@
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api, ApiError, setWriteGuard } from './api.js';
 import { state, on, emit, projectLabel, PLURAL, findDesign, isPublicLibraryItem, isSuperadminUser } from './state.js';
-import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
+import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, downloadProjectHtml, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
@@ -548,7 +548,9 @@ function menuDef() {
       ['Export open design as SVG (with animation)', () => app.current ? downloadSvg(app.current.type, app.current.id) : toast('Open a design first', 'error')],
       ['Export usage guide (usage-and-guide.html)', () => downloadGuide()],
       ['Export selected screens…', () => openExportDialog({ screenIds: state.catalogSel.size ? [...state.catalogSel] : 'all' })],
-      ['Export all screens…', () => openExportDialog({ screenIds: 'all' })]
+      ['Export all screens…', () => openExportDialog({ screenIds: 'all' })],
+      '-',
+      ['Export all project (one browsable html)', () => downloadProjectHtml()]
     ]],
     ['Trash', [
       ['🗑 Trash Management (Restore / Purge)…', () => openTrashModal()],

@@ -286,7 +286,8 @@ window.UD_SCREENS = window.UD_MANIFEST.screens;
 const pct = (v, total) => `${Math.round((v / total) * 10000) / 100}%`;
 
 /** One screen page: all theme variants inline (only the active theme is displayed), links, hotspots, dev notes. */
-export function screenHtml({ screen, themes, inlineSvgs, links, components, actions = [], overlays = [], primary, title }) {
+/** The pieces of one screen page (also used by the single-file project viewer): device markup, overlays (popups/drawers), link list. */
+export function screenParts({ screen, inlineSvgs, links, components, actions = [], overlays = [] }) {
   const W = screen.width, H = screen.height;
   const pos = b => `left:${pct(b.x, W)};top:${pct(b.y, H)};width:${pct(b.w, W)};height:${pct(b.h, H)}`;
   const sameBox = (a, b) => ['x', 'y', 'w', 'h'].every(k => Math.abs(a[k] - b[k]) < 0.5);
@@ -312,6 +313,17 @@ export function screenHtml({ screen, themes, inlineSvgs, links, components, acti
   const ctl = components.filter(c => ['button', 'a'].includes(c.htmlTag)).map(c =>
     `<${c.htmlTag === 'a' ? 'a href="#"' : 'button type="button"'} class="ud-ctl" style="left:${pct(c.box.x, W)};top:${pct(c.box.y, H)};width:${pct(c.box.w, W)};height:${pct(c.box.h, H)}" aria-label="${esc(c.name)}"></${c.htmlTag === 'a' ? 'a' : 'button'}>`).join('\n      ');
   const linkList = links.map(l => `<a href="${esc(l.to)}.html"><strong>${esc(l.name || l.to)}</strong><small>→ ${esc(l.to)} · ${esc(l.trigger)}</small></a>`).join('\n        ') || '<small>No outgoing links.</small>';
+  const device = `<div class="ud-device" style="--ud-device-w:${W}px" id="${esc(screen.key)}">
+    ${inlineSvgs.join('\n    ')}
+    ${hot}
+    ${act}
+    ${ctl}
+  </div>`;
+  return { device, overlays: ov, linkList };
+}
+
+export function screenHtml({ screen, themes, inlineSvgs, links, components, actions = [], overlays = [], primary, title }) {
+  const { device, overlays: ov, linkList } = screenParts({ screen, inlineSvgs, links, components, actions, overlays });
   return `<!doctype html>
 <html lang="en" data-theme="${esc(primary.key)}">
 <head>
@@ -328,12 +340,7 @@ export function screenHtml({ screen, themes, inlineSvgs, links, components, acti
   <label>Theme <select id="ud-theme"></select></label>
 </header>
 <main class="ud-stage">
-  <div class="ud-device" style="--ud-device-w:${W}px" id="${esc(screen.key)}">
-    ${inlineSvgs.join('\n    ')}
-    ${hot}
-    ${act}
-    ${ctl}
-  </div>
+  ${device}
   <aside class="ud-side">
     <section><h2>Navigation</h2><nav class="ud-links">
         ${linkList}

@@ -5,6 +5,7 @@ import { TYPES } from '../../domain/entities.js';
 import { bindMenus } from '../../domain/menu-runtime.js';
 import { repeaterPlan, repeaterMarkup, bindRepeaters } from '../../domain/repeater.js';
 import * as T from './templates.js';
+import { projectViewerHtml } from './project-viewer.js';
 
 const stripAnimations = svg => svg.replace(/<style>[\s\S]*?<\/style>/, '');
 const stamp = () => new Date().toISOString();
@@ -42,7 +43,7 @@ export class ExportService {
     return ids.map(i => s.get(i));
   }
 
-  buildBundle({ screenIds = 'all', themeKeys, includeIcons = 'used', title = 'UI Export' } = {}) {
+  buildBundle({ screenIds = 'all', themeKeys, includeIcons = 'used', title = 'UI Export' } = {}, internal = null) {
     const themes = this.#themes(themeKeys);
     const primary = themes[0];
     const S = this.services;
@@ -195,7 +196,42 @@ export class ExportService {
     add('DEV-NOTES.md', T.devNotes({ title, screens: screenInfos, icons: iconInfos, buttons: buttonInfos, elements: elementInfos }));
     add('README.md', T.readmeMd(title));
 
+    if (internal) Object.assign(internal, { screenInfos, themes, primary });
     return { files, summary: { screens: screenInfos.length, themes: themes.map(t => t.key), icons: iconInfos.length, buttons: buttonInfos.length, elements: elementInfos.length, files: files.length } };
+  }
+
+  /**
+   * "Export all project": every workflow of the project and every screen they (and the project) contain, as ONE html file
+   * (left 30%: workflows and their screens, right 70%: the interactive screen; css, js, svg, menus and animations inlined).
+   * @returns {{filename: string, content: string, contentType: string, summary: object}}
+   */
+  buildProjectHtml({ projectId, themeKeys, title = 'Project', projectKey = 'project' } = {}) {
+    const S = this.services;
+    const pid = Number(projectId) || 1;
+    const wfRows = this.workflows.list({ projectId: pid, includePublic: pid === 1 }).filter(w => Number(w.projectId ?? pid) === pid);
+    const screenIds = [];
+    const addScreen = id => { if (id != null && !screenIds.includes(id) && (() => { try { return S.screen.get(id); } catch { return null; } })()) screenIds.push(id); };
+    const workflows = wfRows.map(w => {
+      const full = this.workflows.get(w.id);
+      const ids = [...(full.nodes || [])].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0)).map(n => n.screenId);
+      ids.forEach(addScreen);
+      return { key: full.key, name: full.name, label: full.label, descriptionDev: full.descriptionDev, ids };
+    });
+    S.screen.list({ projectId: pid, includePublic: pid === 1, includePrivate: false }).forEach(s => addScreen(s.id));
+    if (!screenIds.length) throw new ValidationError('this project has no screens to export');
+    const internal = {};
+    this.buildBundle({ screenIds, themeKeys, includeIcons: 'none', title }, internal);
+    const keyById = new Map(internal.screenInfos.map((info, i) => [screenIds[i], info.key]));
+    const screens = internal.screenInfos.map(info => ({
+      key: info.key, name: info.name, label: info.label, descriptionDev: info.descriptionDev, width: info.width, height: info.height, links: info.links,
+      parts: T.screenParts({ screen: info, inlineSvgs: info.inline, links: info.links, components: info.components, actions: info.actionRows, overlays: info.overlays })
+    }));
+    const content = projectViewerHtml({
+      title, themes: internal.themes, primary: internal.primary, screens,
+      workflows: workflows.map(w => ({ ...w, screens: w.ids.map(id => keyById.get(id)).filter(Boolean) })).filter(w => w.screens.length),
+      menuRuntime: bindMenus.toString(), repeaterRuntime: [repeaterPlan, repeaterMarkup, bindRepeaters].map(f => f.toString()).join('\n')
+    });
+    return { filename: `${projectKey}-project.html`, content, contentType: 'text/html; charset=utf-8', summary: { workflows: workflows.length, screens: screens.length, bytes: Buffer.byteLength(content) } };
   }
 
   /** Builds the bundle and writes it into `folder` (created if needed). */
