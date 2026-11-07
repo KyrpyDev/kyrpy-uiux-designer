@@ -10,39 +10,52 @@ import { state, findDesign } from '../state.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
 
-const PICK_LIMIT = 300;
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
 import { buildMenuTree } from '/domain/menu.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
+/** Public items + the user's own (private and all of their projects): what a picker offers, regardless of the library filter. */
+const scopeQuery = (extra = {}) => new URLSearchParams(Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== '' && v != null))).toString();
+
 export function pickIcon(currentId = null) {
   return new Promise(resolve => {
-    let done = false;
+    let done = false, m, seq = 0, timer = null;
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const grid = h('div', { class: 'grid-icons', style: { maxHeight: '360px', overflow: 'auto' } });
-    const q = h('input', { type: 'search', placeholder: 'Search icons…' });
-    let m;
-    const fill = () => {
-      clear(grid);
-      const s = q.value.toLowerCase();
-      // thousands of pack icons: draw the first PICK_LIMIT matches and fetch just their sprite symbols
-      const all = state.library.icons.filter(i => !s || `${i.key} ${i.label} ${i.category} ${(i.tags || []).join(' ')}`.toLowerCase().includes(s));
-      const shown = all.slice(0, PICK_LIMIT);
-      ensureIconSymbols(shown.map(i => i.id));
-      if (all.length > shown.length) grid.append(h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px' } }, `Showing ${shown.length} of ${all.length} icons; type to narrow the search.`));
-      for (const ic of shown) {
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'ico');
-        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', `#i-${ic.key}`);
-        for (const [k, v] of Object.entries({ fill: 'none', stroke: 'url(#lgS)', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) use.setAttribute(k, v);
-        svg.appendChild(use);
-        grid.append(h('div', { class: `cell${ic.id === currentId ? ' sel' : ''}`, title: ic.label, onclick: () => { fin(ic.id); m.close(); } }, svg, h('div', { class: 'lbl' }, ic.key)));
-      }
+    const q = h('input', { type: 'search', placeholder: 'Search public icons and icons of all my projects…' });
+    const cell = (ic, own) => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'ico');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#i-${ic.key}`);
+      for (const [k, v] of Object.entries({ fill: 'none', stroke: 'url(#lgS)', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) use.setAttribute(k, v);
+      svg.appendChild(use);
+      return h('div', { class: `cell${ic.id === currentId ? ' sel' : ''}${own ? ' vis-own' : ''}`, title: `${ic.label || ic.key}${own ? ' · my projects' : ' · public'}`, onclick: () => { fin(ic.id); m.close(); } }, svg, h('div', { class: 'lbl' }, ic.key));
     };
-    q.addEventListener('input', fill);
+    const section = (title, rows, own, total) => {
+      if (!rows.length) return [];
+      return [h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, `${title} · ${total > rows.length ? `${rows.length} of ${total}` : rows.length}${total > rows.length ? ' (type to narrow the search)' : ''}`), ...rows.map(ic => cell(ic, own))];
+    };
+    const fill = async () => {
+      const my = ++seq, term = q.value.trim();
+      try {
+        // user's own items first (private + project-only of every project), then the public library; both searched on the server
+        const [mine, pub] = await Promise.all([
+          api.get(`/api/icons/search?${scopeQuery({ visibility: 'mine', includePublic: '0', q: term, limit: 300 })}`),
+          api.get(`/api/icons/search?${scopeQuery({ visibility: 'public', q: term, limit: 300 })}`)
+        ]);
+        if (my !== seq) return;
+        const ownIds = new Set(mine.items.map(i => i.id));
+        const pubRows = pub.items.filter(i => !ownIds.has(i.id));
+        ensureIconSymbols([...mine.items, ...pubRows].map(i => i.id));
+        clear(grid);
+        const parts = [...section('All my projects', mine.items, true, mine.total), ...section('Public', pubRows, false, pub.total)];
+        grid.append(...(parts.length ? parts : [h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, 'No icons match.')]));
+      } catch (e) { if (my === seq) { clear(grid); grid.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Could not load icons: ${e.message}`)); } }
+    };
+    q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(fill, 180); });
     m = modal({ title: 'Pick an icon', wide: true, onClose: () => fin(null), content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, q, grid),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(0); close(); } }, 'No icon'), h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
     fill();
@@ -50,25 +63,34 @@ export function pickIcon(currentId = null) {
   });
 }
 
-/** Add / edit dialog of one menu item. Resolves with the saved item or null. */
-/** Pick a library button for a menu item (search, thumbnails by name). Resolves to an id, 0 = no button, null = cancelled. */
+/** Pick a library button for a menu item: public + all of my projects, with previews. Resolves to an id, 0 = no button, null = cancelled. */
 export function pickButton(currentId = null, excludeId = null) {
   return new Promise(resolve => {
-    let done = false, m;
+    let done = false, m, all = [];
     const fin = v => { if (!done) { done = true; resolve(v); } };
-    const q = h('input', { type: 'search', placeholder: 'Search buttons…' });
-    const list = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '6px', maxHeight: '360px', overflow: 'auto' } });
+    const q = h('input', { type: 'search', placeholder: 'Search public buttons and buttons of all my projects…' });
+    const list = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(110px,1fr))', gap: '8px', maxHeight: '380px', overflow: 'auto' } });
+    const card = (b, own) => h('button', { class: `cell${b.id === currentId ? ' sel' : ''}${own ? ' vis-own' : ''}`, type: 'button', title: `${b.label || b.name} (${b.key}) · ${own ? 'my projects' : 'public'}`,
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '8px', cursor: 'pointer', textAlign: 'center' }, onclick: () => { fin(b.id); m.close(); } },
+      h('img', { class: 'thumb small', loading: 'lazy', alt: b.label || b.name, style: { width: '72px', height: '72px', objectFit: 'contain' }, src: api.svgUrl('button', b.id, { theme: state.themeKey, animated: 0, size: 96, v: b.updatedAt }) }),
+      h('div', { class: 'lbl', style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, b.label || b.name));
     const fill = () => {
       clear(list);
-      const s = q.value.toLowerCase();
-      const all = (state.library.buttons || []).filter(b => b.id !== excludeId && (!s || `${b.key} ${b.label} ${b.name} ${b.category}`.toLowerCase().includes(s)));
-      for (const b of all.slice(0, 120)) list.append(h('button', { class: `btn${b.id === currentId ? ' primary' : ''}`, type: 'button', title: b.key, style: { textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, onclick: () => { fin(b.id); m.close(); } }, b.label || b.name));
-      if (all.length > 120) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px' } }, `Showing 120 of ${all.length}: type to narrow the search.`));
+      const s = q.value.trim().toLowerCase();
+      const rows = all.filter(r => r.b.id !== excludeId && (!s || `${r.b.key} ${r.b.label} ${r.b.name} ${r.b.category}`.toLowerCase().includes(s)));
+      const mine = rows.filter(r => r.own), pub = rows.filter(r => !r.own);
+      const head = t => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, t);
+      if (mine.length) list.append(head(`All my projects · ${mine.length}`), ...mine.slice(0, 150).map(r => card(r.b, true)));
+      if (pub.length) list.append(head(`Public · ${pub.length}${pub.length > 150 ? ' (showing 150: type to narrow the search)' : ''}`), ...pub.slice(0, 150).map(r => card(r.b, false)));
+      if (!rows.length) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, 'No buttons match.'));
     };
     q.addEventListener('input', fill);
     m = modal({ title: 'Pick a button', wide: true, onClose: () => fin(null), content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, q, list),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(0); close(); } }, 'No button (plain circle)'), h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
-    fill();
+    list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, 'Loading buttons…'));
+    Promise.all([api.list('button', '', { visibility: 'mine', includePublic: false }), api.list('button', '', { visibility: 'public' })])
+      .then(([mine, pub]) => { const ownIds = new Set(mine.map(b => b.id)); all = [...mine.map(b => ({ b, own: true })), ...pub.filter(b => !ownIds.has(b.id)).map(b => ({ b, own: false }))]; fill(); })
+      .catch(e => { clear(list); list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Could not load buttons: ${e.message}`)); });
     setTimeout(() => q.focus(), 30);
   });
 }
@@ -89,14 +111,18 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
     const visCheck = h('input', { type: 'checkbox', checked: item?.visible !== false });
     const dev = h('textarea', { rows: 4, placeholder: 'description-dev: what the dev team must implement for this item' }); dev.value = item?.descriptionDev ?? '';
     const iconBtn = h('button', { class: 'btn', type: 'button' }), iconLabel = h('span', { class: 'muted' });
-    const paintIcon = () => { const ic = findDesign('icon', iconId); iconBtn.textContent = ic ? `Icon: ${ic.label}` : 'Choose icon…'; iconLabel.textContent = ic ? ic.key : 'no icon'; };
-    iconBtn.addEventListener('click', async () => { const r = await pickIcon(iconId); if (r !== null) { iconId = r || null; paintIcon(); } });
+    // picked items can be outside the (filtered) library: remember the record the picker returned or fetch it
+    const known = { icon: new Map(), button: new Map() };
+    const lookup = async (type, id) => { if (id == null) return null; const hit = findDesign(type, id) || known[type].get(id); if (hit) return hit; try { const rec = await api.getDesign(type, id); known[type].set(id, rec); return rec; } catch { return null; } };
+    const paintIcon = () => { const ic = findDesign('icon', iconId) || known.icon.get(iconId); iconBtn.textContent = ic ? `Icon: ${ic.label}` : 'Choose icon…'; iconLabel.textContent = ic ? ic.key : 'no icon'; };
+    iconBtn.addEventListener('click', async () => { const r = await pickIcon(iconId); if (r !== null) { iconId = r || null; await lookup('icon', iconId); paintIcon(); } });
     label.addEventListener('input', () => { if (!nameTouched) name.value = slugify(label.value, 'item'); });
     name.addEventListener('input', () => { nameTouched = true; });
     const btnBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-button' }), btnLabel = h('span', { class: 'muted' });
-    const paintButton = () => { const b = findDesign('button', refButtonId); btnBtn.textContent = b ? `Button: ${b.label || b.name}` : 'Choose button…'; btnLabel.textContent = b ? b.key : 'plain circle'; };
-    btnBtn.addEventListener('click', async () => { const r = await pickButton(refButtonId, buttonId); if (r !== null) { refButtonId = r || null; paintButton(); } });
+    const paintButton = () => { const b = findDesign('button', refButtonId) || known.button.get(refButtonId); btnBtn.textContent = b ? `Button: ${b.label || b.name}` : 'Choose button…'; btnLabel.textContent = b ? b.key : 'plain circle'; };
+    btnBtn.addEventListener('click', async () => { const r = await pickButton(refButtonId, buttonId); if (r !== null) { refButtonId = r || null; await lookup('button', refButtonId); paintButton(); } });
     paintIcon(); paintButton();
+    lookup('icon', iconId).then(paintIcon); lookup('button', refButtonId).then(paintButton);
     let m;
     const save = async () => {
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');

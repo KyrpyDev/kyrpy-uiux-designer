@@ -250,7 +250,7 @@ CREATE TABLE menu_items (
   action           TEXT NOT NULL DEFAULT '',
   target_screen_id INTEGER REFERENCES screens(id) ON DELETE SET NULL,
   description_dev  TEXT NOT NULL DEFAULT ''
-, target_element_id INTEGER REFERENCES elements(id) ON DELETE SET NULL, visible INTEGER NOT NULL DEFAULT 1, mcp_context TEXT NOT NULL DEFAULT '{}');
+, target_element_id INTEGER REFERENCES elements(id) ON DELETE SET NULL, visible INTEGER NOT NULL DEFAULT 1, ref_button_id INTEGER REFERENCES buttons(id) ON DELETE SET NULL, mcp_context TEXT NOT NULL DEFAULT '{}');
 
 CREATE TABLE nodes (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
