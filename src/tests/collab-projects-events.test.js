@@ -206,7 +206,7 @@ test('multi-events (click, mouseover, release, drag, drop), small element toolba
   assert.equal(node.events.length, 4);
 
   // Add new animation types (flip, shake, swing, float, shine, contour-blink, slide-in)
-  for (const type of ['flip', 'shake', 'swing', 'float', 'shine', 'contour-blink', 'slide-in']) {
+  for (const type of ['flip', 'shake', 'swing', 'float', 'shine', 'contour-blink', 'slide-in', 'move-up', 'move-down', 'move-left', 'move-right']) {
     const a = c.screen.addAnimation(node.id, { type, durationMs: 600, trigger: 'hover' });
     assert.equal(a.type, type);
   }
@@ -214,6 +214,8 @@ test('multi-events (click, mouseover, release, drag, drop), small element toolba
   const css = animationsToCss(fullScr.animations);
   assert.match(css, /rotateY/);
   assert.match(css, /drop-shadow/);
+  assert.match(css, /translate\(0px, -16px\)/, 'move-up');
+  assert.match(css, /translate\(16px, 0px\)/, 'move-right');
 
   // Export bundle includes multi-event hotspots and toolbar overlay
   const bundle = c.exporter.buildBundle({ screenIds: [homeScr.id, targetScr.id], themeKeys: ['liquid'] });

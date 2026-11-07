@@ -34,6 +34,8 @@ const PARAM_FIELDS = {
   shine: [['min', 'min opacity'], ['max', 'max opacity']],
   'contour-blink': [['min', 'min'], ['max', 'max']],
   'slide-in': [['fromX', 'from X px'], ['fromY', 'from Y px']],
+  'move-up': [['distance', 'distance px']], 'move-down': [['distance', 'distance px']],
+  'move-left': [['distance', 'distance px']], 'move-right': [['distance', 'distance px']],
   keyframes: [['frames', 'frames (json)', 'json']]
 };
 const TAG_LABEL = { rect: 'rect', circle: 'circle', ellipse: 'ellipse', path: 'path', line: 'line', polyline: 'poly', polygon: 'poly', text: 'text', g: 'group', use: 'inst' };

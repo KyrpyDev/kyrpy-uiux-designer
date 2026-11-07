@@ -4,8 +4,11 @@
  */
 export const ANIMATION_TYPES = [
   'move', 'rotate', 'scale', 'fade', 'visible', 'blink', 'pulse', 'bounce', 'draw', 'glow',
-  'flip', 'shake', 'swing', 'float', 'shine', 'contour-blink', 'slide-in', 'keyframes'
+  'flip', 'shake', 'swing', 'float', 'shine', 'contour-blink', 'slide-in', 'keyframes',
+  'move-up', 'move-down', 'move-left', 'move-right'
 ];
+/** Directional moves: unit vector (x, y) in screen space. */
+const MOVE_DIRS = { 'move-up': [0, -1], 'move-down': [0, 1], 'move-left': [-1, 0], 'move-right': [1, 0] };
 export const TRIGGERS = ['load', 'hover', 'click', 'mouseover', 'release', 'drag', 'focus'];
 export const EASINGS = ['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'steps(1)', 'cubic-bezier(.2,.8,.2,1)'];
 
@@ -28,6 +31,7 @@ export const ANIMATION_DEFAULTS = {
   shine: { color: '#79C8FF' },
   'contour-blink': { color: '#FFB020', width: 3 },
   'slide-in': { fromX: -24, fromY: 0 },
+  'move-up': { distance: 16 }, 'move-down': { distance: 16 }, 'move-left': { distance: 16 }, 'move-right': { distance: 16 },
   keyframes: { frames: [{ offset: 0, opacity: 1 }, { offset: 100, opacity: 0.3 }] }
 };
 
@@ -112,6 +116,13 @@ export function compileKeyframes(a) {
     case 'slide-in': return [
       { offset: 0, props: { transform: `translate(${px(p.fromX ?? -24)}, ${px(p.fromY ?? 0)})`, opacity: 0 } },
       { offset: 100, props: { transform: 'translate(0px, 0px)', opacity: 1 } }];
+    case 'move-up': case 'move-down': case 'move-left': case 'move-right': {
+      const [ux, uy] = MOVE_DIRS[a.type];
+      const d = Number(p.distance ?? 16) || 0;
+      return [
+        { offset: 0, props: { transform: 'translate(0px, 0px)' } },
+        { offset: 100, props: { transform: `translate(${px(ux * d)}, ${px(uy * d)})` } }];
+    }
     case 'keyframes': return (p.frames || []).map(f => {
       const { offset, ...props } = f; return { offset: Number(offset) || 0, props };
     });
