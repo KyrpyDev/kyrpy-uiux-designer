@@ -122,6 +122,38 @@ function getButtonRows(d, bid) {
   return libBtn?.menuItems || [];
 }
 
+/* ---------- menu tools for the library cards' hover toolbar (no designer open) ---------- */
+function pickMenuItem(rows) {
+  return new Promise(resolve => {
+    let done = false, m;
+    const fin = v => { if (!done) { done = true; resolve(v); } };
+    const label = r => { const parts = []; for (let cur = r; cur; cur = cur.parentId != null ? rows.find(x => x.id === cur.parentId) : null) parts.unshift(cur.label || cur.name); return parts.join(' › '); };
+    const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflow: 'auto' } },
+      ...rows.map(r => h('button', { class: 'btn', style: { textAlign: 'left' }, onclick: () => { fin(r); m.close(); } }, label(r))));
+    m = modal({ title: 'Add a sub menu item to…', onClose: () => fin(null), content: list, actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
+  });
+}
+
+export const libraryMenuTools = {
+  /** ＋ on a button card: a new top-level menu item. */
+  async addItem(button) {
+    const saved = await menuItemDialog({ buttonId: button.id, parentId: null });
+    if (saved) await reloadLibrary({ silent: true });
+    return saved;
+  },
+  /** Sub menu item tool: choose the parent item, then fill in the new sub item. */
+  async addSubItem(button) {
+    const m = await api.menu(button.id);
+    const rows = m.items || [];
+    if (!rows.length) { toast('This button has no menu items yet: use ＋ first.', 'error'); return null; }
+    const parent = rows.length === 1 ? rows[0] : await pickMenuItem(rows);
+    if (!parent) return null;
+    const saved = await menuItemDialog({ buttonId: button.id, parentId: parent.id });
+    if (saved) await reloadLibrary({ silent: true });
+    return saved;
+  }
+};
+
 /* ---------- actions shared by the hover toolbar and the inspector ---------- */
 export const menuActions = {
   async refresh(d, buttonId = null) {

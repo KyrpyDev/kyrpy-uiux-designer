@@ -1,3 +1,4 @@
+import { markEdited } from './edited.js';
 /**
  * HTTP client for the designer API with:
  *  - Session token & active user/project headers (`Authorization: Bearer`, `x-user-id`, `x-project-id`)
@@ -235,7 +236,7 @@ export const api = {
   getDesign: (type, id) => api.get(`/api/${PLURAL[type]}/${id}`),
   getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
   createDesign: (type, body) => api.post(`/api/${PLURAL[type]}`, body),
-  updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body),
+  updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body).then(r => { markEdited(type, id); return r; }),
   deleteDesign: (type, id) => api.del(`/api/${PLURAL[type]}/${id}`),
   cloneDesign: (type, id, nameOrBody) =>
     api.post(
@@ -244,14 +245,14 @@ export const api = {
     ),
   restoreDesign: (type, id, snap) => api.post(`/api/${PLURAL[type]}/${id}/restore`, snap),
   restoreWorkflow: (id, snap) => api.post(`/api/workflows/${id}/restore`, snap),
-  replaceNodes: (type, id, nodes) => api.put(`/api/${PLURAL[type]}/${id}/nodes`, { nodes }),
-  addNode: (type, id, el) => api.post(`/api/${PLURAL[type]}/${id}/nodes`, el),
-  patchNode: (type, id, eid, patch) => api.patch(`/api/${PLURAL[type]}/${id}/nodes/${eid}`, patch),
-  deleteNode: (type, id, eid) => api.del(`/api/${PLURAL[type]}/${id}/nodes/${eid}`),
-  duplicateNode: (type, id, eid) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/duplicate`, {}),
-  addAnimation: (type, id, eid, a) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/animations`, a),
-  updateAnimation: (type, id, aid, a) => api.put(`/api/${PLURAL[type]}/${id}/animations/${aid}`, a),
-  deleteAnimation: (type, id, aid) => api.del(`/api/${PLURAL[type]}/${id}/animations/${aid}`),
+  replaceNodes: (type, id, nodes) => api.put(`/api/${PLURAL[type]}/${id}/nodes`, { nodes }).then(r => { markEdited(type, id); return r; }),
+  addNode: (type, id, el) => api.post(`/api/${PLURAL[type]}/${id}/nodes`, el).then(r => { markEdited(type, id); return r; }),
+  patchNode: (type, id, eid, patch) => api.patch(`/api/${PLURAL[type]}/${id}/nodes/${eid}`, patch).then(r => { markEdited(type, id); return r; }),
+  deleteNode: (type, id, eid) => api.del(`/api/${PLURAL[type]}/${id}/nodes/${eid}`).then(r => { markEdited(type, id); return r; }),
+  duplicateNode: (type, id, eid) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/duplicate`, {}).then(r => { markEdited(type, id); return r; }),
+  addAnimation: (type, id, eid, a) => api.post(`/api/${PLURAL[type]}/${id}/nodes/${eid}/animations`, a).then(r => { markEdited(type, id); return r; }),
+  updateAnimation: (type, id, aid, a) => api.put(`/api/${PLURAL[type]}/${id}/animations/${aid}`, a).then(r => { markEdited(type, id); return r; }),
+  deleteAnimation: (type, id, aid) => api.del(`/api/${PLURAL[type]}/${id}/animations/${aid}`).then(r => { markEdited(type, id); return r; }),
   svgUrl: (type, id, params = {}) => `/api/${PLURAL[type]}/${id}/svg?${new URLSearchParams(params)}`,
   importSvg: body => api.post('/api/import/svg', body),
   importFolders: () => api.get('/api/import/folders'),
@@ -261,9 +262,9 @@ export const api = {
   // button menus (popup / rotating): nested items + settings
   menu: id => api.get(`/api/buttons/${id}/menu`),
   menuConfig: (id, cfg) => api.put(`/api/buttons/${id}/menu/config`, cfg),
-  addMenuItem: (id, item) => api.post(`/api/buttons/${id}/menu/items`, item),
-  updateMenuItem: (id, iid, patch) => api.put(`/api/buttons/${id}/menu/items/${iid}`, patch),
-  deleteMenuItem: (id, iid) => api.del(`/api/buttons/${id}/menu/items/${iid}`),
+  addMenuItem: (id, item) => api.post(`/api/buttons/${id}/menu/items`, item).then(r => { markEdited('button', id); return r; }),
+  updateMenuItem: (id, iid, patch) => api.put(`/api/buttons/${id}/menu/items/${iid}`, patch).then(r => { markEdited('button', id); return r; }),
+  deleteMenuItem: (id, iid) => api.del(`/api/buttons/${id}/menu/items/${iid}`).then(r => { markEdited('button', id); return r; }),
 
   themes: () => api.get('/api/themes'),
   saveTheme: (id, body) => api.put(`/api/themes/${id}`, body),

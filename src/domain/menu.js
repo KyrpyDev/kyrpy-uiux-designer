@@ -71,6 +71,12 @@ export function layoutItems(cfg, n, size) {
 
 const round = v => Math.round(v * 100) / 100;
 
+/** Hub menu geometry (px): small = side button diameter, big = centre button (twice as big), gap between buttons, vertical flag. */
+export function hubGeometry(cfg, size) {
+  const small = size * (Number(cfg.hubScale) > 0 ? Number(cfg.hubScale) : 0.8);
+  return { small, big: small * 2, gap: (cfg.gap ?? 0.2) * size, vertical: cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down' };
+}
+
 /**
  * Markup of a button's menu, drawn in the button's own coordinate box (w x h) so it scales with the button.
  * Every level is pre-rendered (hidden); the runtime only toggles classes.
@@ -80,7 +86,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
   const w = button.width, h = button.height, cx = w / 2, cy = h / 2, size = Math.min(w, h);
   const surface = roleAttrs(ctx.theme, 'button');
   const itemAttrs = a => attrString({ ...surface, ...a });
-  const iconSize = size * cfg.itemScale * 0.62;
+  const isHub = cfg.kind === 'hub';
+  const hub = hubGeometry(cfg, size);
+  const lsize = isHub ? hub.big : size;                    // fan sizes are relative to the centre button in a hub
+  const iconSize = lsize * cfg.itemScale * 0.62;
   const isCarousel = cfg.layout === 'carousel' || cfg.kind === 'carousel';
   if (isCarousel) ctx.hasCarousel = true;
   const carDim = cfg.dimension === '2d' ? '2d' : '3d';
@@ -94,8 +103,15 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
   };
   const levels = [], centers = [];
   const walk = (items, parentPath, parentNode) => {
-    const pos = layoutItems(cfg, items.length, size);
+    const pos = layoutItems(cfg, items.length, lsize);
+    const isHubRoot = isHub && parentPath === '';
     const els = items.map((it, i) => {
+      if (isHubRoot) {
+        // one pre-rendered button per ring item; the runtime places it (left / centre / right / hidden) with --x --y --k --o
+        const r = hub.big / 2;
+        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || '')}"${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
+          + `<title>${esc(it.label || it.name)}</title><circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, hub.big * 0.62)}</g>`;
+      }
       const p = pos[i], r = p.s / 2;
       const popupAttr = (it.targetElementKey || it.targetElementId)
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
@@ -107,18 +123,20 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey }) {
     const innerItems = isCarousel
       ? `<g class="ud-carousel-track ud-carousel-${carDim}-${carDir}" style="--roll-dur:2400ms">${els.join('')}</g>`
       : els.join('');
-    levels.push(`<g class="rm-level" data-level="${esc(parentPath)}" data-layout="${esc(cfg.layout || 'list')}">${innerItems}</g>`);
+    levels.push(`<g class="rm-level" data-level="${esc(parentPath)}" data-layout="${esc(isHubRoot ? 'hub' : (cfg.layout || 'list'))}">${innerItems}</g>`);
     for (const it of items) {
-      if ((cfg.kind === 'rotating' || cfg.kind === 'radial') && it.children.length || (cfg.kind === 'rotating' || cfg.kind === 'radial') && ctx.editor) {
-        centers.push(`<g class="rm-center" data-for="${esc(it.path)}"><circle cx="${round(cx)}" cy="${round(cy)}" r="${round(size / 2)}"${itemAttrs({})}/>${iconUse(it.iconId, cx, cy, size * 0.625)}</g>`);
+      const rot = cfg.kind === 'rotating' || cfg.kind === 'radial';
+      if (rot && it.children.length || rot && ctx.editor || (isHub && parentNode && it.children.length)) {
+        centers.push(`<g class="rm-center" data-for="${esc(it.path)}"><circle cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}"${itemAttrs({})}/>${iconUse(it.iconId, cx, cy, lsize * 0.625)}</g>`);
       }
       if (it.children.length) walk(it.children, it.path, it);
     }
   };
   walk(tree, '', null);
   const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
-  const hub = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(size / 2)}" fill="transparent"${showElAttr}/>`;
-  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}"${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hub}</g>`;
+  const hit = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}"` : '';
+  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}</g>`;
 }
 
 /** Stylesheet shared by the designer canvas and exported pages (transitions of the menu). */
@@ -131,6 +149,9 @@ export const MENU_CSS = `
 .ud-btn .rm-center{visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s}
 .ud-btn .rm-center.is-active{visibility:visible;opacity:1}
 .ud-btn .rm-hit{cursor:pointer}
+.ud-btn .rm-item.rm-hub-item{transition:transform .35s cubic-bezier(.3,.8,.3,1),opacity .25s ease}
+.ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(var(--x),var(--y)) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
+.ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
 .ud-btn .rm-hub-icon{transform-box:fill-box;transform-origin:center;transition:transform .3s ease}
 .ud-btn[data-open="1"] .rm-hub-icon{transform:rotate(var(--rot,0deg))}
 .ud-btn[data-center="1"] .rm-hub-icon{opacity:0}
@@ -141,9 +162,17 @@ export const MENU_CSS = `
 export function menuExtent(button, cfg, tree) {
   const size = Math.min(button.width, button.height), cx = button.width / 2, cy = button.height / 2;
   let x0 = 0, y0 = 0, x1 = button.width, y1 = button.height;
-  const walk = items => {
-    layoutItems(cfg, items.length, size).forEach(p => { const r = p.s / 2; x0 = Math.min(x0, cx + p.x - r); x1 = Math.max(x1, cx + p.x + r); y0 = Math.min(y0, cy + p.y - r); y1 = Math.max(y1, cy + p.y + r); });
-    items.forEach(i => i.children.length && walk(i.children));
+  const hubG = cfg.kind === 'hub' ? hubGeometry(cfg, size) : null;
+  const lsize = hubG ? hubG.big : size;
+  if (hubG) {
+    const along = hubG.big / 2 + hubG.gap + hubG.small, across = hubG.big / 2;
+    const hx = hubG.vertical ? across : along, hy = hubG.vertical ? along : across;
+    x0 = Math.min(x0, cx - hx); x1 = Math.max(x1, cx + hx); y0 = Math.min(y0, cy - hy); y1 = Math.max(y1, cy + hy);
+  }
+  const walk = (items, root = true) => {
+    if (hubG && root) { items.forEach(i => i.children.length && walk(i.children, false)); return; }
+    layoutItems(cfg, items.length, lsize).forEach(p => { const r = p.s / 2; x0 = Math.min(x0, cx + p.x - r); x1 = Math.max(x1, cx + p.x + r); y0 = Math.min(y0, cy + p.y - r); y1 = Math.max(y1, cy + p.y + r); });
+    items.forEach(i => i.children.length && walk(i.children, false));
   };
   if (tree.length) walk(tree);
   const pad = 4;

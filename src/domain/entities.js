@@ -44,16 +44,18 @@ export function privateFirst(list, userId) {
  * Library order: project-scope items first, then the user's own private items, then public items; every group keeps
  * its existing order (stable, O(n)).
  */
-export function scopeFirst(list, userId, used = null, type = '') {
+export function scopeFirst(list, userId, used = null, type = '', edited = null) {
   const uid = Number(userId || 1);
-  const project = [], own = [], inUse = [], rest = [];
+  const hot = [], project = [], own = [], inUse = [], rest = [];
   for (const d of list || []) {
-    if (d.visibility === 'project') project.push(d);
+    if (isEdited(d, edited, type)) hot.push(d);
+    else if (d.visibility === 'project') project.push(d);
     else if (d.visibility === 'private' && Number(d.creatorId || 1) === uid) own.push(d);
     else if (isUsed(d, used, type)) inUse.push(d);
     else rest.push(d);
   }
-  return project.length || own.length || inUse.length ? project.concat(own, inUse, rest) : rest;
+  if (hot.length) hot.sort((a, b) => edited.get(`${type}:${a.id}`) - edited.get(`${type}:${b.id}`));
+  return hot.length || project.length || own.length || inUse.length ? hot.concat(project, own, inUse, rest) : rest;
 }
 
 /** True when the active project uses this item (`used` = Set of "type:id" keys from /api/library `usedKeys`). */
@@ -61,13 +63,20 @@ export function isUsed(d, used, type) {
   return Boolean(used && type && d && used.has(`${type}:${d.id}`));
 }
 
+/** True when the user edited this item (`edited` = Map "type:id" -> recency rank, most recently edited = 0). */
+export function isEdited(d, edited, type) {
+  return Boolean(edited && edited.size && type && d && edited.has(`${type}:${d.id}`));
+}
+
 /**
  * CSS class for the card edge of a library item:
- *   green  (vis-own)   project-scope, private or cloned items: they belong to the user's projects and are listed first
- *   purple (vis-used)  public items the active project uses
- *   plain              public, immutable items that are not in use
+ *   red    (vis-edited) items the user edited: listed before everything else, most recent first
+ *   green  (vis-own)    project-scope, private or cloned items: they belong to the user's projects and are listed next
+ *   purple (vis-used)   public items the active project uses
+ *   plain               public, immutable items that are not in use
  */
-export function visClass(d, used = null, type = '') {
+export function visClass(d, used = null, type = '', edited = null) {
+  if (isEdited(d, edited, type)) return ' vis-edited';
   if (d?.visibility === 'project' || d?.visibility === 'private') return ' vis-own';
   return isUsed(d, used, type) ? ' vis-used' : '';
 }
@@ -397,10 +406,10 @@ export function buttonStyleFrameNodes(styleKey, { width = 64, height = 64 } = {}
 }
 
 export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
-export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element'];
+export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element', 'hub'];
 /** Default menu settings of a button. Sizes are ratios of the button size so the menu scales with the button. */
 export const DEFAULT_MENU = {
-  kind: 'popup',        // popup | rotating | radial | drawer | slider-vertical | slider-horizontal | carousel | show-element
+  kind: 'popup',        // popup | rotating | radial | drawer | slider-vertical | slider-horizontal | carousel | show-element | hub
   layout: 'list',       // fan | radial | list | drawer | slider-vertical | slider-horizontal | carousel
   direction: 'up',      // list/slider: up | down | left | right; carousel: horizontal | vertical
   dimension: '3d',      // carousel: 2d | 3d
@@ -411,6 +420,7 @@ export const DEFAULT_MENU = {
   sweep: 140,           // fan/radial: angle covered by the items
   itemScale: 0.75,      // item size / button size
   gap: 0.2,             // list/slider/carousel gap / button size
+  hubScale: 0.8,        // hub: small side button size / button size (the centre button is twice as big)
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

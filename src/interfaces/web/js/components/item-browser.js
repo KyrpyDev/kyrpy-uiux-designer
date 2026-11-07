@@ -6,6 +6,7 @@
  */
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import { visClass } from '/domain/entities.js';
+import { editedIndex } from '../edited.js';
 import { api } from '../api.js';
 import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
 import { h, clear, modal, toast, confirmBox, promptBox } from '../dom.js';
@@ -353,9 +354,11 @@ export function buildItemBrowserElement({
     }
     // project-scope items first, then the user's own private items, then public ones; each group keeps its order
     // green (project/private/cloned) first, then purple (public items the active project uses), then plain public
-    const used = new Set(state.library?.usedKeys || []);
-    const rank = ({ type, item }) => (item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : used.has(`${type}:${item.id}`) ? 2 : 3);
-    return out.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(x => x[0]);
+    // red (edited, most recent first) comes before all of them
+    const used = new Set(state.library?.usedKeys || []), edited = editedIndex();
+    const rank = ({ type, item }) => (edited.has(`${type}:${item.id}`) ? -1 : item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : used.has(`${type}:${item.id}`) ? 2 : 3);
+    const hot = ({ type, item }) => edited.get(`${type}:${item.id}`) ?? 0;
+    return out.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || hot(a[0]) - hot(b[0]) || a[1] - b[1]).map(x => x[0]);
   }
 
   function renderTypeTabs() {
@@ -657,7 +660,7 @@ export function buildItemBrowserElement({
       );
 
       const card = h('div', {
-        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item, new Set(state.library?.usedKeys || []), type)}`,
+        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item, new Set(state.library?.usedKeys || []), type, editedIndex())}`,
         dataset: { ibCardType: type, ibCardId: String(item.id) },
         onclick: () => {
           const next = !selectedKeys.has(k);

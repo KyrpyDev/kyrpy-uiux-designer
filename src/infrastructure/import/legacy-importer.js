@@ -148,6 +148,38 @@ export class LegacyImporter {
   }
 
   /**
+   * Adds the hub sample menus (button + element preset) to an existing library when missing (idempotent, public library
+   * project 1). Returns the keys added.
+   */
+  ensureHubMenus() {
+    const S = this.services, own = this.#own();
+    const inLib = x => Number(x.projectId ?? 1) === 1;
+    const iconIds = new Map(S.icon.list().filter(inLib).map(i => [i.key, i.id]));
+    const have = new Set(S.button.list().filter(inLib).map(b => b.key));
+    const added = [];
+    for (const def of SAMPLE_MENUS.filter(d => d.config?.kind === 'hub')) {
+      if (have.has(def.key) || !iconIds.has(def.icon)) continue;
+      const nodes = [
+        { id: 1, parentId: null, tag: 'rect', kind: 'shape', role: 'button', name: 'surface', attrs: { x: '0', y: '0', width: '64', height: '64', rx: '32' } },
+        { id: 2, parentId: null, tag: 'rect', kind: 'shape', role: 'shine', name: 'shine', attrs: { x: '5', y: '3', width: '54', height: '26', rx: '16' } },
+        { id: 3, parentId: null, tag: 'use', kind: 'instance', refType: 'icon', refId: iconIds.get(def.icon), name: 'icon', attrs: { x: '12', y: '12', width: '40', height: '40' } }
+      ];
+      const draft = { key: def.key, name: def.name, label: def.name, width: 64, height: 64 };
+      const b = S.button.create({ ...draft, ...own, category: 'menus', builtin: true, meta: { shape: 'circle', icon: def.icon, menu: def.config }, descriptionDev: buttonDevDescription(draft, nodes, [def.icon]) }, { nodes });
+      const walk = (items, parentId, parentPath) => {
+        for (const it of items) {
+          const row = this.menus.addItem(b.id, { name: it.name, label: it.label, iconId: iconIds.get(it.icon) ?? null, parentId, action: it.action || it.name,
+            descriptionDev: menuItemDevDescription({ ...it, hasChildren: !!it.children?.length }, parentPath) });
+          if (it.children?.length) walk(it.children, row.id, parentPath ? `${parentPath}/${it.name}` : it.name);
+        }
+      };
+      walk(def.items, null, '');
+      added.push(def.key);
+    }
+    return [...added, ...this.ensurePresets(['html-hub-menu', 'html-hub-menu-vertical'])];
+  }
+
+  /**
    * One empty public frame template per button style (`button-frame-<style>`, 64x64 or wide for pill), shaped like
    * "Apply All" shapes it. Placed at the position of `button-frame-circle` (or 1) so all frames sort together at the top.
    */

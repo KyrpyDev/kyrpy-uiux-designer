@@ -48,5 +48,60 @@ export const SAMPLE_MENUS = [
       { name: 'settings', label: 'Settings', icon: 'settings' },
       { name: 'logout', label: 'Log out', icon: 'logout' }
     ]
+  },
+  // Hub menus: an infinitely scrolling bar of 3 visible buttons (small left, DOUBLE-size centre, small right) over a ring of
+  // 3+ root items. Click a side button: it swaps size and place with the centre button and, when it has sub items, they fan out
+  // around the centre; sub items with sub items repeat that. A second click on the centre or a click outside goes back.
+  {
+    key: 'hub-menu-horizontal', name: 'Hub menu (horizontal)', icon: 'sample-logo-basic',
+    config: { kind: 'hub', layout: 'fan', direction: 'horizontal', hubScale: 0.8, radius: 1.15, startAngle: -160, sweep: 140, itemScale: 0.4, gap: 0.2, rotateOnOpen: 0 },
+    items: [
+      { name: 'logo', label: 'Logo', icon: 'sample-logo-basic', children: [
+        { name: 'profile', label: 'Profile', icon: 'profile' },
+        { name: 'settings', label: 'Settings', icon: 'settings' },
+        { name: 'feedback', label: 'Feedback', icon: 'feedback' }
+      ] },
+      { name: 'home', label: 'Home', icon: 'home' },
+      { name: 'search', label: 'Search', icon: 'search' },
+      { name: 'share', label: 'Share', icon: 'share', children: [
+        { name: 'sync', label: 'Sync', icon: 'sync' },
+        { name: 'view', label: 'View', icon: 'eye' }
+      ] },
+      { name: 'menu', label: 'Menu', icon: 'menu', children: [
+        { name: 'profile', label: 'Profile', icon: 'profile' },
+        { name: 'notifications', label: 'Notifications', icon: 'notifications', children: [
+          { name: 'announcements', label: 'Announcements', icon: 'announcement' },
+          { name: 'feedback', label: 'Feedback', icon: 'feedback' }
+        ] },
+        { name: 'settings', label: 'Settings', icon: 'settings' },
+        { name: 'logout', label: 'Log out', icon: 'logout' }
+      ] }
+    ]
+  },
+  {
+    key: 'hub-menu-vertical', name: 'Hub menu (vertical)', icon: 'sample-logo-basic',
+    config: { kind: 'hub', layout: 'fan', direction: 'vertical', hubScale: 0.8, radius: 1.15, startAngle: -70, sweep: 140, itemScale: 0.4, gap: 0.2, rotateOnOpen: 0 },
+    items: [
+      { name: 'logo', label: 'Logo', icon: 'sample-logo-basic', children: [
+        { name: 'profile', label: 'Profile', icon: 'profile' },
+        { name: 'settings', label: 'Settings', icon: 'settings' },
+        { name: 'feedback', label: 'Feedback', icon: 'feedback' }
+      ] },
+      { name: 'home', label: 'Home', icon: 'home' },
+      { name: 'search', label: 'Search', icon: 'search' },
+      { name: 'share', label: 'Share', icon: 'share', children: [
+        { name: 'sync', label: 'Sync', icon: 'sync' },
+        { name: 'view', label: 'View', icon: 'eye' }
+      ] },
+      { name: 'menu', label: 'Menu', icon: 'menu', children: [
+        { name: 'profile', label: 'Profile', icon: 'profile' },
+        { name: 'notifications', label: 'Notifications', icon: 'notifications', children: [
+          { name: 'announcements', label: 'Announcements', icon: 'announcement' },
+          { name: 'feedback', label: 'Feedback', icon: 'feedback' }
+        ] },
+        { name: 'settings', label: 'Settings', icon: 'settings' },
+        { name: 'logout', label: 'Log out', icon: 'logout' }
+      ] }
+    ]
   }
 ];

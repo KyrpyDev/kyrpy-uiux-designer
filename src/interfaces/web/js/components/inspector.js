@@ -248,9 +248,10 @@ export class Inspector {
           ['slider-vertical', 'Vertical Slider Menu'],
           ['slider-horizontal', 'Horizontal Slider Menu'],
           ['carousel', 'Carousel Animated Roll Menu (2D/3D)'],
-          ['show-element', 'Show Element (Popup / Modal / Drawer)']
+          ['show-element', 'Show Element (Popup / Modal / Drawer)'],
+          ['hub', 'Hub Menu (3-button scrolling bar, min 3 items)']
         ], v => {
-          const autoLayout = v === 'radial' || v === 'rotating'
+          const autoLayout = v === 'radial' || v === 'rotating' || v === 'hub'
             ? 'fan'
             : ['drawer', 'slider-vertical', 'slider-horizontal', 'carousel'].includes(v)
               ? v
@@ -273,7 +274,11 @@ export class Inspector {
             ...els.map(el => [el.id, `${el.name} (${el.key})`])
           ], v => set({ targetElementId: v ? Number(v) : null })))
         : null,
-      (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
+      cfg.kind === 'hub'
+        ? h('div', { class: 'grid2' },
+            this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set({ direction: v }))),
+            num('hubScale', 'Side button × button'), num('gap', 'Gap × button'), num('radius', 'Sub fan radius × centre'), num('itemScale', 'Sub item × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5))
+        : (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
         ? h('div', { class: 'grid2' }, num('radius', 'Radius × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
         : (cfg.layout === 'carousel' || cfg.kind === 'carousel')
           ? h('div', { class: 'grid2' },

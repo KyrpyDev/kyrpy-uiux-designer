@@ -116,7 +116,7 @@ Hierarchy path → icon → button → element → screen → workflow (an item 
 ## 8. Versions, scope and library colours
 
 - Every project has numbered versions (`uiux_list_versions`); approving a changeset creates the next one. Clone-on-reference copies foreign items into the project (project scope) when a project item uses them.
-- Designer library edges: **green** = project, private or cloned items (listed first); **purple** = public items the active project uses (directly or through other items); **plain** = public, immutable items not in use. `/api/library` returns `usedKeys` (`type:id`) for the active project.
+- Designer library edges: **red** = items you edited (listed before everything else, most recent first; "Clear edited" resets the marks); **green** = project, private or cloned items (listed first); **purple** = public items the active project uses (directly or through other items); **plain** = public, immutable items not in use. `/api/library` returns `usedKeys` (`type:id`) for the active project.
 - One **superadmin** (`kyrpy`) edits, imports and updates the public libraries directly, with no approval step. Everyone else proposes through changesets or item requests.
 - Published GitHub snapshot (`npm run db:publish`): PostgreSQL is the primary DB; only the `public` user's data is exported.
 

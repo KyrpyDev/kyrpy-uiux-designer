@@ -53,7 +53,9 @@ const NEW_PRESETS = [
   // one public `button-frame-<style>` template per BUTTON_STYLES entry (circle / square already existed)
   { id: 'preset-002-button-style-frames', run: importer => importer.ensureButtonStyleFrames() },
   // the 40 design-style DEFAULT_BUTTON_TEMPLATES as public `templates` buttons, right below the frames
-  { id: 'preset-003-design-button-templates', run: importer => importer.ensureDesignButtonTemplates() }
+  { id: 'preset-003-design-button-templates', run: importer => importer.ensureDesignButtonTemplates() },
+  // hub menu buttons (3-button scrolling bar, horizontal + vertical) and their element presets
+  { id: 'preset-004-hub-menus', run: importer => importer.ensureHubMenus() }
 ];
 function seedNewPresets(db, services, importer) {
   try {

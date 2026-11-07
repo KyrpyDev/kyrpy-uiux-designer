@@ -17,6 +17,8 @@ let usedCache = { arr: null, set: null };
 const usedSet = () => { const a = state.library?.usedKeys; if (a !== usedCache.arr) usedCache = { arr: a, set: new Set(a || []) }; return usedCache.set; };
 import { iconPack, expandIconSummary } from '/domain/icon-summary.js';
 import { ensureIconSymbols, loadIcons } from '../icon-store.js';
+import { editedIndex, clearEdited, editedKeys } from '../edited.js';
+import { libraryMenuTools } from './menu-editor.js';
 
 /** Above this many icons the icons tab searches on the server (the grid itself is always virtualized). */
 const LARGE_ICON_LIBRARY = 1500;
@@ -165,7 +167,7 @@ export class LibraryPanel {
         }
       }
       return (!c || d.category === c) && (!q || `${d.key || ''} ${d.name || ''} ${d.label || ''} ${(d.tags || []).join(' ')} ${d.descriptionDev || ''} ${d.description || ''}`.toLowerCase().includes(q));
-    }), curUserId, usedSet(), kind);
+    }), curUserId, usedSet(), kind, editedIndex());
   }
 
   visBar(onChange) {
@@ -174,7 +176,8 @@ export class LibraryPanel {
     return h('div', { class: 'cats lib-vis-filter', title: 'Filter by public, private (user global library), or project-specific visibility' },
       [['all', 'All items'], ['public', '🌐 Public'], ['private', '👤 Private'], ['project', '📁 Project-only']].map(([k, lbl]) =>
         h('button', { class: `cat${cur === k ? ' on' : ''}`, dataset: { visFilter: k }, onclick: () => set(k) }, lbl)
-      )
+      ),
+      editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'Items you edited are listed first with a red edge. Click to clear these marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear edited (${editedKeys().length})`) : null
     );
   }
 
@@ -286,6 +289,10 @@ export class LibraryPanel {
       ibtn('copy', 'Clone', async e => { e.stopPropagation(); await cloneDesign(type, rec); }, { desc: 'Clone (tracks root owner lineage)' }),
       ibtn('collab', 'Lineage', e => { e.stopPropagation(); openLineageModal(type, rec.id); }, { desc: 'Root owner & clone lineage' }),
       ibtn('export', 'Export SVG', e => { e.stopPropagation(); downloadSvg(type, rec.id, type === 'icon' || type === 'path' ? { frame: 0 } : {}); }, { desc: 'Export SVG (with animation)' }),
+      ...(type === 'button' ? [
+        h('button', { class: 'tb-menu-add', disabled: !canMove, title: canMove ? 'Add a menu item to this button' : 'Only your own buttons can get menu items (clone it first)', onclick: e => { e.stopPropagation(); if (canMove) libraryMenuTools.addItem(rec).then(() => this.renderBody()); } }, '＋'),
+        h('button', { class: 'tb-submenu-add', disabled: !canMove, title: canMove ? 'Add a sub menu item (choose the parent item)' : 'Only your own buttons can get menu items (clone it first)', onclick: e => { e.stopPropagation(); if (canMove) libraryMenuTools.addSubItem(rec).then(() => this.renderBody()); } }, '↳')
+      ] : []),
       ibtn('trash', 'Move to trash', async e => { e.stopPropagation(); await deleteDesign(type, rec); })
     );
   }
@@ -444,7 +451,7 @@ export class LibraryPanel {
       svg.appendChild(use);
       const drag = this.dragData('icon', ic);
       return h('div', {
-        class: `cell${this.accepts('icon') ? '' : ' dim-cell'}${selSet.has(ic.id) ? ' sel' : ''}${visClass(ic, usedSet(), 'icon')}`,
+        class: `cell${this.accepts('icon') ? '' : ' dim-cell'}${selSet.has(ic.id) ? ' sel' : ''}${visClass(ic, usedSet(), 'icon', editedIndex())}`,
         draggable: 'true',
         title: `${ic.label} · ${ic.key}${ic.meta?.pack ? ` · ${ic.meta.pack}` : ''}\n(drag onto the canvas, double-click to add, click to edit)`,
         // the drop renders the icon: start loading its geometry while it is dragged
@@ -609,7 +616,7 @@ export class LibraryPanel {
         const tag = it.meta?.htmlTag;
         const menu = type === 'button' && it.menuItems?.length ? h('span', { class: 'badge', style: { position: 'absolute', top: '4px', right: '4px' }, title: `${it.meta?.menu?.kind || 'popup'} menu · ${it.menuItems.length} items` }, '☰') : null;
         const cell = h('div', {
-          class: `cell${this.accepts(type) ? '' : ' dim-cell'}${selSet.has(it.id) ? ' sel' : ''}${visClass(it, usedSet(), type)}`,
+          class: `cell${this.accepts(type) ? '' : ' dim-cell'}${selSet.has(it.id) ? ' sel' : ''}${visClass(it, usedSet(), type, editedIndex())}`,
           draggable: 'true',
           title: `${it.label} · ${it.key} · ${it.width}×${it.height}\n(drag onto the canvas, double-click to add, click to edit)`,
           ondragstart: this.dragData(type, it),
@@ -669,7 +676,7 @@ export class LibraryPanel {
             selBar._updateInfo?.();
           }
         });
-        const cell = h('div', { class: `cell screen-cell${visClass(s, usedSet(), 'screen')}`, title: `${s.label}\n${s.key} · ${s.width}×${s.height}`, onclick: () => this.app.openDesign('screen', s.id) },
+        const cell = h('div', { class: `cell screen-cell${visClass(s, usedSet(), 'screen', editedIndex())}`, title: `${s.label}\n${s.key} · ${s.width}×${s.height}`, onclick: () => this.app.openDesign('screen', s.id) },
           chk, this.toolbar('screen', s),
           h('img', { class: 'thumb', loading: 'lazy', alt: s.label, src: api.svgUrl('screen', s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
           h('div', { class: 'lbl' }, s.name));
@@ -730,7 +737,7 @@ export class LibraryPanel {
           }
         });
         const rowEl = h('div', {
-          class: `list-row${state.workflowId === w.id ? ' on' : ''}${selSet.has(w.id) ? ' sel' : ''}${visClass(w, usedSet(), 'workflow')}`,
+          class: `list-row${state.workflowId === w.id ? ' on' : ''}${selSet.has(w.id) ? ' sel' : ''}${visClass(w, usedSet(), 'workflow', editedIndex())}`,
           onclick: () => this.app.openWorkflow(w.id)
         },
         chk,
