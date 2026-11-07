@@ -14,6 +14,8 @@ import { ValidationError, ForbiddenError, NotFoundError } from '../../domain/err
 import { AGENT_NAME, SKILL_NAME, PLATFORMS } from '../domain/ai-pack-templates.js';
 import { renderTemplate, platformFiles, sectionBlock, SECTION_MARKER } from '../domain/ai-pack-render.js';
 import { SCHEMA_VERSION } from './design-query-service.js';
+import { initPromptMd } from '../domain/init-prompt.js';
+import { BUTTON_STYLES } from '../../domain/entities.js';
 
 export const UIUX_ROOTS = ['uiux', 'themes'];
 const KINDS = { agent: AGENT_NAME, skill: SKILL_NAME };
@@ -21,6 +23,7 @@ const MAX_TEMPLATE = 64 * 1024;
 const sha = s => createHash('sha256').update(s).digest('hex');
 export const LOCKFILE_PATH = '.uiux/uiux.lock.json';
 export const CONFIG_PATH = '.uiux/config.json';
+export const INIT_PROMPT_PATH = 'init-prompt.md';
 export const GITIGNORE_LINES = ['.uiux/cache/', '*.uiux-new'];
 /** Default MCP client recipe for a pack platform (see interfaces/web/client-setup.js CLIENTS). */
 export const PLATFORM_CLIENT = { claude: 'claude-code', antigravity: 'antigravity', cursor: 'cursor', 'agents-md': 'codex', generic: 'generic' };
@@ -116,12 +119,23 @@ export class AiPackService {
       ...(args.selection ? { selection: args.selection } : {})
     };
     const configContent = `${JSON.stringify(config, null, 2)}\n`;
-    const candidates = [...pack.files, { path: CONFIG_PATH, mode: 'file', content: configContent, checksum: sha(configContent) }];
+    // init-prompt.md orders the coding assistant to build the standalone prototype; written once, never overwritten
+    const sel = args.selection || {};
+    const mode = sel.mode || (args.origin ? 'download' : 'project');
+    const initPrompt = initPromptMd({
+      mode, projectKey: principal.project.key, projectName: principal.project.name,
+      sourceKey: sel.source || args.origin?.project, sourceName: args.origin?.name, sourceVersion: sel.sourceVersion ?? args.origin?.version,
+      version: sel.headVersion ?? sel.baseVersion, framework: o.framework, root: o.uiuxRoot,
+      styles: this.query.schema().styles.map(st => st.key), defaultStyle: o.styles[0], buttonStyles: BUTTON_STYLES.map(b => b.key)
+    });
+    const candidates = [...pack.files, { path: CONFIG_PATH, mode: 'file', content: configContent, checksum: sha(configContent) },
+      { path: INIT_PROMPT_PATH, mode: 'file', content: initPrompt, checksum: sha(initPrompt), once: true }];
 
     const files = candidates.map(f => {
       const inst = installed.get(f.path);
       const base = { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), checksum: f.checksum };
       if (!inst || !inst.currentChecksum) return { ...base, action: 'create', content: f.content };
+      if (f.once) return { ...base, action: 'skip', reason: 'written once at init' };
       const locallyEdited = inst.recordedChecksum && inst.currentChecksum !== inst.recordedChecksum;
       if (locallyEdited) {
         if (inst.currentChecksum === f.checksum) return { ...base, action: 'skip', reason: 'local file already matches' };
@@ -180,6 +194,27 @@ export class AiPackService {
         'Keep the API key out of the repository: it belongs in the MCP client configuration or the KYRPY_UIUX_API_KEY environment variable.',
         'Run uiux_init again at any time; it only returns what changed and never overwrites files you edited.'
       ]
+    };
+  }
+
+  /**
+   * Cheap start-of-session check (uiux_check_update): is the pack, the design or the server's tool set newer than this repository?
+   * `toolsHash` is supplied by the caller (tools.js) and compared with the lockfile's.
+   */
+  checkUpdate(principal, args = {}, { baseUrl, toolsHash }) {
+    const plan = this.init(principal, { ...args, includeBundle: false }, { baseUrl, createBundle: () => null });
+    const manifest = this.query.manifestPage(principal, { limit: 1 });
+    const packChanged = plan.files.filter(f => f.action === 'create' || f.action === 'update').map(f => ({ path: f.path, action: f.action }));
+    const conflicts = plan.files.filter(f => f.action === 'conflict').map(f => f.path);
+    const designChanged = Boolean(args.manifestHash) && args.manifestHash !== manifest.manifestHash;
+    const toolsChanged = Boolean(args.toolsHash) && args.toolsHash !== toolsHash;
+    const updateAvailable = packChanged.length > 0 || conflicts.length > 0 || designChanged || toolsChanged || !args.toolsHash;
+    return {
+      updateAvailable, packVersion: plan.packVersion, schemaVersion: plan.schemaVersion, toolsHash, manifestHash: manifest.manifestHash,
+      packChanged, conflicts, designChanged, toolsChanged,
+      next: updateAvailable
+        ? 'Call uiux_init with the same installed list, apply its steps (pack files, config, bundle), then write the returned lockfile (it records toolsHash).'
+        : 'Up to date: continue with the task.'
     };
   }
 

@@ -3,6 +3,7 @@
  * ctx = { principal, query: DesignQueryService, bundles: BundleService, limiter, baseUrl }.
  * `run` returns { summary, data }: `summary` is the human text line, `data` the structured result.
  */
+import { createHash } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
 
 const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
@@ -158,6 +159,7 @@ function runInit({ principal, aiPack, bundles, limiter, baseUrl, versions }, arg
     createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
   });
   if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
+  if (data.lockfile) data.lockfile.toolsHash = toolsHash();
   return data;
 }
 
@@ -491,6 +493,13 @@ const M4_TOOLS = [
   }
 ];
 
+/** Fingerprint of this server's tool set (names + descriptions + schemas): a changed hash means new MCP abilities for existing repos. */
+export function toolsHash() {
+  const h = createHash('sha256');
+  for (const t of [...TOOLS].sort((a, b) => a.name.localeCompare(b.name))) h.update(`${t.name}\n${t.description}\n${JSON.stringify(t.inputSchema)}\n`);
+  return h.digest('hex').slice(0, 16);
+}
+
 export const TOOLS = [
   {
     name: 'uiux_init',
@@ -706,6 +715,54 @@ export const TOOLS = [
       versions?.ensureHead(principal.project.id);
       const data = bundles.create(principal, args, { baseUrl });
       return { summary: `Bundle ready: ${data.files} files, ${(data.bytes / 1024).toFixed(0)} KB, styles ${data.styles.join(', ')}. Run the install steps; the link works once and expires ${data.expiresAt}.`, data };
+    }
+  },
+  {
+    name: 'uiux_check_update',
+    title: 'Check whether this repository is up to date',
+    description: 'Call at the START of every session, before other work. Compares what the repository has (pack file checksums, manifestHash, toolsHash from .uiux/uiux.lock.json) with the server: newer agent/skill/config templates, a changed design, or new MCP abilities. Cheap: no bundle is built. When updateAvailable is true, call uiux_init with the same installed list and apply its steps, then write the returned lockfile.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        platform: PLATFORM_PROP,
+        framework: str('The app stack.', { maxLength: 40 }),
+        uiuxRoot: { type: 'string', enum: ['uiux', 'themes'] },
+        styles: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 },
+        installed: { type: 'array', maxItems: 50, items: { type: 'object', properties: { path: str('Repository-relative path.', { maxLength: 300 }), recordedChecksum: str('sha256 from the lockfile.', { maxLength: 64 }), currentChecksum: str('sha256 of the file on disk now.', { maxLength: 64 }) }, required: ['path'], additionalProperties: false }, description: 'Pack files in the repository (lockfile pack.files with their current checksums).' },
+        manifestHash: str('manifestHash from the lockfile.', { maxLength: 64 }),
+        toolsHash: str('toolsHash from the lockfile (absent in older repositories: an update is then reported).', { maxLength: 64 }),
+        packVersion: str('pack.version from the lockfile (informational).', { maxLength: 40 })
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, aiPack, baseUrl }, args) => {
+      const data = aiPack.checkUpdate(principal, args, { baseUrl, toolsHash: toolsHash() });
+      return { summary: data.updateAvailable ? `UPDATE AVAILABLE (pack v${data.packVersion}: ${data.packChanged.length} file(s)${data.designChanged ? ', design changed' : ''}${data.toolsChanged ? ', new MCP abilities' : ''}${data.conflicts.length ? `, ${data.conflicts.length} conflict(s)` : ''}). ${data.next}` : 'Repository is up to date.', data };
+    }
+  },
+  {
+    name: 'uiux_import_styles',
+    title: 'List / import design styles and button types',
+    description: 'Without `styles`: lists every design style and button type the server offers (pass `installed` = style keys from uiux/source/styles.json to see which are new). With `styles` (keys or "all"): builds an incremental bundle (tokens, web adapter with CSS/TS/icon sprite, refreshed button styles, styles.json, switch-style.mjs, prototype Options menu) and returns a single-use URL with shell steps that MERGE it into uiux/source/ without removing anything, so the new styles can be switched locally right away.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        styles: { oneOf: [{ type: 'string', enum: ['all'] }, { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 }], description: 'Style keys to download, or "all". Omit to list the catalog.' },
+        installed: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 100, description: 'Style keys already installed locally.' },
+        uiuxRoot: { type: 'string', enum: ['uiux', 'themes'], description: 'Output folder (default "uiux").' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, bundles, limiter, baseUrl }, args) => {
+      if (args.styles === undefined) {
+        const data = bundles.styleCatalog(args.installed);
+        return { summary: `${data.designStyles.length} design style(s), ${data.buttonStyles.length} button type(s)${data.newStyles.length ? `; ${data.newStyles.length} not installed yet: ${data.newStyles.join(', ')}` : ''}. Call again with styles to import.`, data };
+      }
+      takeBundle(limiter, principal);
+      const data = bundles.createStyles(principal, { styles: args.styles, installed: args.installed, root: args.uiuxRoot }, { baseUrl });
+      return { summary: `Style bundle ready (${data.files} files, ${(data.bytes / 1024).toFixed(0)} KB): ${data.styles.join(', ')}. Run the install steps (they merge into ${args.uiuxRoot || 'uiux'}/source/), then switch with node ${args.uiuxRoot || 'uiux'}/source/switch-style.mjs <style>.`, data };
     }
   },
   ...M4_TOOLS,

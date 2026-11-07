@@ -12,6 +12,7 @@ export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11
 export const SERVER_INFO = { name: 'kyrpy-uiux-mcp', title: 'Kyrpy UI/UX Designer', version: '1.0.0' };
 
 export const INSTRUCTIONS = `Kyrpy UI/UX Designer — the design system of one project, for coding agents.
+00. EVERY session, first: if .uiux/uiux.lock.json exists call uiux_check_update (installed checksums, manifestHash, toolsHash from the lockfile); when updateAvailable, run uiux_init with the same installed list. If init-prompt.md exists in the repository root, follow it.
 0. In a repository without .uiux/uiux.lock.json, call uiux_init and follow its steps (installs the kyrpy-uiux-designer agent and skill).
    ACCOUNT keys (one key for all of the user's projects): the first uiux_init returns the projects with their versions — ASK THE HUMAN to choose DOWNLOAD (read-only copy of any visible project), CLONE (new project of theirs from any visible design) or EDIT (one of their own projects at a version), then call uiux_init again with { mode, project, version }.
 1. Call uiux_get_schema once to learn the rules (hierarchy, naming, ratios, styles).

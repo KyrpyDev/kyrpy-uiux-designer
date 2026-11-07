@@ -124,7 +124,7 @@ test('M3: init plan for Claude Code renders the project into the agent and skill
     assert.ok(!r.isError, JSON.stringify(r));
     const plan = r.structuredContent;
     assert.deepEqual(plan.files.map(f => `${f.action}:${f.path}`), [
-      'create:.claude/agents/kyrpy-uiux-designer.md', 'create:.claude/skills/kyrpy-skill-uiux-designer/SKILL.md', 'create:.uiux/config.json']);
+      'create:.claude/agents/kyrpy-uiux-designer.md', 'create:.claude/skills/kyrpy-skill-uiux-designer/SKILL.md', 'create:.uiux/config.json', 'create:init-prompt.md']);
     const [agent, skill, config] = plan.files;
     assert.match(agent.content, new RegExp(`project\\s+\\*\\*${w.p.key}\\*\\*`));
     assert.match(agent.content, /\(react\)/);
@@ -163,13 +163,15 @@ test('M3: end to end — empty repo → init → bundle → adapters → re-run 
     assert.match(sprite, /<symbol id="icon-star"/); assert.match(sprite, /<symbol id="icon-dot"/);
     assert.match(readFileSync(join(repo, 'uiux', st, 'index.ts'), 'utf8'), /"star": \{ id: "icon-star"/);
     assert.ok(existsSync(join(repo, 'uiux', 'source', 'manifest.json')));
+    assert.ok(existsSync(join(repo, 'uiux', 'source', 'prototype', 'options-menu.js')), 'bundle ships the prototype Options menu');
+    assert.match(readFileSync(join(repo, 'init-prompt.md'), 'utf8'), /init-prompt/);
     assert.match(readFileSync(join(repo, '.gitignore'), 'utf8'), /\.uiux\/cache\//);
     const grep = spawnSync('bash', ['-c', 'grep -rln "kud_live_" . || true'], { cwd: repo, encoding: 'utf8' });
     assert.equal(grep.stdout.trim(), '', 'no API key anywhere in the repo');
 
     // re-run with nothing changed: every file skipped, no bundle
     const again = (await w.call('uiux_init', { platform: 'agents-md', framework: 'vue', ...installedFrom(repo) })).structuredContent;
-    assert.deepEqual(again.summary, { create: 0, update: 0, skip: 2, conflict: 0, bundle: 'not needed' });
+    assert.deepEqual(again.summary, { create: 0, update: 0, skip: 3, conflict: 0, bundle: 'not needed' });
     assert.ok(again.files.every(f => f.content === undefined), 'skipped files carry no content');
 
     // a design change → bundle again; a local edit of the config → conflict, original untouched

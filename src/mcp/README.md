@@ -244,3 +244,7 @@ sprites for the default pair only (tokens still ship for every style; `styles.js
 
 Then push with the changeset tools (`project`: the key from config) and approve in the designer. Sensors:
 `tests/mcp-account.test.js` (visibility, scopes, selection list, clone → stage → submit → approve, edit at a version).
+
+## M8 — prototype, init-prompt, style import, update check
+
+`domain/init-prompt.js` (init-prompt.md, written once by `uiux_init`), `domain/prototype-shell.js` (dependency-free top-left Options menu: device / style / button type), `uiux_import_styles` (`BundleService.styleCatalog` / `createStyles`, merges into `uiux/source/`), `uiux_check_update` (`AiPackService.checkUpdate`, lockfile `toolsHash` from `server/tools.js`). Sensors: `tests/mcp-m8.test.js`. Full reference: `readme-mcp.md`.

@@ -20,6 +20,7 @@ import { tarGz } from '../infrastructure/export/tar-gz.js';
 import { spriteSvg, iconIndexTs, reactIconTsx, reactIndexTs } from '../domain/web-adapter.js';
 import { BUTTON_STYLES, DEFAULT_BUTTON_TEMPLATES, DEFAULT_PROJECT_BUTTON_SETTINGS } from '../../domain/entities.js';
 import { switchStyleScript, buttonStylesCss, buttonStylesTs } from '../domain/style-switch.js';
+import { optionsMenuJs } from '../domain/prototype-shell.js';
 import { flutterTokens, flutterIcons, composeTokens, composeIcons, swiftTokens, swiftIcons } from '../domain/native-adapters.js';
 
 export const ADAPTERS = ['web', 'react-tsx', 'flutter', 'compose', 'swiftui'];
@@ -134,20 +135,28 @@ export class BundleService {
         for (const i of icons) files.push({ path: `${dir}/icons/${i.key}.svg`, content: i.svg });
       }
     }
-    if (switchable) {
-      const activeButton = principal.project?.settings?.buttonStyle || DEFAULT_PROJECT_BUTTON_SETTINGS.buttonStyle;
-      const btn = { styles: BUTTON_STYLES, defaults: DEFAULT_PROJECT_BUTTON_SETTINGS, active: activeButton, iconSizePct: [50, 100] };
-      files.push({ path: 'tokens/button-styles.json', content: JSON.stringify(btn, null, 2) });
-      files.push({ path: 'tokens/button-styles.css', content: buttonStylesCss(BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS) });
-      files.push({ path: 'tokens/button-styles.ts', content: buttonStylesTs(BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS) });
-      files.push({ path: 'tokens/button-templates.json', content: JSON.stringify(DEFAULT_BUTTON_TEMPLATES, null, 2) });
-      const meta = schema.styles.map(st => ({ key: st.key, label: st.label, mode: st.mode, pairKey: st.pairKey, family: st.family }));
-      files.push({ path: 'styles.json', content: JSON.stringify({ spritesForAllStyles: spriteStyles.length === styleKeys.length, spriteStyles, designStyles: meta, defaultStyle: schema.defaultStyle, buttonStyles: BUTTON_STYLES.map(b => ({ key: b.key, label: b.label })), activeButtonStyle: activeButton }, null, 2) });
-      files.push({ path: 'switch-style.mjs', content: switchStyleScript(root || 'uiux', schema.defaultStyle, activeButton) });
-    }
+    if (switchable) files.push(...this.switchFiles(principal, schema, styleKeys, spriteStyles, root));
     if (includeApp) files.push(...this.appFiles(principal, manifest, styleKeys));
     files.push({ path: 'README.md', content: readme(principal, manifest, styleKeys) });
     return { files, manifest, styleKeys };
+  }
+
+
+  /** Style-switching files: button styles, styles.json, switch-style.mjs and the prototype Options menu. */
+  switchFiles(principal, schema, styleKeys, spriteStyles, root) {
+    const out = [];
+    const activeButton = principal.project?.settings?.buttonStyle || DEFAULT_PROJECT_BUTTON_SETTINGS.buttonStyle;
+    const btn = { styles: BUTTON_STYLES, defaults: DEFAULT_PROJECT_BUTTON_SETTINGS, active: activeButton, iconSizePct: [50, 100] };
+    out.push({ path: 'tokens/button-styles.json', content: JSON.stringify(btn, null, 2) });
+    out.push({ path: 'tokens/button-styles.css', content: buttonStylesCss(BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS) });
+    out.push({ path: 'tokens/button-styles.ts', content: buttonStylesTs(BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS) });
+    out.push({ path: 'tokens/button-templates.json', content: JSON.stringify(DEFAULT_BUTTON_TEMPLATES, null, 2) });
+    const meta = schema.styles.map(st => ({ key: st.key, label: st.label, mode: st.mode, pairKey: st.pairKey, family: st.family }));
+    out.push({ path: 'styles.json', content: JSON.stringify({ spritesForAllStyles: spriteStyles.length === styleKeys.length, spriteStyles, designStyles: meta, defaultStyle: schema.defaultStyle, buttonStyles: BUTTON_STYLES.map(b => ({ key: b.key, label: b.label })), activeButtonStyle: activeButton }, null, 2) });
+    out.push({ path: 'switch-style.mjs', content: switchStyleScript(root || 'uiux', schema.defaultStyle, activeButton) });
+    const designMeta = schema.styles.map(st => ({ key: st.key, label: st.label, mode: st.mode }));
+    out.push({ path: 'prototype/options-menu.js', content: optionsMenuJs({ root: root || 'uiux', designStyles: designMeta, buttonStyles: BUTTON_STYLES.map(b => ({ key: b.key, label: b.label })), defaultStyle: schema.defaultStyle, defaultButton: activeButton }) });
+    return out;
   }
 
   /**
@@ -194,6 +203,54 @@ export class BundleService {
   archive(principal, opts = {}) {
     const { files, manifest } = this.files(principal, opts);
     return { buffer: tarGz(files), filename: `${principal.project.key}-app-${manifest.manifestHash.slice(0, 12)}.tar.gz` };
+  }
+
+  /** Design styles and button types the server offers; `installed` = style keys already in uiux/source/styles.json. */
+  styleCatalog(installed = []) {
+    const have = new Set(installed || []);
+    const schema = this.query.schema();
+    return {
+      defaultStyle: schema.defaultStyle,
+      designStyles: schema.styles.map(st => ({ key: st.key, label: st.label, mode: st.mode, pairKey: st.pairKey, family: st.family, installed: have.has(st.key) })),
+      buttonStyles: BUTTON_STYLES.map(b => ({ key: b.key, label: b.label })),
+      newStyles: schema.styles.map(st => st.key).filter(k => installed?.length && !have.has(k))
+    };
+  }
+
+  /**
+   * Incremental style import: tokens + web adapter (CSS, TS, icon sprite) for the chosen styles, refreshed button styles,
+   * styles.json, switch-style.mjs and the prototype Options menu. Extracting it MERGES into uiux/source/ (nothing is removed).
+   */
+  createStyles(principal, { styles, installed = [], root = 'uiux' } = {}, { baseUrl }) {
+    this.#sweep();
+    const schema = this.query.schema();
+    const all = schema.styles.map(s => s.key);
+    const want = styles === 'all' ? all : (Array.isArray(styles) ? styles : []);
+    if (!want.length) throw new ValidationError('pass "styles": an array of style keys, or "all" (call without styles to list what is available)');
+    const bad = want.filter(k => !all.includes(k));
+    if (bad.length) throw new ValidationError(`unknown style(s): ${bad.join(', ')}`);
+    const rootDir = root === 'themes' ? 'themes' : 'uiux';
+    const built = this.files(principal, { styles: want, includeSvg: false, adapters: ['web'], types: ['icon'], root: rootDir });
+    const keep = built.files.filter(f => f.path.startsWith('tokens/') || f.path.startsWith('adapters/web/'));
+    const known = [...new Set([...(installed || []).filter(k => all.includes(k)), ...want])];
+    keep.push(...this.switchFiles(principal, schema, known, known, rootDir));
+    const buffer = tarGz(keep);
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    const token = randomBytes(24).toString('base64url');
+    const expiresAt = this.now() + BUNDLE_TTL_MS;
+    const filename = `${principal.project.key}-styles-${sha256.slice(0, 12)}.tar.gz`;
+    this.store.set(token, { buffer, sha256, apiKeyId: principal.apiKeyId, expiresAt, filename });
+    return {
+      url: `${baseUrl}/mcp/bundles/${token}`, sha256, bytes: buffer.length, files: keep.length, filename, expiresAt: new Date(expiresAt).toISOString(), singleUse: true,
+      styles: want, merge: true,
+      install: [
+        'mkdir -p .uiux/cache',
+        `curl -fsSL -o .uiux/cache/${filename} "${baseUrl}/mcp/bundles/${token}"`,
+        `echo "${sha256}  .uiux/cache/${filename}" | sha256sum -c -`,
+        `mkdir -p ${rootDir}/source && tar -xzf .uiux/cache/${filename} -C ${rootDir}/source`,
+        ...want.map(k => `mkdir -p ${rootDir}/${k} && cp -R ${rootDir}/source/adapters/web/${k}/. ${rootDir}/${k}/`)
+      ]
+    };
   }
 
   /** Builds and stores a bundle; returns a single-use download descriptor. */
