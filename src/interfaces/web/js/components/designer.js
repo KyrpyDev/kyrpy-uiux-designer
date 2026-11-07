@@ -391,9 +391,9 @@ export class Designer {
     this.backBtn = o.onBack ? ibtn('back', 'Back', () => o.onBack(), { desc: 'Return to the previous page', kbd: 'Alt+←', dataset: { act: 'back' } }) : null;
     this.saveBtn = ibtn('save', 'Save', () => this.save(), {
       desc: ownedByMe
-        ? 'Keep the current version (and save to any selected Multi-Targets).'
+        ? this.saveTargetNames()
         : `Disabled: owned by ${ownerLabel(d.creatorUsername, d.creatorId)}. Use Save as… to save a copy.`,
-      kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save'
+      disabled: !ownedByMe, cls: 'save'
     });
     this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to your All Projects library and any selected Multi-Target projects.' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
@@ -469,9 +469,18 @@ export class Designer {
     return this.updateDoc(patch);
   }
 
+  /** Tooltip text of the Save button: only the name(s) of the project(s) the save goes to (own project + checked targets). */
+  saveTargetNames() {
+    const projects = state.projects || [];
+    const ids = new Set([this.doc?.projectId, ...(state.saveTargetProjectIds || [])].filter(v => v != null));
+    const names = [...ids].map(id => projectLabel(projects.find(p => p.id === id) || { id }));
+    return names.join(', ') || projectLabel(projects.find(p => p.id === state.activeProjectId));
+  }
+
   updateDocBar() {
     if (!this.saveBtn) return;
     const ownedByMe = this.isOwnedByCurrentUser(this.doc);
+    this.saveBtn.dataset.tip = ownedByMe ? `Save\n${this.saveTargetNames()}` : this.saveBtn.dataset.tip;
     this.saveBtn.disabled = !ownedByMe;
     this.saveBtn.classList.toggle('dirty', this.dirty && ownedByMe);
     this.resetBtn.disabled = !this.dirty;
