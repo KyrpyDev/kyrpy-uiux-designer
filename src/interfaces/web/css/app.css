@@ -775,3 +775,12 @@ button.profile-stat:hover { border-color: var(--accent); }
 .icon-virt-spacer { width: 1px; }
 .icon-virt-window { position: absolute; top: 8px; left: 8px; right: 8px; will-change: transform; }
 .icon-virt-window .cell { height: 70px; box-sizing: border-box; }
+
+/* library header: search row with collapse + drawer buttons; collapsible filters/tools */
+.lib-search-row { display: flex; gap: 4px; align-items: center; }
+.lib-search-row > input[type="search"] { flex: 1 1 auto; min-width: 0; }
+.lib-tools-more { display: flex; flex-direction: column; gap: 6px; }
+.lib-tools.tools-collapsed .lib-tools-more { display: none; }
+.left-reopen { display: none; flex: 0 0 22px; align-items: flex-start; justify-content: center; padding-top: 10px; background: var(--panel); border: 0; border-right: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+.left-reopen:hover { color: var(--text); background: var(--panel-2, var(--panel)); }
+#left.collapsed ~ .left-reopen { display: flex; }

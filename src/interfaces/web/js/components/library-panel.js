@@ -3,7 +3,7 @@
  * Items are dragged onto the open designer (the hierarchy rules decide where they may go).
  */
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
-import { ibtn } from '../icons.js';
+import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
 import { state, on, emit, libOf, PLURAL, canEditOwned } from '../state.js';
 import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog, reloadLibrary } from '../actions.js';
@@ -19,6 +19,7 @@ const LARGE_ICON_LIBRARY = 1500;
 /** Known icon packs (scripts/import-icon-packs.js) in chip order; any other pack gets a chip after them. */
 const ICON_PACKS = [['lucide', 'Lucide'], ['tabler', 'Tabler'], ['heroicons', 'Heroicons'], ['phosphor', 'Phosphor'], ['bootstrap', 'Bootstrap']];
 const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
+const TOOLS_COLLAPSED_KEY = 'ud_lib_tools_collapsed';
 const HINT = {
   path: 'Reusable vector path groups. Drag into an icon.',
   icon: 'Icons are built from path groups. Drag into a button or element.',
@@ -76,10 +77,44 @@ export class LibraryPanel {
   renderBody() {
     this.renderTabs();
     clear(this.bodyEl);
-    if (state.tab === 'screen') return this.screensTab();
-    if (state.tab === 'workflow') return this.workflowsTab();
-    if (state.tab === 'icon') return this.iconsTab();
-    return this.thumbTab(state.tab);
+    if (state.tab === 'screen') this.screensTab();
+    else if (state.tab === 'workflow') this.workflowsTab();
+    else if (state.tab === 'icon') this.iconsTab();
+    else this.thumbTab(state.tab);
+    this.decorateTools();
+  }
+
+  /**
+   * Every tab's `.lib-tools` header: keeps the search box on top with two buttons beside it (collapse /
+   * expand the filters and tools below it, and hide the whole left panel). The rest of the header, plus
+   * the icon pack row, moves into `.lib-tools-more`, which the collapse button hides. The collapsed
+   * state is one per-viewer setting shared by all tabs.
+   */
+  decorateTools() {
+    const tools = this.bodyEl.querySelector(':scope > .lib-tools');
+    if (!tools || tools.querySelector(':scope > .lib-search-row')) return;
+    const search = tools.querySelector(':scope > input[type="search"]');
+    const more = h('div', { class: 'lib-tools-more', id: `lib-tools-more-${state.tab}` });
+    for (const el of [...tools.children]) if (el !== search) more.append(el);
+    const packRow = this.bodyEl.querySelector(':scope > .lib-pack-row');
+    if (packRow) more.append(packRow);
+    let collapsed = false;
+    try { collapsed = localStorage.getItem(TOOLS_COLLAPSED_KEY) === '1'; } catch { /* storage unavailable */ }
+    const toggle = ibtn('chevron-up', 'Collapse filters and tools', () => apply(!collapsed, true), { cls: 'lib-tools-toggle', size: 15 });
+    toggle.setAttribute('aria-controls', more.id);
+    const apply = (v, save) => {
+      collapsed = v;
+      tools.classList.toggle('tools-collapsed', v);
+      toggle.setAttribute('aria-expanded', String(!v));
+      const label = v ? 'Expand filters and tools' : 'Collapse filters and tools';
+      toggle.setAttribute('aria-label', label); toggle.dataset.tip = label;
+      toggle.replaceChildren(iconEl(v ? 'chevron-down' : 'chevron-up', { size: 15 }));
+      if (save) try { localStorage.setItem(TOOLS_COLLAPSED_KEY, v ? '1' : '0'); } catch { /* storage unavailable */ }
+    };
+    const drawer = ibtn('panel-left', 'Hide the library panel', () => window.dispatchEvent(new CustomEvent('ud:toggle-left')), { desc: 'Reopen it from the rail on the left edge', cls: 'lib-drawer-toggle', size: 15 });
+    tools.prepend(h('div', { class: 'lib-search-row' }, search, toggle, drawer));
+    tools.append(more);
+    apply(collapsed, false);
   }
 
   /** Does the open designer accept this kind of design? (used to dim cells that cannot be dropped) */
@@ -527,7 +562,7 @@ export class LibraryPanel {
         h('button', { class: 'btn small', title: 'Batch import from an SVG folder into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '📁 Folder'),
         h('button', { class: 'btn small', title: 'Import glyphs from Fonts (.svg / .ttf / .woff / symbols) into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '🔤 Fonts')
       ], selBar),
-      h('div', { class: 'row', style: { alignItems: 'center', gap: '6px' } }, packBar, h('span', { class: 'grow' }), count),
+      h('div', { class: 'row lib-pack-row', style: { alignItems: 'center', gap: '6px' } }, packBar, h('span', { class: 'grow' }), count),
       scroller
     );
     fill();

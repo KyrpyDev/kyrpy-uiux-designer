@@ -778,7 +778,13 @@ function showShortcuts() {
 }
 
 /* ---------- layout ---------- */
-function toggleLeft() { const l = $('#left'); l.classList.toggle('collapsed'); if (!l.classList.contains('collapsed')) l.style.width = `${state.settings.leftPanelWidth || 360}px`; }
+function toggleLeft() {
+  const l = $('#left'); l.classList.toggle('collapsed');
+  if (!l.classList.contains('collapsed')) l.style.width = `${state.settings.leftPanelWidth || 360}px`;
+  requestAnimationFrame(() => app.designer?.fit?.());
+}
+// the library panel's own drawer button (inside #left) asks for the toggle through this event
+window.addEventListener('ud:toggle-left', toggleLeft);
 
 function bindSplitter() {
   const sp = $('#split-left'), left = $('#left');
@@ -790,6 +796,8 @@ function bindSplitter() {
     sp.addEventListener('pointermove', mv); sp.addEventListener('pointerup', up);
   });
   sp.addEventListener('dblclick', toggleLeft);
+  // slim rail shown only while the panel is collapsed (CSS), so the panel can always be reopened
+  if (!$('#left-reopen')) sp.after(h('button', { id: 'left-reopen', type: 'button', class: 'left-reopen', title: 'Show the library panel', 'aria-label': 'Show the library panel', onclick: toggleLeft }, iconEl('panel-left', { size: 16 })));
 }
 
 function renderMode() {
