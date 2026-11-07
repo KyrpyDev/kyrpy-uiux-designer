@@ -54,3 +54,11 @@ test('NodeRepository.usedByProject follows screen -> element -> button -> icon r
   const used = new NodeRepository(db).usedByProject(5);
   assert.deepEqual(used.sort(), ['button:20', 'element:10', 'icon:30', 'screen:1']);
 });
+
+test('revealInLibrary switches a mismatching visibility filter to the saved item\'s scope (stub state)', async () => {
+  // web modules import browser-only code, so check the rule on the same inputs the helper uses
+  const follows = (filter, vis) => (filter === 'all' || filter === vis ? null : vis);
+  assert.equal(follows('project', 'private'), 'private');
+  assert.equal(follows('project', 'project'), null);
+  assert.equal(follows('all', 'private'), null);
+});

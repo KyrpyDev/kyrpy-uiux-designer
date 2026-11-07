@@ -20,7 +20,7 @@ import { reorderLayer, stepLayer } from '/domain/node-ops.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
-import { updateSettings, openGuide, reloadLibrary, createEmptyItem } from '../actions.js';
+import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { MenuEditor, menuActions } from './menu-editor.js';
 import { PenTool } from './pen-tool.js';
@@ -410,6 +410,7 @@ export class Designer {
     const setVis = async next => {
       if (!this.doc || next === (this.doc.visibility || 'public')) return;
       await this.updateDoc(next === 'project' ? { visibility: next, projectId: state.activeProjectId || this.doc.projectId || 1 } : { visibility: next });
+      await revealInLibrary(this.doc);
       this.buildDocBar();
       toast(`Visibility set to ${next.toUpperCase()}`, 'ok');
     };
@@ -528,7 +529,7 @@ export class Designer {
           includeUserPrivate: includePriv
         });
       }
-      await reloadLibrary({ silent: true });
+      if (!(await revealInLibrary(this.doc))) await reloadLibrary({ silent: true });
       this.renderStage();
       this.emit('saved', this.doc);
       if (multiRes?.savedCount) {
@@ -592,7 +593,7 @@ export class Designer {
       this.undoStack = []; this.redoStack = []; this.vtx.exit();
       await this.reload(false);
       this.changed();
-      await reloadLibrary({ silent: true });
+      if (!(await revealInLibrary(copy))) await reloadLibrary({ silent: true });
       if (!this.opts.modal && copy?.id) this.opts.openDesign?.(this.type, copy.id);
       return copy;
     } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }

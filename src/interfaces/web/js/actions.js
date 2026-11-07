@@ -105,6 +105,20 @@ export async function setVisibilityFilter(filter) {
 }
 
 /**
+ * After an item was saved or its visibility changed: when the library is filtered to another scope (e.g. "Project-only"
+ * while the item is now Private) the item would silently disappear from the list. Follow the item's scope instead.
+ * @returns {Promise<boolean>} true when the filter was switched (the library was reloaded)
+ */
+export async function revealInLibrary(rec) {
+  const vis = rec?.visibility || 'public';
+  const f = state.visibilityFilter || 'all';
+  if (f === 'all' || f === vis) return false;
+  await setVisibilityFilter(vis);
+  toast(`Library filter switched to ${vis === 'project' ? 'Project-only' : vis === 'private' ? 'Private' : 'Public'} so "${rec.name || rec.key}" stays visible`, 'info', 2800);
+  return true;
+}
+
+/**
  * Rebuilds the shared sprite with the icons whose geometry is known locally (the ones library items draw, plus
  * the lazily cached ones). Icon-grid cells fetch the symbols they show through icon-store.ensureIconSymbols.
  */
