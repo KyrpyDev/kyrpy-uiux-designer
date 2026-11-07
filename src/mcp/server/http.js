@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
 import { RPC, SUPPORTED_PROTOCOL_VERSIONS } from './protocol.js';
+import { publicBaseUrl } from '../../interfaces/http/base-url.js';
 
 const MAX_BODY = 1024 * 1024;
 const SESSION_TTL_MS = 24 * 3600 * 1000;
@@ -73,10 +74,7 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
   }, pollMs) : null;
   poller?.unref?.();
 
-  const baseUrlOf = req => {
-    const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
-    return `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
-  };
+  const baseUrlOf = publicBaseUrl;
 
   const authenticate = (req, ip) => {
     const header = String(req.headers.authorization || '');

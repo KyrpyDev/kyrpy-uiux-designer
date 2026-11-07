@@ -1,7 +1,7 @@
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api, ApiError, setWriteGuard } from './api.js';
-import { state, on, emit, projectLabel } from './state.js';
+import { state, on, emit, projectLabel, PLURAL, findDesign, isPublicLibraryItem, isSuperadminUser } from './state.js';
 import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
 import { Designer } from './components/designer.js';
@@ -169,8 +169,72 @@ async function insertPresetElement(key) {
  * opened there, and the edit that triggered the prompt is not applied (the caller shows the message below).
  */
 let firstProjectFlow = null;
-async function firstProjectGuard() {
-  if (!needsFirstProject()) return;
+/**
+ * Public-library rule: only the superadmin edits public items in place. When anyone else drops / edits on one, the
+ * edit is not applied; the Save as… button blinks and a popup asks where the copy goes (own projects + Global Private
+ * Library). The copy is saved and opened, so the user can repeat the edit there.
+ */
+let publicEditFlow = null;
+const SINGULAR = Object.fromEntries(Object.entries(PLURAL).map(([k, v]) => [v, k]));
+function targetedPublicItem(url) {
+  const m = /^\/api\/(paths|icons|buttons|elements|screens|workflows)\/(\d+)/.exec(String(url));
+  if (!m) return null;
+  const type = SINGULAR[m[1]];
+  const doc = app.designer?.doc;
+  const rec = !type ? null : (doc && app.designer.type === type && Number(doc.id) === Number(m[2]) ? doc : findDesign(type, Number(m[2])));
+  return rec && isPublicLibraryItem(rec) && !isSuperadminUser() ? { type, rec } : null;
+}
+function chooseSaveTargets(rec) {
+  return new Promise(resolve => {
+    const own = ownProjects();
+    const active = Number(state.activeProjectId || DEFAULT_PROJECT_ID);
+    const picked = new Set(own.filter(p => Number(p.id) === active).map(p => Number(p.id)));
+    let priv = picked.size === 0;   // no active project of the user's: default to the private library
+    let done = false;
+    const finish = v => { if (!done) { done = true; resolve(v); } };
+    const box = (label, checked, on) => h('label', { class: 'target-row', style: { display: 'flex', gap: '8px', alignItems: 'center', padding: '4px 0' } },
+      h('input', { type: 'checkbox', checked, onchange: e => on(e.target.checked) }), label);
+    const m = modal({
+      title: 'Save as… — choose where to save',
+      onClose: () => finish(null),
+      content: h('div', {},
+        h('p', {}, `"${rec.name}" belongs to the public library, which only the superadmin can change. Save your own copy (with all sub-items) to:`),
+        box('🔒 My Global Private Library', priv, v => { priv = v; }),
+        ...(own.length ? [h('b', {}, 'My projects')] : [h('p', { class: 'muted' }, 'You have no projects yet: the copy goes to your private library.')]),
+        ...own.map(p => box(p.name, picked.has(Number(p.id)), v => { v ? picked.add(Number(p.id)) : picked.delete(Number(p.id)); }))),
+      actions: close => [
+        h('button', { class: 'btn', onclick: () => { finish(null); close(); } }, 'Cancel'),
+        h('button', { class: 'btn primary', onclick: () => {
+          if (!priv && !picked.size) { toast('Pick at least one target', 'warn'); return; }
+          finish({ projectIds: [...picked], includeUserPrivate: priv }); close();
+        } }, 'Save as')]
+    });
+    return m;
+  });
+}
+async function publicEditGuard(url) {
+  const hit = targetedPublicItem(url);
+  if (!hit) return;
+  const btn = app.designer?.saveAsBtn;
+  btn?.classList.add('attn');
+  publicEditFlow ||= (async () => {
+    const pick = await chooseSaveTargets(hit.rec);
+    if (!pick) return { cancelled: true };
+    const res = await api.saveToTargets({ type: hit.type, id: hit.rec.id, name: hit.rec.name, projectIds: pick.projectIds,
+      visibility: pick.projectIds.length ? 'project' : 'private', includeUserPrivate: pick.includeUserPrivate, restoreBaseline: null });
+    const copy = res.primaryCopy || res.copied?.[0]?.item;
+    await reloadLibrary({ silent: true });
+    if (copy?.id) await app.openDesign(hit.type, copy.id);
+    return { copy, count: res.savedCount };
+  })().finally(() => { btn?.classList.remove('attn'); setTimeout(() => { publicEditFlow = null; }, 0); });
+  const r = await publicEditFlow;
+  throw new ApiError(r.cancelled
+    ? 'This item belongs to the public library: use Save as… to edit your own copy.'
+    : `Saved your own copy (${r.count} target(s)); you are now editing it. Your last change was not applied: do it again here.`);
+}
+
+async function firstProjectGuard({ url } = {}) {
+  if (!needsFirstProject()) return publicEditGuard(url);
   firstProjectFlow ||= (async () => {
     const name = await promptBox('Create your first project', {
       value: 'My first project', okLabel: 'Create project',

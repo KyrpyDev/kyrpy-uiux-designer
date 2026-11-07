@@ -230,12 +230,12 @@ h3, h4 { margin: 0; }
 .dz-docbar { display: flex; gap: 6px; align-items: center; padding: 5px 8px; background: #0c1527; border-bottom: 1px solid var(--line2); flex: 0 0 auto; }
 .doc-state { font-size: 12px; color: var(--muted); padding-left: 2px; }
 .doc-state.dirty { color: var(--warn); font-weight: 600; }
-.btn.save.dirty { background: var(--accent2); border-color: #fff; color: #fff; font-weight: 700; animation: save-blink 1s steps(1, end) infinite; }
+.btn.save.dirty, .btn.attn { background: var(--accent2); border-color: #fff; color: #fff; font-weight: 700; animation: save-blink 1s steps(1, end) infinite; }
 @keyframes save-blink {
   0%, 100% { background: var(--accent2); color: #fff; box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
   50% { background: var(--warn); color: #1b1200; box-shadow: 0 0 0 4px rgba(245, 158, 11, .45), 0 0 16px 2px rgba(245, 158, 11, .8); }
 }
-@media (prefers-reduced-motion: reduce) { .btn.save.dirty { animation: none; background: var(--warn); color: #1b1200; box-shadow: 0 0 0 3px rgba(245, 158, 11, .5); } }
+@media (prefers-reduced-motion: reduce) { .btn.save.dirty, .btn.attn { animation: none; background: var(--warn); color: #1b1200; box-shadow: 0 0 0 3px rgba(245, 158, 11, .5); } }
 
 /* ---- "Test actions" preview: a popup or drawer over the canvas ---- */
 .dz-pv { position: absolute; inset: 0; z-index: 40; display: flex; }

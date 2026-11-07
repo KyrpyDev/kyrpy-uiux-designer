@@ -12,6 +12,7 @@ import { collabRoutes } from './controllers/collab-routes.js';
 import { profileRoutes } from './controllers/profile-routes.js';
 import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
 import { DomainError } from '../../domain/errors.js';
+import { publicBaseUrl } from './base-url.js';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
@@ -104,7 +105,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
         }
         const projectId = headerProjectId || (url.searchParams.get('projectId') ? Number(url.searchParams.get('projectId')) : 1);
         const ip = req.socket?.remoteAddress || '';
-        const baseUrl = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+        const baseUrl = publicBaseUrl(req);
         const out = await hit.handler({ params: hit.params, query: url.searchParams, body, token, actor, projectId, ip, baseUrl });
         if (MUTATIONS.includes(req.method)) broadcastSync();
         if (out && out.raw !== undefined) {
@@ -128,7 +129,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
       }
       // reference pages (opened from the topbar API / MCP status icons)
       if ((url.pathname === '/docs/api' || url.pathname === '/docs/mcp') && req.method === 'GET') {
-        const baseUrl = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['x-forwarded-host'] || req.headers.host}`;
+        const baseUrl = publicBaseUrl(req);
         const html = url.pathname === '/docs/api'
           ? renderApiDocs(router.list())
           : renderMcpDocs({ baseUrl, status: mcpHealth(container), tools: container.mcp?.protocol?.tools ? [...container.mcp.protocol.tools.values()] : undefined, readme: mcpReadme() });

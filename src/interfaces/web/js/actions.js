@@ -1,6 +1,6 @@
 /** App-level actions shared by menus, panels and the designers. Components call these instead of each other. */
 import { api } from './api.js';
-import { state, emit, on, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign } from './state.js';
+import { state, emit, on, isSuperadminUser, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign } from './state.js';
 import { syncIconVersion, cachedIcon, resetSprite, appendSymbols, markSymbols } from './icon-store.js';
 import { expandIconSummary } from '/domain/icon-summary.js';
 import { renderSprite } from '/domain/svg.js';
