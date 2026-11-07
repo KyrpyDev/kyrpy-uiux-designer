@@ -142,7 +142,7 @@ try {
   const liveProj1 = db.prepare('SELECT settings FROM projects WHERE id = 1').get();
   const proj1Settings = (liveProj1 && liveProj1.settings && liveProj1.settings !== '{}')
     ? liveProj1.settings
-    : '{"buttonStyle":"circle","buttonIconSizePct":70}';
+    : '{"buttonStyle":"circle","buttonIconSizePct":95}';
   db.exec('DELETE FROM projects WHERE id != 1;');
   db.prepare(`
     INSERT OR REPLACE INTO projects (id, key, name, label, description, owner_id, visibility, require_approval, settings, created_at, updated_at)

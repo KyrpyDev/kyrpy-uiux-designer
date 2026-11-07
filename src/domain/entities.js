@@ -219,13 +219,13 @@ export const BUTTON_STYLES = [
 
 export const DEFAULT_PROJECT_BUTTON_SETTINGS = {
   buttonStyle: 'circle',
-  buttonIconSizePct: 70
+  buttonIconSizePct: 95
 };
 
-export function normalizeButtonIconSizePct(pct, fallback = 70) {
+export function normalizeButtonIconSizePct(pct, fallback = DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct) {
   const n = Number(pct);
   if (!Number.isFinite(n)) return fallback;
-  return Math.max(50, Math.min(90, Math.round(n)));
+  return Math.max(50, Math.min(100, Math.round(n)));
 }
 
 export function normalizeButtonStyleKey(styleKey, fallback = 'circle') {
@@ -234,10 +234,10 @@ export function normalizeButtonStyleKey(styleKey, fallback = 'circle') {
 }
 
 /**
- * Applies a project-wide `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–90%`)
- * to a button's node list (updating surface corner radius/shape and scaling `<use refType="icon">` to 50–90%).
+ * Applies a project-wide `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–100%`, default 95%)
+ * to a button's node list (updating surface corner radius/shape and scaling `<use refType="icon">` to 50–100%).
  */
-export function applyButtonStyleAndIconSizeToNodes(nodes, { width = 64, height = 64, buttonStyle = 'circle', buttonIconSizePct = 70 } = {}) {
+export function applyButtonStyleAndIconSizeToNodes(nodes, { width = 64, height = 64, buttonStyle = 'circle', buttonIconSizePct = DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct } = {}) {
   const styleKey = normalizeButtonStyleKey(buttonStyle);
   const styleDef = BUTTON_STYLES.find(s => s.key === styleKey) || BUTTON_STYLES[0];
   const pct = normalizeButtonIconSizePct(buttonIconSizePct);

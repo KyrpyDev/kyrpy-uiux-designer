@@ -53,7 +53,7 @@ export function collabRoutes(router, c) {
     return {
       projectId: p.id,
       buttonStyle: p.settings?.buttonStyle || 'circle',
-      buttonIconSizePct: p.settings?.buttonIconSizePct ?? 70,
+      buttonIconSizePct: p.settings?.buttonIconSizePct ?? 95,
       styles: BUTTON_STYLES
     };
   });

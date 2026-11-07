@@ -1440,11 +1440,11 @@ test('Persona 12 (@kyrpy-uiux-designer): 15 Design Styles (Glassmorphism, Brutal
   });
 });
 
-test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Slider (50-90%, Default Circle), Radial/Drawer/Slider/Carousel/Show-Element Button Actions, Project Lifecycle (New, Save, Clone, Browse, Delete), and Updated Help Guide', async () => {
+test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Slider (50-100%, default 95%, Default Circle), Radial/Drawer/Slider/Carousel/Show-Element Button Actions, Project Lifecycle (New, Save, Clone, Browse, Delete), and Updated Help Guide', async () => {
   await withServer(async ({ c, req }) => {
     c.importer.run({ legacyRoot });
 
-    // 1. Create a New Project and verify default button settings (buttonStyle: 'circle', buttonIconSizePct: 70)
+    // 1. Create a New Project and verify default button settings (buttonStyle: 'circle', buttonIconSizePct: 95)
     const createProjRes = await req('POST', '/api/projects', {
       name: 'Interactive Buttons Workspace',
       description: 'Tests per-project button style & icon size + action menus',
@@ -1453,12 +1453,12 @@ test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Sl
     assert.equal(createProjRes.status, 200);
     const proj = createProjRes.body;
     assert.equal(proj.buttonStyle, 'circle', 'Default project button style must be circle');
-    assert.equal(proj.buttonIconSizePct, 70, 'Default project button icon size must be 70%');
+    assert.equal(proj.buttonIconSizePct, 95, 'Default project button icon size must be 95%');
 
     const getBtnSettings = await req('GET', `/api/projects/${proj.id}/button-settings`);
     assert.equal(getBtnSettings.status, 200);
     assert.equal(getBtnSettings.body.buttonStyle, 'circle');
-    assert.equal(getBtnSettings.body.buttonIconSizePct, 70);
+    assert.equal(getBtnSettings.body.buttonIconSizePct, 95);
     assert.ok(Array.isArray(getBtnSettings.body.styles) && getBtnSettings.body.styles.some(s => s.key === 'circle'));
 
     // 2. Apply Button Style ('squircle' and 'circle') and Icon Size Slider (clamped 50-90%) across all buttons in library
@@ -1475,12 +1475,12 @@ test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Sl
     // Verify icon size clamping to [50, 90]
     const clampHighRes = await req('POST', `/api/projects/${proj.id}/button-settings`, {
       buttonStyle: 'pill',
-      buttonIconSizePct: 99,
+      buttonIconSizePct: 140,
       scope: 'project'
     });
     assert.equal(clampHighRes.status, 200);
     assert.equal(clampHighRes.body.buttonStyle, 'pill');
-    assert.equal(clampHighRes.body.buttonIconSizePct, 90, 'Icon size above 90% must clamp to 90%');
+    assert.equal(clampHighRes.body.buttonIconSizePct, 100, 'Icon size above 100% must clamp to 100%');
 
     const clampLowRes = await req('POST', `/api/projects/${proj.id}/button-settings`, {
       buttonStyle: 'circle',

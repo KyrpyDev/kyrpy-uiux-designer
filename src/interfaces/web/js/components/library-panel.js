@@ -290,14 +290,14 @@ export class LibraryPanel {
   }
 
   /**
-   * Per-project Button Style (default `'circle'`) & Icon Size Slider (`50–90%`)
+   * Per-project Button Style (default `'circle'`) & Icon Size Slider (`50–100%`)
    * that applies to all buttons under the Buttons library.
    */
   projectButtonSettingsBar() {
     const pid = Number(state.activeProjectId || state.currentProjectId || 1);
     const proj = (state.projects || []).find(p => Number(p.id) === pid) || state.projects?.[0];
     const curStyle = proj?.settings?.buttonStyle || proj?.buttonStyle || DEFAULT_PROJECT_BUTTON_SETTINGS.buttonStyle || 'circle';
-    const curPct = Math.max(50, Math.min(90, Number(proj?.settings?.buttonIconSizePct ?? proj?.buttonIconSizePct ?? DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct ?? 70)));
+    const curPct = Math.max(50, Math.min(100, Number(proj?.settings?.buttonIconSizePct ?? proj?.buttonIconSizePct ?? DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct ?? 95)));
 
     const styleSel = h('select', {
       class: 'project-button-style-select',
@@ -312,12 +312,12 @@ export class LibraryPanel {
       type: 'range',
       class: 'project-button-icon-slider',
       name: 'project-button-icon-size',
-      'aria-label': 'Button icon size percentage (50% to 90%)',
+      'aria-label': 'Button icon size percentage (50% to 100%)',
       min: '50',
-      max: '90',
+      max: '100',
       step: '1',
       value: String(curPct),
-      title: 'Icon size slider for buttons (50%–90%), stored per project',
+      title: 'Icon size slider for buttons (50%–100%), stored per project',
       style: { flex: '1', minWidth: '80px', cursor: 'pointer' },
       oninput: e => {
         pctBadge.textContent = `${e.target.value}%`;
@@ -326,7 +326,7 @@ export class LibraryPanel {
 
     const applySettings = async () => {
       const nextStyle = styleSel.value;
-      const nextPct = Math.max(50, Math.min(90, Number(iconSlider.value) || 70));
+      const nextPct = Math.max(50, Math.min(100, Number(iconSlider.value) || 70));
       try {
         const res = await api.applyProjectButtonSettings(pid, {
           buttonStyle: nextStyle,
@@ -366,12 +366,12 @@ export class LibraryPanel {
       styleSel,
       h('button', {
         class: 'btn small primary apply-project-btn-settings',
-        title: 'Apply selected button style and icon size (50–90%) to all buttons in the library',
+        title: 'Apply selected button style and icon size (50–100%) to all buttons in the library',
         onclick: applySettings
       }, 'Apply All')
     ),
     h('div', { class: 'row spread', style: { gap: '6px' } },
-      h('span', { class: 'muted', style: { fontSize: '11px', whiteSpace: 'nowrap' } }, 'Icon Size (50–90%):'),
+      h('span', { class: 'muted', style: { fontSize: '11px', whiteSpace: 'nowrap' } }, 'Icon Size (50–100%):'),
       iconSlider,
       pctBadge
     ));

@@ -512,7 +512,7 @@ export class ProjectService {
   }
 
   /**
-   * Stores `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–90%`) per project
+   * Stores `buttonStyle` (default `'circle'`) and `buttonIconSizePct` (`50–100%`, default 95%) per project
    * and applies them to all buttons in the Buttons library.
    */
   applyButtonSettings(projectId, { buttonStyle, buttonIconSizePct, scope = 'all' } = {}, optsOrActor = {}) {
@@ -522,7 +522,7 @@ export class ProjectService {
       throw new ForbiddenError('Only the project owner or admin can update project button settings');
     }
     const styleKey = normalizeButtonStyleKey(buttonStyle ?? p.settings?.buttonStyle, 'circle');
-    const pct = normalizeButtonIconSizePct(buttonIconSizePct ?? p.settings?.buttonIconSizePct, 70);
+    const pct = normalizeButtonIconSizePct(buttonIconSizePct ?? p.settings?.buttonIconSizePct, DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct);
     const nextSettings = {
       ...(p.settings || {}),
       buttonStyle: styleKey,

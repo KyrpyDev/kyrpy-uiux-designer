@@ -66,7 +66,7 @@ export const SCHEMA_REGISTRY_SEED = {
   },
   buttons: {
     purpose: 'Interactive buttons: a frame plus icons, with optional popup / radial / drawer / slider / carousel menu.',
-    usage: 'Shapes in `nodes` (owner_type = "button"); menu entries in `menu_items`. The frame shape and icon size follow the project button settings (projects.settings.buttonStyle, buttonIconSizePct 50–90).',
+    usage: 'Shapes in `nodes` (owner_type = "button"); menu entries in `menu_items`. The frame shape and icon size follow the project button settings (projects.settings.buttonStyle, buttonIconSizePct 50–100, default 95).',
     constraints: [HIERARCHY, 'May contain icon and path instances.', 'Needs an accessible `label`.'],
     columns: designColumns()
   },
@@ -232,7 +232,7 @@ export const SCHEMA_REGISTRY_SEED = {
   },
   projects: {
     purpose: 'Workspaces that own design items, members and settings.',
-    usage: 'settings JSON holds project-wide options such as buttonStyle and buttonIconSizePct (50–90).',
+    usage: 'settings JSON holds project-wide options such as buttonStyle and buttonIconSizePct (50–100, default 95).',
     columns: {
       id: C.id, key: 'Project key (dashed words), unique.', name: C.name, label: C.label,
       description: 'Project description for humans.',
