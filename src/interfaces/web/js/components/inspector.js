@@ -72,7 +72,7 @@ export function elementTypeTitle(e) {
 }
 
 /** Searchable modal listing every library icon; resolves through onPick(icon) when one is chosen. */
-function openIconPicker(currentId, onPick) {
+export function openIconPicker(currentId, onPick) {
   const icons = [...(state.library.icons || [])].sort((a, b) => String(a.label || a.key).localeCompare(String(b.label || b.key)));
   let query = '';
   const search = h('input', { type: 'search', class: 'grow', placeholder: 'Search icons by name, key or category…', 'aria-label': 'Search icons' });

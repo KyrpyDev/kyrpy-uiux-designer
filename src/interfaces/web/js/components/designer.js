@@ -22,6 +22,7 @@ import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
+import { openIconPicker } from './inspector.js';
 import { MenuEditor, menuActions } from './menu-editor.js';
 import { PenTool } from './pen-tool.js';
 import { installPathTools } from './designer-pathtools.js';
@@ -889,6 +890,7 @@ export class Designer {
       this.hoverBar.append(...[
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
         ibtn('pencil', 'Open Editor (Double-click)', e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
+        this.type === 'button' ? ibtn('search', 'Change the icon of this button', e => { e.stopPropagation(); this.changeButtonIcon(target); }, { cls: 'hb-btn' }) : null,
         isMenuItemRole ? h('button', {
           class: `hb-btn${menuBtnItems.length ? ' active' : ''}`,
           'aria-label': 'Menu items',
@@ -1151,6 +1153,16 @@ export class Designer {
     if (e.tag === 'g') return { label: 'Enter group', hint: 'select the items inside the group', run: () => { const kids = this.nodes.filter(n => n.parentId === e.id); if (kids.length) this.select(kids.map(k => k.id)); else toast('This group is empty'); } };
     if (this.vtx.canEdit(e)) return { label: 'Edit vertices', hint: 'drag the points and bezier handles (Enter)', run: () => this.vtx.enter(e) };
     return { label: 'Open editor', hint: 'this element has no editor', disabled: true, run: () => {} };
+  }
+
+  /** Button designer: pick another library icon for the button (swaps the placed icon, or places one if the button has none). */
+  async changeButtonIcon(target) {
+    const cur = target?.kind === 'instance' && target.refType === 'icon' ? target
+      : this.nodes.find(n => n.kind === 'instance' && n.refType === 'icon');
+    openIconPicker(cur?.refId ?? null, async icon => {
+      if (cur) await this.patchNode(cur.id, { refId: icon.id }); else await this.addInstance('icon', icon.id);
+      toast(`Button icon: "${icon.label || icon.key}"`, 'ok', 1400);
+    });
   }
 
   openEditor(e = this.selectedNodes()[0]) {
