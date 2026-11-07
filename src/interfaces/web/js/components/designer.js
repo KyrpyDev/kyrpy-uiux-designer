@@ -458,11 +458,6 @@ export class Designer {
       moveToProjBtn,
       lineageBtn,
       h('span', { class: 'sep-v' }),
-      ibtn('plus', `New empty ${NAMES[this.type]}`, async () => {
-        const r = await createEmptyItem(this.type);
-        if (r) this.opts.openDesign?.(this.type, r.id);
-      }, { desc: `Create an empty ${NAMES[this.type].toLowerCase()} and open it`, cls: 'new-empty' }),
-      h('span', { class: 'sep-v' }),
       this.docState
     ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
