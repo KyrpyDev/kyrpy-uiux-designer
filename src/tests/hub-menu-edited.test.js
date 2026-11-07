@@ -187,5 +187,10 @@ test('menu item can show a library button besides its icon (refButtonId): stored
     assert.deepEqual(calls[0], [frame.id, 48, true], 'item size = itemScale x button; the item icon replaces the button icon');
     const plain = renderMenu({ button: { key: 'host', width: 64, height: 64 }, cfg, tree: buildMenuTree(items.map(i => ({ ...i, refButtonId: null }))), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
     assert.doesNotMatch(plain, /ref-btn/);
+    // no own button on the item: the slot shows the host button's own body instead of a bare placeholder circle
+    const hostCalls = [];
+    const hosted = renderMenu({ button: { key: 'host', width: 64, height: 64 }, cfg, tree: buildMenuTree(items.map(i => ({ ...i, refButtonId: null }))), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null, hostButtonId: host.id, renderButton: (id, size, noIcon) => { hostCalls.push([id, size, noIcon]); return '<g class="host-btn"/>'; } });
+    assert.match(hosted, /class="host-btn"/);
+    assert.equal(hostCalls[0][0], host.id);
   } finally { c.close(); }
 });

@@ -82,7 +82,7 @@ export function hubGeometry(cfg, size) {
  * Every level is pre-rendered (hidden); the runtime only toggles classes.
  * @param {object} p {button:{key,width,height}, cfg, tree, ctx, iconKey(id)->key|null}
  */
-export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = null }) {
+export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = null, hostButtonId = null }) {
   const w = button.width, h = button.height, cx = w / 2, cy = h / 2, size = Math.min(w, h);
   const surface = roleAttrs(ctx.theme, 'button');
   const itemAttrs = a => attrString({ ...surface, ...a });
@@ -103,7 +103,9 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   };
   // body of one item, drawn around its own centre (0,0): a referenced library button (its own icon unless the item has one), else circle + icon
   const itemBody = (it, r, iconSz) => {
-    const btn = it.refButtonId && renderButton ? renderButton(it.refButtonId, r * 2, Boolean(it.iconId)) : '';
+    // the slot shows the item's own library button; without one it shows this menu button's own body (never a bare placeholder shell)
+    const slotButton = it.refButtonId ?? hostButtonId;
+    const btn = slotButton != null && renderButton ? renderButton(slotButton, r * 2, Boolean(it.iconId) || slotButton === hostButtonId) : '';
     if (btn) return `${btn}<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
     return `<circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
   };

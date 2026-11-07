@@ -189,7 +189,7 @@ function renderInstance(el, a, ctx, all) {
       const nodes = withoutIcon ? b.nodes.filter(n => !(n.kind === 'instance' && n.refType === 'icon')) : b.nodes;
       return `<g transform="translate(${round(-size / 2)} ${round(-size / 2)}) scale(${round(size / b.width)} ${round(size / b.height)})">${renderTree(nodes, ctx)}</g>`;
     };
-    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton });
+    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId });
   }
   ctx.depth--;
   return `<g${attrString(attrs)}>${inner}${menuMarkup}</g>`;
