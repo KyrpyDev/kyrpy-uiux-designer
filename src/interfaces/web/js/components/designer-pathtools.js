@@ -310,7 +310,8 @@ const methods = {
     if (this.vtx.active) { await this.vtx.contextMenu(ev, this.worldPoint(ev)); return; }
     if (this.tool === 'pen') { if (this.pen.pts.length) await this.pen.finish(false); return; }
     const hit = this.hitNode(ev.target);
-    if (hit && !this.selected.has(hit.id)) this.select([hit.id]);
+    if (hit && hit.role !== 'bg' && hit.role !== 'bg-glow') this.toolbarNodeId = hit.id;   // right-click also opens the quick toolbar
+    if (hit && !this.selected.has(hit.id)) this.select([hit.id]); else this.updateHoverToolbar();
     const sel = this.selectedNodes(), one = sel.length === 1 ? sel[0] : null, editor = one ? this.editorFor(one) : null, vec = this.vectorNodes(), many = vec.length > 1 && vec.length === sel.length, has = sel.length > 0;
     contextMenu(ev.clientX, ev.clientY, [
       { label: '✎ Open editor', kbd: editor ? editor.label : '', disabled: !editor || editor.disabled, fn: () => this.openEditor(one) },

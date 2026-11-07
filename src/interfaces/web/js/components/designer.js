@@ -16,6 +16,7 @@ import {
   clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
+import { reorderLayer, stepLayer } from '/domain/node-ops.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
@@ -64,6 +65,7 @@ export class Designer {
     this.baseline = null; this.baselineFp = ''; this.dirty = false;   // last saved version of the open design
     this.selected = new Set();
     this.hoveredNodeId = null;
+    this.toolbarNodeId = null;   // element whose quick toolbar is open (click toggles it; never opened by hover)
     this.tool = 'select';
     this.view = { tx: 0, ty: 0, z: 1 };
     this.undoStack = []; this.redoStack = [];
@@ -98,7 +100,7 @@ export class Designer {
     this.world.append(this.frame, this.stage, this.liveLayer, this.overlay);
     this.liveHud = h('div', { class: 'dz-live-hud', hidden: true });
     this.hoverBar = h('div', { class: 'el-hover-toolbar', hidden: true });
-    this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Hover/right-click element: quick toolbar & events · Del: delete · Enter: edit vertices');
+    this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Click element: open/close quick toolbar · Right-click: menu & events · Del: delete · Enter: edit vertices');
     this.viewport.append(this.world, this.hoverBar, this.hint);
     this.inspectorEl = h('aside', { class: 'dz-inspector' });
     this.inspectorFitted = false;
@@ -231,8 +233,7 @@ export class Designer {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear();
-                state.saveToUserPrivateLibrary = false;
+                selSet.clear(); // the Global Private Library target is locked on: Clear only drops the projects
                 updateTriggerText();
                 rebuildPanel();
               }
@@ -245,28 +246,28 @@ export class Designer {
       const privChk = h('input', {
         type: 'checkbox',
         class: 'save-target-private-chk',
-        checked: Boolean(state.saveToUserPrivateLibrary),
-        onchange: () => {
-          state.saveToUserPrivateLibrary = privChk.checked;
-          updateTriggerText();
-        }
+        checked: true,
+        disabled: true,
+        title: 'Always saved to your private library'
       });
       panel.append(
         h('label', {
-          class: 'row save-target-row',
+          class: 'row save-target-row save-target-private-row',
+          title: 'Always saved to your private library',
           style: {
             padding: '6px 8px',
             borderRadius: '6px',
-            background: state.saveToUserPrivateLibrary ? 'rgba(16,185,129,0.16)' : 'rgba(255,255,255,0.03)',
+            background: 'rgba(16,185,129,0.16)',
             marginBottom: '6px',
-            cursor: 'pointer',
+            cursor: 'default',
             gap: '8px',
             fontSize: '12px',
             fontWeight: '600'
           }
         },
         privChk,
-        h('span', {}, '👤 My Global Private Library (All My Projects)')
+        h('span', {}, '👤 My Global Private Library (All My Projects)'),
+        h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 }))
         )
       );
 
@@ -393,7 +394,7 @@ export class Designer {
         : `Disabled: owned by ${ownerLabel(d.creatorUsername, d.creatorId)}. Use Save as… to save a copy.`,
       kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save'
     });
-    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to the active project or all selected Multi-Target projects.' });
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy (with all cascading sub-items) to your Global Private Library and any selected Multi-Target projects.' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     this.deviceMenu = this.type === 'screen' ? this.buildDeviceMenu() : null;
@@ -462,7 +463,7 @@ export class Designer {
       }, { desc: `Create an empty ${NAMES[this.type].toLowerCase()} and open it`, cls: 'new-empty' }),
       h('span', { class: 'sep-v' }),
       this.docState
-    ]);
+    ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
     this.updateDocBar();
   }
@@ -512,8 +513,10 @@ export class Designer {
       await this.reload();
       const had = designFingerprint(this.doc) !== this.baselineFp;
       this.markBaseline();
+      // Save copies into the checked projects only; the locked private-library target applies to Save as…
+      // (otherwise every Save would add another private copy)
       const targetPids = [...(state.saveTargetProjectIds || [])];
-      const includePriv = Boolean(state.saveToUserPrivateLibrary);
+      const includePriv = false;
       let multiRes = null;
       if (targetPids.length > 0 || includePriv) {
         multiRes = await api.saveToTargets({
@@ -561,9 +564,8 @@ export class Designer {
     if (!name?.trim()) return false;
     await this.settle();
     try {
-      // No explicit multi-targets: the copy goes to the active project, still cascading every sub-item
+      // The copy always goes to the Global Private Library (locked target) plus any checked projects, cascading every sub-item
       const targetPids = [...(state.saveTargetProjectIds || [])];
-      if (!targetPids.length && state.activeProjectId) targetPids.push(Number(state.activeProjectId));
       const includePriv = Boolean(state.saveToUserPrivateLibrary);
       const reverted = this.dirty;
       let copy;
@@ -821,13 +823,26 @@ export class Designer {
     this.fitted = false;
   }
 
-  /** Renders the floating mouse-over / selection toolbar above the active element on the canvas. */
+  /** Quick-toolbar target: the clicked element while it is the single selection (hovering never opens it). */
+  toolbarTarget() {
+    const id = this.toolbarNodeId;
+    if (id == null || this.selected.size !== 1 || !this.selected.has(id)) return null;
+    return this.byId(id) || null;
+  }
+
+  /** A plain click (no drag) on an element toggles its quick toolbar; a click on another element moves it there. */
+  toggleToolbarFor(id, { shift = false, wasOpen = false } = {}) {
+    this.toolbarNodeId = shift || wasOpen ? null : id;
+    this.updateHoverToolbar();
+  }
+
+  /** Renders the floating quick toolbar above the clicked element on the canvas. */
   updateHoverToolbar() {
     if (!this.hoverBar || !this.doc || this.dragging || this.vtx?.active || this.actionsLive) {
       if (this.hoverBar) this.hoverBar.hidden = true;
       return;
     }
-    const target = (this.hoveredNodeId && this.byId(this.hoveredNodeId)) || (this.selected.size === 1 ? this.selectedNodes()[0] : null);
+    const target = this.toolbarTarget();
     if (!target || target.role === 'bg' || target.role === 'bg-glow') {
       this.hoverBar.hidden = true;
       return;
@@ -851,7 +866,7 @@ export class Designer {
         : [];
       const isMenuItemRole = target.role === 'menu-item' || /menu/i.test(target.name || '') || isMenuButton;
 
-      this.hoverBar.append(
+      this.hoverBar.append(...[
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
         ibtn('pencil', 'Open Editor (Double-click)', e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
         isMenuItemRole ? h('button', {
@@ -943,7 +958,7 @@ export class Designer {
         })(),
         ibtn('copy', 'Duplicate element (Ctrl+D)', async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }, { cls: 'hb-btn' }),
         ibtn('trash', 'Delete element (Del)', async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }, { cls: 'hb-btn danger' })
-      );
+      ].filter(Boolean));   // Element.append() would render a skipped (null) tool as the text "null"
     }
     this.hoverBar.hidden = false;
     // measure after the content is built and shown, then sit 20px above the bounding box
@@ -1000,6 +1015,8 @@ export class Designer {
   select(ids, { add = false } = {}) {
     if (!add) this.selected = new Set();
     for (const id of ids) this.selected.add(id);
+    // the quick toolbar belongs to its clicked element only while it stays the single selection; only a canvas click reopens it
+    if (this.toolbarNodeId != null && !(this.selected.size === 1 && this.selected.has(this.toolbarNodeId))) this.toolbarNodeId = null;
     if (this.vtx.active && !(ids.length === 1 && ids[0] === this.vtx.node?.id)) this.vtx.exit();
     this.renderOverlay();
     this.emit('selection', this.selectedNodes());
@@ -1228,6 +1245,7 @@ export class Designer {
   onPointerDown(ev) {
     if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar')) return;
     this.viewport.focus({ preventScroll: true });
+    this.tbClick = null;
     if (!this.doc) return;
     const p = this.worldPoint(ev);
     if (ev.button === 1 || (ev.button === 0 && this.spaceDown)) {
@@ -1276,6 +1294,7 @@ export class Designer {
     const hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
     const isBg = hit && (hit.role === 'bg' || hit.role === 'bg-glow');
     if (hit && !isBg) {
+      this.tbClick = { id: hit.id, shift: ev.shiftKey, wasOpen: this.toolbarTarget()?.id === hit.id };   // resolved on pointer-up: a click without a drag toggles the quick toolbar
       if (ev.shiftKey) { this.selected.has(hit.id) ? this.selected.delete(hit.id) : this.selected.add(hit.id); this.select([...this.selected]); }
       else if (!this.selected.has(hit.id)) this.select([hit.id]);
       if (this.doc.locked) return;
@@ -1293,7 +1312,7 @@ export class Designer {
       this.op = { kind: 'move', start: p, els: [...moveSet.values()], box: this.selectionBox(sel), snap: this.snapshot(), moved: false };
       capture(this.viewport, ev);
     } else {
-      if (!ev.shiftKey) this.clearSelection();
+      if (!ev.shiftKey) { this.toolbarNodeId = null; this.clearSelection(); }
       this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: ev.shiftKey };
       capture(this.viewport, ev);
     }
@@ -1409,9 +1428,10 @@ export class Designer {
       return;
     }
     const op = this.op; this.op = null; this.guides = [];
-    if (!op) return;
+    const tbClick = this.tbClick; this.tbClick = null;
+    if (!op) { if (tbClick) this.toggleToolbarFor(tbClick.id, tbClick); return; }   // locked element / design: still a click
     const wasDragging = this.dragging; this.dragging = false;
-    if (op.kind === 'move' && !op.moved) { this.renderOverlay(); return; }
+    if (op.kind === 'move' && !op.moved) { if (tbClick) this.toggleToolbarFor(tbClick.id, tbClick); this.renderOverlay(); return; }
     if (op.kind === 'box') {
       const w = this.doc.width, hh = this.doc.height;
       this.doc.width = op.w; this.doc.height = op.h; this.nodes.splice(0, this.nodes.length, ...op.nodes0);
@@ -1490,6 +1510,7 @@ export class Designer {
     if (this.tool === 'pen' && this.pen.key(ev)) { ev.preventDefault(); return; }
     const k = ev.key.toLowerCase(), ctrl = ev.ctrlKey || ev.metaKey;
     if (k === 'escape' && (this.pv || this.tbPv)) { this.closePreview(); return; }
+    if (k === 'escape' && this.toolbarTarget()) { this.toolbarNodeId = null; this.updateHoverToolbar(); return; }
     if (ctrl && k === 'g') { ev.preventDefault(); ev.shiftKey ? this.ungroupSelected() : this.groupSelected(); return; }
     if (ctrl && k === 'l') { ev.preventDefault(); this.toggleLockSelected?.(); return; }
     if (ev.code === 'Space') { this.spaceDown = true; ev.preventDefault(); return; }
@@ -1853,6 +1874,23 @@ export class Designer {
     await this.mutate(async () => {
       this.doc = { ...(await api.replaceNodes(this.type, this.doc.id, out.map(e => ({ ...e })))) };
     });
+  }
+
+  /** Layers panel drag/keyboard reorder among siblings (`place` 'above' = in front of `targetId`); one replaceNodes request, undoable. */
+  async moveLayer(dragId, targetId, place) { return this.saveLayerOrder(reorderLayer(this.nodes, dragId, targetId, place)); }
+  async stepLayer(id, dir) { return this.saveLayerOrder(stepLayer(this.nodes, id, dir)); }
+  async saveLayerOrder(out) {
+    if (!out || this.layerSaving) return false;     // one reorder at a time: the next one builds on the saved order
+    this.layerSaving = true;
+    const snap = this.snapshot(), ord = new Map(out.map(n => [n.id, n.ord]));
+    for (const n of this.nodes) if (ord.has(n.id)) n.ord = ord.get(n.id);   // show the new order right away
+    this.renderAll();
+    try {
+      this.doc = { ...(await api.replaceNodes(this.type, this.doc.id, out.map(e => ({ ...e })))) };
+      this.pushUndo(snap); this.renderAll(); this.changed();
+      return true;
+    } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }
+    finally { this.layerSaving = false; }
   }
 
   /* ================= animations (used by the inspector) ================= */

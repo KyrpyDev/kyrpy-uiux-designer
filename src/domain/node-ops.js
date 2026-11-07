@@ -141,3 +141,29 @@ export function rotatePatch(node, nodes, degrees, cx, cy) {
   delete attrs.transform;
   return { id: node.id, attrs, rotation: 0 };
 }
+
+/**
+ * Layers-panel reorder (pure). The panel lists nodes front-most first, so `place: 'above'` puts `dragId` directly in
+ * front of `targetId` and `'below'` directly behind it. Only siblings (same parent) can be reordered; returns the full
+ * node list in paint order (back to front) with fresh `ord`s for `replaceNodes`, or null when nothing changes.
+ */
+export function reorderLayer(nodes, dragId, targetId, place = 'above') {
+  if (dragId === targetId) return null;
+  const list = [...nodes].sort(byOrd);
+  const drag = list.find(n => n.id === dragId), target = list.find(n => n.id === targetId);
+  if (!drag || !target || (drag.parentId ?? null) !== (target.parentId ?? null)) return null;
+  const rest = list.filter(n => n.id !== dragId);
+  const at = rest.indexOf(target) + (place === 'below' ? 0 : 1);
+  const out = [...rest.slice(0, at), drag, ...rest.slice(at)];
+  if (out.every((n, i) => n === list[i])) return null;
+  return out.map((n, i) => ({ ...n, ord: i }));
+}
+
+/** Moves a layer one step among its siblings: `dir` 1 = toward the front (up in the Layers panel), -1 = toward the back. */
+export function stepLayer(nodes, id, dir) {
+  const node = nodes.find(n => n.id === id);
+  if (!node) return null;
+  const sibs = nodes.filter(n => (n.parentId ?? null) === (node.parentId ?? null)).sort(byOrd);
+  const next = sibs[sibs.indexOf(node) + (dir > 0 ? 1 : -1)];
+  return next ? reorderLayer(nodes, id, next.id, dir > 0 ? 'above' : 'below') : null;
+}

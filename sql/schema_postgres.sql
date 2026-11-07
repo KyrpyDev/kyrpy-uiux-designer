@@ -14,6 +14,12 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL DEFAULT '',
   last_login_at TEXT
 );
+-- exactly one superadmin (created only when the remote has at most one, so an old copy never blocks the schema script)
+DO $$ BEGIN
+  IF (SELECT COUNT(*) FROM users WHERE role = 'superadmin') <= 1 THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_superadmin ON users(role) WHERE role = 'superadmin';
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,

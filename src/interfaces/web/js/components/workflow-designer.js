@@ -3,7 +3,7 @@
  * between them (curved or cornered; cornered lines hop over each other with a small "U" at intersections).
  */
 import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom.js';
-import { ibtn } from '../icons.js';
+import { ibtn, iconEl } from '../icons.js';
 import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprint.js';
 import { api } from '../api.js';
 import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js';
@@ -138,8 +138,7 @@ export class WorkflowDesigner {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear();
-                state.saveToUserPrivateLibrary = false;
+                selSet.clear(); // the Global Private Library target is locked on: Clear only drops the projects
                 updateTriggerText();
                 rebuildPanel();
               }
@@ -151,26 +150,25 @@ export class WorkflowDesigner {
       const privChk = h('input', {
         type: 'checkbox',
         class: 'save-target-private-chk',
-        checked: Boolean(state.saveToUserPrivateLibrary),
-        onchange: () => {
-          state.saveToUserPrivateLibrary = privChk.checked;
-          updateTriggerText();
-        }
+        checked: true,
+        disabled: true,
+        title: 'Always saved to your private library'
       });
       panel.append(
         h('label', {
-          class: 'row save-target-row',
+          class: 'row save-target-row save-target-private-row',
+          title: 'Always saved to your private library',
           style: {
             padding: '6px 8px',
             borderRadius: '6px',
-            background: state.saveToUserPrivateLibrary ? 'rgba(16,185,129,0.16)' : 'rgba(255,255,255,0.03)',
+            background: 'rgba(16,185,129,0.16)',
             marginBottom: '6px',
-            cursor: 'pointer',
+            cursor: 'default',
             gap: '8px',
             fontSize: '12px',
             fontWeight: '600'
           }
-        }, privChk, h('span', {}, '👤 My Global Private Library (All My Projects)'))
+        }, privChk, h('span', {}, '👤 My Global Private Library (All My Projects)'), h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 })))
       );
 
       for (const p of projects) {
@@ -223,7 +221,7 @@ export class WorkflowDesigner {
         : `Save is disabled because this workflow is owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)}. Use "Save as…" to save a copy.`,
       onclick: () => this.save()
     }, '💾 Save');
-    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into the active project or all selected Multi-Targets)' });
+    this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into your Global Private Library and any selected Multi-Targets)' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     const copyToBtn = h('button', {
@@ -297,8 +295,10 @@ export class WorkflowDesigner {
       await this.refresh();
       const had = this.dirty;
       this.markBaseline();
+      // Save copies into the checked projects only; the locked private-library target applies to Save as…
+      // (otherwise every Save would add another private copy)
       const targetPids = [...(state.saveTargetProjectIds || [])];
-      const includePriv = Boolean(state.saveToUserPrivateLibrary);
+      const includePriv = false;
       if (targetPids.length > 0 || includePriv) {
         const multiRes = await api.saveToTargets({
           type: 'workflow',

@@ -65,6 +65,31 @@ export function resetLibraryIconCache() {
 // a different user (or signing in/out) sees a different icon set: never reuse the previous user's list
 on('auth:changed', () => { if (iconActorSig() !== lastIconActor) resetLibraryIconCache(); });
 
+/** The shared Default Public Project (#1) is where everybody lands first; it is never "your" project. */
+export const DEFAULT_PROJECT_ID = 1;
+export const inDefaultProject = () => Number(state.activeProjectId || DEFAULT_PROJECT_ID) === DEFAULT_PROJECT_ID;
+/** Projects the signed-in user owns or is an accepted member of, besides the default one (public projects of others do not count). */
+export const ownProjects = () => {
+  const uid = Number(state.user?.id);
+  return (state.projects || []).filter(p => Number(p.id) !== DEFAULT_PROJECT_ID
+    && (Number(p.ownerId) === uid || (p.members || []).some(m => Number(m.userId) === uid && m.status !== 'revoked')));
+};
+const canEditPublicDirectly = () => isSuperadminUser();
+/**
+ * A user with no project of their own works in the shared Default Public Project: their first edit has to
+ * start with creating a project of their own (only the superadmin edits the public library directly).
+ */
+export const needsFirstProject = () => inDefaultProject() && !canEditPublicDirectly() && ownProjects().length === 0;
+
+/** Which project to open at start-up: the last one used in this browser when the user can still see it, else their newest own project, else the default. */
+export function pickStartupProject(storedId) {
+  const list = state.projects || [];
+  const stored = Number(storedId) || 0;
+  if (stored && list.some(p => Number(p.id) === stored)) return stored;
+  const own = ownProjects().sort((a, b) => Number(b.id) - Number(a.id))[0];
+  return own ? Number(own.id) : DEFAULT_PROJECT_ID;
+}
+
 export async function setActiveProject(projectId) {
   const pid = Number(projectId) || 1;
   state.activeProjectId = pid;

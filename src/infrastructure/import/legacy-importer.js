@@ -6,7 +6,7 @@ import { HTML_ELEMENTS, BUTTON_ELEMENTS } from './elements-catalog.js';
 import { SAMPLE_MENUS } from './sample-menus.js';
 import { WORKFLOWS } from './default-workflows.js';
 import { labelFromKey } from '../../domain/naming.js';
-import { DEFAULT_MENU as menuDefaults } from '../../domain/entities.js';
+import { DEFAULT_MENU as menuDefaults, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, DEFAULT_BUTTON_TEMPLATES, buttonStyleFrameKey, buttonStyleFrameNodes, buttonStyleFrameSize, isButtonStyleFrame, isDesignButtonTemplate, designButtonTemplateNodes } from '../../domain/entities.js';
 import { pathDevDescription, iconDevDescription, buttonDevDescription, menuItemDevDescription, elementDevDescription, screenDevDescription, workflowDevDescription } from '../../domain/dev-description.js';
 
 const SHARED_MIN_USES = 2;
@@ -112,8 +112,16 @@ export class LegacyImporter {
       ids.set(key, b.id); stats.buttons++;
       return b.id;
     };
-    make('button-frame-circle', 'Button frame circle', 'frames', 'circle', null);
-    make('button-frame-square', 'Button frame square', 'frames', 'square', null);
+    for (const style of BUTTON_STYLES) {
+      const key = buttonStyleFrameKey(style.key);
+      if (ids.has(key)) { stats.skipped++; continue; }
+      ids.set(key, this.#createStyleFrame(style).id); stats.buttons++;
+    }
+    const tplPos = this.#designTemplatePosition();
+    for (const tpl of DEFAULT_BUTTON_TEMPLATES) {
+      if (ids.has(tpl.key)) { stats.skipped++; continue; }
+      ids.set(tpl.key, this.#createDesignTemplate(tpl, tplPos).id); stats.buttons++;
+    }
     for (const [key, id] of iconIds) {
       const ic = S.icon.get(id);
       make(`${key}-button`, `${ic.label} button`, ic.category, 'circle', key);
@@ -137,6 +145,92 @@ export class LegacyImporter {
       S.button.update(bid, { descriptionDev: buttonDevDescription(full, full.nodes, [def.icon], { config: { ...menuDefaults, ...def.config }, items: full.menuItems, depth: depth() }) });
     }
     return ids;
+  }
+
+  /**
+   * One empty public frame template per button style (`button-frame-<style>`, 64x64 or wide for pill), shaped like
+   * "Apply All" shapes it. Placed at the position of `button-frame-circle` (or 1) so all frames sort together at the top.
+   */
+  #createStyleFrame(style) {
+    const key = buttonStyleFrameKey(style.key);
+    const { width, height } = buttonStyleFrameSize(style.key);
+    const nodes = buttonStyleFrameNodes(style.key, { width, height });
+    const label = `Button frame ${style.key}`;
+    const draft = { key, name: label, label, width, height };
+    const circle = this.services.button.list().find(b => b.key === buttonStyleFrameKey('circle') && Number(b.projectId ?? 1) === 1);
+    return this.services.button.create({ ...draft, ...this.#own(), category: 'frames', builtin: true, position: circle?.position ?? 1,
+      meta: { shape: style.shape, icon: null, buttonStyle: style.key, buttonIconSizePct: DEFAULT_PROJECT_BUTTON_SETTINGS.buttonIconSizePct },
+      descriptionDev: buttonDevDescription(draft, nodes, []) }, { nodes });
+  }
+
+  /**
+   * Adds the missing per-style frame templates to an existing library (idempotent: matched by key in the
+   * public library project 1). An existing built-in frame owned by the public user whose meta.buttonStyle is not its
+   * own style (left re-styled by an earlier "Apply All") is reshaped back to its style; other frames are never changed.
+   * Returns the keys added or repaired.
+   */
+  ensureButtonStyleFrames() {
+    const own = this.#own();
+    const have = new Map(this.services.button.list().filter(b => Number(b.projectId ?? 1) === 1).map(b => [b.key, b]));
+    const changed = [];
+    for (const style of BUTTON_STYLES) {
+      const key = buttonStyleFrameKey(style.key);
+      const b = have.get(key);
+      if (!b) { this.#createStyleFrame(style); changed.push(key); continue; }
+      const isPublicBuiltin = !!b.builtin && own.creatorId != null && Number(b.creatorId) === Number(own.creatorId);
+      if (!isPublicBuiltin || b.meta?.buttonStyle === style.key) continue;
+      const { width, height } = buttonStyleFrameSize(style.key);
+      this.services.button.update(b.id, { width, height, scaleContent: false, meta: { ...(b.meta || {}), shape: style.shape, buttonStyle: style.key } });
+      this.services.button.replaceNodes(b.id, buttonStyleFrameNodes(style.key, { width, height }).map(({ id, ...n }) => n));   // fresh node ids
+      changed.push(key);
+    }
+    return changed;
+  }
+
+  /**
+   * The public library button of a design-style template (`DEFAULT_BUTTON_TEMPLATES` entry, category `templates`),
+   * sized and built like the template_buttons row (same nodes as `TemplateService`), keeping its own style in meta.
+   * The label is a short sample text that fits the box (the long template name stays the button name).
+   */
+  #createDesignTemplate(tpl, position) {
+    const nodes = designButtonTemplateNodes(tpl, { label: tpl.width >= 100 ? 'Button' : 'OK' });
+    const draft = { key: tpl.key, name: tpl.name, label: tpl.name, width: tpl.width, height: tpl.height };
+    return this.services.button.create({ ...draft, ...this.#own(), category: 'templates', builtin: true, position,
+      meta: { ...(tpl.meta || {}), templateKey: tpl.key, templateCategory: tpl.category, shape: tpl.shape, icon: null, rxRatio: tpl.rxRatio, marginRatio: tpl.marginRatio,
+        strokeRatio: tpl.strokeRatio, hoverEffect: tpl.hoverEffect, indicatorEffect: tpl.indicatorEffect },
+      descriptionDev: buttonDevDescription(draft, nodes, []) }, { nodes });
+  }
+
+  /**
+   * Position of the design-style templates: the slot right after the frames (`button-frame-circle` position + 1), so they
+   * sort just below them. A built-in frame left in that slot by an older database (`button-frame-square`) moves up to
+   * the other frames; when another button holds the slot the templates share the frames' position instead.
+   */
+  #designTemplatePosition() {
+    const S = this.services.button;
+    const all = S.list();
+    const framePos = all.find(b => b.key === buttonStyleFrameKey('circle') && Number(b.projectId ?? 1) === 1)?.position ?? 1;
+    const slot = framePos + 1;
+    const own = this.#own();
+    for (const b of all) {
+      if (b.position !== slot || !isButtonStyleFrame(b) || Number(b.projectId ?? 1) !== 1) continue;
+      if (own.creatorId != null && Number(b.creatorId) !== Number(own.creatorId)) continue;
+      S.update(b.id, { position: framePos }); b.position = framePos;
+    }
+    return all.some(b => b.position === slot && !isDesignButtonTemplate(b)) ? framePos : slot;
+  }
+
+  /**
+   * Adds the missing design-style templates to the public library (idempotent: matched by key in project 1; an
+   * existing button with a template key is never changed or duplicated). Returns the keys added.
+   */
+  ensureDesignButtonTemplates() {
+    const have = new Set(this.services.button.list().filter(b => Number(b.projectId ?? 1) === 1).map(b => b.key));
+    const missing = DEFAULT_BUTTON_TEMPLATES.filter(t => !have.has(t.key));
+    if (!missing.length) return [];
+    const position = this.#designTemplatePosition();
+    for (const tpl of missing) this.#createDesignTemplate(tpl, position);
+    return missing.map(t => t.key);
   }
 
   /* ---------- elements ---------- */

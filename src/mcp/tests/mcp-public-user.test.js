@@ -102,30 +102,37 @@ test('migration m9-001 re-owns public rows of an old-state DB but leaves project
   }
 });
 
-test('admins curate public-library items without change requests; collaborators file one for a real reviewer', () => {
+test('the superadmin curates public-library items without change requests; admins and collaborators file one for a real reviewer', () => {
   const c = fresh();
   const pub = c.publicUserId();
   const admin = c.users.findByUsernameOrEmail('admin');
   const kyrpy = c.users.findByUsernameOrEmail('kyrpy');
+  assert.equal(kyrpy.role, 'superadmin');
+  assert.equal(admin.role, 'admin');
   const dana = c.auth.register({ username: 'dana', email: 'dana@example.com', password: 'secret123' }).user;
   const icon = c.icon.create({ name: 'Library Star', visibility: 'public' }, { actorId: kyrpy.id });
-  assert.equal(icon.creatorId, pub, 'admin-made public item of project 1 joins the library');
-  const wf = c.workflows.create({ name: 'Library Flow', visibility: 'public' }, { actor: admin });
+  assert.equal(icon.creatorId, pub, 'superadmin-made public item of project 1 joins the library');
+  const wf = c.workflows.create({ name: 'Library Flow', visibility: 'public' }, { actor: kyrpy });
   assert.equal(wf.creatorId, pub);
   const pending = () => c.collaboration.list({ status: 'pending' });
 
-  c.icon.update(icon.id, { label: 'curated' }, { actorId: admin.id });
+  c.icon.update(icon.id, { label: 'curated' }, { actorId: kyrpy.id });
   c.icon.update(icon.id, { label: 'curated twice' }, { actorId: kyrpy.id });
-  c.workflows.update(wf.id, { label: 'curated' }, { actorId: admin.id });
-  assert.equal(pending().length, 0, 'admin edits of public items file no change request');
+  c.workflows.update(wf.id, { label: 'curated' }, { actorId: kyrpy.id });
+  assert.equal(pending().length, 0, 'superadmin edits of public items file no change request');
 
+  c.icon.update(icon.id, { label: 'admin idea' }, { actorId: admin.id });
+  assert.equal(pending().length, 1, 'a plain admin keeps the approval flow');
   c.icon.update(icon.id, { label: 'dana idea' }, { actorId: dana.id });
   c.workflows.update(wf.id, { label: 'dana flow' }, { actorId: dana.id });
   const reqs = pending();
-  assert.equal(reqs.length, 2, 'collaborator edits still file change requests');
+  assert.equal(reqs.length, 3, 'collaborator edits still file change requests');
   const projectOwner = c.projects.get(1).ownerId;
   assert.ok(reqs.every(r => r.ownerId === projectOwner && r.ownerId !== pub), 'reviewed by the default project owner');
 
+  // admin-made public items keep their human owner (only the superadmin creates library items)
+  const adminIcon = c.icon.create({ name: 'Admin Public', visibility: 'public' }, { actorId: admin.id });
+  assert.equal(adminIcon.creatorId, admin.id);
   // designer-made public items keep their human owner
   const danaIcon = c.icon.create({ name: 'Dana Public', visibility: 'public' }, { actorId: dana.id });
   assert.equal(danaIcon.creatorId, dana.id);
@@ -135,7 +142,7 @@ test('admins curate public-library items without change requests; collaborators 
 test('public-library items stay public and keep their owner', () => {
   const c = fresh();
   const pub = c.publicUserId();
-  const admin = c.users.findByUsernameOrEmail('admin');
+  const admin = c.users.findByUsernameOrEmail('kyrpy');
   const icon = c.icon.create({ name: 'Locked Public', visibility: 'public' }, { actor: admin });
   const wf = c.workflows.create({ name: 'Locked Flow', visibility: 'public' }, { actor: admin });
   assert.throws(() => c.icon.update(icon.id, { visibility: 'private' }, { actor: admin }), e => e.name === 'ValidationError' && /public library/.test(e.message));

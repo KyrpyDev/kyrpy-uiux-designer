@@ -11,6 +11,7 @@
     "reset": "node --disable-warning=ExperimentalWarning main.js import --reset",
     "export": "node --disable-warning=ExperimentalWarning main.js export",
     "guide": "node --disable-warning=ExperimentalWarning main.js guide",
+    "db:publish": "node --disable-warning=ExperimentalWarning scripts/publish-from-pg.js",
     "db:export-public": "node --disable-warning=ExperimentalWarning scripts/export-public-db.js",
     "icons:import": "node --disable-warning=ExperimentalWarning scripts/import-icon-packs.js",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.js mcp/tests/*.test.js"

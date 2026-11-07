@@ -371,7 +371,7 @@ export async function openAdminUsersModal() {
     const uEmail = h('input', { type: 'email', placeholder: 'email@domain.com' });
     const uDisplay = h('input', { type: 'text', placeholder: 'Display Name' });
     const uPass = h('input', { type: 'password', placeholder: 'Password', value: 'kyrpy123' });
-    const uRole = h('select', {}, Object.entries(ROLE_LABELS).map(([k, v]) => h('option', { value: k, selected: k === 'designer' }, v)));
+    const uRole = h('select', {}, Object.entries(ROLE_LABELS).filter(([k]) => k !== 'superadmin').map(([k, v]) => h('option', { value: k, selected: k === 'designer' }, v)));   // only one superadmin: not selectable here
 
     host.append(
       h('div', { class: 'muted' }, 'Manage system users, ACL levels (superadmin, admin, designer, reviewer, viewer), and account status. Default root owner & admin is @kyrpy.'),
@@ -411,8 +411,11 @@ export async function openAdminUsersModal() {
     const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '320px', overflow: 'auto' } });
     for (const u of users) {
       const sys = !!(u.system || u.readOnly);   // immutable system account: shown, never editable
+      const isSuper = u.role === 'superadmin';
+      const meSuper = state.user?.role === 'superadmin';
       const roleSel = h('select', {
-        disabled: sys,
+        disabled: sys || isSuper,
+        title: isSuper ? 'The superadmin role can only be handed over with "Transfer superadmin…"' : '',
         onchange: async e => {
           try {
             await api.updateUser(u.id, { role: e.target.value });
@@ -422,10 +425,10 @@ export async function openAdminUsersModal() {
             toast(err.message, 'error');
           }
         }
-      }, Object.keys(ROLE_LABELS).map(r => h('option', { value: r, selected: u.role === r }, r)));
+      }, Object.keys(ROLE_LABELS).filter(r => r !== 'superadmin' || isSuper).map(r => h('option', { value: r, selected: u.role === r }, r)));   // hides the choice that would create a second superadmin
 
       const statusSel = h('select', {
-        disabled: sys || u.id === 1,
+        disabled: sys || u.id === 1 || isSuper,
         onchange: async e => {
           try {
             await api.updateUser(u.id, { status: e.target.value });
@@ -464,6 +467,7 @@ export async function openAdminUsersModal() {
           }, (u.username || 'U')[0].toUpperCase()),
           h('div', { style: { flex: '1', minWidth: '140px' } },
             h('div', { style: { fontWeight: '700' } }, `${u.displayName || u.username} (@${u.username})${u.id === 1 ? ' ★ Root Admin' : ''}`,
+              isSuper ? h('span', { class: 'badge accent', style: { marginLeft: '6px' }, title: 'The only user who edits the public library directly, with no approval step' }, 'Superadmin') : null,
               sys ? h('span', { class: 'badge', style: { marginLeft: '6px' }, title: u.username === 'public' ? 'Owner of the public library. Cannot sign in; admins curate its items, users clone them.' : 'System account. Cannot sign in.' }, 'System · Immutable') : null),
             h('div', { class: 'muted' }, `${u.email} · ID #${u.id}${u.username === 'public' ? ' · Public library' : ''}`)
           ),
@@ -480,7 +484,12 @@ export async function openAdminUsersModal() {
               await refresh();
             }
           }, u.id === state.user?.id ? 'Active' : 'Use Account'),
-          u.id !== 1 && !sys ? h('button', {
+          meSuper && !sys && !isSuper && u.status === 'active' ? h('button', {
+            class: 'btn sm',
+            title: 'Hand the single superadmin role to this user (you become admin)',
+            onclick: () => openTransferSuperadmin(u, refresh)
+          }, 'Transfer superadmin…') : null,
+          u.id !== 1 && !sys && !isSuper ? h('button', {
             class: 'btn sm danger',
             onclick: async () => {
               if (!await confirmBox(`Delete user @${u.username}? Their items will be reassigned to @kyrpy.`)) return;
@@ -505,6 +514,35 @@ export async function openAdminUsersModal() {
     wide: true,
     content: host,
     actions: close => [h('button', { class: 'btn primary', onclick: close }, 'Done')]
+  });
+}
+
+/** Superadmin hands the single superadmin role to `target` after re-entering their password. */
+function openTransferSuperadmin(target, done) {
+  const pass = h('input', { type: 'password', placeholder: 'Your password', autocomplete: 'current-password' });
+  modal({
+    title: `Transfer superadmin to @${target.username}`,
+    content: h('div', { class: 'col', style: { gap: '8px' } },
+      h('div', { class: 'muted' }, 'There can be only one superadmin. @' + target.username + ' becomes the superadmin and you become an admin. Re-enter your password to confirm.'),
+      h('label', { class: 'field' }, h('span', {}, 'Password'), pass)),
+    actions: close => [
+      h('button', { class: 'btn', onclick: close }, 'Cancel'),
+      h('button', {
+        class: 'btn danger',
+        onclick: async () => {
+          try {
+            await api.transferSuperadmin(target.id, { password: pass.value });
+            const me = (await api.users()).find(x => x.id === state.user?.id);
+            if (me) { state.user = me; emit('auth:changed', me); }
+            toast(`@${target.username} is now the superadmin`, 'ok');
+            close();
+            await done();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        }
+      }, 'Transfer')
+    ]
   });
 }
 

@@ -126,12 +126,12 @@ try {
   db.prepare(`
     INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '["*"]', ?, ?, ?, NULL)
-  `).run(1, 'kyrpy', 'kyrpy@kyrpy.com', kyrpyHash, 'kyrpy_salt_v1', 'Kyrpy (Admin)', 'admin', '#2e9bff', now, now);
+  `).run(1, 'kyrpy', 'kyrpy@kyrpy.com', kyrpyHash, 'kyrpy_salt_v1', 'Kyrpy (Admin)', 'superadmin', '#2e9bff', now, now);
 
   db.prepare(`
     INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '["*"]', ?, ?, ?, NULL)
-  `).run(2, 'admin', 'admin@local.dev', adminHash, 'admin_salt_v1', 'Administrator', 'superadmin', '#10b981', now, now);
+  `).run(2, 'admin', 'admin@local.dev', adminHash, 'admin_salt_v1', 'Administrator', 'admin', '#10b981', now, now);
 
   db.prepare(`
     INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)

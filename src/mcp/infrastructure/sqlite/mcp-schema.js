@@ -293,6 +293,26 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, revoked_at);
 CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id, revoked_at);`);
     }
+  },
+  {
+    // exactly ONE superadmin, kyrpy (id 1): promoted when no superadmin exists or when the only one is the legacy installer
+    // account `admin` (older installs created it as superadmin; it becomes a plain admin). Any other superadmin is kept;
+    // a legacy DB with several collapses to one (kyrpy, else the lowest id) so the partial unique index can exist.
+    // PG parity (same index, guarded) is in postgres/pg-sync-service.js.
+    id: 'm12-001-single-superadmin', pg: false,
+    run: db => {
+      if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()) return;
+      const sa = () => db.prepare("SELECT id, username FROM users WHERE role = 'superadmin' ORDER BY (id = 1) DESC, id").all();
+      const setRole = (id, role) => db.prepare("UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?").run(role, id);
+      const kyrpy = db.prepare("SELECT id FROM users WHERE id = 1 AND username = 'kyrpy'").get();
+      const cur = sa();
+      if (kyrpy && (!cur.length || (cur.length === 1 && cur[0].username === 'admin'))) {
+        for (const x of cur) setRole(x.id, 'admin');
+        setRole(kyrpy.id, 'superadmin');
+      }
+      for (const x of sa().slice(1)) setRole(x.id, 'admin');
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_superadmin ON users(role) WHERE role = 'superadmin'");
+    }
   }
 ];
 

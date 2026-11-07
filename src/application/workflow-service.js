@@ -18,10 +18,10 @@ export class WorkflowService {
 
   #publicUserId() { return this.users?.publicUserId?.() ?? null; }
 
-  #isAdminId(actorId, actor = null) {
+  #isSuperadminId(actorId, actor = null) {
     const u = actor?.role ? actor : (actorId != null && this.users ? this.users.get(Number(actorId)) : null);
     if (!u) return false;
-    return this.collaboration?.auth ? this.collaboration.auth.isAdmin(u) : ['admin', 'superadmin'].includes(u.role);
+    return this.collaboration?.auth ? this.collaboration.auth.isSuperadmin(u) : u.role === 'superadmin';
   }
 
   /**
@@ -40,10 +40,10 @@ export class WorkflowService {
     }
   }
 
-  /** New public workflows of the default project created by an admin belong to the `public` library user. */
+  /** New public workflows of the default project created by the superadmin belong to the `public` library user. */
   #publicOwnership(data, actorId, actor) {
     const pub = this.#publicUserId();
-    if (pub == null || data.visibility !== 'public' || Number(data.projectId ?? 1) !== 1 || !this.#isAdminId(actorId, actor)) return null;
+    if (pub == null || data.visibility !== 'public' || Number(data.projectId ?? 1) !== 1 || !this.#isSuperadminId(actorId, actor)) return null;
     return Number(pub);
   }
 
@@ -157,8 +157,10 @@ export class WorkflowService {
     const w = this.#require(id);
     if (w.locked) throw new ConflictError(`workflow "${w.name || w.key}" is locked; unlock it before deleting`);
     const isPublic = (w.visibility || 'public') === 'public';
-    if (isPublic && actor && !['admin', 'superadmin'].includes(actor.role)) {
-      throw new ForbiddenError('Only admin or superadmin can trash or purge public items');
+    const pub = this.#publicUserId();
+    const inLibrary = pub != null && Number(w.creatorId) === Number(pub) && (w.visibility || 'public') === 'public';
+    if (actor && ((isPublic && !['admin', 'superadmin'].includes(actor.role)) || (inLibrary && actor.role !== 'superadmin'))) {
+      throw new ForbiddenError('Only admin or superadmin can trash or purge public items (public-library items: superadmin only)');
     }
     let trashRec = null;
     if (!permanent && this.trash) {

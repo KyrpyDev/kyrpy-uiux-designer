@@ -16,7 +16,7 @@ test('default admin user kyrpy is seeded and all items default to public + creat
   assert.ok(kyrpy, 'default user kyrpy exists');
   assert.equal(kyrpy.id, 1);
   assert.equal(kyrpy.username, 'kyrpy');
-  assert.equal(kyrpy.role, 'admin');
+  assert.equal(kyrpy.role, 'superadmin');
 
   const pathRec = c.path.create({ name: 'Wave Path' });
   const iconRec = c.icon.create({ name: 'Wave Icon' });
@@ -39,7 +39,7 @@ test('auth & ACL system: register, login with username or email, session token, 
   // Default kyrpy login
   const kyrpyAuth = c.auth.login({ usernameOrEmail: 'kyrpy', password: 'kyrpy' });
   assert.equal(kyrpyAuth.user.username, 'kyrpy');
-  assert.equal(kyrpyAuth.user.role, 'admin');
+  assert.equal(kyrpyAuth.user.role, 'superadmin');
   assert.ok(kyrpyAuth.token.length > 16);
   assert.equal(c.auth.resolveToken(kyrpyAuth.token).username, 'kyrpy');
 

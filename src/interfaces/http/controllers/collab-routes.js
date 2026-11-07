@@ -26,6 +26,7 @@ export function collabRoutes(router, c) {
   router.post('/api/users', ({ body, actor }) => c.auth.createUser(body, actor));
   router.put('/api/users/:id', ({ params, body, actor }) => c.auth.updateUser(Number(params.id), body, actor));
   router.delete('/api/users/:id', ({ params, actor }) => c.auth.removeUser(Number(params.id), actor));
+  router.post('/api/users/:id/transfer-superadmin', ({ params, body, actor }) => c.auth.transferSuperadmin(actor, Number(params.id), body || {}));
   router.get('/api/acl/matrix', () => ({
     systemRoles: USER_ROLES,
     projectRoles: PROJECT_ROLES,

@@ -181,7 +181,7 @@ export function designRoutes(router, c) {
       menu: { defaults: DEFAULT_MENU, layouts: MENU_LAYOUTS, kinds: MENU_KINDS },
       user: actor,
       currentUser: actor,
-      // owner of the immutable public library (system user `public`); admins may edit its items directly
+      // owner of the immutable public library (system user `public`); only the superadmin edits its items directly
       publicUserId: typeof c.publicUserId === 'function' ? c.publicUserId() : (c.auth?.publicUserId?.() ?? null),
       authenticated: Boolean(token && actor),
       authConfig,

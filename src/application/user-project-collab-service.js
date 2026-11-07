@@ -18,7 +18,10 @@ import {
   DEFAULT_PROJECT_BUTTON_SETTINGS,
   normalizeButtonIconSizePct,
   normalizeButtonStyleKey,
-  applyButtonStyleAndIconSizeToNodes
+  applyButtonStyleAndIconSizeToNodes,
+  isButtonStyleFrame,
+  isDesignButtonTemplate,
+  designButtonTemplateNodes
 } from '../domain/entities.js';
 import { isValidKey, slugify, uniqueKey } from '../domain/naming.js';
 import { restoreBody, workflowRestoreBody } from '../domain/doc-fingerprint.js';
@@ -83,7 +86,7 @@ export class AuthService {
         passwordHash,
         salt,
         displayName: 'Kyrpy (Admin)',
-        role: 'admin',
+        role: 'superadmin',
         status: 'active',
         permissions: ['*'],
         avatarColor: '#2e9bff'
@@ -103,7 +106,7 @@ export class AuthService {
         passwordHash,
         salt,
         displayName: 'Administrator',
-        role: 'superadmin',
+        role: 'admin',
         status: 'active',
         permissions: ['*'],
         avatarColor: '#10b981'
@@ -133,10 +136,13 @@ export class AuthService {
     if (!cfg.bypassLogin) {
       throw new ForbiddenError('Login bypass is disabled in release mode. Please sign in with your credentials.');
     }
-    const adminUser = this.users.getByUsernameOrEmail('admin') || this.defaultAdmin();
+    const adminUser = this.superadminUser() || this.defaultAdmin() || this.users.getByUsernameOrEmail('admin');
     const session = this.#issueSession(adminUser.id);
     return { user: this.users.get(adminUser.id), token: session.token, expiresAt: session.expiresAt, bypassed: true };
   }
+
+  /** The one and only superadmin (the sole curator of the public library), or null. */
+  superadminUser() { return this.users.list().find(u => u.role === 'superadmin' && !isSystemUser(u)) || null; }
 
   defaultAdmin() {
     return this.users.get(1) || this.users.getByUsernameOrEmail('kyrpy');
@@ -171,6 +177,11 @@ export class AuthService {
 
   isAdmin(user) {
     return !!user && (user.role === 'admin' || user.role === 'superadmin' || user.username === 'kyrpy' || (user.permissions || []).includes('*'));
+  }
+
+  /** True only for the single `superadmin`: the one user who edits / imports / updates / deletes the public library directly. */
+  isSuperadmin(user) {
+    return !!user && user.role === 'superadmin' && !isSystemUser(user);
   }
 
   canWrite(user) {
@@ -258,6 +269,7 @@ export class AuthService {
   createUserByAdmin(actor, input) {
     const effActor = actor && actor.id ? actor : this.defaultAdmin();
     this.assertAdmin(effActor);
+    if (input.role === 'superadmin') throw new ConflictError('There can be only one superadmin');
     const { user } = this.register({
       username: input.username,
       email: input.email || `${input.username}@kyrpy.com`,
@@ -294,6 +306,7 @@ export class AuthService {
     this.#assertNotSystem(target, 'updated');
     const isSelf = actor && Number(actor.id) === Number(target.id);
     if (!this.isAdmin(actor) && !isSelf) throw new ForbiddenError('Only admins or the account owner can update this user');
+    if (target.role === 'superadmin' && !isSelf) throw new ForbiddenError('Only the superadmin can update the superadmin account');
     const clean = {};
     if (patch.displayName !== undefined) clean.displayName = String(patch.displayName).trim();
     if (patch.email !== undefined) {
@@ -320,11 +333,16 @@ export class AuthService {
       if (patch.role !== undefined) {
         if (!USER_ROLES.includes(patch.role)) throw new ValidationError(`Role must be one of ${USER_ROLES.join(', ')}`);
         if (target.id === 1 && !['admin', 'superadmin'].includes(patch.role)) throw new ValidationError('Default admin kyrpy cannot be demoted');
+        if (patch.role !== target.role) {
+          if (target.role === 'superadmin') throw new ValidationError('The superadmin role cannot be changed; use "Transfer superadmin" to hand it over');
+          if (patch.role === 'superadmin') throw new ConflictError('There can be only one superadmin');
+        }
         clean.role = patch.role;
       }
       if (patch.status !== undefined) {
         if (!['active', 'suspended', 'pending'].includes(patch.status)) throw new ValidationError('Invalid user status');
         if (target.id === 1 && patch.status !== 'active') throw new ValidationError('Default admin kyrpy cannot be suspended');
+        if (target.role === 'superadmin' && patch.status !== 'active') throw new ValidationError('The superadmin cannot be suspended');
         clean.status = patch.status;
       }
       if (patch.permissions !== undefined && Array.isArray(patch.permissions)) clean.permissions = patch.permissions;
@@ -342,12 +360,34 @@ export class AuthService {
     const target = this.getUser(id);
     if (target.id === 1 || target.username === 'kyrpy') throw new ValidationError('Default admin user kyrpy cannot be deleted');
     this.#assertNotSystem(target, 'deleted');
+    if (target.role === 'superadmin') throw new ValidationError('The superadmin cannot be deleted; transfer the superadmin role first');
     this.users.delete(target.id);
     return { deleted: true, id: target.id };
   }
 
   removeUser(id, actor) {
     return this.deleteUser(actor, id);
+  }
+
+  /**
+   * Hands the single `superadmin` role to another active user; the previous superadmin becomes `admin`.
+   * Needs the current superadmin plus their password (`password`) or an explicit `confirm`. Atomic: demote first so the
+   * partial unique index (users.role = 'superadmin') never sees two.
+   */
+  transferSuperadmin(actor, targetId, { password = null, confirm = false } = {}) {
+    if (!this.isSuperadmin(actor)) throw new ForbiddenError('Only the superadmin can transfer the superadmin role');
+    const target = this.getUser(targetId);
+    this.#assertNotSystem(target, 'made superadmin');
+    if (Number(target.id) === Number(actor.id)) throw new ValidationError('You are already the superadmin');
+    if (target.status !== 'active') throw new ValidationError('The new superadmin must be an active user');
+    const confirmed = password ? passwordMatches(this.users.getWithAuth(actor.id), password) : (confirm === true || confirm === 'true');
+    if (!confirmed) throw new ValidationError(password ? 'Password is incorrect' : 'Re-enter your password (or send confirm: true) to transfer the superadmin role');
+    const run = () => {
+      this.users.update(actor.id, { role: 'admin' });
+      return this.users.update(target.id, { role: 'superadmin' });
+    };
+    const user = this.transaction ? this.transaction(run) : run();
+    return { transferred: true, superadmin: user, previous: this.users.get(actor.id) };
   }
 }
 
@@ -538,6 +578,7 @@ export class ProjectService {
         const allButtons = btnRepo.list({ projectId: p.id, includePublic: scope !== 'project', includePrivate: true, actorId: actor?.id ?? 1 });
         for (const b of allButtons) {
           if (scope === 'project' && Number(b.projectId) !== Number(p.id)) continue;
+          if (isButtonStyleFrame(b) || isDesignButtonTemplate(b)) continue;   // per-style frames and design-style templates keep their own style
           const curNodes = nodeRepo.listByOwner('button', b.id);
           const nextNodes = applyButtonStyleAndIconSizeToNodes(curNodes, {
             width: b.width,
@@ -713,7 +754,7 @@ export class CollaborationService {
     const pub = this.auth?.publicUserId?.() ?? null;
     if (pub != null && ownerId === Number(pub)) {
       const actor = actorId != null ? this.users?.get(Number(actorId)) : null;
-      if (!force && actor && this.auth?.isAdmin(actor)) return null;
+      if (!force && actor && this.auth?.isSuperadmin(actor)) return null;
       if (!force && actorId == null) return null;
       let reviewer = 1;
       try { reviewer = Number(this.projects?.get(1)?.ownerId || 1); } catch { /* no default project */ }
@@ -955,23 +996,7 @@ export class TemplateService {
     }
   }
 
-  #buildButtonNodes(b) {
-    const w = Number(b.width) || 160, h = Number(b.height) || 48;
-    const rx = Math.round(Math.min(w, h) * (Number(b.rxRatio) || 0.3));
-    const swRatio = Number(b.strokeRatio) || 1;
-    const swToken = swRatio === 1 ? '{{sw}}' : `{{sw*${swRatio}}}`;
-    const nodes = [
-      { tag: 'rect', role: b.role || 'button', name: 'surface', attrs: { x: 0, y: 0, width: w, height: h, rx, 'stroke-width': swToken },
-        animations: b.hoverEffect && b.hoverEffect !== 'none' ? [{ name: `hover-${b.hoverEffect}`, type: b.hoverEffect === 'fill' ? 'pulse' : b.hoverEffect, trigger: 'hover', durationMs: 600, iterations: 1 }] : [] }
-    ];
-    if (b.hoverEffect === 'shine' || b.category === 'glass') {
-      nodes.push({ tag: 'rect', role: 'shine', name: 'shine', attrs: { x: Math.round(w * 0.06), y: 3, width: Math.round(w * 0.88), height: Math.round(h * 0.42), rx: Math.max(4, Math.round(rx * 0.6)) } });
-    }
-    if (b.shape !== 'circle') {
-      nodes.push({ tag: 'text', kind: 'text', name: 'label', text: b.name, attrs: { x: Math.round(w / 2), y: Math.round(h / 2 + 5), 'font-size': 14, 'font-weight': 700, 'text-anchor': 'middle', fill: '{{text}}' } });
-    }
-    return nodes;
-  }
+  #buildButtonNodes(b) { return designButtonTemplateNodes(b); }
 
   /** Returns all devices as a `{ [key]: { name, width, height, ... } }` map for the UI and screen normalization. */
   devicesMap() {
@@ -1182,7 +1207,7 @@ export class TranslationService {
  * Trash Management Service (`path`, `icon`, `button`, `element`, `screen`, `workflow`).
  * - All deleted items are archived here first with a complete JSON snapshot.
  * - Items can be restored (preserving original IDs and links when free) or permanently purged.
- * - Only `admin` or `superadmin` can purge `public` or built-in items.
+ * - Only `admin` or `superadmin` can purge `public` or built-in items; public-library (public user) items: superadmin only.
  */
 export class TrashService {
   constructor({ trash, services, workflows, designs, nodes, animations, menus, auth, transaction }) {
@@ -1335,11 +1360,17 @@ export class TrashService {
     });
   }
 
+  /** True for items owned by the immutable `public` user (the public library): only the superadmin curates those. */
+  #inPublicLibrary(item) {
+    const pub = this.auth?.publicUserId?.() ?? null;
+    return pub != null && item.visibility === 'public' && Number(item.creatorId) === Number(pub);
+  }
+
   purge(trashId, { actor = null } = {}) {
     const item = this.get(trashId);
     const isPublic = item.visibility === 'public' || Boolean(item.builtin);
-    if (isPublic && actor && !this.auth.isAdmin(actor)) {
-      throw new ForbiddenError('Only admin or superadmin can trash or purge public items');
+    if (actor && ((isPublic && !this.auth.isAdmin(actor)) || (this.#inPublicLibrary(item) && !this.auth.isSuperadmin(actor)))) {
+      throw new ForbiddenError('Only admin or superadmin can trash or purge public items (public-library items: superadmin only)');
     }
     this.trash.delete(item.id);
     return { purged: true, id: item.id, itemType: item.itemType, originalId: item.originalId };
@@ -1348,8 +1379,8 @@ export class TrashService {
   empty({ projectId = null, itemType = '', actor = null } = {}) {
     const items = this.trash.list({ projectId, itemType });
     const hasPublic = items.some(it => it.visibility === 'public' || Boolean(it.builtin));
-    if (hasPublic && actor && !this.auth.isAdmin(actor)) {
-      throw new ForbiddenError('Only admin or superadmin can trash or purge public items');
+    if (actor && ((hasPublic && !this.auth.isAdmin(actor)) || (items.some(it => this.#inPublicLibrary(it)) && !this.auth.isSuperadmin(actor)))) {
+      throw new ForbiddenError('Only admin or superadmin can trash or purge public items (public-library items: superadmin only)');
     }
     return this.transaction(() => {
       const ids = [];
@@ -1743,7 +1774,7 @@ export class LibraryTransferService {
         throw new ForbiddenError(`Default basic item "${record.name || record.key}" cannot be moved; it can only be copied`);
       }
       const ownerId = Number(record.creatorId || record.rootOwnerId || 1);
-      const publicCurator = ownerId === Number(this.auth?.publicUserId?.()) && this.auth?.isAdmin(actor || this.projects?.users?.get(effActorId));
+      const publicCurator = ownerId === Number(this.auth?.publicUserId?.()) && this.auth?.isSuperadmin(actor || this.projects?.users?.get(effActorId));
       if (ownerId !== effActorId && !publicCurator) {
         throw new ForbiddenError(`Item "${record.name || record.key}" is owned by another user and cannot be moved; it can only be copied`);
       }

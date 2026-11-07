@@ -5,6 +5,16 @@
  *  - Full endpoints for Auth, User/ACL management, Projects, Collaborators, Change Requests,
  *    Lineage, Editable Templates (Devices & Buttons), Translations, and PostgreSQL Sync.
  */
+/**
+ * Hook run before every design write (create / edit / delete of paths, icons, buttons, elements, screens,
+ * workflows; clone and copy stay free). It may await a dialog and throws an ApiError to cancel the request.
+ * main.js uses it to make a user without a project of their own create one before the first edit.
+ */
+let writeGuard = null;
+export function setWriteGuard(fn) { writeGuard = typeof fn === 'function' ? fn : null; }
+const DESIGN_WRITE = /^\/api\/(paths|icons|buttons|elements|screens|workflows)(\/|\?|$)/;
+const DESIGN_FREE = /\/(clone|copy|move|export|import|usage|lineage)(\/|\?|$)/;
+
 export class ApiError extends Error {
   constructor(message, info, status = 0) {
     super(message);
@@ -104,6 +114,7 @@ async function req(method, url, body) {
   if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
 
+  if (writeGuard && method !== 'GET' && DESIGN_WRITE.test(url) && !DESIGN_FREE.test(url)) await writeGuard({ method, url, body });
   try {
     let r = await fetch(url, {
       method,
@@ -302,6 +313,7 @@ export const api = {
   createUser: body => api.post('/api/users', body),
   updateUser: (id, body) => api.put(`/api/users/${id}`, body),
   deleteUser: id => api.del(`/api/users/${id}`),
+  transferSuperadmin: (id, body) => api.post(`/api/users/${id}/transfer-superadmin`, body),
   aclMatrix: () => api.get('/api/acl/matrix'),
 
   // ---- Projects & Collaborators ----

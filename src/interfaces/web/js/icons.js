@@ -116,6 +116,7 @@ const P = {
   flipV: '<path d="M3 12h18M7 8l5-5 5 5M7 16l5 5 5-5"/>',
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  grip: '<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
 };
 
 // Ordered keyword rules: first match wins. Used to pick an icon for a menu label.

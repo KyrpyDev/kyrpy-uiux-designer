@@ -10,7 +10,7 @@ import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, imp
 import { openExportDialog } from './export-dialog.js';
 import { openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
-import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS } from '/domain/entities.js';
+import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, privateFirst } from '/domain/entities.js';
 import { iconPack, expandIconSummary } from '/domain/icon-summary.js';
 import { ensureIconSymbols, loadIcons } from '../icon-store.js';
 
@@ -146,7 +146,8 @@ export class LibraryPanel {
     const selProjects = state.selectedProjectIds;
     const activePid = Number(state.activeProjectId || state.currentProjectId || 1);
     const curUserId = Number(state.user?.id || 1);
-    return (list || []).filter(d => {
+    // the current user's own private items are listed first, the rest keep their order
+    return privateFirst((list || []).filter(d => {
       const vis = d.visibility || 'public';
       if (vf === 'public' && vis !== 'public') return false;
       if (vf === 'private' && (vis !== 'private' || Number(d.creatorId || 1) !== curUserId)) return false;
@@ -160,7 +161,7 @@ export class LibraryPanel {
         }
       }
       return (!c || d.category === c) && (!q || `${d.key || ''} ${d.name || ''} ${d.label || ''} ${(d.tags || []).join(' ')} ${d.descriptionDev || ''} ${d.description || ''}`.toLowerCase().includes(q));
-    });
+    }), curUserId);
   }
 
   visBar(onChange) {
@@ -249,7 +250,7 @@ export class LibraryPanel {
   }
 
   toolbar(type, rec) {
-    const canMove = !rec.builtin && canEditOwned(rec);   // owner, or an admin curating a public-library item
+    const canMove = !rec.builtin && canEditOwned(rec);   // owner, or the superadmin curating a public-library item
     return h('div', { class: 'tb' },
       ibtn('pencil', 'Open in designer', e => { e.stopPropagation(); this.app.openDesign(type, rec.id); }),
       h('button', {

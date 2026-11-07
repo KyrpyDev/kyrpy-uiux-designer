@@ -611,6 +611,8 @@ CREATE UNIQUE INDEX ux_template_devices_uid ON "template_devices"(uid);
 
 CREATE UNIQUE INDEX ux_themes_uid ON "themes"(uid);
 
+CREATE UNIQUE INDEX ux_users_single_superadmin ON users(role) WHERE role = 'superadmin';
+
 CREATE UNIQUE INDEX ux_workflows_project_key ON "workflows"(project_id, key);
 
 CREATE UNIQUE INDEX ux_workflows_uid ON "workflows"(uid);

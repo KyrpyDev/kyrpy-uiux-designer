@@ -1,6 +1,6 @@
 /** Right-hand property inspector of a Designer: design record, selection, geometry, style, animations. */
 import { h, clear, toast, confirmBox, modal } from '../dom.js';
-import { ibtn } from '../icons.js';
+import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions } from './menu-editor.js';
@@ -325,7 +325,21 @@ export class Inspector {
     const d = this.d;
     const rows = [...d.nodes].sort((a, b) => b.ord - a.ord || b.id - a.id).map(e => {
       const label = e.kind === 'instance' ? `${e.refType}: ${findDesign(e.refType, e.refId)?.key ?? '?'}` : e.tag === 'text' ? `"${e.text}"` : (e.name || e.tag);
-      return h('div', { class: `el-row${d.selected.has(e.id) ? ' on' : ''}`, style: { paddingLeft: `${7 + (e.parentId ? 12 : 0)}px`, opacity: e.visible ? 1 : 0.45 }, onclick: ev => d.select([e.id], { add: ev.shiftKey }) },
+      return h('div', {
+        class: `el-row${d.selected.has(e.id) ? ' on' : ''}`, tabindex: '0', dataset: { layer: String(e.id) },
+        title: 'Drag (or Alt+↑/↓) to change the stacking order',
+        style: { paddingLeft: `${3 + (e.parentId ? 12 : 0)}px`, opacity: e.visible ? 1 : 0.45 },
+        onclick: ev => { if (this.layerDragEnded) { this.layerDragEnded = false; return; } d.select([e.id], { add: ev.shiftKey }); },
+        onkeydown: async ev => {
+          if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
+          ev.preventDefault(); ev.stopPropagation();
+          this.layerFocusId = e.id;      // the rows are rebuilt (twice: shown, then saved); keep the focus on this one
+          await d.stepLayer(e.id, ev.key === 'ArrowUp' ? 1 : -1);
+          this.layerFocusId = null;
+          this.root.querySelector(`.el-layers [data-layer="${e.id}"]`)?.focus();
+        }
+      },
+        h('span', { class: 'el-grip', 'aria-hidden': 'true', title: 'Drag to reorder' }, iconEl('grip', { size: 14 })),
         h('span', { class: 't' }, TAG_LABEL[e.tag] || e.tag), h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: e.name }, e.name ? `${e.name} · ${label}` : label),
         e.role ? h('span', { class: 'badge' }, e.role) : null,
         e.onClick ? h('span', { class: 'badge', title: `click: ${e.onClick.type}` }, `⚡ ${e.onClick.type}`) : null,
@@ -339,7 +353,94 @@ export class Inspector {
           await d.deleteSelected();
         }, { cls: 'danger' }));
     });
-    return this.section(`Layers (${d.nodes.length})`, h('div', { class: 'el-list' }, rows.length ? rows : h('div', { class: 'empty' }, 'Nothing here yet. Use the tools or drag from the library.')));
+    const list = h('div', { class: 'el-list el-layers' }, rows.length ? rows : h('div', { class: 'empty' }, 'Nothing here yet. Use the tools or drag from the library.'));
+    this.installLayerDrag(list);
+    // keep the list scroll and the keyboard focus across the re-render that follows a reorder
+    const scroll = this.layersScroll || 0, focusId = this.layerFocusId;
+    requestAnimationFrame(() => {
+      list.scrollTop = scroll;
+      if (focusId != null) list.querySelector(`[data-layer="${focusId}"]`)?.focus();
+    });
+    list.addEventListener('scroll', () => { this.layersScroll = list.scrollTop; });
+    return this.section(`Layers (${d.nodes.length})`, list);
+  }
+
+  /**
+   * Pointer-driven reordering of Layers rows: drag from the grip (mouse, pen or touch) or the row body (mouse, after a
+   * few pixels). A line shows the drop slot; only siblings accept a drop. The list auto-scrolls near its edges.
+   */
+  installLayerDrag(list) {
+    const d = this.d;
+    const line = h('div', { class: 'el-drop-line', hidden: true });
+    list.append(line);
+    let drag = null;
+    const nodeOf = id => d.nodes.find(n => n.id === id);
+    const slotAt = y => {
+      const rows = [...list.querySelectorAll('.el-row[data-layer]')].filter(r => Number(r.dataset.layer) !== drag.id);
+      const src = nodeOf(drag.id);
+      const sib = rows.filter(r => (nodeOf(Number(r.dataset.layer))?.parentId ?? null) === (src?.parentId ?? null));
+      let best = null;
+      for (const r of sib) {
+        const b = r.getBoundingClientRect();
+        for (const [place, edge] of [['above', b.top], ['below', b.bottom]]) {
+          const dist = Math.abs(y - edge);
+          if (!best || dist < best.dist) best = { row: r, place, edge, dist };
+        }
+      }
+      return best;
+    };
+    const autoScroll = () => {
+      if (!drag) return;
+      const b = list.getBoundingClientRect(), zone = 28;
+      const dy = drag.y < b.top + zone ? -(b.top + zone - drag.y) : drag.y > b.bottom - zone ? drag.y - (b.bottom - zone) : 0;
+      if (dy && drag.active) { list.scrollTop += Math.max(-14, Math.min(14, dy / 2)); showSlot(); }
+      drag.raf = requestAnimationFrame(autoScroll);
+    };
+    const showSlot = () => {
+      const s = slotAt(drag.y);
+      drag.slot = s;
+      if (!s) { line.hidden = true; return; }
+      const lb = list.getBoundingClientRect();
+      line.hidden = false;
+      line.style.top = `${Math.round(s.edge - lb.top + list.scrollTop - 1)}px`;
+    };
+    const end = async (ev, cancel = false) => {
+      if (!drag) return;
+      const g = drag; drag = null;
+      cancelAnimationFrame(g.raf);
+      line.hidden = true;
+      g.row.classList.remove('dragging');
+      try { g.row.releasePointerCapture?.(ev.pointerId); } catch { /* already released */ }
+      if (!g.active) return;
+      this.layerDragEnded = true;   // swallow the click that follows the drag
+      setTimeout(() => { this.layerDragEnded = false; }, 0);
+      if (cancel || !g.slot) return;
+      await d.moveLayer(g.id, Number(g.slot.row.dataset.layer), g.slot.place);
+    };
+    list.addEventListener('pointerdown', ev => {
+      const row = ev.target.closest('.el-row[data-layer]');
+      if (!row || ev.button !== 0 || ev.target.closest('button')) return;
+      const onGrip = !!ev.target.closest('.el-grip');
+      if (!onGrip && ev.pointerType !== 'mouse') return;   // touch on the row body keeps scrolling the list
+      drag = { id: Number(row.dataset.layer), row, x: ev.clientX, y: ev.clientY, y0: ev.clientY, active: false, onGrip, slot: null, raf: 0 };
+      if (onGrip) ev.preventDefault();
+      try { row.setPointerCapture(ev.pointerId); } catch { /* synthetic event */ }
+      drag.raf = requestAnimationFrame(autoScroll);
+    });
+    list.addEventListener('pointermove', ev => {
+      if (!drag) return;
+      drag.y = ev.clientY;
+      if (!drag.active) {
+        if (Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y0) < (drag.onGrip ? 2 : 5)) return;
+        drag.active = true;
+        drag.row.classList.add('dragging');
+      }
+      ev.preventDefault();
+      showSlot();
+    });
+    list.addEventListener('pointerup', ev => end(ev));
+    list.addEventListener('pointercancel', ev => end(ev, true));
+    list.addEventListener('keydown', ev => { if (ev.key === 'Escape' && drag?.active) { ev.stopPropagation(); end(ev, true); } });
   }
 
   multiSection(sel) {

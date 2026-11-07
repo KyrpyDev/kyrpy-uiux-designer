@@ -149,6 +149,13 @@ This repository ships with a rich, production-grade sample UI/UX library ready t
 | [`sql/sample_data_sqlite.sql`](./sql/sample_data_sqlite.sql) | Full SQLite SQL dump used by `./installer.sh` to reconstruct `src/data/designer.db` from scratch if deleted. |
 | [`sql/schema_sqlite.sql`](./sql/schema_sqlite.sql) | Synchronized SQLite DDL schema for all tables and indexes. |
 
+### Publishing the Sample Database (PostgreSQL is primary)
+The files above are produced from a clone of the PostgreSQL database, never from a live SQLite file, and contain only the immutable `public` user's data:
+```bash
+npm --prefix src run db:publish -- --push-first --apply   # push SQLite -> PG, clone PG into publish/, leak-check, copy to src/data/designer.db and sql/
+npm --prefix src run db:publish                           # dry run: only prepares the git-ignored publish/ folder
+```
+
 ### Importing the Sample Dump into PostgreSQL Manually
 ```bash
 psql -h <YOUR_PGHOST> -p 5432 -U <YOUR_PGUSER> -d kyrpy-uiux-designer-db -f sql/sample_data_postgres.sql

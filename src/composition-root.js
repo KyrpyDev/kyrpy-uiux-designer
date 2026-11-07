@@ -48,7 +48,13 @@ import { publicUserId } from './domain/system-users.js';
  * Built-in presets added after a database was first seeded reach it once (ledger row in the local `mcp_migrations`
  * table, so a preset the user later deletes is not re-added). Fresh, empty databases get them from the full import.
  */
-const NEW_PRESETS = [{ id: 'preset-001-html-repeater', keys: ['html-repeater'] }];
+const NEW_PRESETS = [
+  { id: 'preset-001-html-repeater', keys: ['html-repeater'] },
+  // one public `button-frame-<style>` template per BUTTON_STYLES entry (circle / square already existed)
+  { id: 'preset-002-button-style-frames', run: importer => importer.ensureButtonStyleFrames() },
+  // the 40 design-style DEFAULT_BUTTON_TEMPLATES as public `templates` buttons, right below the frames
+  { id: 'preset-003-design-button-templates', run: importer => importer.ensureDesignButtonTemplates() }
+];
 function seedNewPresets(db, services, importer) {
   try {
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_migrations'").get()) return;
@@ -56,7 +62,7 @@ function seedNewPresets(db, services, importer) {
     const done = new Set(db.prepare('SELECT id FROM mcp_migrations').all().map(r => r.id));
     for (const p of NEW_PRESETS) {
       if (done.has(p.id)) continue;
-      importer.ensurePresets(p.keys);
+      if (p.run) p.run(importer); else importer.ensurePresets(p.keys);
       db.prepare('INSERT OR IGNORE INTO mcp_migrations (id) VALUES (?)').run(p.id);
     }
   } catch (e) { console.warn('preset seeding skipped:', e.message); }

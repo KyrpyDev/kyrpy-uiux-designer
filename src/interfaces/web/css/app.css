@@ -152,6 +152,14 @@ h3, h4 { margin: 0; }
 .el-row { display: flex; gap: 6px; align-items: center; padding: 3px 7px; cursor: pointer; border-bottom: 1px solid rgba(120, 170, 230, .08); font-size: 12px; }
 .el-row:hover { background: #121d33; } .el-row.on { background: rgba(46, 155, 255, .25); }
 .el-row .t { color: var(--dim); font-family: Consolas, monospace; font-size: 11px; width: 52px; }
+.el-layers { position: relative; }
+.el-layers .el-row { user-select: none; }
+.el-layers .el-row:focus-visible { outline: 1px solid var(--accent, #2e9bff); outline-offset: -1px; }
+.el-layers .el-row.dragging { opacity: .4 !important; }
+.el-grip { display: inline-flex; color: var(--dim); cursor: grab; touch-action: none; padding: 2px 0; flex: none; }
+.el-grip:active { cursor: grabbing; }
+.el-drop-line { position: absolute; left: 4px; right: 4px; height: 2px; background: #2e9bff; border-radius: 1px; pointer-events: none; box-shadow: 0 0 0 1px rgba(46, 155, 255, .35); z-index: 2; }
+.el-drop-line[hidden] { display: none; }
 .anim-card { border: 1px solid var(--line); border-radius: 8px; padding: 7px; display: flex; flex-direction: column; gap: 6px; background: #0a1220; }
 
 /* modal + toast */
@@ -784,3 +792,13 @@ button.profile-stat:hover { border-color: var(--accent); }
 .left-reopen { display: none; flex: 0 0 22px; align-items: flex-start; justify-content: center; padding-top: 10px; background: var(--panel); border: 0; border-right: 1px solid var(--line); color: var(--muted); cursor: pointer; }
 .left-reopen:hover { color: var(--text); background: var(--panel-2, var(--panel)); }
 #left.collapsed ~ .left-reopen { display: flex; }
+
+/* topbar: project switcher in the centre, with a purple outer ring while the shared Default Public Project is active */
+.top-center { margin-left: auto; display: flex; align-items: center; min-width: 0; }
+.top-center + .top-right { margin-left: auto; }
+/* wide screens: exactly centred in the bar (narrow ones keep the in-flow placement so nothing overlaps) */
+@media (min-width: 1380px) { #topbar { position: relative; } #topbar .top-center { position: absolute; left: 50%; top: 0; bottom: 0; transform: translateX(-50%); margin: 0; z-index: 3; } }
+.proj-trigger-wrap.proj-default { padding: 2px 10px 2px 2px; border-radius: 10px; box-shadow: 0 0 0 2px rgba(168, 85, 247, .8), 0 0 12px rgba(168, 85, 247, .45); }
+.proj-trigger-wrap.proj-none { animation: proj-none-pulse 2.2s ease-in-out infinite; }
+@keyframes proj-none-pulse { 50% { box-shadow: 0 0 0 3px rgba(168, 85, 247, 1), 0 0 18px rgba(168, 85, 247, .75); } }
+@media (prefers-reduced-motion: reduce) { .proj-trigger-wrap.proj-none { animation: none; } }

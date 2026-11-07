@@ -33,7 +33,9 @@ export const state = {
   activeProjectId: 1,
   selectedProjectIds: new Set(),  // multi-selected project IDs in topbar dropdown (empty = activeProjectId or all)
   saveTargetProjectIds: new Set(), // multi-target project IDs selected next to "Save as…" in Designer
-  saveToUserPrivateLibrary: false, // whether Save / Save as… also saves to user's Global Private Library
+  // Save as… always saves into the user's Global Private Library: the target is locked on and cannot be switched off
+  get saveToUserPrivateLibrary() { return true; },
+  set saveToUserPrivateLibrary(_) { /* locked on */ },
   visibilityFilter: 'all',        // 'all' | 'public' | 'private' | 'project'
   trashCount: 0,
   templateDevices: [],
@@ -56,14 +58,16 @@ export function emit(evt, data) { for (const fn of handlers.get(evt) || []) { tr
 
 /* ---------- public library (immutable `public` system user) ---------- */
 export const isAdminUser = (u = state.user) => !!u && (['admin', 'superadmin'].includes(u.role) || u.username === 'kyrpy' || (u.permissions || []).includes('*'));
+/** The single superadmin: the only user who edits the public library in place (everyone else uses Save as… / change requests). */
+export const isSuperadminUser = (u = state.user) => !!u && u.role === 'superadmin';
 /** True when the record belongs to the public library (owned by the `public` system user). */
 export const isPublicLibraryItem = rec => !!rec && state.publicUserId != null && Number(rec.creatorId || rec.rootOwnerId || 0) === Number(state.publicUserId);
-/** Save rights: the owner, or an admin curating a public-library item. */
+/** Save rights: the owner, or the superadmin curating a public-library item. */
 export const canEditOwned = rec => {
   if (!rec) return true;
   const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
   if (ownerId === Number(state.user?.id || 1)) return true;
-  return isPublicLibraryItem(rec) && isAdminUser();
+  return isPublicLibraryItem(rec) && isSuperadminUser();
 };
 /** Display label of an owner: `@public · Public library` for the system user, `@name` otherwise. */
 export const ownerLabel = (username, id = null) => (username === 'public' || (id != null && state.publicUserId != null && Number(id) === Number(state.publicUserId))

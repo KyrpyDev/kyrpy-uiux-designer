@@ -1,8 +1,8 @@
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
-import { api } from './api.js';
+import { api, ApiError, setWriteGuard } from './api.js';
 import { state, on, emit, projectLabel } from './state.js';
-import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject, createEmptyItem } from './actions.js';
+import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
@@ -162,6 +162,40 @@ async function insertPresetElement(key) {
     await app.openDesign('element', el.id);
   }
 }
+
+/**
+ * First-edit rule: a user with no project of their own is working in the shared Default Public Project. Before the
+ * first create / edit / delete they have to name a project of their own; the open design is copied into it and
+ * opened there, and the edit that triggered the prompt is not applied (the caller shows the message below).
+ */
+let firstProjectFlow = null;
+async function firstProjectGuard() {
+  if (!needsFirstProject()) return;
+  firstProjectFlow ||= (async () => {
+    const name = await promptBox('Create your first project', {
+      value: 'My first project', okLabel: 'Create project',
+      label: 'You are in the shared Default Public Project. Name a project of your own: your changes are saved there, so the shared library stays untouched.'
+    });
+    if (!name?.trim()) return { cancelled: true };
+    const created = await api.createProject({ name: name.trim(), visibility: 'private' });
+    state.projects = await api.projects();
+    state.selectedProjectIds.add(created.id);
+    let copy = null;
+    const cur = app.current;
+    if (cur?.type && cur.id) {
+      try { copy = await api.cloneDesign(cur.type, cur.id, { name: app.designer?.doc?.name, projectId: created.id }); } catch { /* the project exists; the user can clone the item by hand */ }
+    }
+    await setActiveProject(created.id);
+    buildTopbar();
+    if (copy) await app.openDesign(cur.type, copy.id);
+    return { created, copied: !!copy };
+  })().finally(() => { setTimeout(() => { firstProjectFlow = null; }, 0); });
+  const r = await firstProjectFlow;
+  throw new ApiError(r.cancelled
+    ? 'Create your own project first: edits are not allowed in the shared Default Public Project.'
+    : `Project "${r.created.name}" created. Your last change was not applied${r.copied ? ': you are now editing your own copy of this item in it' : ''}: do it again there.`);
+}
+setWriteGuard(firstProjectGuard);
 
 async function newProjectAction() {
   const name = await promptBox('New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
@@ -507,7 +541,14 @@ function buildProjectsMultiDropdown() {
   }, iconEl('folder', { size: 17 }), selCount ? h('span', { class: 'tb-badge' }, String(selCount)) : null);
   // Active project name shown as a label aligned beside the icon button
   const projLabel = h('span', { class: 'proj-active-label', title: activeProj.name }, activeProj.name);
-  const triggerWrap = h('div', { class: 'proj-trigger-wrap' }, triggerBtn, projLabel);
+  const inDefault = Number(activeProj.id) === DEFAULT_PROJECT_ID;
+  const noOwn = !ownProjects().length;
+  const triggerWrap = h('div', {
+    class: `proj-trigger-wrap${inDefault ? ' proj-default' : ''}${inDefault && noOwn ? ' proj-none' : ''}`,
+    'data-tip': inDefault
+      ? (noOwn ? 'You are in the shared Default Public Project and have no project of your own yet.\nYour first edit asks you to create one.' : 'You are in the shared Default Public Project.\nSwitch to one of your own projects to work on your designs.')
+      : null
+  }, triggerBtn, projLabel);
 
   const rebuildDropdown = () => {
     clear(panel);
@@ -696,7 +737,8 @@ function renderTopbar() {
   bar.append(buildThemeMenu());
   // API / MCP health dots (links to /docs/api and /docs/mcp in a new tab; polling lives in health-status.js)
   const healthGroup = h('div', { class: 'tb-health-group', role: 'group', 'aria-label': 'Service health' }, healthIndicators());
-  bar.append(h('div', { class: 'top-right' }, healthGroup, projDropdown, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
+  bar.append(h('div', { class: 'top-center' }, projDropdown));
+  bar.append(h('div', { class: 'top-right' }, healthGroup, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
   buildTypeBar();
 }
 /* Designer-page section: switch between path / icon / button / element / screen / workflow / item browser,
@@ -822,6 +864,11 @@ async function boot() {
   state.settings = b.settings; state.themes = b.themes; state.devices = b.devices; state.counts = b.counts; state.themeKey = b.settings.theme;
   state.authConfig = b.authConfig || { appMode: 'dev', bypassLogin: true, requireAuth: false };
   state.trashCount = b.trashCount ?? b.counts?.trash ?? 0;
+  // reopen the project that was active before the refresh (the session header already carries it; the topbar and the
+  // library filter must agree with it) instead of always falling back to the Default Public Project
+  state.projects = b.projects || [];
+  state.activeProjectId = pickStartupProject(api.getSession()?.projectId);
+  api.setSession({ projectId: state.activeProjectId });
   if (!state.themes.find(t => t.key === state.themeKey)) state.themeKey = state.themes[0].key;
   applyThemeChrome();
   await ensureAuthGate({ authConfig: state.authConfig, authenticated: Boolean(b.authenticated) });

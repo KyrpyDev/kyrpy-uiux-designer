@@ -46,6 +46,7 @@ src/data/*.tmp.db*
 src/data/*.db-shm
 src/data/*.db-wal
 src/data/*.db-journal
+publish/
 *.log
 *.pid
 .designer-runner.pid

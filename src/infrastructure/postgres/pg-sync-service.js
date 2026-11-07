@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL DEFAULT '',
   last_login_at TEXT
 );
+-- exactly one superadmin (created only when the remote has at most one, so an old copy never blocks the schema script)
+DO $$ BEGIN
+  IF (SELECT COUNT(*) FROM users WHERE role = 'superadmin') <= 1 THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_superadmin ON users(role) WHERE role = 'superadmin';
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY,
@@ -590,6 +596,12 @@ export class PostgresSyncService {
         const pkCol = tbl.pk[0];
         const idList = rows.map(r => pgLiteral(r[pkCol])).join(', ');
         statements.push(`DELETE FROM "${tbl.name}" WHERE "${pkCol}" NOT IN (${idList});`);
+      }
+      // a remote superadmin that is not the local one steps down first: the single-superadmin index would reject
+      // upserting the new superadmin while the old one still holds the role (rows are written one by one)
+      if (tbl.name === 'users') {
+        const keep = rows.filter(r => r.role === 'superadmin').map(r => pgLiteral(r.id));
+        statements.push(`UPDATE "users" SET "role" = 'admin' WHERE "role" = 'superadmin' AND "id" NOT IN (${keep.length ? keep.join(', ') : '-1'});`);
       }
       const cols = Object.keys(rows[0]);
       const colList = cols.map(c => `"${c}"`).join(', ');

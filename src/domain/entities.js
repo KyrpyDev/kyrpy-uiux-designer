@@ -31,6 +31,15 @@ export const NODE_TAGS = ['rect', 'circle', 'ellipse', 'path', 'line', 'polyline
 export const NODE_KINDS = ['shape', 'text', 'group', 'instance'];
 
 export const VISIBILITY_LEVELS = ['public', 'private', 'project'];
+
+/** Stable partition: `userId`'s own private items first, every other item after them in its existing order (O(n)). */
+export function privateFirst(list, userId) {
+  const uid = Number(userId || 1);
+  const own = [], rest = [];
+  for (const d of list || []) (d.visibility === 'private' && Number(d.creatorId || 1) === uid ? own : rest).push(d);
+  return own.length ? own.concat(rest) : rest;
+}
+
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];
 export const PROJECT_ROLES = ['owner', 'admin', 'editor', 'contributor', 'viewer'];
 
@@ -291,6 +300,68 @@ export function applyButtonStyleAndIconSizeToNodes(nodes, { width = 64, height =
     }
     return { ...n, attrs };
   });
+}
+
+/** Key of the public-library frame template of a button style (`button-frame-circle`, `button-frame-pill`, ...). */
+export const buttonStyleFrameKey = styleKey => `button-frame-${styleKey}`;
+
+/** Box of a style's frame template: 64x64, except pill, which needs a wide box to look different from circle. */
+export const buttonStyleFrameSize = styleKey => (normalizeButtonStyleKey(styleKey) === 'pill' ? { width: 112, height: 48 } : { width: 64, height: 64 });
+
+/** True for a built-in per-style frame template; "Apply All" leaves these on their own style. */
+export function isButtonStyleFrame(b) {
+  return !!b?.builtin && BUTTON_STYLES.some(s => buttonStyleFrameKey(s.key) === b.key);
+}
+
+/** Keys of the built-in design-style button templates, also seeded into the public Buttons library (preset-003). */
+export const DESIGN_BUTTON_TEMPLATE_KEYS = new Set(DEFAULT_BUTTON_TEMPLATES.map(b => b.key));
+
+/** True for a built-in design-style template button; "Apply All" leaves these on their own design style. */
+export function isDesignButtonTemplate(b) {
+  return !!b?.builtin && DESIGN_BUTTON_TEMPLATE_KEYS.has(b.key);
+}
+
+/**
+ * Nodes of a design-style button template (`DEFAULT_BUTTON_TEMPLATES` entry or a custom template_buttons row):
+ * a themed `surface` with its hover effect, a `shine` for shine / glass styles and a centred label (`label`, default the
+ * template name) unless circular.
+ */
+export function designButtonTemplateNodes(b, { label = b.name } = {}) {
+  const w = Number(b.width) || 160, h = Number(b.height) || 48;
+  const rx = Math.round(Math.min(w, h) * (Number(b.rxRatio) || 0.3));
+  const swRatio = Number(b.strokeRatio) || 1;
+  const swToken = swRatio === 1 ? '{{sw}}' : `{{sw*${swRatio}}}`;
+  const nodes = [
+    { tag: 'rect', role: b.role || 'button', name: 'surface', attrs: { x: 0, y: 0, width: w, height: h, rx, 'stroke-width': swToken },
+      animations: b.hoverEffect && b.hoverEffect !== 'none' ? [{ name: `hover-${b.hoverEffect}`, type: b.hoverEffect === 'fill' ? 'pulse' : b.hoverEffect, trigger: 'hover', durationMs: 600, iterations: 1 }] : [] }
+  ];
+  if (b.hoverEffect === 'shine' || b.category === 'glass') {
+    nodes.push({ tag: 'rect', role: 'shine', name: 'shine', attrs: { x: Math.round(w * 0.06), y: 3, width: Math.round(w * 0.88), height: Math.round(h * 0.42), rx: Math.max(4, Math.round(rx * 0.6)) } });
+  }
+  if (b.shape !== 'circle') {
+    nodes.push({ tag: 'text', kind: 'text', name: 'label', text: label, attrs: { x: Math.round(w / 2), y: Math.round(h / 2 + 5), 'font-size': 14, 'font-weight': 700, 'text-anchor': 'middle', fill: '{{text}}' } });
+  }
+  return nodes;
+}
+
+/**
+ * Nodes of the empty (no icon) frame template of a button style: a themed `surface` plus a `shine`, shaped by
+ * `applyButtonStyleAndIconSizeToNodes`. Outline gets an accent stroke and no shine, ghost gets its opacity.
+ */
+export function buttonStyleFrameNodes(styleKey, { width = 64, height = 64 } = {}) {
+  const key = normalizeButtonStyleKey(styleKey);
+  const def = BUTTON_STYLES.find(s => s.key === key);
+  const base = [
+    { id: 1, parentId: null, tag: 'rect', kind: 'shape', role: 'button', name: 'surface', attrs: { x: '0', y: '0', width: String(width), height: String(height), rx: '0' } },
+    { id: 2, parentId: null, tag: 'rect', kind: 'shape', role: 'shine', name: 'shine', attrs: { x: '5', y: '3', width: String(width - 10), height: String(Math.round(height * 0.4)), rx: '0' } }
+  ];
+  let nodes = applyButtonStyleAndIconSizeToNodes(base, { width, height, buttonStyle: key });
+  if (def.strokeRatio) {
+    nodes = nodes.filter(n => n.role !== 'shine');
+    nodes[0].attrs = { ...nodes[0].attrs, stroke: '{{accent}}', 'stroke-width': `{{sw*${def.strokeRatio}}}`, filter: 'none' };
+  }
+  if (def.opacity != null) nodes[0].attrs = { ...nodes[0].attrs, opacity: String(def.opacity) };
+  return nodes;
 }
 
 export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
