@@ -38,6 +38,7 @@ import {
 } from './application/user-project-collab-service.js';
 import { ExportService } from './application/export/export-service.js';
 import { SvgImportService } from './application/svg-import-service.js';
+import { OnlineIconService } from './application/online-icon-service.js';
 import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
@@ -169,6 +170,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   projects.libraryTransfer = libraryTransfer;
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
+  const onlineIcons = new OnlineIconService({ services, transaction });
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
   seedNewPresets(db, services, importer);
@@ -212,6 +214,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     iconCatalog,
     exporter,
     svgImport,
+    onlineIcons,
     importer,
     mcp,
     /** Id of the immutable `public` system user that owns the public library. */

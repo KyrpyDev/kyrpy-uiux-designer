@@ -9,6 +9,11 @@ import { state, on, emit, libOf, PLURAL, canEditOwned } from '../state.js';
 import { newDesign, cloneDesign, deleteDesign, downloadSvg, importSvgDialog, importFolderOrFontDialog, reloadLibrary } from '../actions.js';
 import { openExportDialog } from './export-dialog.js';
 import { openLineageModal } from './collab-modals.js';
+import { buildOnlinePanel } from './online-icons-panel.js';
+
+const ONLINE_KEY = 'ud_online_icons';
+const onlineShown = () => { try { return localStorage.getItem(ONLINE_KEY) === '1'; } catch { return false; } };
+const setOnlineShown = v => { try { localStorage.setItem(ONLINE_KEY, v ? '1' : '0'); } catch { /* storage blocked: toggle lasts for this view only */ } };
 import { openCopyMoveToProjectsModal, openItemBrowserModal, openLibraryExportImportModal, refreshGlobalLibraryAndCounts } from './item-browser.js';
 import { TYPES, canContain, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, scopeFirst, visClass } from '/domain/entities.js';
 
@@ -422,7 +427,17 @@ export class LibraryPanel {
   }
 
   /* ---------- icons (drawn from the shared sprite; virtualized for libraries with thousands of pack icons) ---------- */
+  /** Show / hide switch of the online icon sources (free Iconify API sets); remembered in the browser. */
+  onlineToggle() {
+    const on = onlineShown();
+    return h('button', { class: `btn small${on ? ' active' : ''}`, 'aria-pressed': on, title: on ? 'Hide online icon sources' : 'Show online icon sources: search and import SVG icons from free APIs (Tabler, Lucide, Line MD, Spinners, Meteocons, Devicon, brands…)', onclick: () => { setOnlineShown(!on); this.renderBody(); } }, on ? '🌐 Online: shown' : '🌐 Online');
+  }
+
   iconsTab() {
+    if (onlineShown()) {
+      this.bodyEl.append(h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, this.onlineToggle(), h('span', { class: 'dim', style: { fontSize: '11px' } }, 'Imported icons land in your active project (SVG only).')), buildOnlinePanel());
+      return;
+    }
     const list = state.library.icons;
     const large = list.length > LARGE_ICON_LIBRARY;
     const selSet = state.libSel.icon;
@@ -585,6 +600,7 @@ export class LibraryPanel {
     this._offSpriteReset = on('sprite:reset', () => { if (scroller.isConnected) ensureIconSymbols([...cells.keys()]); });
     this.bodyEl.append(
       this.head('icon', list, fill, [
+        this.onlineToggle(),
         h('button', { class: 'btn small', title: 'Import single SVG file or markup', onclick: async () => { const r = await importSvgDialog('icon'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, 'Import SVG'),
         h('button', { class: 'btn small', title: 'Batch import from an SVG folder into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '📁 Folder'),
         h('button', { class: 'btn small', title: 'Import glyphs from Fonts (.svg / .ttf / .woff / symbols) into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '🔤 Fonts')

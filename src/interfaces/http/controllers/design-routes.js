@@ -151,6 +151,13 @@ export function designRoutes(router, c) {
     return { usedKeys, paths, icons, iconsVersion, iconSummary: true, buttons, elements, animations: c.animationList() };
   });
   router.get('/api/sprite', ({ query }) => ({ raw: c.render.sprite(query.get('theme') || c.settings.get().theme), contentType: 'image/svg+xml' }));
+  // online icon sources (Iconify API): browse sets, search, preview, import one / many / a whole set (<= 10 000)
+  router.get('/api/online/sources', () => ({ sources: c.onlineIcons.sources() }));
+  router.get('/api/online/collections', async () => ({ collections: await c.onlineIcons.collections() }));
+  router.get('/api/online/search', ({ query }) => c.onlineIcons.search({ q: query.get('q') || '', prefix: query.get('prefix') || '', start: query.get('start'), limit: query.get('limit') }));
+  router.get('/api/online/svg', async ({ query }) => ({ raw: await c.onlineIcons.svg({ prefix: query.get('prefix'), name: query.get('name'), color: query.get('color') || '' }), contentType: 'image/svg+xml' }));
+  router.post('/api/online/import', ({ body, actor, projectId }) => c.onlineIcons.importIcons({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor }));
+  router.post('/api/online/import-set', ({ body, actor, projectId }) => c.onlineIcons.importSet({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor }));
   router.get('/api/import/folders', () => ({ folders: c.svgImport.listSuggestedFolders() }));
   router.post('/api/import/svg', ({ body, actor, projectId }) =>
     c.svgImport.import({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
