@@ -21,7 +21,7 @@ import { reorderLayer, stepLayer } from '/domain/node-ops.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
-import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem } from '../actions.js';
+import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { openIconPicker } from './inspector.js';
 import { MenuEditor, menuActions } from './menu-editor.js';
@@ -381,6 +381,26 @@ export class Designer {
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
     this.deviceMenu = this.type === 'screen' ? this.buildDeviceMenu() : null;
     this.docState = h('span', { class: 'doc-state', role: 'status' });
+    // Trash: moves the open item to the trash (restorable); the owner / admin only, library items follow the same rules as the library panel
+    const trashBtn = ibtn('trash', 'Move to trash', () => this.doc && deleteDesign(this.type, this.doc), {
+      disabled: !ownedByMe || !!d.builtin,
+      desc: d.builtin ? 'Default basic items cannot be deleted' : 'Move this item to the Trash (restore or purge it there)', cls: 'doc-trash'
+    });
+    // Publish to public: admins publish at once; everybody else files a request the admins approve first
+    const isAdminNow = state.user && ['admin', 'superadmin'].includes(state.user.role);
+    const publishBtn = ibtn('globe', 'Publish to public', async () => {
+      if (!this.doc) return;
+      try {
+        const r = await api.publishToPublic(this.type, this.doc.id);
+        if (r.status === 'published') toast(`"${this.doc.name}" published to the public library (+${r.subItemsCount || 0} sub-items)`, 'ok', 3200);
+        else toast(r.duplicate ? 'A publish request for this item is already waiting for admin approval' : 'Publish request sent: an admin must approve it; the item becomes public after approval', 'ok', 4200);
+        await reloadLibrary({ silent: true });
+      } catch (e) { toast(e.message, 'error'); }
+    }, {
+      disabled: !ownedByMe || (d.visibility === 'public' && !d.projectId),
+      desc: isAdminNow ? 'Copy this item (with all sub-items) into the public library now' : 'Ask the admins to publish this item (with all sub-items) to the public library; it goes public after their approval',
+      cls: 'doc-publish'
+    });
 
     const visOrder = ['public', 'private', 'project'];
     const visLabel = d.visibility === 'project'
@@ -433,6 +453,8 @@ export class Designer {
       moveToProjBtn,
       this.saveTargetsDropdown,
       this.resetBtn,
+      trashBtn,
+      publishBtn,
       this.deviceMenu,
       h('span', { class: 'sep-v' }),
       lockDocBtn,

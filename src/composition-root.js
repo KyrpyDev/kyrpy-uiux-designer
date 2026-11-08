@@ -170,6 +170,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   });
   projects.services = services;
   projects.libraryTransfer = libraryTransfer;
+  collaboration.libraryTransfer = libraryTransfer;
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, templates, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });

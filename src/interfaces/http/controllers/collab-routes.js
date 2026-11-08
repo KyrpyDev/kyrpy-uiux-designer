@@ -176,6 +176,7 @@ export function collabRoutes(router, c) {
   router.post('/api/library/move-to-projects', ({ body, actor }) =>
     c.libraryTransfer.moveToProjects({ ...(body || {}), actor })
   );
+  router.post('/api/library/publish', ({ body, actor }) => c.collaboration.requestPublish({ type: body?.type, id: body?.id, actor }));
   router.post('/api/library/save-to-targets', ({ body, actor }) =>
     c.libraryTransfer.saveAsToTargets({ ...(body || {}), actor })
   );

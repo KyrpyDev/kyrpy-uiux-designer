@@ -413,6 +413,7 @@ export const api = {
   copyToProjects: body => api.post('/api/library/copy-to-projects', body),
   moveToProjects: body => api.post('/api/library/move-to-projects', body),
   saveToTargets: body => api.post('/api/library/save-to-targets', body),
+  publishToPublic: (type, id) => api.post('/api/library/publish', { type, id }),
   emptyProjectLibrary: (projectId, body = {}) =>
     projectId
       ? api.post(`/api/projects/${projectId}/empty-library`, body)

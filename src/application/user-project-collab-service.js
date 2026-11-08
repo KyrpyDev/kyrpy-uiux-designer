@@ -862,6 +862,37 @@ export class CollaborationService {
     });
   }
 
+  /**
+   * "Publish to public": copies an item (with all sub-items) into the public library. The superadmin and admins publish
+   * right away; everybody else files a pending `publish` change request that the admins are informed about (the
+   * "Collaborative changes" list + badge) and the copy is made only after an admin approves it.
+   */
+  requestPublish({ type, id, actor = null } = {}) {
+    const t = String(type || '').trim().replace(/s$/, '');
+    if (!['path', 'icon', 'button', 'element', 'screen', 'workflow'].includes(t) || !Number(id)) throw new ValidationError('Valid item type and id are required');
+    if (!actor) throw new ForbiddenError('Sign in to publish');
+    const svc = t === 'workflow' ? this.workflows : this.services?.[t];
+    const item = svc?.get(Number(id));
+    if (!item) throw new ValidationError(`${t} #${id} not found`);
+    const pub = this.auth.publicUserId();
+    if (pub != null && Number(item.creatorId) === Number(pub) && (item.visibility || 'public') === 'public') throw new ValidationError(`"${item.name}" is already in the public library`);
+    if (!this.auth.isAdmin(actor) && Number(item.creatorId) !== Number(actor.id)) throw new ForbiddenError('Only the owner or an admin can publish this item');
+    if (this.auth.isAdmin(actor)) {
+      const res = this.libraryTransfer.publishToPublic({ type: t, id: Number(id), actor });
+      return { status: 'published', ...res };
+    }
+    const dup = this.changes.list({ status: 'pending' }).find(c => c.action === 'publish' && c.targetType === t && Number(c.targetId) === Number(id));
+    if (dup) return { status: 'pending', change: dup, duplicate: true };
+    const superadmin = this.users.list().find(u => u.role === 'superadmin');
+    const change = this.changes.create({
+      projectId: item.projectId ?? 1, targetType: t, targetId: Number(id), targetKey: item.key || '', targetName: item.name || '',
+      authorId: actor.id, ownerId: superadmin?.id ?? 1, action: 'publish',
+      summary: `publish ${t} "${item.name || item.key}" (with all sub-items) to the public library — needs admin approval`,
+      beforeSnapshot: {}, afterSnapshot: {}, diffSummary: {}, status: 'pending'
+    });
+    return { status: 'pending', change };
+  }
+
   recordChange(input = {}) {
     return this.recordEdit({
       ...input,
@@ -877,6 +908,12 @@ export class CollaborationService {
     const effActor = actor || reviewer || (reviewerId ? this.users.get(Number(reviewerId)) : null);
     // AI changeset ops (src/mcp) are applied by their own review flow, not by snapshot restore
     if (this.externalReviewer?.handles(ch)) return this.externalReviewer.review(ch, 'approve', { actor: effActor, comment: comment || reviewNote || '' });
+    if (ch.action === 'publish') {   // only admins may put items into the public library
+      if (effActor && !this.auth.isAdmin(effActor)) throw new ForbiddenError('Only an admin can approve publishing to the public library');
+      const author = this.users.get(ch.authorId);
+      this.libraryTransfer.publishToPublic({ type: ch.targetType, id: ch.targetId, actor: effActor || author });
+      return this.changes.updateStatus(ch.id, { status: 'approved', reviewerId: effActor?.id ?? reviewerId ?? ch.ownerId ?? 1, reviewComment: comment || reviewNote || '' });
+    }
     if (effActor && !this.auth.isAdmin(effActor) && effActor.id !== ch.ownerId) {
       const p = this.projects.get(ch.projectId);
       if (!p || p.ownerId !== effActor.id) throw new ForbiddenError('Only the item/project owner or admin can approve changes');
@@ -921,7 +958,7 @@ export class CollaborationService {
       const p = this.projects.get(ch.projectId);
       if (!p || p.ownerId !== effActor.id) throw new ForbiddenError('Only the item/project owner or admin can reject changes');
     }
-    if (ch.beforeSnapshot && Array.isArray(ch.beforeSnapshot.nodes)) {
+    if (ch.action !== 'publish' && ch.beforeSnapshot && Array.isArray(ch.beforeSnapshot.nodes)) {
       if (ch.targetType === 'workflow' && this.workflows) {
         try { this.workflows.restore(ch.targetId, ch.beforeSnapshot); } catch { /* ignore */ }
       } else if (this.services[ch.targetType]) {
@@ -1675,6 +1712,24 @@ export class LibraryTransferService {
     const fullCopy = svc.get(copyRec.id);
     memo.set(cacheKey, fullCopy);
     return fullCopy;
+  }
+
+  /** Copies an item (and every sub-item) into the public library: project 1, `public` visibility, owned by the immutable `public` user. */
+  publishToPublic({ type, id, actor = null } = {}) {
+    const pub = this.auth.publicUserId();
+    if (pub == null) throw new ValidationError('The public library owner is missing');
+    return this.transaction(() => {
+      const res = this.copyToProjects({ items: [{ type, id: Number(id) }], projectIds: [1], visibility: 'public', actor: { id: pub, username: 'public', role: 'viewer' } });
+      for (const c of [...res.copied, ...res.subItems]) {
+        const rec = c.item || c;
+        try {
+          if (c.type === 'workflow') this.workflows.workflows.update?.(c.id, { rootOwnerId: pub });
+          else this.services[c.type].designs.update(c.id, { rootOwnerId: pub, creatorId: pub });
+        } catch { /* ownership fix is best effort per item */ }
+        void rec;
+      }
+      return { publishedCount: res.copiedCount, subItemsCount: res.subItemsCount, copy: res.copied[0]?.item || null, by: actor?.username || null };
+    });
   }
 
   copyToProjects({ items, projectIds = [], visibility = 'project', includeUserPrivate = false, overrideName = null, actor = null } = {}) {
