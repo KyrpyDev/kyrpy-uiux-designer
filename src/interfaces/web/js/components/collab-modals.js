@@ -181,13 +181,22 @@ export async function openAuthModal() {
  * Full-screen Login / Register Protection Page for Release Mode (`APP_MODE=release` / `BYPASS_AUTH=false`),
  * with automatic or one-click bypass in Dev Mode (`APP_MODE=dev` / `BYPASS_AUTH=true`).
  */
+const SIGNED_OUT_KEY = 'ud-signed-out';
+const signedOutFlag = {
+  get() { try { return localStorage.getItem(SIGNED_OUT_KEY) === '1'; } catch { return false; } },
+  set(on) { try { on ? localStorage.setItem(SIGNED_OUT_KEY, '1') : localStorage.removeItem(SIGNED_OUT_KEY); } catch { /* storage unavailable */ } }
+};
+
 export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: true, requireAuth: false }, authenticated = false, forceGate = false } = {}) {
   const urlParams = new URLSearchParams(window.location.search);
   const queryWantsLogin = urlParams.get('login') === '1';
   const hasStoredToken = Boolean(api.getSession()?.token);
+  // an explicit sign-out sticks across reloads (even in dev mode) until the next successful sign-in
+  if (forceGate) signedOutFlag.set(true);
+  const signedOut = signedOutFlag.get() && !authenticated && !hasStoredToken;
 
   // In Dev mode, bypass the login/register page automatically unless explicitly forced (?login=1 or Sign Out)
-  if (!forceGate && !queryWantsLogin && (authConfig.bypassLogin || authenticated || hasStoredToken)) {
+  if (!forceGate && !queryWantsLogin && !signedOut && (authConfig.bypassLogin || authenticated || hasStoredToken)) {
     return Promise.resolve(state.user);
   }
 
@@ -208,6 +217,7 @@ export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: tru
         api.setSession({ token: res.token, userId: res.user.id });
         state.user = res.user;
       }
+      signedOutFlag.set(false);
       gateOverlay.remove();
       await reloadLibrary({ silent: true }).catch(() => {});
       emit('auth:changed', state.user);
