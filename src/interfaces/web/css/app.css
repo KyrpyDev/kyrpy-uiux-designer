@@ -858,3 +858,9 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .lib-sel-badge { position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: var(--accent, #2e9bff); color: #fff; font-size: 10px; line-height: 15px; text-align: center; }
 .lib-pop { position: fixed; z-index: 400; width: min(360px, 94vw); padding: 10px; background: var(--panel2, #101a2e); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 14px 44px rgba(0, 0, 0, .65); }
 .lib-pop-col { display: flex; flex-direction: column; gap: 8px; }
+
+/* the project button and the ownership status share one thick purple edge */
+#topbar .top-center { border: 3px solid #a855f7; border-radius: 12px; padding: 2px 6px; gap: 4px; background: rgba(168, 85, 247, .07); }
+#topbar .top-center .proj-multi-trigger { border-color: #a855f7; }
+.tm-glyph { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.tool-menu-panel { max-height: 60vh; overflow: auto; }

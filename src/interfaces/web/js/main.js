@@ -818,6 +818,7 @@ function buildTypeBar() {
     inDesigner ? h('span', { class: 'sep-v' }) : null,
     inDesigner ? designer.docbar : null,
     ...(inDesigner ? (designer.toolToggles || []) : []),
+    ...(inDesigner ? (designer.pathGroups || []) : []),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
     ...(inDesigner ? (designer.viewControls || []) : [])

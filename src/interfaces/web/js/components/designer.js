@@ -7,6 +7,7 @@
 import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
+import { editedKeys } from '../edited.js';
 import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
@@ -49,6 +50,7 @@ const TOOLS = [
   ['crop', 'X', '⛶', 'Crop: drag a rectangle, the selected shapes keep only what is inside it'],
   ['path', 'P', '✎', 'New path (enter the d attribute)']
 ];
+const TAB_GLYPH = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow' };
 const MIN_Z = 0.04, MAX_Z = 80;
 const GLYPH = new Set(['path', 'icon']);
 const deep = o => JSON.parse(JSON.stringify(o));
@@ -453,8 +455,6 @@ export class Designer {
     });
 
     this.docbar.append(...[
-      this.backBtn,
-      this.backBtn ? h('span', { class: 'sep-v' }) : null,
       this.saveBtn,
       this.saveAsBtn,
       this.saveTargetsDropdown,
@@ -499,11 +499,26 @@ export class Designer {
     this.refreshBack();
   }
 
+  /** The old Back button, now a history tool: a scrollable drop-down of the items edited in this session (most recent first), plus Back. */
+  historyMenu() {
+    const btn = this.toolMenu('back', 'History: items edited in this session', () => {
+      const rows = [];
+      if (this.opts.canBack?.()) rows.push(['back', `Back to ${this.opts.backTarget?.() || 'the previous page'}`, () => this.opts.onBack?.(), 'Alt+←']);
+      for (const k of editedKeys()) {
+        const [type, id] = k.split(':'), rec = findDesign(type, Number(id));
+        if (rec) rows.push([TAB_GLYPH[type] || 'dot', `${rec.name || rec.key}  ·  ${type}`, () => this.opts.openDesign?.(type, Number(id)), `Open ${type} "${rec.name}"`]);
+      }
+      return rows;
+    });
+    btn.classList.add('history-tool'); btn.dataset.act = 'back';
+    this.backBtn = btn;
+    return btn;
+  }
+
   /** Enables/disables Back and says where it goes (the app calls this whenever the page history changes). */
   refreshBack() {
     if (!this.backBtn) return;
     const target = this.opts.backTarget?.();
-    this.backBtn.disabled = !(this.opts.canBack?.() ?? false);
     this.backBtn.title = target ? `Back to ${target} (Alt+←)` : 'Back to the previous page (Alt+←)';
   }
 
@@ -674,13 +689,25 @@ export class Designer {
     this.buildDocBar();
     const s = state.settings;
     const tools = TOOLS.filter(t => !(this.isGlyph && ['text', 'container', 'carousel'].includes(t[0])));
+    const GROUPS = [['Select and containers', ['select', 'node', 'container', 'carousel']], ['Shapes', ['rect', 'circle', 'ellipse', 'polygon', 'star', 'arrow', 'callout']], ['Draw, text and crop', ['freehand', 'line', 'pen', 'text', 'crop', 'path']]];
+    this.toolGroupBtns = [];
+    const toolGroups = GROUPS.map(([label, keys]) => {
+      const items = tools.filter(t => keys.includes(t[0]));
+      if (!items.length) return null;
+      const entries = items.map(([k, key, glyph, tip]) => [`@${glyph}`, `${tip.split(':')[0]} (${key})`, () => (k === 'node' ? this.vtx.enter(this.selectedNodes()[0]) : this.setTool(k)), tip]);
+      const btn = this.toolMenu(`@${items[0][2]}`, label, entries);
+      btn.dataset.group = items.map(t => t[0]).join(',');
+      btn.dataset.glyphs = JSON.stringify(Object.fromEntries(items.map(t => [t[0], t[2]])));
+      this.toolGroupBtns.push(btn);
+      return btn;
+    }).filter(Boolean);
     const tool = ([k, key, glyph, tip]) => h('button', { class: `icon-btn${this.tool === k ? ' active' : ''}`, title: `${tip} (${key})`, dataset: { tool: k }, onclick: () => (k === 'node' ? this.vtx.enter(this.selectedNodes()[0]) : this.setTool(k)) }, glyph);
     const toggle = (icon, tip, get, set, desc = '') => { const b = ibtn(icon, tip, () => { set(!get()); b.classList.toggle('active', get()); }, { desc, active: get() }); b.dataset.view = '1'; return b; };
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
     const kids = [
       h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
       this.titleField(),
-      h('span', { class: 'sep-v' }), ...tools.map(tool), h('span', { class: 'sep-v' }),
+      h('span', { class: 'sep-v' }), ...toolGroups, this.historyMenu(), h('span', { class: 'sep-v' }),
       ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
       ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
       ibtn('copy', 'Duplicate', () => this.duplicateSelected(), { kbd: 'Ctrl+D' }),
@@ -719,8 +746,9 @@ export class Designer {
     this.viewControls = kids.filter(k => k.dataset?.view === '1');
     this.toolToggles = kids.filter(k => k.dataset?.tools === '1');
     this.bar.append(...kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1'));
-    emit('topbar:refresh');
     this.buildPathBar();
+    this.setTool(this.tool);
+    emit('topbar:refresh');
   }
 
   setTool(t) {
@@ -728,6 +756,11 @@ export class Designer {
     if (t === 'pen' || t === 'crop') this.vtx.exit();
     this.tool = t;
     this.bar.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+    for (const b of this.toolGroupBtns || []) {
+      const on = b.dataset.group.split(',').includes(t);
+      b.classList.toggle('active', on);
+      if (on) { const g = JSON.parse(b.dataset.glyphs)[t]; const sp = b.querySelector('.tm-glyph'); if (sp && g) sp.textContent = g; }
+    }
     this.viewport.style.cursor = t === 'select' ? 'default' : 'crosshair';
   }
 

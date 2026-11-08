@@ -17,6 +17,8 @@ import { openEventsModal, openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
 import { reloadLibrary } from '../actions.js';
 
+/** '@x' draws the text glyph x, anything else is an icon name. */
+const glyphOrIcon = (ic, size) => (String(ic).startsWith('@') ? h('span', { class: 'tm-glyph', style: { width: `${size}px`, fontSize: `${size - 3}px` } }, String(ic).slice(1)) : iconEl(ic, { size }));
 const byOrd = (a, b) => a.ord - b.ord || a.id - b.id;
 const OP_LABEL = { union: 'Union', subtract: 'Cut out', intersect: 'Crop', exclude: 'Exclude' };
 
@@ -327,15 +329,16 @@ const methods = {
     const btn = h('button', { class: 'btn small ib tool-menu-btn', 'aria-haspopup': 'true', 'aria-label': label, 'data-tip': label,
       onclick: () => {
         if (panel) return close();
-        panel = h('div', { class: 'tool-menu-panel', role: 'menu' }, entries.map(([ic, tip, fn, desc]) => h('button', { class: 'tool-menu-item', role: 'menuitem', title: desc || tip,
-          onclick: () => { close(); fn(); } }, iconEl(ic, { size: 16 }), h('span', {}, tip))));
+        const list = typeof entries === 'function' ? entries() : entries;
+        panel = h('div', { class: 'tool-menu-panel', role: 'menu' }, list.length ? list.map(([ic, tip, fn, desc]) => h('button', { class: 'tool-menu-item', role: 'menuitem', title: desc || tip,
+          onclick: () => { close(); fn(); } }, glyphOrIcon(ic, 16), h('span', {}, tip))) : [h('div', { class: 'muted', style: { padding: '6px 10px', fontSize: '12px' } }, 'Nothing here yet')]);
         document.body.append(panel);
         const r = btn.getBoundingClientRect();
         panel.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - panel.offsetWidth - 4))}px`;
         panel.style.top = `${r.bottom + 4}px`;
         btn.classList.add('active');
         document.addEventListener('pointerdown', away, true); document.addEventListener('keydown', esc, true);
-      } }, iconEl(icon, { size: 17 }), iconEl('chevDown', { size: 11 }));
+      } }, glyphOrIcon(icon, 17), iconEl('chevDown', { size: 11 }));
     return btn;
   },
 
@@ -389,7 +392,7 @@ const methods = {
         ['copy', 'Copy style', () => this.copySelectedStyle(), 'Copy fill / stroke / role style from the selected element'],
         ['paste', 'Paste style', () => this.pasteSelectedStyle(), 'Paste the copied style onto the selected element(s)']])
     ];
-    this.bar.append(h('span', { class: 'sep-v' }), ...groups);
+    this.pathGroups = groups;   // shown in the top (page) toolbar
   },
 
   /** Reference point (9-point grid) of this design; centre ('mc') by default. Stored in the design's meta. */

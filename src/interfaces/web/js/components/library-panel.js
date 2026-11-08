@@ -129,7 +129,8 @@ export class LibraryPanel {
       if (save) try { localStorage.setItem(TOOLS_COLLAPSED_KEY, v ? '1' : '0'); } catch { /* storage unavailable */ }
     };
     const drawer = ibtn('panel-left', 'Hide the library panel', () => window.dispatchEvent(new CustomEvent('ud:toggle-left')), { desc: 'Reopen it from the rail on the left edge', cls: 'lib-drawer-toggle', size: 15 });
-    tools.prepend(h('div', { class: 'lib-search-row' }, search, toggle, drawer));
+    const popBtns = this._toolBtns || []; this._toolBtns = null;
+    tools.prepend(h('div', { class: 'lib-search-row' }, search, toggle, ...popBtns, drawer));
     tools.append(more);
     apply(collapsed, false);
   }
@@ -451,9 +452,9 @@ export class LibraryPanel {
     refresh();
     const tools = this.popTool('tools', 'Selection, new and import tools', () => h('div', { class: 'lib-pop-col' }, selBar, h('div', { class: 'row' }, ...items.filter(Boolean))), { cls: 'lib-tools-pop' });
     tools.append(badge);
-    return h('div', { class: 'lib-toolrow' }, tools,
-      type === 'button' ? this.popTool('sliders', 'Button style settings', () => this.projectButtonSettingsBar(), { cls: 'lib-style-pop' }) : null,
-      h('span', { class: 'grow' }), h('span', { class: 'dim' }, `${count}`));
+    // the tool buttons sit in the search row, between its collapse and drawer buttons (decorateTools places them)
+    this._toolBtns = [tools, type === 'button' ? this.popTool('sliders', 'Button style settings', () => this.projectButtonSettingsBar(), { cls: 'lib-style-pop' }) : null].filter(Boolean);
+    return null;
   }
 
   head(type, list, fill, extra = [], selBar = null) {
