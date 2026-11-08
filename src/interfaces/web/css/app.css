@@ -839,3 +839,7 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .lib-tabs button.lib-tab-ico { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px 4px; font-size: 10px; line-height: 1.1; border-radius: 8px 8px 0 0; }
 .lib-tab-count { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .lib-tabs button.lib-tab-ico.on .lib-tab-count { color: #fff; }
+
+/* the project selection button in the top centre always has a thick purple edge */
+#topbar .proj-multi-trigger { border: 3px solid #a855f7; box-shadow: 0 0 0 1px rgba(168, 85, 247, .35); }
+#topbar .proj-multi-trigger:hover, #topbar .proj-multi-dd.open .proj-multi-trigger { border-color: #c084fc; }

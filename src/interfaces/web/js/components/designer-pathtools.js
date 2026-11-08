@@ -15,6 +15,7 @@ import { parsePath, serializePath } from '/domain/path-data.js';
 import { reversePath, simplifyPath, joinPaths, combinePaths, breakApart } from '/domain/path-tools.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
+import { reloadLibrary } from '../actions.js';
 
 const byOrd = (a, b) => a.ord - b.ord || a.id - b.id;
 const OP_LABEL = { union: 'Union', subtract: 'Cut out', intersect: 'Crop', exclude: 'Exclude' };
@@ -111,6 +112,68 @@ const methods = {
     }
     if (!made) return toast('Nothing to break apart: the path has a single outline', 'error');
     await this.applyNodeList(list, { select: () => sel.map(n => n.id) });
+  },
+
+  /**
+   * Icon tool: explodes the icon into plain, separate paths. Linked path instances become real path nodes (the link to
+   * the library path is cut), every other shape becomes a path, compound paths are split into their outlines and
+   * groups are dissolved. One undo step. Works on the selection, or on the whole icon when nothing is selected.
+   */
+  async explodeIcon() {
+    if (this.type !== 'icon') return toast('Exploding is a tool of the icon designer', 'error');
+    const sel = this.selectedNodes().filter(n => n.tag !== 'g');
+    const targets = new Set((sel.length ? sel : this.nodes.filter(n => n.tag !== 'g')).map(n => n.id));
+    const base = this.doc.name || this.doc.key || 'icon';
+    let tmp = -10, made = 0, k = 0;
+    const list = [];
+    const push = (src, cmds, extra = {}) => {
+      for (const part of breakApart(cmds)) {
+        k++; made++;
+        list.push({ ...src, ...extra, id: tmp--, parentId: null, kind: 'shape', tag: 'path', rotation: 0, name: `${base}-${k}`, refType: null, refId: null, text: null,
+          attrs: { ...styleAttrs(src), ...(extra.attrs || {}), d: serializePath(part, 3) } });
+      }
+    };
+    for (const n of [...this.nodes].sort(byOrd)) {
+      if (n.tag === 'g' && n.kind !== 'instance') continue;      // groups are dissolved (their children keep their world position)
+      if (!targets.has(n.id)) { list.push({ ...n, parentId: null }); continue; }
+      if (n.kind === 'instance' && n.refType === 'path') {
+        let rec; try { rec = await api.getDesign('path', n.refId); } catch { rec = null; }
+        if (!rec?.nodes?.length) { list.push(n); continue; }
+        const a = n.attrs || {}, w = Number(a.width) || rec.width, hh = Number(a.height) || rec.height;
+        const tf = `translate(${Number(a.x) || 0} ${Number(a.y) || 0}) scale(${w / rec.width} ${hh / rec.height})`;
+        for (const t of rec.nodes) {
+          const cmds = worldCommands(t, rec.nodes); if (!cmds) continue;
+          const baked = worldCommands({ tag: 'path', kind: 'shape', attrs: { d: serializePath(cmds, 4), transform: tf } }, []);
+          if (baked) push(t, baked, { role: t.role ?? null, ord: n.ord, visible: n.visible });
+        }
+      } else if (n.kind !== 'instance' && n.tag !== 'text') {
+        const cmds = worldCommands(n, this.nodes);
+        if (cmds) push(n, cmds, { ord: n.ord });
+        else list.push({ ...n, parentId: null });
+      } else list.push({ ...n, parentId: null });
+    }
+    if (!made) return toast('Nothing to explode: the icon has no paths or shapes', 'error');
+    list.forEach((n, i) => { n.ord = i + 1; });
+    await this.applyNodeList(list, { select: () => [] });
+    toast(`Exploded into ${made} path(s). Select some and use "Save paths to my library"`, 'ok', 3200);
+  },
+
+  /** Saves the selected paths (all paths when nothing is selected) as separate items of the user's own path library, named <icon name>-<icon id>-<n>. */
+  async savePathsToLibrary() {
+    const chosen = this.selectedNodes().filter(n => n.tag === 'path');
+    const paths = chosen.length ? chosen : this.nodes.filter(n => n.tag === 'path' && n.kind !== 'instance');
+    if (!paths.length) return toast('No paths to save: explode the icon first', 'error');
+    const base = `${this.doc.name || this.doc.key || 'icon'}-${this.doc.id}`;
+    let saved = 0;
+    for (const [i, n] of paths.entries()) {
+      const cmds = worldCommands(n, this.nodes); if (!cmds) continue;
+      try {
+        await api.createDesign('path', { name: `${base}-${i + 1}`, category: 'custom', visibility: 'private', projectId: state.activeProjectId,
+          nodes: [{ tag: 'path', kind: 'shape', role: n.role ?? null, name: 'path', attrs: { ...styleAttrs(n), d: serializePath(cmds, 3) } }] });
+        saved++;
+      } catch (e) { toast(`${base}-${i + 1}: ${e.message}`, 'error'); }
+    }
+    if (saved) { await reloadLibrary({ silent: true }).catch(() => {}); toast(`Saved ${saved} path(s) to your path library as "${base}-n"`, 'ok', 3200); }
   },
 
   async joinSelected() {
@@ -265,6 +328,8 @@ const methods = {
       I('combine', 'Combine', () => this.combineSelected(), 'Make one compound path from the selected paths'),
       I('breakApart', 'Break apart', () => this.breakApartSelected(), 'Split a compound path into separate paths'),
       I('join', 'Join', () => this.joinSelected(), 'Join two open paths end to end'),
+      ...(this.type === 'icon' ? [I('breakApart', 'Explode icon into paths', () => this.explodeIcon(), 'Break the icon (or the selection) apart into separate plain paths: linked path items become real paths, shapes become paths, compound paths are split'),
+        I('export', 'Save paths to my library', () => this.savePathsToLibrary(), 'Save the selected paths (all when nothing is selected) as your own paths, auto-named <icon name>-<icon id>-<n>')] : []),
       I('reverse', 'Reverse', () => this.reverseSelected(), 'Reverse the direction of the selected path'),
       I('simplify', 'Simplify', () => this.simplifySelected(), 'Remove redundant vertices'),
       I('applyT', 'Apply transform', () => this.bakeSelected(), "Bake the path's transform and rotation into its points"), sep(),

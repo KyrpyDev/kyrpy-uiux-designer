@@ -23428,7 +23428,7 @@ INSERT INTO "elements" ("id", "key", "name", "label", "description_dev", "catego
 Semantic HTML element: <nav>. Build it as a reusable component; every colour must come from theme tokens (bg, surface, text, muted, accent, line) so all four themes work.
 Sample text in the design: "One", "Two", "Three". Replace with real data/props; do not hard-code.
 Expose props for label/value/state; support disabled and focus states.
-role="tablist" aria-orientation="vertical" with role="tab" buttons stacked top to bottom.', 'navigation', '[]', 140, 176, '{"htmlTag":"nav","source":"preset","preset":true}', 1, 160, '2026-11-08 02:24:33', '2026-11-08 02:24:33', 1, 'public', 15, NULL, 352, 15, 0, '{}', '6f3fbaad-dd10-4ebf-ba69-ed46c824cf98', NULL) ON CONFLICT DO NOTHING;
+role="tablist" aria-orientation="vertical" with role="tab" buttons stacked top to bottom.', 'navigation', '[]', 140, 176, '{"htmlTag":"nav","source":"preset","preset":true}', 1, 160, '2026-11-08 02:39:52', '2026-11-08 02:39:52', 1, 'public', 15, NULL, 352, 15, 0, '{}', '0407731b-9615-4286-a027-a0a2d42696dc', NULL) ON CONFLICT DO NOTHING;
 -- Table: screens (24 rows)
 INSERT INTO "screens" ("id", "key", "name", "label", "description_dev", "category", "tags", "width", "height", "meta", "builtin", "position", "created_at", "updated_at", "project_id", "visibility", "creator_id", "cloned_from_id", "root_item_id", "root_owner_id", "locked", "mcp_context", "uid", "content_hash") VALUES (48, 'splash', 'Splash', 'Sample-Splash-Screen', 'Screen "splash" - 390x844 px (iphone-15).
 Launch screen shown while the app boots and restores the session. Auto-advance to Sign in (no session) or Home (session).
