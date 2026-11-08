@@ -647,10 +647,10 @@ export class Designer {
   titleField() {
     const name = this.doc.name;
     if (!this.isOwnedByCurrentUser(this.doc)) {
-      return h('b', { style: { padding: '0 8px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
+      return h('b', { style: { padding: '0 8px', maxWidth: '50ch', minWidth: '12ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
     }
     const input = h('input', { class: 'doc-title', type: 'text', value: name, title: `Click to rename · variable name: ${this.doc.key}`, 'aria-label': 'Item name', maxlength: '80', spellcheck: 'false' });
-    const fit = () => { input.style.width = `${Math.min(36, Math.max(12, input.value.length + 2))}ch`; };
+    const fit = () => { input.style.width = `${Math.min(80, Math.max(50, input.value.length + 2))}ch`; };
     const commit = async () => {
       const v = input.value.trim();
       if (!v || v === this.doc.name) { input.value = this.doc.name; fit(); return; }
@@ -744,7 +744,9 @@ export class Designer {
     this.viewControls = kids.filter(k => k.dataset?.view === '1');
     this.toolToggles = kids.filter(k => k.dataset?.tools === '1');
     // the tools live in the top (page) toolbar: main.js moves them there; the emptied second bar is hidden
-    this.barTools = kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1');
+    const rest = kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1');
+    this.barHead = rest.slice(0, 2);     // design type label + editable name: first in the toolbar
+    this.barTools = rest.slice(2);
     clear(this.bar);
     this.buildPathBar();
     this.setTool(this.tool);

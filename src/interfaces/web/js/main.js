@@ -809,6 +809,7 @@ function buildTypeBar() {
   const tc = $('#topbar .top-center');
   if (tc) { tc.querySelector(':scope > .doc-state')?.remove(); if (inDesigner && designer.docState) tc.append(designer.docState); }
   nav.append(...[
+    ...(inDesigner ? [...(designer.barHead || []), h('span', { class: 'sep-v' })] : []),
     // the per-type page buttons live in the library panel's icon tabs (double-click opens that designer)
     h('div', { class: 'tabs type-tabs', role: 'tablist' },
       h('button', { class: `tab-ico${state.mode === 'browser' ? ' on' : ''}`, 'aria-label': 'Item Browser — full-canvas item list with checkboxes (click again to go back)', 'data-tip': 'Item Browser — full-canvas item list with checkboxes. Click again to return to where you were.', dataset: { modeTab: 'browser' }, onclick: () => { if (state.mode === 'browser') { state.mode = state.prevMode && state.prevMode !== 'browser' ? state.prevMode : 'screen'; } else { state.prevMode = state.mode; state.mode = 'browser'; } renderMode(); buildTopbar(); } }, iconEl('grid', { size: 18 }))
@@ -817,10 +818,10 @@ function buildTypeBar() {
     newBtn,
     inDesigner ? h('span', { class: 'sep-v' }) : null,
     inDesigner ? designer.docbar : null,
-    ...(inDesigner ? (designer.toolToggles || []) : []),
     ...(inDesigner ? (designer.pathGroups || []) : []),
     inDesigner && designer.barTools?.length ? h('span', { class: 'sep-v' }) : null,
     ...(inDesigner ? (designer.barTools || []) : []),
+    ...(inDesigner ? (designer.toolToggles || []) : []),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
     ...(inDesigner ? (designer.viewControls || []) : [])
