@@ -128,7 +128,15 @@ export class Designer {
   }
 
   async load(type, id) {
-    const rec = await api.getDesign(type, id);
+    const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
+    this._loadingTarget = { type, id: Number(id), seq };
+    let rec;
+    try {
+      rec = await api.getDesign(type, id);
+    } finally {
+      if (this._loadingTarget?.seq === seq) this._loadingTarget = null;
+    }
+    if (this._loadSeq !== seq) return;
     this.vtx?.exit();
     const keepLive = Boolean((this._keepActionsLive || this.actionsLive) && ['button', 'element', 'screen'].includes(type));
     this._keepActionsLive = false;
@@ -1609,9 +1617,16 @@ export class Designer {
 
   /* ================= edit operations ================= */
   async mutate(fn) {
-    const snap = this.snapshot();
-    try { const r = await fn(); this.pushUndo(snap); this.renderAll(); this.changed(); return r; }
-    catch (e) { toast(e.message, 'error'); await this.reload(); return null; }
+    const snap = this.snapshot(), targetType = this.type, targetId = this.doc?.id;
+    try {
+      const r = await fn();
+      if (this.type !== targetType || this.doc?.id !== targetId) return r;
+      this.pushUndo(snap); this.renderAll(); this.changed(); return r;
+    } catch (e) {
+      toast(e.message, 'error');
+      if (this.type === targetType && this.doc?.id === targetId) await this.reload();
+      return null;
+    }
   }
 
   uniqueName(base) {
@@ -1622,11 +1637,14 @@ export class Designer {
   }
 
   async addNode(def, { select = true } = {}) {
+    const targetType = this.type, targetId = this.doc?.id;
     return this.mutate(async () => {
       const maxOrd = this.nodes.reduce((m, n) => Math.max(m, Number(n.ord) || 0), 0);
-      const el = await api.addNode(this.type, this.doc.id, { ...def, ord: maxOrd + 1 });
-      this.doc.nodes.push(el);
-      if (select) this.selected = new Set([el.id]);
+      const el = await api.addNode(targetType, targetId, { ...def, ord: maxOrd + 1 });
+      if (this.type === targetType && this.doc?.id === targetId) {
+        this.doc.nodes.push(el);
+        if (select) this.selected = new Set([el.id]);
+      }
       return el;
     });
   }
@@ -1646,12 +1664,13 @@ export class Designer {
   }
 
   async addInstance(refType, id, at) {
+    if (this._loadingTarget && this._loadingTarget.type === refType && this._loadingTarget.id === Number(id)) return;
     if (!this.doc) return toast('Open a design first', 'error');
+    if (refType === this.type && Number(id) === Number(this.doc.id)) return;
     if (!canContain(this.type, refType)) {
       const ok = TYPES[this.type].accepts.join(', ') || 'only its own vector shapes';
       return toast(`A ${this.type} can contain ${ok} (hierarchy: path → icon → button → element → screen)`, 'error');
     }
-    if (refType === this.type && id === this.doc.id) return toast(`A ${this.type} cannot contain itself`, 'error');
     const lib = libOf(refType).find(d => d.id === id);
     if (!lib) return;
     let pl = this.placement(refType, lib, at);

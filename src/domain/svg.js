@@ -40,7 +40,7 @@ export function createContext({ theme, lib = {}, animations = [], editor = false
     anims.get(a.nodeId).push(a);
   }
   const L = { path: new Map(), icon: new Map(), button: new Map(), element: new Map(), ...lib };
-  return { theme, lib: L, anims, editor, emitIds, depth: 0, usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
+  return { theme, lib: L, anims, editor, emitIds, depth: 0, activeInstances: new Set(), usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
     // repeaters: 'animate' (canvas preview), 'static' (first frame, svg export) or 'runtime' (template once + data for the html runtime)
     repeaterMode: ['animate', 'static', 'runtime'].includes(repeaterMode) ? repeaterMode : 'animate', repeaterCss: new Set(), hasRepeaterRuntime: false };
 }
@@ -168,13 +168,15 @@ function renderInstance(el, a, ctx, all) {
   }
 
   // path groups, buttons and elements: their nodes are drawn in their own box, scaled into the instance box
-  if (ctx.depth > 5) return placeholder(el, a, ctx, all);
+  const instKey = `${el.refType}:${el.refId}`;
+  if (ctx.depth > 5 || ctx.activeInstances?.has(instKey)) return placeholder(el, a, ctx, all);
   const tw = w || target.width, th = h || target.height;
   const { x: _x, y: _y, width: _w, height: _h, ...rest } = a;
   const menu = el.refType === 'button' && target.menu?.items?.length ? target.menu : null;
   const attrs = commonAttrs(el, { ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
   if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
   ctx.depth++;
+  ctx.activeInstances?.add(instKey);
   const wasHub = ctx.inHub; ctx.inHub = !!menu;   // the button's own icons turn while open and are hidden while a sub level shows its icon
   const inner = renderTree(target.nodes, ctx);
   ctx.inHub = wasHub;
@@ -186,11 +188,21 @@ function renderInstance(el, a, ctx, all) {
     const renderButton = (id, size, withoutIcon) => {
       const b = ctx.lib.button.get(id);
       if (!b || !b.nodes || ctx.depth > 5) return '';
-      const nodes = withoutIcon ? b.nodes.filter(n => !(n.kind === 'instance' && n.refType === 'icon')) : b.nodes;
-      return `<g transform="translate(${round(-size / 2)} ${round(-size / 2)}) scale(${round(size / b.width)} ${round(size / b.height)})">${renderTree(nodes, ctx)}</g>`;
+      const nodes = b.nodes.filter(n => {
+        if (withoutIcon && n.kind === 'instance' && n.refType === 'icon') return false;
+        if (n.kind === 'instance' && n.refType === 'button' && Number(n.refId) === Number(id)) return false;
+        return true;
+      });
+      ctx.depth++;
+      try {
+        return `<g transform="translate(${round(-size / 2)} ${round(-size / 2)}) scale(${round(size / b.width)} ${round(size / b.height)})">${renderTree(nodes, ctx)}</g>`;
+      } finally {
+        ctx.depth--;
+      }
     };
     menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId });
   }
+  ctx.activeInstances?.delete(instKey);
   ctx.depth--;
   return `<g${attrString(attrs)}>${inner}${menuMarkup}</g>`;
 }

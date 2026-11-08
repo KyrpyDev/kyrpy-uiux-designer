@@ -56,7 +56,9 @@ const NEW_PRESETS = [
   // the 40 design-style DEFAULT_BUTTON_TEMPLATES as public `templates` buttons, right below the frames
   { id: 'preset-003-design-button-templates', run: importer => importer.ensureDesignButtonTemplates() },
   // hub menu buttons (3-button scrolling bar, horizontal + vertical) and their element presets
-  { id: 'preset-004-hub-menus', run: importer => importer.ensureHubMenus() }
+  { id: 'preset-004-hub-menus', run: importer => importer.ensureHubMenus() },
+  // vertical tabs (the horizontal html-tabs already exists)
+  { id: 'preset-005-tabs-vertical', keys: ['html-tabs-vertical'] }
 ];
 function seedNewPresets(db, services, importer) {
   try {

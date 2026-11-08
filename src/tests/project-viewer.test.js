@@ -38,6 +38,10 @@ test('buildProjectHtml: one self-contained file with workflows (left) and screen
     assert.deepEqual(data.workflows[0].screens, ['home', 'detail'], 'workflow screens in canvas order (left to right)');
     assert.deepEqual(data.screens.find(x => x.key === 'home').links.map(l => l.to), ['detail']);
     assert.ok(!data.workflows[0].screens.includes('loose'), 'the loose screen is listed outside workflows');
+    // toolbar: device type, design style, button style; device frames; draggable split; themed scrollbar
+    for (const id of ['pv-device', 'pv-theme', 'pv-btnstyle', 'pv-split']) assert.match(html, new RegExp(`id="${id}"`));
+    assert.match(html, /\.pv-frame\[data-frame="iphone"\]/); assert.match(html, /scrollbar-width: thin/);
+    assert.ok(data.devices['iphone-15'] && 'device' in data.screens[0]);
     // the runtime is valid javascript
     const runtime = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
     assert.doesNotThrow(() => new Function(runtime));

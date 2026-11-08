@@ -135,7 +135,7 @@ export class ExportService {
         }
       }
 
-      const info = { key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height, category: s.category,
+      const info = { key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height, category: s.category, device: s.meta?.device || null,
         file: `screens/${s.key}.html`, svg, links, components, actions: actions.map(({ overlay, ...a }) => a) };
       screenInfos.push({ ...info, notes, inline, overlays: [...overlays.values()], actionRows: actions });
     }
@@ -219,11 +219,17 @@ export class ExportService {
     });
     S.screen.list({ projectId: pid, includePublic: pid === 1, includePrivate: false }).forEach(s => addScreen(s.id));
     if (!screenIds.length) throw new ValidationError('this project has no screens to export');
+    // design style switch: the active theme plus its light/dark counterpart (every theme would multiply the file size)
+    if (!themeKeys?.length) {
+      const cur = this.settings.get().theme, all = new Set(this.themes.list().map(t => t.key));
+      const alt = /-dark$/.test(cur) ? cur.replace(/-dark$/, '-light') : /-light$/.test(cur) ? cur.replace(/-light$/, '-dark') : `${cur}-light`;
+      themeKeys = all.has(alt) && alt !== cur ? [cur, alt] : [cur];
+    } else if (themeKeys.length === 1 && themeKeys[0] === 'all') themeKeys = this.themes.list().map(t => t.key);
     const internal = {};
     this.buildBundle({ screenIds, themeKeys, includeIcons: 'none', title }, internal);
     const keyById = new Map(internal.screenInfos.map((info, i) => [screenIds[i], info.key]));
     const screens = internal.screenInfos.map(info => ({
-      key: info.key, name: info.name, label: info.label, descriptionDev: info.descriptionDev, width: info.width, height: info.height, links: info.links,
+      key: info.key, name: info.name, label: info.label, descriptionDev: info.descriptionDev, width: info.width, height: info.height, device: info.device, links: info.links,
       parts: T.screenParts({ screen: info, inlineSvgs: info.inline, links: info.links, components: info.components, actions: info.actionRows, overlays: info.overlays })
     }));
     const content = projectViewerHtml({

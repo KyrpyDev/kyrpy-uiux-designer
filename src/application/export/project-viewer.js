@@ -6,6 +6,7 @@
  */
 import { themesCss, APP_CSS, screenParts } from './templates.js';
 import { resolveTokens } from '../../domain/theme.js';
+import { DEVICES } from '../../domain/entities.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 /** JSON for a <script type="application/json"> block: "<" is escaped so the data can never close the tag. */
@@ -50,6 +51,43 @@ body { overflow: hidden; }
 .pv-toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--ud-panel); color: var(--ud-text); border: 1px solid var(--ud-accent); border-radius: 10px; padding: 8px 14px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 80; }
 .pv-toast.show { opacity: 1; }
 .pv-empty { color: var(--ud-muted); padding: 40px; text-align: center; }
+
+/* scrollbars of the workflow list and the canvas: visible, thin, themed */
+.pv-tree, .pv-canvas, .pv-info { scrollbar-width: thin; scrollbar-color: var(--ud-accent) transparent; }
+.pv-tree::-webkit-scrollbar, .pv-canvas::-webkit-scrollbar, .pv-info::-webkit-scrollbar { width: 10px; height: 10px; }
+.pv-tree::-webkit-scrollbar-track, .pv-canvas::-webkit-scrollbar-track, .pv-info::-webkit-scrollbar-track { background: transparent; }
+.pv-tree::-webkit-scrollbar-thumb, .pv-canvas::-webkit-scrollbar-thumb, .pv-info::-webkit-scrollbar-thumb { background: var(--ud-line); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+.pv-tree::-webkit-scrollbar-thumb:hover, .pv-canvas::-webkit-scrollbar-thumb:hover { background: var(--ud-accent); background-clip: content-box; }
+/* the bar between the two panels is draggable (scalable) */
+.pv-split { flex: 0 0 6px; cursor: col-resize; background: transparent; margin-left: -3px; margin-right: -3px; z-index: 5; position: relative; }
+.pv-split:hover, .pv-split.drag { background: var(--ud-accent); opacity: .5; }
+.pv-left { flex: 0 0 var(--pv-left-w, 30%); max-width: 70%; }
+.pv-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pv-tools label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ud-muted); }
+.pv-tools select { font: inherit; font-size: 12px; max-width: 150px; color: var(--ud-text); background: var(--ud-field); border: 1px solid var(--ud-line); border-radius: 8px; padding: 4px 8px; }
+/* device templates: a frame around the screen */
+.pv-frame { position: relative; flex: none; background: #0b0d12; box-shadow: 0 0 0 2px #2a2f3a, 0 18px 50px rgba(0,0,0,.55); padding: var(--pv-pad, 12px); border-radius: calc(var(--pv-r, 40px) + var(--pv-pad, 12px)); box-sizing: content-box; }
+.pv-frame > .ud-device { border-radius: var(--pv-r, 40px); overflow: hidden; }
+.pv-frame[data-frame="iphone"] { --pv-pad: 12px; }
+.pv-frame[data-frame="iphone"]::before { content: ''; position: absolute; z-index: 4; top: calc(var(--pv-pad) + 10px); left: 50%; width: 30%; height: 26px; transform: translateX(-50%); background: #000; border-radius: 20px; pointer-events: none; }
+.pv-frame[data-frame="iphone"]::after, .pv-frame[data-frame="android"]::after { content: ''; position: absolute; z-index: 4; bottom: calc(var(--pv-pad) + 7px); left: 50%; width: 34%; height: 5px; transform: translateX(-50%); background: rgba(255,255,255,.6); border-radius: 4px; pointer-events: none; }
+.pv-frame[data-frame="android"] { --pv-pad: 9px; }
+.pv-frame[data-frame="android"]::before { content: ''; position: absolute; z-index: 4; top: calc(var(--pv-pad) + 9px); left: 50%; width: 12px; height: 12px; transform: translateX(-50%); background: #000; border-radius: 50%; pointer-events: none; }
+.pv-frame[data-frame="tablet"] { --pv-pad: 16px; --pv-r: 22px; }
+.pv-frame[data-frame="tablet"]::before { content: ''; position: absolute; z-index: 4; top: 6px; left: 50%; width: 7px; height: 7px; transform: translateX(-50%); background: #1c2029; border-radius: 50%; }
+.pv-frame[data-frame="desktop"] { --pv-pad: 0; --pv-r: 0; border-radius: 10px; padding-top: 30px; }
+.pv-frame[data-frame="desktop"]::before { content: ''; position: absolute; top: 10px; left: 12px; width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; box-shadow: 16px 0 #febc2e, 32px 0 #28c840; }
+.pv-frame[data-frame="desktop"] > .ud-device { border-radius: 0 0 10px 10px; }
+.pv-frame[data-frame="watch"] { --pv-pad: 14px; --pv-r: 44px; }
+.pv-frame[data-frame="none"] { box-shadow: none; background: transparent; padding: 0; border-radius: 0; }
+.ud-btn, .rm-item { cursor: pointer; }
+.ud-btn:active { transform: scale(.96); }
+[data-btn-style="flat"] .rm-item :is(rect,circle,path):first-child, [data-btn-style="flat"] .ud-btn :is(rect,circle):first-of-type { filter: none; stroke: none; }
+[data-btn-style="outline"] .rm-item :is(rect,circle):first-of-type, [data-btn-style="outline"] .ud-btn :is(rect,circle):first-of-type { fill: transparent; stroke: var(--ud-accent); stroke-width: 2px; }
+[data-btn-style="solid"] .rm-item :is(rect,circle):first-of-type, [data-btn-style="solid"] .ud-btn :is(rect,circle):first-of-type { fill: var(--ud-accent); stroke: none; }
+[data-btn-style="pill"] .rm-item rect:first-of-type, [data-btn-style="pill"] .ud-btn rect:first-of-type { rx: 999px; ry: 999px; }
+[data-btn-style="square"] .rm-item rect:first-of-type, [data-btn-style="square"] .ud-btn rect:first-of-type { rx: 4px; ry: 4px; }
+[data-btn-style="glow"] .rm-item, [data-btn-style="glow"] .ud-btn { filter: drop-shadow(0 0 6px var(--ud-accent)); }
 @media (max-width: 760px) { .pv { flex-direction: column; } .pv-left { flex: 0 0 38%; max-width: none; width: 100%; border-right: 0; border-bottom: 1px solid var(--ud-line); } }
 `;
 
@@ -84,15 +122,56 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   // runtimes shared with the designer preview and the multi-file export
   var bindMenus = ${menuRuntime};
   ${repeaterRuntime}
+  function findOverlay(key) {
+    if (!key) return null;
+    var all = document.querySelectorAll('.ud-overlay'), k = String(key).toLowerCase();
+    for (var i = 0; i < all.length; i++) { var id = all[i].id.toLowerCase(); if (id === k || id.slice(-(k.length + 1)) === '-' + k) return all[i]; }
+    return null;
+  }
+  function openOv(o, from) { if (!o) return false; closeOverlay(); o.hidden = false; openOverlay = o; returnTo = from || null; var c = o.querySelector('.ud-close'); if (c) c.focus(); return true; }
   var menus = bindMenus(stage, { onAction: function (a) {
+    var act = a.action || '';
     if (a.target && byKey[a.target]) { go(a.target); return; }
-    toast('Menu action: ' + (a.action || a.item || 'item'));
+    if (a.targetElement || a.targetElementId) { if (openOv(findOverlay(a.targetElement) || findOverlay(a.targetElementId))) return; }
+    if (act === 'back') { back(); return; }
+    if (act === 'close') { closeOverlay(); return; }
+    toast('Menu action: ' + (act || a.item || 'item'));
   } });
+
+  // device templates: a frame (iphone, android, tablet, desktop, watch) around the screen
+  var devSel = document.getElementById('pv-device'), btnSel = document.getElementById('pv-btnstyle'), frameChoice = 'auto';
+  var FRAMES = { mobile: 'iphone', tablet: 'tablet', desktop: 'desktop', kiosk: 'tablet', wearable: 'watch' };
+  function frameKind(s) {
+    var c = frameChoice;
+    if (c === 'none' || c === 'iphone' || c === 'android' || c === 'tablet' || c === 'desktop' || c === 'watch') return c;
+    var d = DATA.devices[s.device] || {}, k = s.device || '';
+    if (/android|pixel|galaxy/.test(k)) return 'android';
+    return FRAMES[d.category] || 'iphone';
+  }
+  function applyFrame(s) {
+    var dev = stage.querySelector(':scope > .ud-device'); if (!dev) return;
+    var kind = frameKind(s), f = document.createElement('div'); f.className = 'pv-frame'; f.setAttribute('data-frame', kind);
+    var d = DATA.devices[s.device]; if (d && d.cornerRadius) f.style.setProperty('--pv-r', Math.round(d.cornerRadius * Math.min(1, s.width / d.width)) + 'px');
+    dev.parentNode.insertBefore(f, dev); f.appendChild(dev);
+  }
+  if (devSel) {
+    var o0 = document.createElement('option'); o0.value = 'auto'; o0.textContent = 'Device: screen default'; devSel.appendChild(o0);
+    [['iphone', 'iPhone'], ['android', 'Android'], ['tablet', 'Tablet'], ['desktop', 'Desktop'], ['watch', 'Watch'], ['none', 'No frame']].forEach(function (p) { var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; devSel.appendChild(o); });
+    try { var sd = localStorage.getItem('ud-pv-device'); if (sd && devSel.querySelector('option[value="' + sd + '"]')) { devSel.value = sd; frameChoice = sd; } } catch (e) {}
+    devSel.addEventListener('change', function () { frameChoice = devSel.value; try { localStorage.setItem('ud-pv-device', frameChoice); } catch (e) {} if (cur.screen) go(cur.screen, { back: true, keep: true }); });
+  }
+  if (btnSel) {
+    [['', 'Button style: theme'], ['flat', 'Flat'], ['outline', 'Outline'], ['solid', 'Solid'], ['pill', 'Pill'], ['square', 'Square'], ['glow', 'Glow']].forEach(function (p) { var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; btnSel.appendChild(o); });
+    try { var sb = localStorage.getItem('ud-pv-btn'); if (sb && btnSel.querySelector('option[value="' + sb + '"]')) btnSel.value = sb; } catch (e) {}
+    var setBtn = function () { if (btnSel.value) stage.setAttribute('data-btn-style', btnSel.value); else stage.removeAttribute('data-btn-style'); document.querySelectorAll('.ud-overlay').forEach(function (o) { if (btnSel.value) o.setAttribute('data-btn-style', btnSel.value); else o.removeAttribute('data-btn-style'); }); try { localStorage.setItem('ud-pv-btn', btnSel.value); } catch (e) {} };
+    btnSel.addEventListener('change', setBtn); setBtn();
+  }
 
   function fit() {
     var dev = stage.querySelector('.ud-device'); var s = byKey[cur.screen];
     if (!dev || !s) return;
-    var availW = canvas.clientWidth - 36, availH = canvas.clientHeight - 36;
+    var fr = dev.closest('.pv-frame'), padW = fr ? 80 : 0;
+    var availW = canvas.clientWidth - 36 - padW, availH = canvas.clientHeight - 36 - padW;
     var w = Math.max(160, Math.min(s.width, availW, availH * s.width / s.height));
     stage.style.setProperty('--ud-device-w', w + 'px');
     stage.querySelectorAll('.ud-device').forEach(function (d) { if (d === dev) d.style.setProperty('--ud-device-w', w + 'px'); });
@@ -106,13 +185,15 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     opts = opts || {};
     var s = byKey[key], tpl = document.getElementById('t-' + key);
     if (!s || !tpl) return;
-    if (cur.screen && cur.screen !== key && !opts.back) history.push({ screen: cur.screen, wf: cur.wf });
+    if (cur.screen && cur.screen !== key && !opts.back && !opts.keep) history.push({ screen: cur.screen, wf: cur.wf });
     if (opts.wf !== undefined) cur.wf = opts.wf;
     else if (!cur.wf || DATA.workflows.filter(function (w) { return w.key === cur.wf && w.screens.indexOf(key) >= 0; }).length === 0) { var w = wfOf(key); cur.wf = w ? w.key : null; }
     cur.screen = key;
     closeOverlay();
     stage.innerHTML = '';
     stage.appendChild(tpl.content.cloneNode(true));
+    applyFrame(s);
+    if (btnSel && btnSel.value) document.querySelectorAll('.ud-overlay').forEach(function (o) { o.setAttribute('data-btn-style', btnSel.value); });
     bindRepeaters(stage);
     stage.querySelectorAll('.ud-btn').forEach(function (b) { menus.apply(b, menus.get(b)); });
     title.textContent = (s.label || s.name) + (cur.wf ? '  ·  ' + DATA.workflows.filter(function (w) { return w.key === cur.wf; })[0].name : '');
@@ -146,10 +227,7 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     if (t.hasAttribute('data-ud-toggle')) { t.classList.toggle('ud-on'); return; }
     var href = t.getAttribute('data-ud-href') || '';
     if (href) { var k = href.replace(/\\.html$/, ''); if (byKey[k]) go(k); else toast('Target screen is not part of this export'); return; }
-    var o = document.getElementById(t.getAttribute('data-ud-open'));
-    if (!o) return;
-    closeOverlay(); o.hidden = false; openOverlay = o; returnTo = t;
-    var c = o.querySelector('.ud-close'); if (c) c.focus();
+    openOv(document.getElementById(t.getAttribute('data-ud-open')), t);
   }
   // screen links are <a href="key.html">: never navigate away from this single file
   document.addEventListener('click', function (ev) {
@@ -174,11 +252,12 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     var an = ev.target && ev.target.closest ? ev.target.closest('[class*="ud-e"]') : null;
     if (an && stage.contains(an)) an.classList.toggle('ud-on');
   }, true);
-  ['dblclick', 'mouseover', 'mouseleave', 'mousedown', 'mouseup', 'dragstart', 'drop', 'focus'].forEach(function (domEv) {
+  ['dblclick', 'mouseover', 'mouseleave', 'mousedown', 'mouseup', 'dragstart', 'drop', 'focus', 'contextmenu'].forEach(function (domEv) {
     var mapTrig = domEv === 'mouseup' ? 'release' : (domEv === 'dragstart' ? 'drag' : domEv);
     document.addEventListener(domEv, function (ev) {
       var t = ev.target && ev.target.closest ? ev.target.closest('[data-trigger="' + mapTrig + '"]') : null;
-      if (t && stage.contains(t)) trigger(t);
+      if (!t && domEv === 'contextmenu' && ev.target && ev.target.closest) t = ev.target.closest('[data-trigger="rightclick"]');
+      if (t && stage.contains(t)) { if (domEv === 'contextmenu') ev.preventDefault(); trigger(t); }
     }, true);
   });
   document.addEventListener('keydown', function (ev) {
@@ -214,6 +293,17 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     if (q) tree.querySelectorAll('details').forEach(function (d) { d.open = true; });
   });
 
+  // draggable bar between the workflow list and the screen
+  var split = document.getElementById('pv-split'), leftP = document.querySelector('.pv-left');
+  if (split && leftP) {
+    split.addEventListener('mousedown', function (ev) {
+      ev.preventDefault(); split.classList.add('drag');
+      var move = function (e) { var w = Math.max(220, Math.min(window.innerWidth * 0.7, e.clientX)); leftP.style.setProperty('--pv-left-w', w + 'px'); fit(); };
+      var up = function () { split.classList.remove('drag'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    });
+  }
+
   var start = (location.hash || '').replace('#', '');
   var first = byKey[start] ? start : (DATA.workflows[0] && DATA.workflows[0].screens[0]) || (screens[0] && screens[0].key);
   if (first) go(first, { wf: byKey[start] ? undefined : (DATA.workflows[0] ? DATA.workflows[0].key : null) });
@@ -231,7 +321,8 @@ export function projectViewerHtml({ title, themes, primary, workflows, screens, 
     title,
     themes: themes.map(t => ({ key: t.key, name: t.name })),
     workflows: workflows.map(w => ({ key: w.key, name: w.name, label: w.label, descriptionDev: w.descriptionDev, screens: w.screens })),
-    screens: screens.map(s => ({ key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height,
+    devices: Object.fromEntries(Object.entries(DEVICES).map(([k, d]) => [k, { name: d.name, width: d.width, height: d.height, category: d.category, cornerRadius: d.cornerRadius }])),
+    screens: screens.map(s => ({ key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height, device: s.device || null,
       links: (s.links || []).map(l => ({ name: l.name, to: l.to, trigger: l.trigger })) }))
   };
   const templates = screens.map(s => `<template id="t-${esc(s.key)}">${s.parts.device}\n${s.parts.overlays}</template>`).join('\n');
@@ -255,14 +346,17 @@ ${VIEWER_CSS}
       <h1>${esc(title)}</h1>
       <small>${workflows.length} workflow(s) · ${screens.length} screen(s)</small>
       <input id="pv-search" type="search" placeholder="Search screens…" aria-label="Search screens">
-      <label>Theme <select id="pv-theme"></select></label>
     </div>
     <nav class="pv-tree" id="pv-tree"></nav>
   </aside>
+  <div class="pv-split" id="pv-split" role="separator" aria-orientation="vertical" aria-label="Resize panels"></div>
   <main class="pv-right">
     <div class="pv-bar">
       <button type="button" id="pv-prev" aria-label="Previous screen">‹ Prev</button>
       <b id="pv-title"></b>
+      <span class="pv-tools"><label><select id="pv-device" aria-label="Device type"></select></label>
+      <label><select id="pv-theme" aria-label="Design style"></select></label>
+      <label><select id="pv-btnstyle" aria-label="Button style"></select></label></span>
       <button type="button" id="pv-next" aria-label="Next screen">Next ›</button>
       <button type="button" id="pv-info-toggle" aria-label="Links and notes">ⓘ</button>
     </div>
