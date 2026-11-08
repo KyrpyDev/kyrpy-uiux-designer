@@ -80,6 +80,7 @@ export function bindMenus(root, opts) {
     btn.setAttribute('data-open', st.open ? '1' : '0');
     btn.setAttribute('data-center', rotating && !hub && st.open && st.path.length ? '1' : '0');
     btn.querySelectorAll('.rm-level').forEach(function (l) { var lv = l.getAttribute('data-level'); l.classList.toggle('is-active', st.open && (lv === key || (hub && lv === ''))); });
+    btn.setAttribute('data-hubdepth', hub ? String(st.path.length) : '0');
     if (hub) layoutHub(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
     fit(btn);

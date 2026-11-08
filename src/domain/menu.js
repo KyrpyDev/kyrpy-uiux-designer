@@ -144,8 +144,15 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   walk(tree, '', null);
   const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
   const hit = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
+  // hub menus: a small "up one level" button at the lower right of the centre, shown only inside sub items (the runtime sets data-hubdepth)
+  let back = '';
+  if (isHub) {
+    const r = hub.small * 0.26, bx = hub.vertical ? cx + hub.big * 0.62 : cx + hub.big / 2 + hub.gap + hub.small / 2, by = hub.vertical ? cy + hub.big / 2 + hub.gap + hub.small / 2 : cy + hub.big * 0.62;
+    back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
+      + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
+  }
   const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}"` : '';
-  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}</g>`;
+  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }
 
 /** Stylesheet shared by the designer canvas and exported pages (transitions of the menu). */
@@ -158,6 +165,11 @@ export const MENU_CSS = `
 .ud-btn .rm-center{visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s}
 .ud-btn .rm-center.is-active{visibility:visible;opacity:1}
 .ud-btn .rm-hit{cursor:pointer}
+.ud-btn .rm-back{visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s;cursor:pointer}
+.ud-btn[data-hubdepth]:not([data-hubdepth="0"]) .rm-back{visibility:visible;pointer-events:auto;opacity:1}
+.ud-btn[data-hubdepth="1"] .rm-center{opacity:0}
+.ud-btn[data-hubdepth] > :not(.ud-menu){opacity:0}
+.dz-stage:not(.menu-live) .ud-btn[data-hubdepth="0"] > :not(.ud-menu),.dz-stage:not(.menu-live) .ud-btn[data-hubdepth="1"] > :not(.ud-menu){opacity:1}
 .ud-btn .rm-item.rm-hub-item{transition:transform .35s cubic-bezier(.3,.8,.3,1),opacity .25s ease}
 .ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
 .ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
