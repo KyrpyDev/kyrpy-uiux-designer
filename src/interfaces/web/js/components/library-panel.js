@@ -415,19 +415,56 @@ export class LibraryPanel {
     ));
   }
 
+  /**
+   * Boxed pop-up tool: an icon button that opens a floating panel (fixed under the button; closes on Escape or a click
+   * elsewhere). `build()` returns the panel content. Used for the selection / file tools and the button style settings.
+   */
+  popTool(icon, label, build, { cls = '' } = {}) {
+    let panel = null;
+    const close = () => { panel?.remove(); panel = null; document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', esc, true); btn.classList.remove('active'); };
+    const away = e => { if (panel && !panel.contains(e.target) && !btn.contains(e.target)) close(); };
+    const esc = e => { if (e.key === 'Escape') close(); };
+    const btn = ibtn(icon, label, () => {
+      if (panel) return close();
+      panel = h('div', { class: 'lib-pop', role: 'dialog', 'aria-label': label }, build());
+      document.body.append(panel);
+      const r = btn.getBoundingClientRect();
+      panel.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - panel.offsetWidth - 4))}px`;
+      panel.style.top = `${r.bottom + 4}px`;
+      btn.classList.add('active');
+      document.addEventListener('pointerdown', away, true); document.addEventListener('keydown', esc, true);
+    }, { cls: `lib-pop-btn ${cls}`.trim(), size: 17 });
+    btn.append(iconEl('chevDown', { size: 11 }));
+    return btn;
+  }
+
+  /**
+   * The one grouped tool row of every library tab, right under the visibility filter: a drop-down with the selection tools
+   * (all / none / invert / copy / move / export / empty) and the new / import tools, a button style tool (buttons tab only)
+   * and the item count. Replaces the two loose icon rows.
+   */
+  libTools(type, selBar, items, count) {
+    const sel = state.libSel[type] || (state.libSel[type] = new Set());
+    const badge = h('span', { class: 'lib-sel-badge' }, '');
+    const refresh = () => { badge.textContent = sel.size ? String(sel.size) : ''; badge.hidden = !sel.size; };
+    const inner = selBar._updateInfo; selBar._updateInfo = () => { inner?.(); refresh(); };
+    refresh();
+    const tools = this.popTool('tools', 'Selection, new and import tools', () => h('div', { class: 'lib-pop-col' }, selBar, h('div', { class: 'row' }, ...items.filter(Boolean))), { cls: 'lib-tools-pop' });
+    tools.append(badge);
+    return h('div', { class: 'lib-toolrow' }, tools,
+      type === 'button' ? this.popTool('sliders', 'Button style settings', () => this.projectButtonSettingsBar(), { cls: 'lib-style-pop' }) : null,
+      h('span', { class: 'grow' }), h('span', { class: 'dim' }, `${count}`));
+  }
+
   head(type, list, fill, extra = [], selBar = null) {
     return h('div', { class: 'lib-tools' },
       this.searchBox(type, fill),
       this.visBar(() => this.renderBody()),
-      type === 'button' ? this.projectButtonSettingsBar() : null,
-      this.chips(type, list, () => this.renderBody()),
-      selBar,
-      h('div', { class: 'row' },
+      this.libTools(type, selBar, [
         ibtn('plus', `New ${TYPES[type].label.toLowerCase()}`, async () => { const r = await newDesign(type); if (r) this.app.openDesign(type, r.id); }, { desc: `Create an empty ${TYPES[type].label.toLowerCase()} and open it` }),
-        ...extra,
-        h('span', { class: 'grow' }),
-        h('span', { class: 'dim' }, `${list.length}`)
-      ),
+        ...extra
+      ], list.length),
+      this.chips(type, list, () => this.renderBody()),
       h('div', { class: 'dim', style: { fontSize: '11px' } }, HINT[type])
     );
   }
@@ -727,13 +764,12 @@ export class LibraryPanel {
       h('div', { class: 'lib-tools' },
         this.searchBox('screen', fill),
         this.visBar(() => this.renderBody()),
-        this.chips('screen', list, () => this.renderBody()),
-        selBar,
-        h('div', { class: 'row' },
+        this.libTools('screen', selBar, [
           ibtn('plus', 'New screen', async () => { const r = await newDesign('screen'); if (r) { this.screensList = null; this.app.openDesign('screen', r.id); } }, { desc: 'Create a screen from a device template and open it' }),
           exportBtn,
           ibtn('layers', 'Export all screens…', () => openExportDialog({ screenIds: 'all' }), { desc: 'Export every screen as an html/css/ts bundle' })
-        )
+        ], list.length),
+        this.chips('screen', list, () => this.renderBody())
       ),
       h('div', { class: 'lib-scroll' }, grid)
     );
@@ -859,8 +895,7 @@ export class LibraryPanel {
       h('div', { class: 'lib-tools' },
         this.searchBox('workflow', fill),
         this.visBar(() => this.renderBody()),
-        selBar,
-        h('div', { class: 'row' },
+        this.libTools('workflow', selBar, [
           ibtn('plus', 'New workflow', async () => {
               const n = await promptBox('New workflow', { okLabel: 'Create' });
               if (n?.trim()) {
@@ -869,7 +904,7 @@ export class LibraryPanel {
                 this.app.openWorkflow(w.id);
               }
           }, { desc: 'Create a workflow and open it' })
-        )
+        ], this.workflows.length)
       ),
       box
     );

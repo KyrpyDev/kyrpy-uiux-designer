@@ -851,3 +851,10 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .tool-menu-panel { position: fixed; z-index: 400; min-width: 210px; display: flex; flex-direction: column; padding: 4px; background: var(--panel2, #101a2e); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .6); }
 .tool-menu-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: transparent; border: 0; border-radius: 7px; color: var(--text, #dbe6ff); text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
 .tool-menu-item:hover, .tool-menu-item:focus-visible { background: rgba(46, 155, 255, .18); outline: 0; }
+
+/* library: one grouped tool row (pop-up tools) instead of two loose icon rows */
+.lib-toolrow { display: flex; align-items: center; gap: 6px; }
+.lib-pop-btn { position: relative; width: auto; gap: 1px; padding: 0 6px; }
+.lib-sel-badge { position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: var(--accent, #2e9bff); color: #fff; font-size: 10px; line-height: 15px; text-align: center; }
+.lib-pop { position: fixed; z-index: 400; width: min(360px, 94vw); padding: 10px; background: var(--panel2, #101a2e); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 14px 44px rgba(0, 0, 0, .65); }
+.lib-pop-col { display: flex; flex-direction: column; gap: 8px; }
