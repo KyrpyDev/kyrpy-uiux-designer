@@ -868,3 +868,6 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 #topbar .top-center .proj-multi-trigger:hover, #topbar .top-center .proj-multi-dd.open .proj-multi-trigger { border: 0; background: rgba(168, 85, 247, .2); }
 
 #topbar .top-center .proj-trigger-wrap { box-shadow: none !important; }
+
+/* the tools moved into the top toolbar: the emptied designer bar takes no room */
+.dz > .dz-bar:not(.dz-pathbar) { display: none; }

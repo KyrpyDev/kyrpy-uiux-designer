@@ -709,17 +709,14 @@ export class Designer {
       h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
       this.titleField(),
       h('span', { class: 'sep-v' }), ...toolGroups, h('span', { class: 'sep-v' }),
-      ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
-      ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
-      ibtn('copy', 'Duplicate', () => this.duplicateSelected(), { kbd: 'Ctrl+D' }),
-      ibtn('trash', 'Delete', () => this.deleteSelected(), { kbd: 'Del' }),
-      ibtn('bringFront', 'Bring to front', () => this.reorder('front')),
-      ibtn('sendBack', 'Send to back', () => this.reorder('back')),
+      this.toolMenu('undo', 'Edit: undo, redo, duplicate, delete, order', [
+        ['undo', 'Undo (Ctrl+Z)', () => this.undo()], ['redo', 'Redo (Ctrl+Y)', () => this.redo()],
+        ['copy', 'Duplicate (Ctrl+D)', () => this.duplicateSelected()], ['trash', 'Delete (Del)', () => this.deleteSelected()],
+        ['bringFront', 'Bring to front', () => this.reorder('front')], ['sendBack', 'Send to back', () => this.reorder('back')]]),
       h('span', { class: 'sep-v' }),
-      ibtn('zoomOut', 'Zoom out', () => this.zoomBy(1 / 1.25), { kbd: '-' }), this.zoomLabel,
-      ibtn('zoomIn', 'Zoom in', () => this.zoomBy(1.25), { kbd: '+' }),
-      ibtn('fit', 'Fit to window', () => this.fit(), { kbd: '0' }),
-      ibtn('actual', 'Actual size (100%)', () => this.setZoom(1)),
+      this.toolMenu('zoomIn', 'Zoom: in, out, fit, actual size', [
+        ['zoomIn', 'Zoom in (+)', () => this.zoomBy(1.25)], ['zoomOut', 'Zoom out (-)', () => this.zoomBy(1 / 1.25)],
+        ['fit', 'Fit to window (0)', () => this.fit()], ['actual', 'Actual size (100%)', () => this.setZoom(1)]]), this.zoomLabel,
       h('span', { class: 'sep-v' }),
       toggle('grid2', 'Show grid', () => s.showGrid, v => { updateSettings({ showGrid: v }); this.renderOverlay(); }),
       toggle('magnet', 'Snap to grid', () => s.snapToGrid, v => updateSettings({ snapToGrid: v })),
@@ -746,7 +743,9 @@ export class Designer {
       ...(this.opts.onClose ? [ibtn('close', 'Close', () => this.opts.onClose(), { desc: 'Close this designer' })] : []));
     this.viewControls = kids.filter(k => k.dataset?.view === '1');
     this.toolToggles = kids.filter(k => k.dataset?.tools === '1');
-    this.bar.append(...kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1'));
+    // the tools live in the top (page) toolbar: main.js moves them there; the emptied second bar is hidden
+    this.barTools = kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1');
+    clear(this.bar);
     this.buildPathBar();
     this.setTool(this.tool);
     emit('topbar:refresh');
