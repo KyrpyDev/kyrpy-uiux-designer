@@ -193,6 +193,8 @@ function renderInstance(el, a, ctx, all) {
         if (n.kind === 'instance' && n.refType === 'button' && Number(n.refId) === Number(id)) return false;
         return true;
       });
+      // a button with no visible body left (only icons / empty groups) draws nothing, so the caller falls back to the plain circle
+      if (!nodes.some(n => (n.kind === 'instance' ? n.refType !== 'icon' : n.tag !== 'g'))) return '';
       ctx.depth++;
       try {
         return `<g transform="translate(${round(-size / 2)} ${round(-size / 2)}) scale(${round(size / b.width)} ${round(size / b.height)})">${renderTree(nodes, ctx)}</g>`;

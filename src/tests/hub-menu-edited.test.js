@@ -9,7 +9,7 @@ import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, DEFAULT_MENU, scopeFirst, visClass, isEdited } from '../domain/entities.js';
 import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig } from '../domain/menu.js';
 import { readFileSync } from 'node:fs';
-import { createContext } from '../domain/svg.js';
+import { createContext, indexLibrary, renderTree } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
 import { bindMenus } from '../domain/menu-runtime.js';
 
@@ -377,4 +377,24 @@ test('hub auto downsize: sub items wider than the screen are scaled (size and di
   const off = run(false);
   assert.equal(off[0].vars['--fit'], undefined, 'never scaled while off: items untouched');
   assert.equal(parseFloat(off[0].vars['--x']), -20);
+});
+
+test('menu item whose button has no visible body falls back to the plain circle', () => {
+  const icon = { id: 10, key: 'bell', width: 24, height: 24, nodes: [] };
+  const iconNode = { id: 1, tag: 'use', kind: 'instance', refType: 'icon', refId: 10, attrs: { x: 0, y: 0, width: 40, height: 40 } };
+  const items = [{ id: 1, parentId: null, path: 'a', name: 'a', label: 'A', iconId: 10, refButtonId: null, children: [], visible: true, position: 0 }];
+  const cfg = { ...menuConfig({ menu: HUB.config }) };
+  const draw = hostNodes => {
+    const host = { id: 5, key: 'host', width: 64, height: 64, nodes: hostNodes, meta: { menu: cfg } };
+    const lib = indexLibrary({ icons: [icon], buttons: [host] }, new Map([[5, items]]));
+    const ctx = createContext({ theme: BUILTIN_THEMES[0], lib });
+    const inst = { id: 9, tag: 'use', kind: 'instance', refType: 'button', refId: 5, attrs: { x: 0, y: 0, width: 64, height: 64 } };
+    return renderTree([inst], ctx);
+  };
+  const itemCircles = svg => (svg.match(/<g class="rm-item rm-hub-item"[\s\S]*?<\/g>/) || [''])[0].match(/<circle r="/g)?.length || 0;
+  // body removed (only the icon left): the item still draws its circle
+  assert.ok(itemCircles(draw([iconNode])) >= 1, 'bodyless host -> plain circle behind the item icon');
+  // body present: the host button body is drawn instead of the fallback circle
+  const withBody = draw([{ id: 2, tag: 'circle', attrs: { cx: 32, cy: 32, r: 30 } }, iconNode]);
+  assert.match(withBody, /<g transform="translate\(/);
 });
