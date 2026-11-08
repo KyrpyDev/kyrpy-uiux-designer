@@ -174,7 +174,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
   const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}"` : '';
-  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
+  return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-hub-spin="${Number(cfg.hubSpin) || 0}" data-hub-fit="${cfg.hubFit ? 1 : 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }
 
 /** Stylesheet shared by the designer canvas and exported pages (transitions of the menu). */
@@ -182,7 +182,7 @@ export const MENU_CSS = `
 .ud-btn .rm-level{visibility:hidden;pointer-events:none}
 .ud-btn .rm-item{transform-box:view-box;transform-origin:0 0;transform:translate(var(--cx,0px),var(--cy,0px)) scale(.2);opacity:0;cursor:pointer;transition:transform .32s cubic-bezier(.2,.9,.3,1.2),opacity .2s ease;transition-delay:0ms}
 .ud-btn .rm-level.is-active{visibility:visible;pointer-events:auto}
-.ud-btn .rm-level.is-active .rm-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(1);opacity:1;transition-delay:calc(var(--i)*35ms)}
+.ud-btn .rm-level.is-active .rm-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(var(--fit,1));opacity:1;transition-delay:calc(var(--i)*35ms)}
 .ud-btn .rm-item:hover circle:first-of-type{stroke-opacity:1}
 .ud-btn .rm-center{visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s}
 .ud-btn .rm-center.is-active{visibility:visible;opacity:1}
@@ -196,7 +196,8 @@ export const MENU_CSS = `
 .ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
 .ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
 .ud-btn .rm-hub-icon{transform-box:fill-box;transform-origin:center;transition:transform .3s ease}
-.ud-btn[data-open="1"] .rm-hub-icon{transform:rotate(var(--rot,0deg))}
+.ud-btn .rm-hub-icon{transform:rotate(var(--spin,0deg))}
+.ud-btn[data-open="1"] .rm-hub-icon{transform:rotate(calc(var(--rot,0deg) + var(--spin,0deg)))}
 .ud-btn[data-center="1"] .rm-hub-icon{opacity:0}
 .ud-btn .rm-hub-icon{transition:transform .3s ease,opacity .2s ease}
 `;

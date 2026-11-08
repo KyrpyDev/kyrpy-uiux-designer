@@ -97,7 +97,7 @@ export function bindMenus(root, opts) {
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     btn.querySelectorAll('.rm-level.is-active .rm-item').forEach(function (el) {
       if (el.getAttribute('data-hub-pos') === 'hidden') return;
-      var k = el.hasAttribute('data-hub-index') ? (parseFloat(el.style.getPropertyValue('--k')) || 1) : 1;
+      var k = el.hasAttribute('data-hub-index') ? (parseFloat(el.style.getPropertyValue('--k')) || 1) : (parseFloat(el.style.getPropertyValue('--fit')) || 1);
       if (k === 0) return;
       var r = (+el.getAttribute('data-r') || 0) * k, x = px(el.style.getPropertyValue('--x')), y = px(el.style.getPropertyValue('--y'));
       x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); y0 = Math.min(y0, y - r); y1 = Math.max(y1, y + r);
@@ -108,6 +108,28 @@ export function bindMenus(root, opts) {
     if (x1 - x0 > R - L) dx = (L + R) / 2 - (x0 + x1) / 2;
     if (y1 - y0 > B - T) dy = (T + B) / 2 - (y0 + y1) / 2;
     m.style.setProperty('--sx', dx + 'px'); m.style.setProperty('--sy', dy + 'px');
+  }
+  /* hub "auto downsize": the sub items of the open level are scaled down (size and distance from the centre) when they would not fit the screen */
+  function downsize(btn, box) {
+    var m = btn.querySelector('.ud-menu'), items = Array.prototype.slice.call(btn.querySelectorAll('.rm-level.is-active:not([data-level=""]) .rm-item'));
+    if (!m || !items.length) return;
+    var on = m.getAttribute('data-kind') === 'hub' && m.getAttribute('data-hub-fit') === '1' && m.getAttribute('data-keep') === '1' && box;
+    var svg = btn.ownerSVGElement;
+    if (on && svg && svg.getBoundingClientRect && btn.getBoundingClientRect && btn.getBoundingClientRect().width >= svg.getBoundingClientRect().width * 0.8) on = false;   // the button designer shows the button alone: no screen
+    if (!on && !items.some(function (el) { return el._ox != null; })) return;       // never scaled: leave the items alone
+    items.forEach(function (el) { if (el._ox == null) { el._ox = px(el.style.getPropertyValue('--x')); el._oy = px(el.style.getPropertyValue('--y')); } });
+    var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), s = 1;
+    if (on) {
+      // largest scale (about the hub centre) that keeps every item inside the screen without shifting; never below 20 %
+      var pad = 4, dl = 0, dr = 0, dt = 0, db = 0;
+      items.forEach(function (el) { var r = +el.getAttribute('data-r') || 0; dl = Math.max(dl, cx - (el._ox - r)); dr = Math.max(dr, el._ox + r - cx); dt = Math.max(dt, cy - (el._oy - r)); db = Math.max(db, el._oy + r - cy); });
+      var lim = function (avail, d) { return d > 0 ? Math.max(0, avail) / d : 1; };
+      s = Math.max(0.2, Math.min(1, lim(cx - box.L - pad, dl), lim(box.R - pad - cx, dr), lim(cy - box.T - pad, dt), lim(box.B - pad - cy, db)));
+    }
+    items.forEach(function (el) {
+      el.style.setProperty('--x', (cx + (el._ox - cx) * s) + 'px'); el.style.setProperty('--y', (cy + (el._oy - cy) * s) + 'px');
+      el.style.setProperty('--fit', String(s));
+    });
   }
   function apply(btn, st) {
     var menu = btn.querySelector('.ud-menu');
@@ -125,7 +147,7 @@ export function bindMenus(root, opts) {
     // a corner fan is already placed inside the screen: the rest of the menu stays where it is
     var m = btn.querySelector('.ud-menu');
     if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
-    else fit(btn);
+    else { downsize(btn, screenBox(btn)); fit(btn); }
   }
   function set(btn, st) { states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
@@ -134,6 +156,12 @@ export function bindMenus(root, opts) {
       target: el.getAttribute('data-target'), targetElement: el.getAttribute('data-popup-element'), targetElementId: el.getAttribute('data-popup-element-id')
     });
   }
+  /* hub "when clicked rotate": the clicked item's icon turns by data-hub-spin degrees on every click (accumulates, so it always turns the same way) */
+  function spin(btn, el) {
+    var m = btn.querySelector('.ud-menu'), deg = +(m && m.getAttribute('data-hub-spin')) || 0;
+    if (!deg || !el || !el.style) return;
+    el.style.setProperty('--spin', ((parseFloat(el.style.getPropertyValue('--spin')) || 0) + deg) + 'deg');
+  }
   function hubStep(btn, t, st) {
     var items = hubItems(btn), n = items.length, c = st.c || 0, prev = st.prev == null ? c : st.prev;
     if (t.getAttribute('data-rm') === 'center') {
@@ -141,6 +169,7 @@ export function bindMenus(root, opts) {
       var cur = items[c];
       if (!cur) return st;
       if (opts.onItem) opts.onItem(btn, cur);
+      spin(btn, cur);
       if (cur.getAttribute('data-children') === '1') return { open: true, path: cur.getAttribute('data-item').split('/'), c: c, prev: c };
       fire(btn, cur);
       return st;
@@ -149,11 +178,13 @@ export function bindMenus(root, opts) {
       if (st.path.length) return st;
       var i = +t.getAttribute('data-hub-index');
       if (opts.onItem) opts.onItem(btn, t);
+      spin(btn, t);
       // the clicked item swaps into the centre; its existing sub items fan out at once (also in the editor)
       return { open: true, path: t.getAttribute('data-children') === '1' ? t.getAttribute('data-item').split('/') : [], c: i, prev: c };
     }
     // an item of a fan (sub level)
     if (opts.onItem) opts.onItem(btn, t);
+    spin(btn, t);
     if (t.getAttribute('data-children') === '1') return { open: true, path: t.getAttribute('data-item').split('/'), c: c, prev: prev };
     fire(btn, t);
     return opts.keepOpen ? st : { open: true, path: [], c: prev, prev: prev };

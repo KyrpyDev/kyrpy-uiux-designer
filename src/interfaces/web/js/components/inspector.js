@@ -329,7 +329,10 @@ export class Inspector {
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
             this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set(hubDirectionPatch(cfg, v)))),
-            num('hubScale', 'Small items size × button'), num('centerScale', 'Centre item size × button (0 = 2 × small)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5))
+            num('hubScale', 'Small items size × button'), num('centerScale', 'Centre item size × button (0 = 2 × small)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),
+            h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the sub items would not fit the screen they are scaled down (size and distance) until they do' },
+              h('input', { type: 'checkbox', checked: !!cfg.hubFit, 'data-f': `mc-${bid}-hubfit`, onchange: e => set({ hubFit: e.target.checked }) }), h('span', {}, 'Auto downsize sub items to fit the screen')),
+            this.field('When clicked rotate (° per click, 0 = off, 360 = full turn)', this.num(`mc-${bid}-hubspin`, cfg.hubSpin, v => set({ hubSpin: v }), { step: 45 })))
         : (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
         ? h('div', { class: 'grid2' }, num('radius', 'Distance from parent (radius) × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
         : (cfg.layout === 'carousel' || cfg.kind === 'carousel')

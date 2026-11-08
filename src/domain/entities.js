@@ -429,6 +429,8 @@ export const DEFAULT_MENU = {
   fanCorner: '',        // fan levels open as a quarter-circle fan at this screen corner (MENU_FAN_CORNERS; '' = around the button)
   keepInside: true,     // keep the opened menu inside the device screen (shifts it back when it would leave the screen)
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
+  hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
+  hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

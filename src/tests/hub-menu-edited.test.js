@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
-import { MENU_KINDS, scopeFirst, visClass, isEdited } from '../domain/entities.js';
+import { MENU_KINDS, DEFAULT_MENU, scopeFirst, visClass, isEdited } from '../domain/entities.js';
 import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig } from '../domain/menu.js';
 import { readFileSync } from 'node:fs';
 import { createContext } from '../domain/svg.js';
@@ -333,4 +333,48 @@ test('hub default centre: a top-level item can be the starting centre button (va
   w.btn.querySelector('.ud-menu').attrs['data-hub-start'] = '3';
   const st = bindMenus({ addEventListener() {}, querySelectorAll: () => [w.btn], ownerDocument: null }, {}).get(w.btn);
   assert.equal(st.c, 3); assert.equal(st.prev, 3);
+});
+
+test('hub "when clicked rotate": hubSpin is rendered and every click turns the clicked item\'s icon (accumulating); 0 = off', () => {
+  assert.equal(DEFAULT_MENU.hubSpin, 0);
+  const w = hubWorld(5, {});
+  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '360';
+  w.items.forEach(it => { it.style.getPropertyValue = k => it.styleVars[k] ?? ''; });
+  w.click(w.items[1]);
+  assert.equal(w.items[1].styleVars['--spin'], '360deg');
+  w.click(w.items[1]);          // clicked again: keeps turning the same way
+  assert.equal(w.items[1].styleVars['--spin'], '720deg');
+  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '0';
+  w.click(w.items[2]);
+  assert.equal(w.items[2].styleVars['--spin'], undefined);
+  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '90';
+  w.fanItem.style.getPropertyValue = k => w.fanItem.styleVars[k] ?? '';
+  w.click(w.fanItem);                                           // a fan sub item turns too
+  assert.equal(w.fanItem.styleVars['--spin'], '90deg');
+});
+
+test('hub auto downsize: sub items wider than the screen are scaled (size and distance) to fit; off or fitting = untouched', () => {
+  assert.equal(DEFAULT_MENU.hubFit, false);
+  const tree = buildMenuTree(rowsOf(HUB.items));
+  const mkSvg = hubFit => renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...menuConfig({ menu: HUB.config }), hubFit }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(mkSvg(true), /data-hub-fit="1"/); assert.match(mkSvg(false), /data-hub-fit="0"/);
+  const run = fitOn => {
+    const mk = (attrs = {}) => { const el = { attrs: { ...attrs }, vars: {}, style: { setProperty: (k, v) => { el.vars[k] = v; }, getPropertyValue: k => el.vars[k] ?? '' }, getAttribute: k => el.attrs[k] ?? null, setAttribute: (k, v) => { el.attrs[k] = String(v); }, hasAttribute: k => k in el.attrs, classList: { toggle() {} }, querySelectorAll: () => [], querySelector: () => null }; return el; };
+    const items = [-200, -100, 0, 100, 200].map(x => { const e = mk({ 'data-r': '20' }); e.vars['--x'] = (180 + x) + 'px'; e.vars['--y'] = '300px'; return e; });   // 440 px wide on a 360 px screen
+    const menu = mk({ 'data-kind': 'hub', 'data-cx': '180', 'data-cy': '300', 'data-keep': '1', 'data-hub-fit': fitOn ? '1' : '0' });
+    const pt = () => { const p = { x: 0, y: 0, matrixTransform: () => ({ x: p.x, y: p.y }) }; return p; };
+    const btn = mk({}); btn.ownerSVGElement = { createSVGPoint: pt, getBoundingClientRect: () => ({ left: 0, top: 0, right: 360, bottom: 640, width: 360 }) };
+    btn.getScreenCTM = () => ({ a: 1, inverse() { return this; } }); btn.getBoundingClientRect = () => ({ width: 40 });
+    btn.querySelector = s => (s === '.ud-menu' ? menu : s === '.ud-menu[data-kind="hub"]' ? menu : null);
+    btn.querySelectorAll = s => (s.includes('.rm-item') && s.includes('is-active') ? items : []);
+    bindMenus({ addEventListener() {}, ownerDocument: { addEventListener() {} }, querySelectorAll: () => [] }, {}).apply(btn, { open: true, path: ['x'], c: 0, prev: 0 });
+    return items;
+  };
+  const on = run(true), xs = on.map(i => parseFloat(i.vars['--x'])), s = parseFloat(on[0].vars['--fit']);
+  assert.ok(s < 1 && s >= 0.2, `scale ${s}`);
+  assert.ok(Math.min(...xs) - 20 * s >= 0 && Math.max(...xs) + 20 * s <= 360, 'every sub item inside the screen');
+  assert.equal(xs[2], 180, 'the centre stays');
+  const off = run(false);
+  assert.equal(off[0].vars['--fit'], undefined, 'never scaled while off: items untouched');
+  assert.equal(parseFloat(off[0].vars['--x']), -20);
 });
