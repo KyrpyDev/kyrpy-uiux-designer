@@ -662,8 +662,16 @@ export class Designer {
     this.fitted = false;
   }
 
+  /** The path-tools row and the drawing-tools row hide separately (body classes dz-hide-pathbar / dz-hide-drawbar); remembered in the browser. */
+  toolRowHidden(key) { try { return localStorage.getItem(`ud_hide_${key}bar`) === '1'; } catch { return false; } }
+  setToolRowHidden(key, v) {
+    document.body.classList.toggle(`dz-hide-${key}bar`, !!v);
+    try { localStorage.setItem(`ud_hide_${key}bar`, v ? '1' : '0'); } catch { /* storage blocked */ }
+    this.fitted = false;
+  }
+
   buildBar() {
-    document.body.classList.toggle('dz-tools-collapsed', this.toolsCollapsedGet());
+    for (const k of ['path', 'draw']) document.body.classList.toggle(`dz-hide-${k}bar`, this.toolRowHidden(k));
     clear(this.bar);
     this.buildDocBar();
     const s = state.settings;
@@ -703,10 +711,9 @@ export class Designer {
         active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
       }));
     }
-    {
-      const col = this.toolsCollapsedGet();
-      const b = ibtn(col ? 'chevDown' : 'chevUp', col ? 'Expand the tool rows' : 'Collapse the tool rows', () => { this.applyToolsCollapsed(!this.toolsCollapsedGet()); this.buildBar(); }, { desc: 'Show / hide the path tools and drawing tools rows to save screen space', active: col, dataset: { view: '1' } });
-      kids.push(b);
+    for (const [key, icon, label, desc] of [['path', 'bezier', 'path tools row', 'Show / hide the row with the path and shape-combine tools'], ['draw', 'pencil', 'drawing tools row', 'Show / hide the row with the drawing tools, undo / redo and zoom']]) {
+      const hidden = this.toolRowHidden(key);
+      kids.push(ibtn(icon, `${hidden ? 'Show' : 'Hide'} the ${label}`, () => { this.setToolRowHidden(key, !this.toolRowHidden(key)); this.buildBar(); }, { desc, active: !hidden, dataset: { view: '1' } }));
     }
     kids.push(h('span', { class: 'grow' }),
       ibtn('book', 'Guide', () => openGuide(this.type), { desc: `How to use the ${NAMES[this.type].toLowerCase()}`, kbd: 'F1', dataset: { view: '1' } }),
@@ -860,7 +867,7 @@ export class Designer {
   }
 
   setInspectorWidth(w) {
-    this.inspectorEl.style.width = `${Math.min(720, Math.max(240, Math.round(w)))}px`;
+    this.inspectorEl.style.width = `${Math.min(720, Math.max(190, Math.round(w)))}px`;
   }
 
   /** First load: size the inspector to the width its content needs (clamped), then the user can drag it. */
@@ -871,7 +878,7 @@ export class Designer {
     el.style.width = 'max-content';
     const natural = el.getBoundingClientRect().width;
     el.style.width = '';
-    this.setInspectorWidth(natural + 16);
+    this.setInspectorWidth(Math.min(natural + 16, 270));
     this.fitted = false;
   }
 

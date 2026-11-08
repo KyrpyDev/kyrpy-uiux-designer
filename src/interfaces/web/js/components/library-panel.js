@@ -33,6 +33,7 @@ const LARGE_ICON_LIBRARY = 1500;
 /** Known icon packs (scripts/import-icon-packs.js) in chip order; any other pack gets a chip after them. */
 const ICON_PACKS = [['lucide', 'Lucide'], ['tabler', 'Tabler'], ['heroicons', 'Heroicons'], ['phosphor', 'Phosphor'], ['bootstrap', 'Bootstrap']];
 const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
+const TAB_ICONS = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow' };
 const TOOLS_COLLAPSED_KEY = 'ud_lib_tools_collapsed';
 const HINT = {
   path: 'Reusable vector path groups. Drag into an icon.',
@@ -73,12 +74,14 @@ export class LibraryPanel {
           ? (this.screensList?.length ?? state.counts?.screens ?? '')
           : (libOf(k)?.length ?? '');
       this.tabsEl.append(h('button', {
-        class: state.tab === k ? 'on' : '',
+        class: `lib-tab-ico${state.tab === k ? ' on' : ''}`,
         role: 'tab',
         'aria-selected': state.tab === k,
-        title: label,
-        onclick: () => { state.tab = k; this.renderTabs(); this.renderBody(); }
-      }, label, h('span', { class: 'dim', style: { display: 'block', fontSize: '10px' } }, String(count))));
+        'aria-label': `${label} (${count})`,
+        'data-tip': `${label} (${count})\nClick: show the library · Double-click: open its designer`,
+        onclick: () => { state.tab = k; this.renderTabs(); this.renderBody(); },
+        ondblclick: () => window.dispatchEvent(new CustomEvent('ud:open-page', { detail: k }))
+      }, iconEl(TAB_ICONS[k], { size: 18 }), h('span', { class: 'lib-tab-count' }, String(count))));
     }
   }
 
@@ -221,14 +224,14 @@ export class LibraryPanel {
       });
     };
     const bar = h('div', { class: 'sel-bar', style: { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' } },
-      ibtn('pointer', 'Select all', () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }, { desc: 'Select all visible items', cls: 'lib-sel-all-btn', extra: [h('span', { class: 'ib-lbl' }, 'All')] }),
-      ibtn('close', 'Deselect all', () => { selSet.clear(); updateInfo(); }, { desc: 'Clear the selection', cls: 'lib-sel-none-btn', extra: [h('span', { class: 'ib-lbl' }, 'None')] }),
+      ibtn('pointer', 'Select all', () => { getVisible().forEach(r => selSet.add(r.id)); updateInfo(); }, { desc: 'Select all visible items', cls: 'lib-sel-all-btn', size: 16 }),
+      ibtn('close', 'Deselect all', () => { selSet.clear(); updateInfo(); }, { desc: 'Clear the selection', cls: 'lib-sel-none-btn', size: 16 }),
       ibtn('rotate', 'Reverse selection', () => {
         getVisible().forEach(r => (selSet.has(r.id) ? selSet.delete(r.id) : selSet.add(r.id)));
         updateInfo();
-      }, { desc: 'Invert the selection of visible items', cls: 'lib-sel-invert-btn', extra: [h('span', { class: 'ib-lbl' }, 'Invert')] }),
-      ibtn('copy', 'Copy to…', () => openBrowserWithSelection('copy'), { desc: 'Open the wide Item Browser to copy selected items to project(s)', cls: 'lib-copy-to-btn', extra: [h('span', { class: 'ib-lbl' }, 'Copy')] }),
-      ibtn('import', 'Move to…', () => openBrowserWithSelection('move'), { desc: 'Open the wide Item Browser to move selected items to project(s)', cls: 'lib-move-to-btn', extra: [h('span', { class: 'ib-lbl' }, 'Move')] }),
+      }, { desc: 'Invert the selection of visible items', cls: 'lib-sel-invert-btn', size: 16 }),
+      ibtn('copy', 'Copy to…', () => openBrowserWithSelection('copy'), { desc: 'Open the wide Item Browser to copy selected items to project(s)', cls: 'lib-copy-to-btn', size: 16 }),
+      ibtn('import', 'Move to…', () => openBrowserWithSelection('move'), { desc: 'Open the wide Item Browser to move selected items to project(s)', cls: 'lib-move-to-btn', size: 16 }),
       ibtn('export', 'Export / import', () => {
           const preselected = [...selSet].map(id => ({ type, id }));
           openLibraryExportImportModal({
@@ -241,7 +244,7 @@ export class LibraryPanel {
               this.renderBody();
             }
           });
-        }, { desc: 'Export or import paths, icons, buttons, elements, screens and workflows as HTML, SVG or JSON', cls: 'lib-export-import-btn', extra: [h('span', { class: 'ib-lbl' }, 'Export')] }),
+        }, { desc: 'Export or import paths, icons, buttons, elements, screens and workflows as HTML, SVG or JSON', cls: 'lib-export-import-btn', size: 16 }),
       ibtn('trash', 'Empty private library', async () => {
           const pid = Number(state.activeProjectId || state.currentProjectId || 1);
           const proj = (state.projects || []).find(p => p.id === pid);
@@ -257,7 +260,7 @@ export class LibraryPanel {
           } catch (err) {
             toast(err.message, 'err');
           }
-        }, { desc: 'Empty the active project’s private library (default libraries are immutable)', cls: 'lib-empty-private-btn', extra: [h('span', { class: 'ib-lbl' }, 'Empty')] }),
+        }, { desc: 'Empty the active project’s private library (default libraries are immutable)', cls: 'lib-empty-private-btn', size: 16 }),
       info
     );
     bar._updateInfo = updateInfo;
@@ -420,7 +423,7 @@ export class LibraryPanel {
       this.chips(type, list, () => this.renderBody()),
       selBar,
       h('div', { class: 'row' },
-        h('button', { class: 'btn small', onclick: async () => { const r = await newDesign(type); if (r) this.app.openDesign(type, r.id); } }, `+ New ${TYPES[type].label.toLowerCase()}`),
+        ibtn('plus', `New ${TYPES[type].label.toLowerCase()}`, async () => { const r = await newDesign(type); if (r) this.app.openDesign(type, r.id); }, { desc: `Create an empty ${TYPES[type].label.toLowerCase()} and open it` }),
         ...extra,
         h('span', { class: 'grow' }),
         h('span', { class: 'dim' }, `${list.length}`)
@@ -606,9 +609,9 @@ export class LibraryPanel {
     this.bodyEl.append(
       this.head('icon', list, fill, [
         this.onlineToggle(),
-        h('button', { class: 'btn small', title: 'Import single SVG file or markup', onclick: async () => { const r = await importSvgDialog('icon'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, 'Import SVG'),
-        h('button', { class: 'btn small', title: 'Batch import from an SVG folder into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '📁 Folder'),
-        h('button', { class: 'btn small', title: 'Import glyphs from Fonts (.svg / .ttf / .woff / symbols) into Icons library', onclick: async () => { const r = await importFolderOrFontDialog('icon', 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '🔤 Fonts')
+        ibtn('import', 'Import single SVG file or markup', async () => { const r = await importSvgDialog('icon'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); }),
+        ibtn('folder', 'Batch import from an SVG folder into Icons library', async () => { const r = await importFolderOrFontDialog('icon', 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); }),
+        ibtn('text', 'Import glyphs from Fonts (.svg / .ttf / .woff / symbols) into Icons library', async () => { const r = await importFolderOrFontDialog('icon', 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); })
       ], selBar),
       h('div', { class: 'row lib-pack-row', style: { alignItems: 'center', gap: '6px' } }, packBar, h('span', { class: 'grow' }), count),
       scroller
@@ -669,9 +672,9 @@ export class LibraryPanel {
     };
     const extra = ['path', 'button', 'element'].includes(type)
       ? [
-          h('button', { class: 'btn small', title: `Import SVG into ${PLURAL[type]}`, onclick: async () => { const r = await importSvgDialog(type); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, 'Import SVG'),
-          h('button', { class: 'btn small', title: `Batch import from an SVG folder into ${PLURAL[type]}`, onclick: async () => { const r = await importFolderOrFontDialog(type, 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '📁 Folder'),
-          h('button', { class: 'btn small', title: `Import glyphs from Fonts into ${PLURAL[type]}`, onclick: async () => { const r = await importFolderOrFontDialog(type, 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); } }, '🔤 Fonts')
+          ibtn('import', `Import SVG into ${PLURAL[type]}`, async () => { const r = await importSvgDialog(type); if (r?.rec) this.app.openDesign(r.type, r.rec.id); }),
+          ibtn('folder', `Batch import from an SVG folder into ${PLURAL[type]}`, async () => { const r = await importFolderOrFontDialog(type, 'folder'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); }),
+          ibtn('text', `Import glyphs from Fonts into ${PLURAL[type]}`, async () => { const r = await importFolderOrFontDialog(type, 'font'); if (r?.rec) this.app.openDesign(r.type, r.rec.id); })
         ]
       : [];
     this.bodyEl.append(this.head(type, list, fill, extra, selBar), h('div', { class: 'lib-scroll' }, grid));
@@ -685,7 +688,7 @@ export class LibraryPanel {
     const grid = h('div', { class: 'screen-grid' });
     const cells = new Map();
     const visible = () => this.filtered('screen', list);
-    const exportBtn = h('button', { class: 'btn primary small', disabled: !state.catalogSel.size, onclick: () => openExportDialog({ screenIds: [...state.catalogSel] }) }, 'Export selected…');
+    const exportBtn = ibtn('export', 'Export selected screens…', () => openExportDialog({ screenIds: [...state.catalogSel] }), { desc: 'Export the checked screens as an html/css/ts bundle', cls: 'primary', disabled: !state.catalogSel.size });
     const syncInfo = () => {
       cells.forEach((c, id) => {
         c.classList.toggle('sel', state.catalogSel.has(id));
@@ -727,9 +730,9 @@ export class LibraryPanel {
         this.chips('screen', list, () => this.renderBody()),
         selBar,
         h('div', { class: 'row' },
-          h('button', { class: 'btn small', onclick: async () => { const r = await newDesign('screen'); if (r) { this.screensList = null; this.app.openDesign('screen', r.id); } } }, '+ New screen'),
+          ibtn('plus', 'New screen', async () => { const r = await newDesign('screen'); if (r) { this.screensList = null; this.app.openDesign('screen', r.id); } }, { desc: 'Create a screen from a device template and open it' }),
           exportBtn,
-          h('button', { class: 'btn small', title: 'Export every screen', onclick: () => openExportDialog({ screenIds: 'all' }) }, 'Export all…')
+          ibtn('layers', 'Export all screens…', () => openExportDialog({ screenIds: 'all' }), { desc: 'Export every screen as an html/css/ts bundle' })
         )
       ),
       h('div', { class: 'lib-scroll' }, grid)
@@ -858,17 +861,14 @@ export class LibraryPanel {
         this.visBar(() => this.renderBody()),
         selBar,
         h('div', { class: 'row' },
-          h('button', {
-            class: 'btn small',
-            onclick: async () => {
+          ibtn('plus', 'New workflow', async () => {
               const n = await promptBox('New workflow', { okLabel: 'Create' });
               if (n?.trim()) {
                 const w = await api.createWorkflow({ name: n.trim(), projectId: state.activeProjectId || state.currentProjectId || 1, visibility: 'public' });
                 await this.loadWorkflows();
                 this.app.openWorkflow(w.id);
               }
-            }
-          }, '+ New workflow')
+          }, { desc: 'Create a workflow and open it' })
         )
       ),
       box

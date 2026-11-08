@@ -142,7 +142,7 @@ h3, h4 { margin: 0; }
 .dz-overlay .anchor { fill: rgba(255, 79, 216, .55); }
 .dz-device-frame { position: absolute; pointer-events: none; border: 1px solid rgba(255, 255, 255, .15); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0); }
 .dz-hint { position: absolute; left: 10px; bottom: 8px; color: var(--dim); font-size: 11px; pointer-events: none; }
-.dz-inspector { width: 310px; flex: 0 0 auto; background: var(--panel); border-left: 1px solid var(--line); overflow: auto; }
+.dz-inspector { width: 250px; flex: 0 0 auto; background: var(--panel); border-left: 1px solid var(--line); overflow: auto; }
 .dz-inspector.collapsed { display: none; }
 .insp-splitter { flex: 0 0 6px; width: 6px; cursor: col-resize; background: transparent; border-left: 1px solid var(--line); }
 .insp-splitter:hover, .insp-splitter:active { background: var(--accent2, #2e9bff); opacity: .5; }
@@ -824,7 +824,7 @@ input.doc-title:focus { outline: none; border-color: var(--accent); background: 
 .ib-lbl { font-size: 11px; font-weight: 600; }
 
 /* collapsed tool rows (path tools + drawing tools) in every designer */
-body.dz-tools-collapsed .dz-pathbar, body.dz-tools-collapsed .dz-bar { display: none; }
+body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) { display: none; }
 
 /* hub designer: the open button's own body is the centre button; the centre menu item keeps only its hit area (no second button on top) */
 .dz-stage:not(.menu-live) .rm-hub-item[data-hub-pos="center"] .rm-item-body > :not(circle[fill="transparent"]) { opacity: 0; }
@@ -833,3 +833,9 @@ body.dz-tools-collapsed .dz-pathbar, body.dz-tools-collapsed .dz-bar { display: 
 .cell .tb, .lib-card .tb { top: 100%; right: 0; left: auto; width: max-content; max-width: 90vw; flex-wrap: wrap; justify-content: flex-end; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); z-index: 30; }
 .cell:hover, .lib-card:hover { z-index: 30; }
 .cell .chk, .lib-card .chk { top: auto; left: auto; bottom: 5px; right: 5px; }
+
+/* library tabs: icon buttons with the item count below (no named tabs) */
+.lib-tabs { gap: 2px; padding: 4px 6px 0; }
+.lib-tabs button.lib-tab-ico { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 2px 4px; font-size: 10px; line-height: 1.1; border-radius: 8px 8px 0 0; }
+.lib-tab-count { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lib-tabs button.lib-tab-ico.on .lib-tab-count { color: #fff; }

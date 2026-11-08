@@ -796,7 +796,6 @@ function buildTypeBar() {
   const nav = $('#typebar'); if (!nav) return;
   clear(nav);
   const page = currentPageType();
-  const navBtn = (type, tip, icon, onclick) => h('button', { class: `tab-ico${page === type ? ' on' : ''}`, 'aria-label': tip, 'data-tip': tip, onclick }, iconEl(icon, { size: 18 }));
   const newBtn = page ? ibtn('plus', `New empty ${page === 'workflow' ? 'workflow' : (TYPE_NAV.find(t => t[0] === page)?.[1] || page).replace(' designer', '').toLowerCase()}`, async () => {
     const r = await createEmptyItem(page);
     if (!r) return;
@@ -807,9 +806,8 @@ function buildTypeBar() {
   const designer = app.designer;
   const inDesigner = state.mode === 'screen' && designer?.doc;
   nav.append(...[
+    // the per-type page buttons live in the library panel's icon tabs (double-click opens that designer)
     h('div', { class: 'tabs type-tabs', role: 'tablist' },
-      ...TYPE_NAV.map(([type, tip, icon]) => navBtn(type, tip, icon, () => openPageType(type))),
-      navBtn('workflow', 'Workflow designer — screen-to-screen routing graph', 'workflow', () => openPageType('workflow')),
       h('button', { class: `tab-ico${state.mode === 'browser' ? ' on' : ''}`, 'aria-label': 'Item Browser — full-canvas item list with checkboxes', 'data-tip': 'Item Browser — full-canvas item list with checkboxes', dataset: { modeTab: 'browser' }, onclick: () => { state.mode = 'browser'; renderMode(); buildTopbar(); } }, iconEl('grid', { size: 18 }))
     ),
     h('span', { class: 'sep-v' }),
@@ -821,6 +819,7 @@ function buildTypeBar() {
     ...(inDesigner ? (designer.viewControls || []) : [])
   ].filter(Boolean));
 }
+window.addEventListener('ud:open-page', e => { const t = e.detail; if (t) openPageType(t).catch(err => toast(err.message, 'error')); });
 const closeMenus = () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', e => {
