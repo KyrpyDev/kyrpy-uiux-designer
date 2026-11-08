@@ -26,6 +26,7 @@ export const DEFAULT_ENV_VAR = 'KYRPY_UIUX_API_KEY';
 export const KEY_PLACEHOLDER = 'kud_live_<paste-your-key-here>';
 
 export const SHELLS = [
+  ['any', 'Not sure / any shell (works in bash, zsh, PowerShell and cmd)'],
   ['posix', 'bash / zsh (macOS, Linux, WSL)'],
   ['powershell', 'PowerShell (Windows)'],
   ['fish', 'fish'],
@@ -97,6 +98,8 @@ export function envLines(shell, name, value) {
 }
 
 const shellLang = shell => (shell === 'powershell' ? 'powershell' : shell === 'cmd' ? 'bat' : 'bash');
+/** Shell-neutral recipes exist for Claude Code only (plain `claude mcp` commands with the key inline); other clients fall back to bash / zsh syntax. */
+const ANY_SHELL_CLIENTS = new Set(['claude-code']);
 
 export function buildClientSetup({
   client = 'claude-code', url, key = '', keyMode = 'env', shell = 'posix',
@@ -104,14 +107,17 @@ export function buildClientSetup({
 } = {}) {
   const perRepo = keyKind !== 'account';
   if (!url) throw new Error('url is required');
+  const wantedAny = shell === 'any';
+  if (wantedAny && !ANY_SHELL_CLIENTS.has(client)) shell = 'posix';     // no neutral recipe: fall back to bash / zsh
+  const anyShell = shell === 'any';
   const hasKey = /^kud_(live|test)_[0-9A-Za-z]{32}$/.test(String(key));
-  const mode = hasKey && keyMode === 'inline' ? 'inline' : 'env';
+  const mode = hasKey && (keyMode === 'inline' || anyShell) ? 'inline' : 'env';   // no portable env-var syntax: the neutral recipe writes the key into the command
   const value = hasKey ? key : KEY_PLACEHOLDER;
   const name = String(serverName || DEFAULT_SERVER_NAME).trim().replace(/[^A-Za-z0-9_.-]/g, '-') || DEFAULT_SERVER_NAME;
   const ev = String(envVar || DEFAULT_ENV_VAR).trim().replace(/[^A-Za-z0-9_]/g, '_') || DEFAULT_ENV_VAR;
   const info = CLIENTS.find(c => c.id === client) || CLIENTS[0];
   const lang = shellLang(shell);
-  const isWin = shell === 'powershell' || shell === 'cmd';
+  const isWin = shell === 'powershell' || shell === 'cmd';   // 'any' keeps the file-path hints in posix style
 
   // what goes into a header value inside a shell command / a config file
   const cmdBearer = mode === 'inline' ? `Bearer ${value}` : `Bearer ${shellVar(shell, ev)}`;
@@ -148,11 +154,13 @@ export function buildClientSetup({
       // local > project > user, so remove it first ("not found" is fine)
       const nul = shell === 'powershell' ? '$null' : shell === 'cmd' ? 'nul' : '/dev/null';
       const ok = shell === 'posix' || shell === 'fish' ? ' || true' : '';
-      const staleRemoval = scopes => scopes.map(sc => `claude mcp remove ${name} -s ${sc} 2>${nul}${ok}\n`).join('');
+      // neutral recipe: no redirect / `|| true` (they differ per shell); "No MCP server found" for a missing entry is harmless
+      const staleRemoval = scopes => scopes.map(sc => (anyShell ? `claude mcp remove ${name} -s ${sc}\n` : `claude mcp remove ${name} -s ${sc} 2>${nul}${ok}\n`)).join('');
       steps.push({ title: perRepo
         ? `1. In the repository root, add the server for this repository only (local scope: stored in ~/.claude.json under this folder, never in the repo)`
         : `1. Add the server once for every repository (user scope; each repo's .uiux/config.json names its project)`, lang,
         text: `${perRepo ? '# run this inside your repository root\n' : ''}${staleRemoval(perRepo ? ['local'] : ['local', 'user'])}claude mcp add --transport http --scope ${scope} ${name} ${url} --header ${argExpand(mode === 'inline' || !hasKey ? literal : `Authorization: ${cmdBearer}`)}` });
+      if (anyShell) notes.push('Shell-neutral recipe: the same lines run in bash, zsh, PowerShell and cmd. "No MCP server found" from the remove lines just means there was no older entry.');
       if (mode === 'env' && hasKey) steps.unshift({ title: `0. Make the key available to the command (only while adding it)`, lang, text: envLines(shell, ev, value).split('\n').slice(0, 2).join('\n') });
       steps.push({ title: `${n()} Or share it with the team in .mcp.json (the key stays in each person’s ${ev})`, lang: 'json', path: '.mcp.json',
         text: json({ mcpServers: { [name]: { type: 'http', url, headers: { Authorization: `Bearer \${${ev}}` } } } }) });
@@ -347,6 +355,7 @@ function wrapPrereq(shell, prereq, body) {
   const msg = [`${prereq.name} ("${prereq.cmd}") is not installed. Install it, open a new terminal and paste these steps again:`,
     ...prereq.install.map(l => `  ${l}`), ...(prereq.note ? [`  ${prereq.note}`] : []), `  docs: ${prereq.docs}`];
   const title = `Requires ${prereq.name} ("${prereq.cmd}")`;
+  if (shell === 'any') return `# ${title}. Not installed? ${[...new Set(prereq.install)].join('  or  ')}  (docs: ${prereq.docs})\n\n${body}`;
   if (shell === 'powershell') {
     const say = msg.map(l => `  Write-Host '${l.replace(/'/g, "''")}'`).join('\n');
     return `# ${title}\nif (-not (Get-Command ${prereq.cmd} -ErrorAction SilentlyContinue)) {\n${say}\n} else {\n\n${body}\n\n}`;

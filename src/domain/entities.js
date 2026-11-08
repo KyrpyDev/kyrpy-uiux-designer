@@ -406,6 +406,8 @@ export function buttonStyleFrameNodes(styleKey, { width = 64, height = 64 } = {}
 }
 
 export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
+/** Screen corner a menu's fan levels open at ('' = around the button); e.g. a burger item fanning out from the lower right corner. */
+export const MENU_FAN_CORNERS = ['', 'bottom-left', 'bottom-right', 'top-left', 'top-right'];
 export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element', 'hub'];
 /** Default menu settings of a button. Sizes are ratios of the button size so the menu scales with the button. */
 export const DEFAULT_MENU = {
@@ -420,9 +422,11 @@ export const DEFAULT_MENU = {
   sweep: 140,           // fan/radial: angle covered by the items
   itemScale: 0.75,      // item size / button size
   gap: 0.2,             // list/slider/carousel gap / button size
-  hubScale: 0.8,        // hub: small side button size / button size
-  centerScale: 0,       // hub: centre button size / button size (0 = twice the side buttons)
+  hubScale: 0.4,        // hub: small side button size / button size (a quarter of the centre button)
+  centerScale: 1.6,     // hub: centre button size / button size (0 = twice the side buttons)
   distance: null,       // list/slider/drawer/carousel: distance of the first item from its parent / button size (null = same as gap)
+  hubCenterItemId: null,// hub: root menu item shown in the centre when the menu first appears (null = the first item)
+  fanCorner: '',        // fan levels open as a quarter-circle fan at this screen corner (MENU_FAN_CORNERS; '' = around the button)
   keepInside: true,     // keep the opened menu inside the device screen (shifts it back when it would leave the screen)
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)

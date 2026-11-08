@@ -134,3 +134,17 @@ test('"Copy all steps" is a pasteable script: CLI check first, config files and 
   assert.ok(cc.indexOf('claude mcp remove kyrpy-uiux -s local') < cc.indexOf('claude mcp add'));
   assert.ok(cc.includes('claude mcp remove kyrpy-uiux -s user'));
 });
+
+test('claude-code "any shell" recipe: identical in bash, PowerShell and cmd, removes stale entries, key inline, no shell-specific syntax', async () => {
+  const { buildClientSetup, setupAsText } = await import('../interfaces/web/client-setup.js');
+  const key = 'kud_live_' + 'a'.repeat(32);
+  const text = setupAsText(buildClientSetup({ client: 'claude-code', url: 'https://d.example/mcp', key, shell: 'any', keyKind: 'account' }));
+  assert.match(text, /^claude mcp remove kyrpy-uiux -s local$/m);
+  assert.match(text, /^claude mcp remove kyrpy-uiux -s user$/m);
+  assert.match(text, new RegExp(`^claude mcp add --transport http --scope user kyrpy-uiux https://d\\.example/mcp --header "Authorization: Bearer ${key}"$`, 'm'));
+  const code = text.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+  assert.equal(code.length, 4, code.join('\n'));                      // 2 removes, add, `claude mcp get`
+  for (const bad of ['$env:', '$null', '/dev/null', '|| true', 'if ', 'Get-Command', 'export ', '{', '}']) assert.ok(!code.join('\n').includes(bad), bad);
+  // clients without a neutral recipe fall back to bash / zsh syntax
+  assert.equal(buildClientSetup({ client: 'codex', url: 'https://d.example/mcp', key, shell: 'any' }).shell, 'posix');
+});

@@ -296,12 +296,25 @@ export class MenuEditor {
     this.toolbar = h('div', { class: 'rm-toolbar', hidden: true, role: 'toolbar', 'aria-label': 'Menu item tools' });
     this.toolbar.addEventListener('pointerenter', () => clearTimeout(this.hideTimer));
     this.toolbar.addEventListener('pointerleave', () => this.scheduleHide());
+    this.toolbar.addEventListener('click', e => e.stopPropagation());   // a click on the toolbar must not close the open hub level (outside-click rule)
     designer.viewport.appendChild(this.toolbar);
     // same behaviour as the exported page; leaf clicks keep the menu open while editing, or trigger actions/routes in Test mode
     designer.stage.addEventListener('dblclick', ev => this.onDblClick(ev), true);
+    // a clicked item keeps its action toolbar until the next click elsewhere on the canvas
+    designer.stage.addEventListener('click', ev => {
+      if (!this.active || ev.target.closest?.('.rm-item, [data-rm="center"], .rm-toolbar')) return;
+      this.pinned = null; this.hideToolbar();
+    });
     this.ctl = bindMenus(designer.stage, {
       keepOpen: true,
       onState: (_, st) => { this.menuState = st; },
+      onItem: (_, el) => {
+        if (!this.active || this.d.actionsLive || this.d.menuLive) return;
+        this.pinned = el.getAttribute('data-menu-id');
+        this.hover = null;
+        this.showPinned(0);
+        this.showPinned(400);   // again once the item has moved into place (hub swap / fan transition)
+      },
       onAction: async a => {
         if (!this.d.actionsLive && !this.d.menuLive) return;
         const btnEl = designer.stage.querySelector(`.ud-btn[data-menu="${a.menu}"]`) || designer.stage.querySelector('.ud-btn');
@@ -352,6 +365,21 @@ export class MenuEditor {
     const btn = this.d.stage.querySelector('.ud-btn');
     if (btn) this.ctl.set(btn, this.menuState);
     this.hideToolbar();
+    if (this.pinned) this.showPinned(400);
+  }
+
+  /** Shows the action toolbar of the clicked (pinned) menu item, when that item is still on screen. */
+  showPinned(delay) {
+    clearTimeout(this.pinTimer);
+    this.pinTimer = setTimeout(() => {
+      if (!this.pinned || !this.active) return;
+      const el = [...this.d.stage.querySelectorAll('.rm-level.is-active .rm-item')].find(e => e.getAttribute('data-menu-id') === this.pinned && e.getAttribute('data-hub-pos') !== 'hidden');
+      const hit = el ? this.itemAtEvent({ target: el }) : null;
+      if (!hit) { this.pinned = null; return this.hideToolbar(); }
+      clearTimeout(this.hideTimer);
+      this.hover = null;
+      this.show(hit);
+    }, delay);
   }
   afterChange() {
     if (!this.active) return;
@@ -388,15 +416,18 @@ export class MenuEditor {
     this.show(hit);
   }
 
-  scheduleHide() { clearTimeout(this.hideTimer); this.hideTimer = setTimeout(() => this.hideToolbar(), 350); }
+  // leaving a hovered item returns to the pinned (clicked) item's toolbar, if any
+  scheduleHide() { clearTimeout(this.hideTimer); this.hideTimer = setTimeout(() => (this.pinned ? this.showPinned(0) : this.hideToolbar()), 350); }
   hideToolbar() { this.toolbar.hidden = true; this.hover = null; }
 
   show(hit) {
     const key = hit.hub ? `hub-${hit.buttonId}` : `${hit.buttonId}-${hit.item?.id}`;
     const vr = this.d.viewport.getBoundingClientRect(), r = hit.el.getBoundingClientRect();
-    this.toolbar.style.left = `${r.left - vr.left + r.width / 2}px`;
     this.toolbar.style.top = `${Math.max(46, r.top - vr.top - 40)}px`;
     this.toolbar.hidden = false;
+    // centred over the item, kept inside the canvas (the toolbar is centred on its left position)
+    const half = (this.toolbar.offsetWidth || 240) / 2 + 6;
+    this.toolbar.style.left = `${Math.min(Math.max(r.left - vr.left + r.width / 2, half), Math.max(half, vr.width - half))}px`;
     if (this.hover === key) return;
     this.hover = key;
     clear(this.toolbar);
@@ -423,7 +454,66 @@ export class MenuEditor {
         btn('→', 'Move later', () => menuActions.move(this.d, it.id, 1, hit.buttonId)),
         btn('🗑', 'Delete this item', () => menuActions.remove(this.d, it.id, hit.buttonId))
       );
+      // hub ring item: make it the centre button the menu starts on (between its neighbours of the same level)
+      if (hit.el.hasAttribute('data-hub-index')) {
+        const host = this.d.doc?.id === hit.buttonId ? this.d.doc : state.library.buttons.find(b => b.id === hit.buttonId);
+        const isDefault = Number(menuConfig(host?.meta).hubCenterItemId) === Number(it.id) || (menuConfig(host?.meta).hubCenterItemId == null && hit.el.getAttribute('data-hub-index') === '0');
+        this.toolbar.append(isDefault
+          ? h('span', { class: 'badge accent', title: 'The hub menu starts with this item in the centre' }, '◎ Default centre')
+          : btn('◎', `Set “${it.label || it.name}” as the default centre button`, () => this.setDefaultCentre(it.id, hit.buttonId, +hit.el.getAttribute('data-hub-index'))));
+      }
     }
+  }
+
+  /**
+   * Brings a menu item into view on the canvas (row click in the inspector's item list): opens the level that holds it
+   * (hub: its top-level ancestor swaps into the centre and that fan opens), pins its toolbar and pans to it when off screen.
+   */
+  focusItem(itemId) {
+    if (!this.active || !this.d.doc) return;
+    const rows = this.d.doc.menuItems || [];
+    const it = rows.find(r => r.id === itemId);
+    if (!it) return;
+    const path = menuActions.pathOf(rows, it.id);
+    const host = this.d.stage.querySelector('.ud-btn');
+    const isHub = !!host?.querySelector('.ud-menu[data-kind="hub"]');
+    const parentPath = path.slice(0, -1);
+    let st = { open: true, path: parentPath };
+    if (isHub) {
+      // the top-level ancestor sits in the centre; its sub level is the one shown
+      const top = rows.find(r => r.name === path[0] && r.parentId == null);
+      const el = top && host.querySelector(`.rm-hub-item[data-menu-id="${top.id}"]`);
+      const c = el ? +el.getAttribute('data-hub-index') : (this.menuState.c || 0);
+      st = { open: true, path: parentPath, c, prev: this.menuState.c ?? c };
+    }
+    this.menuState = st;
+    if (host) this.ctl.set(host, st);
+    this.focusedId = it.id;
+    this.pinned = String(it.id);
+    this.hover = null;
+    this.showPinned(0);
+    clearTimeout(this.focusTimer);
+    this.focusTimer = setTimeout(() => {                 // once the item has moved into place
+      const el = [...this.d.stage.querySelectorAll('.rm-level.is-active .rm-item')].find(e => e.getAttribute('data-menu-id') === String(it.id) && e.getAttribute('data-hub-pos') !== 'hidden');
+      if (!el || this.focusedId !== it.id) return;
+      this.pinned = String(it.id);                      // a re-render in between may have dropped the pin
+      el.classList.add('rm-focus');
+      setTimeout(() => el.classList.remove('rm-focus'), 1200);
+      const vr = this.d.viewport.getBoundingClientRect(), r = el.getBoundingClientRect(), m = 24;
+      const out = r.left < vr.left + m || r.right > vr.right - m || r.top < vr.top + 46 || r.bottom > vr.bottom - m;
+      if (out) {
+        this.d.view.tx += (vr.left + vr.width / 2) - (r.left + r.width / 2);
+        this.d.view.ty += (vr.top + vr.height / 2) - (r.top + r.height / 2);
+        this.d.applyView(); this.d.renderOverlay?.();
+      }
+      this.showPinned(0);
+    }, 420);
+  }
+
+  async setDefaultCentre(itemId, buttonId, index) {
+    if (this.active && this.d.doc?.id === buttonId && index >= 0) this.menuState = { open: true, path: [], c: index, prev: index };
+    await menuActions.config(this.d, { hubCenterItemId: itemId }, buttonId);
+    toast('Default centre button set', 'ok', 1400);
   }
 }
 

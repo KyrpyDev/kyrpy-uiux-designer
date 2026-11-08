@@ -5,7 +5,7 @@ import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
-import { buildMenuTree } from '/domain/menu.js';
+import { buildMenuTree, hubDirectionPatch } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, ANCHORS,
@@ -203,7 +203,22 @@ export class Inspector {
       await d.reload();
       toast(`Button style: ${BUTTON_STYLES.find(b => b.key === v)?.label || v}`, 'ok', 1400);
     });
-    return this.section('', this.field('Button style', sel));
+    const rows = doc.menuItems || [];
+    if (!rows.length) return this.section('', this.field('Button style', sel));
+    // APPLY: every menu item (hub ring, fans, sub items) is drawn with this button's style: drop the menu-wide and per-item button picks
+    const apply = ibtn('check', 'Apply this button style to all menu items', () => this.applyStyleToMenuItems(doc.id), { desc: 'Every menu item (hub buttons, fans, sub items) is drawn with this button\'s style; items keep their own icon', cls: 'primary' });
+    return this.section('', this.field('Button style', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, h('div', { class: 'grow' }, sel), apply)));
+  }
+
+  async applyStyleToMenuItems(bid) {
+    const d = this.d, doc = d.doc?.id === bid ? d.doc : findDesign('button', bid);
+    const rows = (doc?.menuItems || []).filter(r => r.refButtonId != null);
+    const cfg = { ...DEFAULT_MENU, ...(doc?.meta?.menu || {}) };
+    if (!rows.length && cfg.itemButtonId == null) return toast('All menu items already use this button style', 'ok', 1600);
+    for (const r of rows) await api.updateMenuItem(bid, r.id, { refButtonId: null });
+    if (cfg.itemButtonId != null) await menuActions.config(d, { itemButtonId: null }, bid);
+    else await menuActions.refresh(d, bid);
+    toast(`Button style applied to all menu items${rows.length ? ` (${rows.length} reset)` : ''}`, 'ok', 1600);
   }
 
   designSection() {
@@ -313,7 +328,7 @@ export class Inspector {
         : null,
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
-            this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set({ direction: v }))),
+            this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set(hubDirectionPatch(cfg, v)))),
             num('hubScale', 'Small items size × button'), num('centerScale', 'Centre item size × button (0 = 2 × small)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5))
         : (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
         ? h('div', { class: 'grid2' }, num('radius', 'Distance from parent (radius) × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
@@ -333,6 +348,15 @@ export class Inspector {
                 num('gap', 'Gap between items × button')
               )
             : h('div', { class: 'grid2' }, this.field('Direction', this.select(`mc-${bid}-dir`, cfg.direction, ['up', 'down', 'left', 'right'], v => set({ direction: v }))), num('itemScale', 'Item size × button'), num('distance', 'Distance from parent × button'), num('gap', 'Gap between items × button')),
+      ['hub', 'radial', 'rotating', 'popup'].includes(cfg.kind)
+        ? this.field(cfg.kind === 'hub' ? 'Sub items open (e.g. the burger item)' : 'Items open', this.select(`mc-${bid}-corner`, cfg.fanCorner || '', [
+            ['', 'Around the button'],
+            ['bottom-right', 'Radial fan · bottom right corner of the screen'],
+            ['bottom-left', 'Radial fan · bottom left corner of the screen'],
+            ['top-right', 'Radial fan · top right corner of the screen'],
+            ['top-left', 'Radial fan · top left corner of the screen']
+          ], v => set({ fanCorner: v })))
+        : null,
       this.menuStyleTool(bid, cfg, rows, set),
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the opened menu would leave the device screen it is shifted back inside' },
         h('input', { type: 'checkbox', checked: cfg.keepInside !== false, 'data-f': `mc-${bid}-keep`, onchange: e => set({ keepInside: e.target.checked }) }), h('span', {}, 'Keep the menu inside the device screen')),
@@ -345,7 +369,17 @@ export class Inspector {
       const popEl = n.targetElementId ? findDesign('element', n.targetElementId) : null;
       const scr = n.targetScreenId ? this.screenChoices().find(s => s.id === n.targetScreenId) : null;
       const isVisible = n.visible !== false;
-      lines.push(h('div', { class: 'el-row', style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible ? 1 : 0.45 } },
+      const canFocus = d.menu?.focusItem && d.doc?.id === bid;
+      lines.push(h('div', {
+        class: `el-row${canFocus ? ' mi-focusable' : ''}${canFocus && d.menu.focusedId === n.id ? ' on' : ''}`, style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible ? 1 : 0.45 },
+        title: canFocus ? 'Click to show this item on the canvas' : undefined,
+        onclick: canFocus ? e => {
+          if (e.target.closest('button, input, select, a')) return;
+          e.currentTarget.parentElement?.querySelectorAll(':scope > .el-row.on').forEach(r => r.classList.remove('on'));
+          e.currentTarget.classList.add('on');
+          setTimeout(() => d.menu.focusItem(n.id), 0);   // after this click: the menu's outside-click rule would close the level again
+        } : undefined
+      },
         h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: n.descriptionDev || n.name },
           `${n.label || n.name}`,
           h('span', { class: 'dim' }, ic ? ` · ${ic.key}` : ''),
@@ -354,6 +388,10 @@ export class Inspector {
         ),
         ibtn(isVisible ? 'view' : 'close', isVisible ? 'Visible' : 'Hidden', () => menuActions.toggleVisible(d, n.id, bid), { desc: isVisible ? 'Click to hide this item' : 'Click to show this item' }),
         ibtn('plus', 'Add sub item', () => menuActions.add(d, n.id, bid)),
+        // hub: the top-level item the bar starts with in the centre (first visible item when none is set)
+        cfg.kind === 'hub' && depth === 0
+          ? ibtn('target', 'Default centre button', () => d.menu?.setDefaultCentre ? d.menu.setDefaultCentre(n.id, bid, tree.filter(x => x.visible !== false).findIndex(x => x.id === n.id)) : set({ hubCenterItemId: n.id }), { active: Number(cfg.hubCenterItemId) === n.id || (cfg.hubCenterItemId == null && tree.find(x => x.visible !== false)?.id === n.id), desc: 'The hub menu starts with this item in the centre, between its neighbours' })
+          : null,
         ibtn('pencil', 'Edit menu item', () => menuActions.edit(d, n.id, bid)),
         ibtn('arrowUp', 'Move earlier', () => menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
         ibtn('arrowDown', 'Move later', () => menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),

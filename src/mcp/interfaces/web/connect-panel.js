@@ -12,7 +12,7 @@ import { CLIENTS, SHELLS, DEFAULT_SERVER_NAME, DEFAULT_ENV_VAR, buildClientSetup
 const PREF = 'aik-connect-prefs';
 const loadPrefs = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
 const savePrefs = p => { try { localStorage.setItem(PREF, JSON.stringify(p)); } catch { /* storage off */ } };
-const guessShell = () => (/win/i.test(navigator.userAgentData?.platform || navigator.platform || '') ? 'powershell' : 'posix');
+const guessShell = () => (/win/i.test(navigator.userAgentData?.platform || navigator.platform || '') ? 'any' : 'posix');
 
 let stylesDone = false;
 function injectStyles() {

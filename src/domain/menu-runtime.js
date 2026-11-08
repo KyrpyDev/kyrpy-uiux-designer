@@ -23,7 +23,7 @@ export function bindMenus(root, opts) {
   opts = opts || {};
   var states = new WeakMap();
   function isHub(btn) { return !!(btn.querySelector && btn.querySelector('.ud-menu[data-kind="hub"]')); }
-  function get(btn) { var s = states.get(btn); if (!s) { s = isHub(btn) ? { open: true, path: [], c: 0, prev: 0 } : { open: false, path: [] }; states.set(btn, s); } return s; }
+  function get(btn) { var s = states.get(btn); if (!s) { if (isHub(btn)) { var m0 = btn.querySelector('.ud-menu'), c0 = +(m0 && m0.getAttribute('data-hub-start')) || 0; s = { open: true, path: [], c: c0, prev: c0 }; } else s = { open: false, path: [] };   /* hub: starts on its default centre item */ states.set(btn, s); } return s; }
   function hubItems(btn) { return Array.prototype.slice.call(btn.querySelectorAll('.rm-level[data-level=""] .rm-hub-item')); }
   function layoutHub(btn, st) {
     var m = btn.querySelector('.ud-menu'), items = hubItems(btn), n = items.length, c = st.c || 0;
@@ -41,6 +41,44 @@ export function bindMenus(root, opts) {
       el.style.setProperty('--o', String(o));
       el.setAttribute('data-hub-pos', pos);
     });
+  }
+  /* the device screen in the button's own coordinates ({L,R,T,B}), or null when it cannot be measured */
+  function screenBox(btn) {
+    var svg = btn.ownerSVGElement;
+    if (!svg || !btn.getScreenCTM || !svg.createSVGPoint || !svg.getBoundingClientRect) return null;
+    var ctm = btn.getScreenCTM(), sr = svg.getBoundingClientRect();
+    if (!ctm || !ctm.a || !sr.width) return null;
+    var inv = ctm.inverse(), p1 = svg.createSVGPoint(), p2 = svg.createSVGPoint();
+    p1.x = sr.left; p1.y = sr.top; p2.x = sr.right; p2.y = sr.bottom;
+    var a = p1.matrixTransform(inv), b = p2.matrixTransform(inv);
+    return { L: Math.min(a.x, b.x), R: Math.max(a.x, b.x), T: Math.min(a.y, b.y), B: Math.max(a.y, b.y) };
+  }
+  /* corner fan (data-corner on a level): its items sit on a quarter circle around a corner of the screen, none clipped by the edges */
+  function cornerLevel(btn) {
+    var l = btn.querySelector('.rm-level.is-active[data-corner]');
+    return l || null;   // the hub ring never carries data-corner; a plain burger button's root level may
+  }
+  function layoutCorner(btn, box) {
+    var level = cornerLevel(btn);
+    if (!level || !box) return false;
+    var corner = level.getAttribute('data-corner') || 'bottom-right';
+    var items = Array.prototype.slice.call(level.querySelectorAll('.rm-item')), n = items.length;
+    if (!n) return false;
+    var r = 0; items.forEach(function (el) { r = Math.max(r, +el.getAttribute('data-r') || 0); });
+    var pad = 4, m = r + pad, left = corner.indexOf('left') >= 0, top = corner.indexOf('top') === 0;
+    var ox = left ? box.L : box.R, oy = top ? box.T : box.B, sx = left ? 1 : -1, sy = top ? 1 : -1;
+    var R = Math.max(+level.getAttribute('data-corner-r') || 0, m * 1.5), lo = 0, hi = 0;
+    for (var g = 0; g < 40; g++) {                  // grow the radius until the items fit on the arc without touching
+      lo = Math.asin(Math.min(1, m / R)); hi = Math.acos(Math.min(1, m / R));
+      if (hi > lo && (n === 1 || R * (hi - lo) >= (n - 1) * r * 2.2)) break;
+      R *= 1.12;
+    }
+    items.forEach(function (el, i) {
+      var t = n === 1 ? (lo + hi) / 2 : lo + (hi - lo) * i / (n - 1);
+      el.style.setProperty('--x', (ox + sx * R * Math.cos(t)) + 'px');
+      el.style.setProperty('--y', (oy + sy * R * Math.sin(t)) + 'px');
+    });
+    return true;
   }
   /* keep the opened menu inside the device screen: shift it (all items together) back by the part that sticks out */
   function px(v) { return parseFloat(v) || 0; }
@@ -81,9 +119,13 @@ export function bindMenus(root, opts) {
     btn.setAttribute('data-center', rotating && !hub && st.open && st.path.length ? '1' : '0');
     btn.querySelectorAll('.rm-level').forEach(function (l) { var lv = l.getAttribute('data-level'); l.classList.toggle('is-active', st.open && (lv === key || (hub && lv === ''))); });
     btn.setAttribute('data-hubdepth', hub ? String(st.path.length) : '0');
+    if (hub) btn.setAttribute('data-hub', '1');
     if (hub) layoutHub(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
-    fit(btn);
+    // a corner fan is already placed inside the screen: the rest of the menu stays where it is
+    var m = btn.querySelector('.ud-menu');
+    if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
+    else fit(btn);
   }
   function set(btn, st) { states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
@@ -107,6 +149,7 @@ export function bindMenus(root, opts) {
       if (st.path.length) return st;
       var i = +t.getAttribute('data-hub-index');
       if (opts.onItem) opts.onItem(btn, t);
+      // the clicked item swaps into the centre; its existing sub items fan out at once (also in the editor)
       return { open: true, path: t.getAttribute('data-children') === '1' ? t.getAttribute('data-item').split('/') : [], c: i, prev: c };
     }
     // an item of a fan (sub level)

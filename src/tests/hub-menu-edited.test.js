@@ -7,7 +7,8 @@ import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, scopeFirst, visClass, isEdited } from '../domain/entities.js';
-import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig } from '../domain/menu.js';
+import { readFileSync } from 'node:fs';
 import { createContext } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
 import { bindMenus } from '../domain/menu-runtime.js';
@@ -21,7 +22,8 @@ test('hub menu: kind exists, samples have 3+ root items, big centre = 2x side bu
   for (const def of [HUB, HUB_V]) { assert.equal(def.config.kind, 'hub'); assert.ok(def.items.length >= 3); }
   assert.equal(HUB.config.direction, 'horizontal'); assert.equal(HUB_V.config.direction, 'vertical');
   const g = hubGeometry(HUB.config, 56);
-  assert.equal(g.big, g.small * 2); assert.equal(g.vertical, false);
+  assert.equal(g.big, g.small * 4, 'side buttons are half their former size: a quarter of the centre'); assert.equal(g.vertical, false);
+  assert.equal(hubGeometry(HUB.config, 56).big, hubGeometry(HUB_V.config, 56).big, 'both bar directions share the sizes');
   assert.equal(hubGeometry(HUB_V.config, 56).vertical, true);
   const sizeOk = BUTTON_ELEMENTS.filter(e => /hub-menu/.test(e.key));
   assert.deepEqual(sizeOk.map(e => e.key), ['html-hub-menu', 'html-hub-menu-vertical']);
@@ -46,7 +48,7 @@ test('hub menu markup: every ring item pre-rendered, sub levels fan around the c
 });
 
 // --- runtime with a tiny DOM stub ---
-function hubWorld(n = 5, children = { 0: true }) {
+function hubWorld(n = 5, children = { 0: true }, extra = {}) {
   const mk = (attrs = {}) => {
     const el = { attrs: { ...attrs }, cls: new Set(), kids: [], styleVars: {}, style: { setProperty: (k, v) => { el.styleVars[k] = v; } },
       getAttribute: k => el.attrs[k] ?? null, setAttribute: (k, v) => { el.attrs[k] = String(v); }, hasAttribute: k => k in el.attrs,
@@ -70,7 +72,7 @@ function hubWorld(n = 5, children = { 0: true }) {
   const handlers = {}; root.addEventListener = (type, fn) => { handlers[type] = fn; };
   root.ownerDocument = { addEventListener: (type, fn) => { handlers.docClick = fn; } };
   const actions = [];
-  const ctl = bindMenus(root, { onAction: a => actions.push(a) });
+  const ctl = bindMenus(root, { onAction: a => actions.push(a), ...extra });
   const click = t => handlers.click({ target: t, stopPropagation() {} });
   const pos = () => items.map(i => i.attrs['data-hub-pos']);
   return { btn, items, click, centre, fanItem, ctl, actions, pos, sub, rootLevel, handlers };
@@ -209,4 +211,126 @@ test('menu settings: distance from parent, hub centre size, item button style, k
   assert.equal(calls[0], 77, 'the menu button style is used for items without their own button');
   assert.match(svg, /data-keep="0"/);
   assert.match(svg, /data-r="/);
+});
+
+test('hub menu editor: centre placeholder has no button circle, host body hidden under a hub, swapping an item keeps depth 0 (back button invisible)', () => {
+  const tree = buildMenuTree(rowsOf(HUB.items));
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  const centres = svg.match(/<g class="rm-center"[^>]*>.*?<\/g>/g) || [];
+  assert.ok(centres.length > 0);
+  for (const c of centres) assert.doesNotMatch(c, /<circle/, 'no button element on the centred placeholder of a hub menu');
+  assert.match(MENU_CSS, /\.ud-btn:not\(\[data-hub\]\)\[data-hubdepth="0"\]/, 'the host button body only shows for non-hub menus');
+  // radial menus keep their centre circle
+  const radial = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config, kind: 'radial', layout: 'fan' }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  if (/class="rm-center"/.test(radial)) assert.match(radial, /<g class="rm-center"[^>]*><circle/);
+});
+
+test('hub menu: centre item body is not hidden by the editor stylesheet; default config halves the side buttons', () => {
+  const css = readFileSync(new URL('../interfaces/web/css/app.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /rm-hub-item\[data-hub-pos="center"\][^{]*\{[^}]*opacity:\s*0/, 'the centre hub item keeps its button body in the designer');
+  const def = hubGeometry(menuConfig({}), 64);
+  assert.equal(def.small, 64 * 0.4); assert.equal(def.big, 64 * 1.6);
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config }, tree: buildMenuTree(rowsOf(HUB.items)), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(svg, /data-hub-k="0.25"/, 'side buttons drawn at a quarter of the centre');
+});
+
+test('vertical hub menu: switching the bar direction moves a default fan with it (custom fans stay)', () => {
+  assert.deepEqual(hubDirectionPatch({ startAngle: -160, sweep: 140 }, 'vertical'), { direction: 'vertical', ...HUB_FAN.vertical });
+  assert.deepEqual(hubDirectionPatch({ startAngle: -70, sweep: 140 }, 'horizontal'), { direction: 'horizontal', ...HUB_FAN.horizontal });
+  assert.deepEqual(hubDirectionPatch({ startAngle: 10, sweep: 90 }, 'vertical'), { direction: 'vertical' });
+  assert.equal(HUB_V.config.startAngle, HUB_FAN.vertical.startAngle);
+  const tree = buildMenuTree(rowsOf(HUB.items));
+  const v = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB_V.config }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(v, /data-hub-vertical="1"/);
+  const ext = menuExtent({ width: 56, height: 56 }, { ...HUB_V.config }, tree);
+  assert.ok(ext.h > ext.w * 0.9, 'the vertical bar extends top to bottom');
+});
+
+test('hub menu items are body containers: changing the host button style restyles every item; a menu item style overrides all', () => {
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const mkBtn = (key, rx) => c.button.create({ name: key, key, projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 64, height: 64 }, { nodes: [{ tag: 'rect', role: 'button', name: 'surface', attrs: { x: 0, y: 0, width: 64, height: 64, rx } }] });
+    const host = mkBtn('hub-host', 32), square = mkBtn('square-style', 4);
+    c.menus.setConfig(host.id, { ...HUB.config });
+    const a = c.menus.addItem(host.id, { label: 'A' }); c.menus.addItem(host.id, { label: 'B' }); c.menus.addItem(host.id, { label: 'C' });
+    c.menus.addItem(host.id, { label: 'A1', parentId: a.id });
+    const bodies = () => { const svg = c.render.boxSvg('button', host.id, null, { editor: true }); return [...svg.matchAll(/<g class="rm-item[^"]*"[^>]*>.*?<rect[^>]*rx="([\d.]+)"/g)].map(m => m[1]); };
+    const before = bodies();
+    assert.equal(before.length, 4, 'ring items and fan items all draw a button body');
+    assert.ok(before.every(rx => rx === '32'), 'items follow the host body (circle)');
+    // the Button style tool rewrites the host nodes: every item follows
+    c.button.replaceNodes(host.id, [{ tag: 'rect', role: 'button', name: 'surface', attrs: { x: 0, y: 0, width: 64, height: 64, rx: 12 } }]);
+    assert.ok(bodies().every(rx => rx === '12'), 'all items take the new host style');
+    // menu-wide item style
+    c.menus.setConfig(host.id, { itemButtonId: square.id });
+    assert.ok(bodies().every(rx => rx === '4'));
+  } finally { c.close(); }
+});
+
+test('hub editor: clicking an item swaps it into the centre, shows its existing sub items and reports the item (action toolbar)', () => {
+  const seen = [];
+  const w = hubWorld(5, { 1: true }, { keepOpen: true, onItem: (_, el) => seen.push(el.getAttribute('data-item')) });
+  w.click(w.items[1]);
+  assert.deepEqual(w.ctl.get(w.btn).path, ['i1'], 'sub items fan out in the editor too');
+  assert.equal(w.items[1].attrs['data-hub-pos'], 'center');
+  assert.deepEqual(seen, ['i1'], 'the editor is told which item was clicked so it can pin its toolbar');
+  w.click(w.centre);                                       // back to the ring, nothing lost
+  assert.deepEqual(w.ctl.get(w.btn).path, []);
+  w.click(w.items[2]);                                     // a leaf: only swaps, toolbar still reported
+  assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(seen.at(-1), 'i2');
+});
+
+test('corner fan option: levels carry data-corner (never the hub ring), validated setting, runtime places items on a quarter circle inside the screen', () => {
+  const tree = buildMenuTree(rowsOf(HUB.items));
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...menuConfig({ menu: HUB.config }), fanCorner: 'bottom-right' }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(svg, /data-level="menu"[^>]*data-corner="bottom-right"/, 'the burger fan opens at the corner');
+  assert.doesNotMatch(svg, /data-level=""[^>]*data-corner/, 'the hub ring stays a bar');
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'burger', key: 'burger', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 48, height: 48 }, { nodes: [] });
+    assert.equal(c.menus.setConfig(b.id, { kind: 'radial', fanCorner: 'bottom-left' }).fanCorner, 'bottom-left');
+    assert.throws(() => c.menus.setConfig(b.id, { fanCorner: 'middle' }), /fanCorner/);
+  } finally { c.close(); }
+  // runtime with a stub: a 48px burger button at (300,600) of a 360 x 640 screen (identity transform)
+  const mk = (attrs = {}) => { const el = { attrs: { ...attrs }, vars: {}, style: { setProperty: (k, v) => { el.vars[k] = v; } }, getAttribute: k => el.attrs[k] ?? null, setAttribute: (k, v) => { el.attrs[k] = String(v); }, hasAttribute: k => k in el.attrs, classList: { toggle() {} } }; return el; };
+  const items = Array.from({ length: 4 }, () => mk({ 'data-r': '18' }));
+  const level = mk({ 'data-level': '', 'data-corner': 'bottom-right', 'data-corner-r': '80' }); level.querySelectorAll = () => items;
+  const menu = mk({ 'data-kind': 'radial', 'data-keep': '1' });
+  const pt = () => { const p = { x: 0, y: 0, matrixTransform: () => ({ x: p.x, y: p.y }) }; return p; };
+  const btn = mk({}); btn.ownerSVGElement = { createSVGPoint: pt, getBoundingClientRect: () => ({ left: 0, top: 0, right: 360, bottom: 640, width: 360 }) };
+  btn.getScreenCTM = () => ({ a: 1, inverse() { return this; } });
+  btn.querySelector = s => (s === '.ud-menu' || s === '.ud-menu[data-kind="hub"]' ? (s === '.ud-menu' ? menu : null) : s === '.rm-level.is-active[data-corner]' ? level : null);
+  btn.querySelectorAll = () => [];
+  const root = { addEventListener() {}, querySelectorAll: () => [] };
+  bindMenus(root, {}).apply(btn, { open: true, path: [] });
+  const pts = items.map(i => [parseFloat(i.vars['--x']), parseFloat(i.vars['--y'])]);
+  for (const [x, y] of pts) { assert.ok(x + 18 <= 360 && x - 18 >= 0 && y + 18 <= 640 && y - 18 >= 0, `inside the screen: ${x},${y}`); assert.ok(x > 180 && y > 320, 'near the bottom right corner'); }
+  for (let i = 1; i < pts.length; i++) assert.ok(Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) >= 36, 'items do not overlap');
+  const d = pts.map(([x, y]) => Math.round(Math.hypot(360 - x, 640 - y)));
+  assert.ok(d.every(v => v === d[0]), 'all on one arc around the corner');
+});
+
+test('hub default centre: a top-level item can be the starting centre button (validated, rendered, runtime starts there)', () => {
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'hub', key: 'hub-dc', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 56, height: 56 }, { nodes: [] });
+    c.menus.setConfig(b.id, { ...HUB.config });
+    const [a, , m] = ['a', 'b', 'c'].map(l => c.menus.addItem(b.id, { label: l }));
+    const sub = c.menus.addItem(b.id, { label: 'a1', parentId: a.id });
+    assert.throws(() => c.menus.setConfig(b.id, { hubCenterItemId: sub.id }), /top-level/);
+    assert.equal(c.menus.setConfig(b.id, { hubCenterItemId: m.id }).hubCenterItemId, m.id);
+    assert.match(c.render.boxSvg('button', b.id, null, {}), /data-hub-start="2"/);
+    c.menus.setConfig(b.id, { hubCenterItemId: null });
+    assert.match(c.render.boxSvg('button', b.id, null, {}), /data-hub-start="0"/);
+  } finally { c.close(); }
+  const fresh = hubWorld(5, {});
+  assert.equal(fresh.ctl.get(fresh.btn).c, 0, 'no start index: the first item is the centre');
+  // a menu that declares a start index begins there
+  const w = hubWorld(5, {});
+  w.btn.querySelector('.ud-menu').attrs['data-hub-start'] = '3';
+  const st = bindMenus({ addEventListener() {}, querySelectorAll: () => [w.btn], ownerDocument: null }, {}).get(w.btn);
+  assert.equal(st.c, 3); assert.equal(st.prev, 3);
 });

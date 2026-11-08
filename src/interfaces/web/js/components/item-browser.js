@@ -649,6 +649,7 @@ export function buildItemBrowserElement({
               if (type === 'workflow') await api.deleteWorkflow(item.id);
               else await api.deleteDesign(type, item.id);
               selectedKeys.delete(k);
+              emit('design:deleted', { type, id: item.id });
               await refreshGlobalLibraryAndCounts();
               await loadAllItems();
               toast(`Moved ${type} "${item.name || item.key}" to Trash`, 'ok');
@@ -750,6 +751,7 @@ export function buildItemBrowserElement({
         if (it.type === 'workflow') await api.deleteWorkflow(it.id);
         else await api.deleteDesign(it.type, it.id);
         selectedKeys.delete(`${it.type}:${it.id}`);
+        emit('design:deleted', { type: it.type, id: it.id });
         count++;
       } catch (err) {
         toast(err.message, 'err');

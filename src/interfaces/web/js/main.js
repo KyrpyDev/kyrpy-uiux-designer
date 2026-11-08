@@ -815,6 +815,9 @@ function buildTypeBar() {
   // the designer's doc bar (back, save, targets, visibility, status, new) and canvas toggles live in this row
   const designer = app.designer;
   const inDesigner = state.mode === 'screen' && designer?.doc;
+  // the workflow designer's doc bar and tools live in this row too (otherwise the row looked empty on workflow pages)
+  const wfd = app.workflow;
+  const inWorkflow = state.mode === 'workflow' && wfd?.wf && wfd.docbar && wfd.toolbar;
   // the ownership / save status sits in the top centre, next to the project button
   const tc = $('#topbar .top-center');
   if (tc) { tc.querySelector(':scope > .doc-state')?.remove(); if (inDesigner && designer.docState) tc.append(designer.docState); }
@@ -828,6 +831,10 @@ function buildTypeBar() {
     newBtn,
     inDesigner ? h('span', { class: 'sep-v' }) : null,
     inDesigner ? designer.docbar : null,
+    inWorkflow ? h('span', { class: 'sep-v' }) : null,
+    inWorkflow ? wfd.docbar : null,
+    inWorkflow ? h('span', { class: 'sep-v' }) : null,
+    inWorkflow ? wfd.toolbar : null,
     ...(inDesigner ? (designer.pathGroups || []) : []),
     inDesigner && designer.barTools?.length ? h('span', { class: 'sep-v' }) : null,
     ...(inDesigner ? (designer.barTools || []) : []),
@@ -961,7 +968,23 @@ async function boot() {
   on('settings:changed', () => app.designer.renderOverlay());
   // icon geometry fetched lazily (large libraries): redraw open canvases that drew those icons as placeholders
   on('icons:loaded', debounce(() => { for (const d of [app.designer, ...app.modals]) if (d?.doc && d.renderStage) d.renderStage(); }, 60));
-  on('design:deleted', ({ type, id }) => { if (app.current && app.current.type === type && app.current.id === id) { app.current = null; app.designer.doc = null; app.designer.baseline = null; app.designer.dirty = false; app.designer.updateDocBar(); clear(app.designer.stage); app.designer.renderOverlay(); toast('The open design was deleted'); } });
+  // a trashed item leaves the library lists at once; when it was open, the canvas resets onto a fresh item of the same type
+  on('design:deleted', async ({ type, id }) => {
+    const key = PLURAL[type];
+    if (key && Array.isArray(state.library?.[key])) state.library[key] = state.library[key].filter(x => Number(x.id) !== Number(id));
+    const wasOpen = app.current && app.current.type === type && Number(app.current.id) === Number(id);
+    if (wasOpen) {
+      app.current = null; app.designer.doc = null; app.designer.baseline = null; app.designer.dirty = false;
+      app.designer.updateDocBar(); clear(app.designer.stage); app.designer.renderOverlay();
+    }
+    emit('library:changed');
+    if (!wasOpen) return;
+    try {
+      const rec = await createEmptyItem(type);
+      if (rec) { if (type === 'workflow') await app.openWorkflow(rec.id); else await app.openDesign(type, rec.id); buildTopbar(); }
+      else toast('The open design was moved to Trash');
+    } catch (e) { toast(e.message, 'error'); }
+  });
   refreshCounts();
 
   // thumbnails of the catalog follow edits of the open screen

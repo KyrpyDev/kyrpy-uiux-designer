@@ -200,7 +200,11 @@ function renderInstance(el, a, ctx, all) {
         ctx.depth--;
       }
     };
-    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId });
+    // the button's own icon sets how big the hub glyphs are drawn (resize the icon on the canvas to scale them up to the centre circle)
+    const ownIcon = (target.nodes || []).find(n => n.kind === 'instance' && n.refType === 'icon' && n.parentId == null);
+    const iw = Number(ownIcon?.attrs?.width), ih = Number(ownIcon?.attrs?.height);
+    const iconFrac = iw > 0 && ih > 0 ? Math.min(iw, ih) / Math.min(target.width, target.height) : null;
+    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId, iconFrac });
   }
   ctx.activeInstances?.delete(instKey);
   ctx.depth--;

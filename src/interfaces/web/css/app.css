@@ -130,6 +130,20 @@ h3, h4 { margin: 0; }
 /* designer */
 .dz { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .dz-bar { display: flex; gap: 4px; align-items: center; padding: 5px 8px; background: #0a101c; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.wf-title { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; }
+.wf-title-input { font: inherit; font-weight: 700; color: var(--text, #e6edf7); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; min-width: 8ch; max-width: 42ch; cursor: text; }
+.wf-title-input:hover { border-color: var(--line); background: rgba(255,255,255,.03); }
+.wf-title-input:focus { outline: none; border-color: var(--accent, #6aa7ff); background: #0d1526; }
+.scr-pick { display: flex; flex-direction: column; gap: 10px; }
+.scr-pick .scr-pick-search { flex: 1; min-width: 0; margin-right: 10px; }
+.scr-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 62vh; overflow: auto; padding: 2px; }
+.scr-pick-card { display: flex; flex-direction: column; gap: 4px; align-items: stretch; text-align: left; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: #0a101c; cursor: pointer; color: inherit; font: inherit; }
+.scr-pick-card:hover:not([disabled]), .scr-pick-card:focus-visible { border-color: var(--accent, #6aa7ff); outline: none; }
+.scr-pick-card[disabled] { opacity: .45; cursor: default; }
+.scr-pick-card b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scr-pick-card .muted { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scr-pick-thumb { height: 190px; display: flex; align-items: center; justify-content: center; background: #03050a; border-radius: 6px; overflow: hidden; }
+.scr-pick-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .dz-body { flex: 1; display: flex; min-height: 0; }
 .dz-viewport { position: relative; flex: 1; overflow: hidden; background: #03050a; cursor: default; touch-action: none; }
 .dz-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
@@ -157,6 +171,7 @@ h3, h4 { margin: 0; }
 .el-list { max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
 .el-row { display: flex; gap: 6px; align-items: center; padding: 3px 7px; cursor: pointer; border-bottom: 1px solid rgba(120, 170, 230, .08); font-size: 12px; }
 .el-row:hover { background: #121d33; } .el-row.on { background: rgba(46, 155, 255, .25); }
+.dz-stage .rm-item.rm-focus { filter: drop-shadow(0 0 6px #ffd54a) drop-shadow(0 0 2px #ffd54a); }
 .el-row .t { color: var(--dim); font-family: Consolas, monospace; font-size: 11px; width: 52px; }
 .el-layers { position: relative; }
 .el-layers .el-row { user-select: none; }
@@ -706,6 +721,8 @@ h3, h4 { margin: 0; }
 .typebar { flex-wrap: wrap; height: auto; min-height: 44px; padding: 4px 8px; }
 .typebar .dz-docbar { background: transparent; border: 0; padding: 0; flex-wrap: wrap; }
 .typebar .dz-toprow { display: contents; }
+.typebar .wf-bar { display: contents; }
+.typebar:has(.wf-bar) .typebar-hint { display: none; }
 
 /* ---------- My Profile page (components/profile-page.js) ---------- */
 .profile-page { display: flex; flex-direction: column; gap: 12px; min-height: 420px; }
@@ -826,9 +843,7 @@ input.doc-title:focus { outline: none; border-color: var(--accent); background: 
 /* collapsed tool rows (path tools + drawing tools) in every designer */
 body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) { display: none; }
 
-/* hub designer: the open button's own body is the centre button; the centre menu item keeps only its hit area (no second button on top) */
-/* the centre item keeps its icon (it is the centre button); only its duplicate body is hidden so the host button body is not drawn twice */
-.dz-stage:not(.menu-live) .rm-hub-item[data-hub-pos="center"] .rm-item-body > :not(circle[fill="transparent"]):not(use) { opacity: 0; }
+/* hub designer: the host button's own body is hidden under a hub (MENU_CSS), so the centre menu item draws its full button body itself */
 
 /* library cells: the hover toolbar sits OUTSIDE the item (below it) so the item stays selectable; the checkbox moves to the bottom-right corner */
 .cell .tb, .lib-card .tb { top: 100%; right: 0; left: auto; width: max-content; max-width: 90vw; flex-wrap: wrap; justify-content: flex-end; box-shadow: 0 6px 18px rgba(0, 0, 0, .5); z-index: 30; }

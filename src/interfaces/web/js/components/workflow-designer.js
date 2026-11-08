@@ -92,7 +92,6 @@ export class WorkflowDesigner {
       : [{ id: 1, name: 'Default Public Project', ownerId: 1, visibility: 'public' }];
     const selSet = state.saveTargetProjectIds || (state.saveTargetProjectIds = new Set());
     const count = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
-    const labelText = count > 0 ? `🎯 Targets (${count})` : '🎯 Targets…';
 
     const panel = h('div', {
       class: 'menu-panel save-targets-panel',
@@ -102,8 +101,9 @@ export class WorkflowDesigner {
     });
     const wrap = h('div', { class: 'menu save-targets-dd', style: { position: 'relative', display: 'inline-flex' } });
     const triggerBtn = h('button', {
-      class: `btn small save-targets-trigger${count > 0 ? ' active' : ''}`,
-      title: 'Multi-target Save Option: select multiple projects and/or your All Projects library to save this workflow (and all sub-items) into all selected targets',
+      class: `btn small ib save-targets-trigger${count > 0 ? ' active' : ''}`,
+      'aria-label': 'Save targets',
+      'data-tip': 'Save targets — also save this workflow (and all sub-items) into multiple projects and/or your All Projects library',
       onclick: e => {
         e.stopPropagation();
         const isOpen = wrap.classList.contains('open');
@@ -113,11 +113,12 @@ export class WorkflowDesigner {
           rebuildPanel();
         }
       }
-    }, `${labelText} ▾`);
+    }, iconEl('target', { size: 16 }), h('span', { class: 'tb-badge', hidden: count === 0 }, String(count)));
 
     const updateTriggerText = () => {
       const c = selSet.size + (state.saveToUserPrivateLibrary ? 1 : 0);
-      triggerBtn.textContent = `${c > 0 ? `🎯 Targets (${c})` : '🎯 Targets…'} ▾`;
+      const badge = triggerBtn.querySelector('.tb-badge');
+      if (badge) { badge.textContent = String(c); badge.hidden = c === 0; }
       triggerBtn.classList.toggle('active', c > 0);
     };
 
@@ -189,44 +190,23 @@ export class WorkflowDesigner {
     const app = this.app;
     const ownedByMe = this.isOwnedByCurrentUser(this.wf);
     this.backBtn = ibtn('back', 'Back', () => app.back(), { desc: 'Return to the previous page', kbd: 'Alt+←', dataset: { act: 'back' } });
-    this.saveBtn = h('button', {
-      class: 'btn small save',
-      disabled: !ownedByMe,
-      title: ownedByMe
-        ? 'Save (Ctrl+S): keep the current version (and save to any selected Multi-Targets).'
-        : `Save is disabled because this workflow is owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)}. Use "Save as…" to save a copy.`,
-      onclick: () => this.save()
-    }, '💾 Save');
+    this.saveBtn = ibtn('save', 'Save', () => this.save(), { kbd: 'Ctrl+S', disabled: !ownedByMe, cls: 'save' });
     this.saveAsBtn = ibtn('copy', 'Save as…', () => this.saveAs(), { desc: 'Save a copy under a new name (into your All Projects library and any selected Multi-Targets)' });
     this.saveTargetsDropdown = this.buildSaveTargetsDropdown();
     this.resetBtn = ibtn('undo', 'Reset', () => this.reset(), { desc: 'Throw away every change since the last save' });
-    const copyToBtn = h('button', {
-      class: 'btn small',
-      title: 'Copy this workflow (and its screens + sub-items) to project(s)',
-      onclick: () => this.wf && openCopyMoveToProjectsModal({
-        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key, creatorId: this.wf.creatorId }],
-        mode: 'copy'
-      })
-    }, '📥 Copy to…');
-    const moveToBtn = h('button', {
-      class: 'btn small',
+    const wfItem = () => [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key, creatorId: this.wf.creatorId }];
+    const copyToBtn = ibtn('copy', 'Copy to…', () => this.wf && openCopyMoveToProjectsModal({ items: wfItem(), mode: 'copy' }),
+      { desc: 'Copy this workflow (and its screens + sub-items) to project(s)' });
+    const moveToBtn = ibtn('import', 'Move to…', () => this.wf && ownedByMe && openCopyMoveToProjectsModal({ items: wfItem(), mode: 'move' }), {
       disabled: !ownedByMe,
-      title: ownedByMe
-        ? 'Move this workflow (and its screens + sub-items) to your project(s)'
-        : 'Workflows owned by other users cannot be moved (only copied)',
-      onclick: () => this.wf && ownedByMe && openCopyMoveToProjectsModal({
-        items: [{ type: 'workflow', id: this.wf.id, name: this.wf.name, key: this.wf.key, creatorId: this.wf.creatorId }],
-        mode: 'move'
-      })
-    }, '📤 Move to…');
-    this.docState = h('span', { class: 'doc-state', role: 'status' });
+      desc: ownedByMe ? 'Move this workflow (and its screens + sub-items) to your project(s)' : 'Workflows owned by other users cannot be moved (only copied)'
+    });
+    // no status text: the Save button blinks while there are unsaved changes and its tooltip carries the state
     this.docbar = h('div', { class: 'dz-docbar', role: 'toolbar', 'aria-label': 'Document' },
       this.backBtn, h('span', { class: 'sep-v' }),
       this.saveBtn, this.saveAsBtn, this.saveTargetsDropdown, this.resetBtn,
       h('span', { class: 'sep-v' }),
-      copyToBtn, moveToBtn,
-      h('span', { class: 'sep-v' }),
-      this.docState
+      copyToBtn, moveToBtn
     );
     this.updateDocBar();
     return this.docbar;
@@ -238,12 +218,11 @@ export class WorkflowDesigner {
     this.saveBtn.disabled = !ownedByMe;
     this.saveBtn.classList.toggle('dirty', this.dirty && ownedByMe);
     this.resetBtn.disabled = !this.dirty;
-    this.docState.classList.toggle('dirty', this.dirty);
-    if (!ownedByMe) {
-      this.docState.textContent = `🔒 Owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)} — use Save as…`;
-    } else {
-      this.docState.textContent = this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
-    }
+    const status = !ownedByMe
+      ? `🔒 Owned by ${ownerLabel(this.wf?.creatorUsername, this.wf?.creatorId)}: use Save as… to save a copy`
+      : this.dirty ? '● Unsaved changes: press Save' : '✓ All changes saved';
+    this.saveBtn.dataset.tip = `Save\n${status}\nShortcut: Ctrl+S`;
+    this.saveBtn.setAttribute('aria-label', `Save (${status.replace(/^\S+\s/, '')})`);
     this.refreshBack();
   }
 
@@ -256,7 +235,7 @@ export class WorkflowDesigner {
 
   async settle() {
     const a = document.activeElement;
-    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && this.root.contains(a)) a.blur();
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && [this.root, this.docbar, this.toolbar].some(r => r?.contains(a))) a.blur();   // the bars live in the page row (#typebar)
     await new Promise(r => setTimeout(r, 80));
   }
 
@@ -371,13 +350,74 @@ export class WorkflowDesigner {
 
   async refresh() { const keep = this.view; this.wf = await api.workflow(this.wf.id); this.computeDirty(); this.screens = new Map((await api.list('screen')).map(s => [s.id, s])); this.full.clear(); await this.loadFulls(); this.render(); this.view = keep; this.applyView(); emit('workflows:changed'); }
 
+  /** Renames the open workflow (header title or inspector field). Resolves true when the name changed. */
+  async rename(raw, { syncInspector = true } = {}) {
+    const name = String(raw ?? '').trim();
+    if (!this.wf || !name || name === this.wf.name) return false;
+    try {
+      await api.updateWorkflow(this.wf.id, { name });
+      this.wf.name = name;
+      this.checkDirty();
+      this.updateDocBar?.();
+      if (syncInspector) this.renderInspector();                    // keep the inspector's Name field in sync
+      emit('workflows:changed');
+      toast(`Renamed to "${name}"`, 'ok', 1800);
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+  }
+
+  /** Modal to search the existing screens (with previews) and add one to this workflow. */
+  openScreenPicker() {
+    if (!this.wf) return;
+    const wf = this.wf;
+    const inWf = new Set(wf.nodes.map(n => n.screenId));
+    const all = [...this.screens.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const search = h('input', { type: 'search', class: 'scr-pick-search', placeholder: 'Search screens (name, key, label, tag)…', 'aria-label': 'Search screens' });
+    const grid = h('div', { class: 'scr-pick-grid', role: 'listbox', 'aria-label': 'Screens' });
+    const count = h('span', { class: 'muted' });
+    let dlg = null;
+    const add = async s => {
+      dlg?.close();
+      try {
+        this.pushUndo();
+        const c = this.centerWorld();
+        await api.placeScreen(wf.id, { screenId: s.id, x: Math.round(c.x - (s.width || 390) / 2), y: Math.round(c.y - 300) });
+        await this.refresh();
+        toast(`Added "${s.name}"`, 'ok', 1800);
+      } catch (e) { toast(e.message, 'error'); }
+    };
+    const draw = () => {
+      const q = search.value.trim().toLowerCase();
+      const hits = all.filter(s => !q || [s.name, s.key, s.label, ...(s.tags || [])].some(v => String(v ?? '').toLowerCase().includes(q)));
+      clear(grid);
+      for (const s of hits) {
+        const used = inWf.has(s.id);
+        grid.append(h('button', {
+          class: `scr-pick-card${used ? ' used' : ''}`, role: 'option', disabled: used,
+          title: used ? `"${s.name}" is already in this workflow` : `Add "${s.name}" to this workflow`,
+          onclick: () => add(s)
+        },
+          h('div', { class: 'scr-pick-thumb' }, h('img', { loading: 'lazy', alt: '', draggable: 'false', src: api.svgUrl('screen', s.id, { theme: state.themeKey, v: s.updatedAt }) })),
+          h('b', {}, s.name),
+          h('span', { class: 'muted' }, used ? 'already in this workflow' : (s.key || ''))));
+      }
+      if (!hits.length) grid.append(h('p', { class: 'muted' }, all.length ? 'No screen matches the search.' : 'There are no screens yet: create one in the Screen designer.'));
+      count.textContent = `${hits.filter(s => !inWf.has(s.id)).length} available · ${hits.length} shown`;
+    };
+    search.addEventListener('input', draw);
+    search.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); grid.querySelector('.scr-pick-card:not([disabled])')?.click(); }
+    });
+    draw();
+    dlg = modal({ title: 'Add a screen to this workflow', wide: true, content: h('div', { class: 'scr-pick' }, h('div', { class: 'row spread' }, search, count), grid) });
+    requestAnimationFrame(() => search.focus());
+  }
+
   /* ---------- layout of the chrome ---------- */
   render() {
     clear(this.root); this.root.classList.add('wf');
     const wf = this.wf;
-    const addSel = h('select', { 'aria-label': 'Add a screen to this workflow' }, h('option', { value: '' }, '+ Add screen…'),
-      [...this.screens.values()].filter(s => !wf.nodes.some(n => n.screenId === s.id)).map(s => h('option', { value: s.id }, s.name)));
-    addSel.addEventListener('change', async () => { if (addSel.value) { this.pushUndo(); const c = this.centerWorld(); await api.placeScreen(wf.id, { screenId: Number(addSel.value), x: Math.round(c.x - 195), y: Math.round(c.y - 300) }); await this.refresh(); } });
+    const addSel = ibtn('monitor', 'Add screen…', () => this.openScreenPicker(), { desc: 'Search the existing screens (with previews) and add one to this workflow', dataset: { act: 'add-screen' } });
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '');
     const styleSel = h('select', { title: 'Style of new links' }, h('option', { value: 'curved' }, 'curved links'), h('option', { value: 'cornered' }, 'cornered links'));
     styleSel.value = this.linkStyle; styleSel.addEventListener('change', () => { this.linkStyle = styleSel.value; });
@@ -388,15 +428,33 @@ export class WorkflowDesigner {
       title: 'Test actions & workflow routing interactively: click links or buttons on screens to follow routes',
       onclick: () => this.setTestMode(!this.testMode)
     }, '▶ Test actions');
-    const bar = h('div', { class: 'dz-bar' },
-      h('b', { style: { padding: '0 8px' } }, `Workflow: ${wf.name}`),
+    const nameIn = h('input', {
+      class: 'wf-title-input', value: wf.name, spellcheck: 'false',
+      'aria-label': 'Workflow name', title: 'Workflow name: click to rename, Enter to save, Esc to cancel'
+    });
+    const fitName = () => { nameIn.style.width = `${Math.min(Math.max(nameIn.value.length, 6), 40) + 2}ch`; };
+    fitName();
+    this.titleInput = nameIn;
+    nameIn.addEventListener('input', fitName);
+    nameIn.addEventListener('focus', () => nameIn.select());
+    nameIn.addEventListener('keydown', e => {
+      e.stopPropagation();                                            // keep Del/Ctrl+Z etc. for the text, not the canvas
+      if (e.key === 'Enter') { e.preventDefault(); nameIn.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); nameIn.value = this.wf.name; fitName(); nameIn.blur(); }
+    });
+    nameIn.addEventListener('blur', async () => {
+      if (!(await this.rename(nameIn.value))) nameIn.value = this.wf.name;
+      fitName();
+    });
+    const bar = h('div', { class: 'dz-bar wf-bar', role: 'toolbar', 'aria-label': 'Workflow tools' },
+      h('span', { class: 'wf-title' }, h('b', {}, 'Workflow:'), nameIn),
       h('span', { class: 'sep-v' }),
       ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
       ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
       ibtn('trash', 'Delete', () => this.deleteSelected(), { desc: 'Delete the selected link or screen node', kbd: 'Del' }),
       h('span', { class: 'sep-v' }),
       addSel,
-      ibtn('plus', 'Add all screens', () => this.addAll(), { desc: 'Add every screen to this workflow' }), h('span', { class: 'sep-v' }), this.linkBtn, styleSel,
+      h('span', { class: 'sep-v' }), this.linkBtn, styleSel,
       ibtn('grid', 'Auto layout', () => this.autoLayout(), { desc: 'Arrange screens left → right following the links' }),
       this.testBtn,
       h('span', { class: 'sep-v' }),
@@ -411,10 +469,21 @@ export class WorkflowDesigner {
     this.testHud = h('div', { class: 'dz-live-hud wf-test-hud', hidden: !this.testMode });
     this.viewport = h('div', { class: 'wf-viewport', tabindex: '0', 'aria-label': 'Workflow canvas' }, this.world);
     this.inspector = h('aside', { class: 'dz-inspector' });
-    this.root.append(this.buildDocBar(), bar, this.testHud, h('div', { class: 'dz-body' }, this.viewport, this.inspector));
+    // like the screen designer, the doc bar and the tools live in the page row (#typebar, see buildTypeBar in main.js);
+    // a rebuild swaps the new bars in at once, so the row never shows stale or missing tools while the topbar rebuild waits
+    const oldDoc = this.docbar, oldBar = this.toolbar;
+    const docbar = this.buildDocBar();
+    this.toolbar = bar;
+    const inRow = el => el?.isConnected && el.closest('#typebar');
+    if (inRow(oldDoc)) oldDoc.replaceWith(docbar);
+    if (inRow(oldBar)) oldBar.replaceWith(bar);
+    if (!docbar.isConnected) this.root.append(docbar);
+    if (!bar.isConnected) this.root.append(bar);
+    this.root.append(this.testHud, h('div', { class: 'dz-body' }, this.viewport, this.inspector));
     this.buildNodes();
     this.world.append(this.linkSvg);
     this.drawLinks(); this.applyView(); this.renderInspector(); this.renderTestHud(); this.bind();
+    emit('topbar:refresh');
   }
 
   buildNodes() {
@@ -832,7 +901,7 @@ export class WorkflowDesigner {
     visSel.value = wf.visibility || 'public';
     visSel.addEventListener('change', async () => { await api.updateWorkflow(wf.id, { visibility: visSel.value, projectId: state.currentProjectId || wf.projectId || 1 }); wf.visibility = visSel.value; this.checkDirty(); emit('workflows:changed'); });
     root.append(sec(`Workflow · ${wf.key}`,
-      fld('Name', txt(wf.name, async v => { if (v.trim()) { await api.updateWorkflow(wf.id, { name: v.trim() }); wf.name = v.trim(); this.checkDirty(); emit('workflows:changed'); } })),
+      fld('Name', txt(wf.name, async v => { if (await this.rename(v, { syncInspector: false }) && this.titleInput) { this.titleInput.value = this.wf.name; this.titleInput.dispatchEvent(new Event('input')); } })),
       fld('Label', txt(wf.label, async v => { await api.updateWorkflow(wf.id, { label: v }); wf.label = v; this.checkDirty(); })),
       fld('Visibility', visSel),
       h('div', { class: 'row wrap' },
