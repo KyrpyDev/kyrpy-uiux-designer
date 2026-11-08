@@ -5,7 +5,7 @@
  * Structural edits send the whole node list once (one undo step); position edits send attribute patches.
  */
 import { h, clear, toast, contextMenu } from '../dom.js';
-import { ibtn } from '../icons.js';
+import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
 import { state } from '../state.js';
 import { nodeBBox, translateAttrs } from '/domain/geometry.js';
@@ -315,48 +315,81 @@ const methods = {
     toast('Created 2×2 grid array duplicate', 'ok', 1600);
   },
 
+  /**
+   * Boxed drop-down button: one icon (with a small arrow) that opens a panel of labelled tools. The panel is fixed-positioned
+   * under the button, closes on a choice, a click elsewhere or Escape.
+   */
+  toolMenu(icon, label, entries) {
+    let panel = null;
+    const close = () => { panel?.remove(); panel = null; document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', esc, true); btn.classList.remove('active'); };
+    const away = e => { if (panel && !panel.contains(e.target) && !btn.contains(e.target)) close(); };
+    const esc = e => { if (e.key === 'Escape') close(); };
+    const btn = h('button', { class: 'btn small ib tool-menu-btn', 'aria-haspopup': 'true', 'aria-label': label, 'data-tip': label,
+      onclick: () => {
+        if (panel) return close();
+        panel = h('div', { class: 'tool-menu-panel', role: 'menu' }, entries.map(([ic, tip, fn, desc]) => h('button', { class: 'tool-menu-item', role: 'menuitem', title: desc || tip,
+          onclick: () => { close(); fn(); } }, iconEl(ic, { size: 16 }), h('span', {}, tip))));
+        document.body.append(panel);
+        const r = btn.getBoundingClientRect();
+        panel.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - panel.offsetWidth - 4))}px`;
+        panel.style.top = `${r.bottom + 4}px`;
+        btn.classList.add('active');
+        document.addEventListener('pointerdown', away, true); document.addEventListener('keydown', esc, true);
+      } }, iconEl(icon, { size: 17 }), iconEl('chevDown', { size: 11 }));
+    return btn;
+  },
+
+  /** The grouped path / arrange / align / transform tools live as drop-down menus at the end of the one tool bar. */
   buildPathBar() {
-    const bar = this.pathBar; clear(bar);
-    const I = (icon, tip, fn, desc = '') => ibtn(icon, tip, fn, { desc, size: 17 });
-    const sep = () => h('span', { class: 'sep-v' });
-    bar.append(
-      I('unite', 'Union', () => this.pathfinder('union'), 'Merge the selected shapes into one outline'),
-      I('subtract', 'Cut out', () => this.pathfinder('subtract'), 'Cut the top shape out of the shapes behind it'),
-      I('intersect', 'Crop (intersect)', () => this.pathfinder('intersect'), 'Keep only the part where the selected shapes overlap'),
-      I('exclude', 'Exclude', () => this.pathfinder('exclude'), 'Keep everything except where the shapes overlap'),
-      I('cropBox', 'Crop to box', () => this.cropToBox(), 'Trim the selected shapes to the bounding box of this design'), sep(),
-      I('combine', 'Combine', () => this.combineSelected(), 'Make one compound path from the selected paths'),
-      I('breakApart', 'Break apart', () => this.breakApartSelected(), 'Split a compound path into separate paths'),
-      I('join', 'Join', () => this.joinSelected(), 'Join two open paths end to end'),
-      ...(this.type === 'icon' ? [I('breakApart', 'Explode icon into paths', () => this.explodeIcon(), 'Break the icon (or the selection) apart into separate plain paths: linked path items become real paths, shapes become paths, compound paths are split'),
-        I('export', 'Save paths to my library', () => this.savePathsToLibrary(), 'Save the selected paths (all when nothing is selected) as your own paths, auto-named <icon name>-<icon id>-<n>')] : []),
-      I('reverse', 'Reverse', () => this.reverseSelected(), 'Reverse the direction of the selected path'),
-      I('simplify', 'Simplify', () => this.simplifySelected(), 'Remove redundant vertices'),
-      I('applyT', 'Apply transform', () => this.bakeSelected(), "Bake the path's transform and rotation into its points"), sep(),
-      I('group', 'Group', () => this.groupSelected(), 'Group the selection (Ctrl+G)'),
-      I('ungroup', 'Ungroup', () => this.ungroupSelected(), 'Dissolve the selected group (Ctrl+Shift+G)'), sep(),
-      I('alignLeft', 'Align left', () => this.alignSelected('left'), 'Align to the selection (or to the box when one item is selected)'),
-      I('alignHCenter', 'Align horizontal centres', () => this.alignSelected('hcenter')),
-      I('alignRight', 'Align right', () => this.alignSelected('right')),
-      I('alignTop', 'Align top', () => this.alignSelected('top')),
-      I('alignVMiddle', 'Align vertical centres', () => this.alignSelected('vmiddle')),
-      I('alignBottom', 'Align bottom', () => this.alignSelected('bottom')),
-      I('distH', 'Distribute horizontally', () => this.distributeSelected('h'), '3+ items'),
-      I('distV', 'Distribute vertically', () => this.distributeSelected('v'), '3+ items'), sep(),
-      I('flip', 'Flip horizontally', () => this.flipSelected('h')),
-      I('flipV', 'Flip vertically', () => this.flipSelected('v')),
-      I('rotate', 'Rotate 90° clockwise', () => this.rotateSelected(90)),
-      I('rotateCcw', 'Rotate 90° counter-clockwise', () => this.rotateSelected(-90)), sep(),
-      I('lock', 'Lock / unlock position', () => this.toggleLockSelected(), 'Lock or unlock the selected element position (Ctrl+L)'),
-      I('zap', 'Events', () => {
-        const one = this.selectedNodes()[0];
-        if (!one) return toast('Select an element first', 'error');
-        openEventsModal({ node: one, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(one.id, patch) });
-      }, 'Configure element events (click, mouseover, release, drag&drop)'),
-      I('grid', '2×2 grid array', () => this.arrayDuplicateSelected(), 'Duplicate the selected element into a 2×2 grid'),
-      I('copy', 'Copy style', () => this.copySelectedStyle(), 'Copy fill / stroke / role style from the selected element'),
-      I('paste', 'Paste style', () => this.pasteSelectedStyle(), 'Paste the copied style onto the selected element(s)')
-    );
+    clear(this.pathBar);   // the old second row is gone (hidden by css)
+    const M = (icon, label, entries) => this.toolMenu(icon, label, entries);
+    const one = () => {
+      const n = this.selectedNodes()[0];
+      if (!n) return toast('Select an element first', 'error');
+      openEventsModal({ node: n, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(n.id, patch) });
+    };
+    const groups = [
+      M('unite', 'Shape combine: union, cut out, crop, exclude', [
+        ['unite', 'Union', () => this.pathfinder('union'), 'Merge the selected shapes into one outline'],
+        ['subtract', 'Cut out', () => this.pathfinder('subtract'), 'Cut the top shape out of the shapes behind it'],
+        ['intersect', 'Crop (intersect)', () => this.pathfinder('intersect'), 'Keep only the part where the selected shapes overlap'],
+        ['exclude', 'Exclude', () => this.pathfinder('exclude'), 'Keep everything except where the shapes overlap'],
+        ['cropBox', 'Crop to box', () => this.cropToBox(), 'Trim the selected shapes to the bounding box of this design']]),
+      M('combine', 'Path tools: combine, break apart, join, reverse, simplify', [
+        ['combine', 'Combine', () => this.combineSelected(), 'Make one compound path from the selected paths'],
+        ['breakApart', 'Break apart', () => this.breakApartSelected(), 'Split a compound path into separate paths'],
+        ['join', 'Join', () => this.joinSelected(), 'Join two open paths end to end'],
+        ['reverse', 'Reverse', () => this.reverseSelected(), 'Reverse the direction of the selected path'],
+        ['simplify', 'Simplify', () => this.simplifySelected(), 'Remove redundant vertices'],
+        ['applyT', 'Apply transform', () => this.bakeSelected(), "Bake the path's transform and rotation into its points"]]),
+      ...(this.type === 'icon' ? [M('ungroup', 'Icon tools: explode into paths, save paths to my library', [
+        ['breakApart', 'Explode icon into paths', () => this.explodeIcon(), 'Break the icon (or the selection) apart into separate plain paths'],
+        ['export', 'Save paths to my library', () => this.savePathsToLibrary(), 'Save the selected paths (all when nothing is selected) as your own paths, auto-named <icon name>-<icon id>-<n>']])] : []),
+      M('group', 'Group / ungroup', [
+        ['group', 'Group', () => this.groupSelected(), 'Group the selection (Ctrl+G)'],
+        ['ungroup', 'Ungroup', () => this.ungroupSelected(), 'Dissolve the selected group (Ctrl+Shift+G)']]),
+      M('alignLeft', 'Align and distribute', [
+        ['alignLeft', 'Align left', () => this.alignSelected('left'), 'Align to the selection (or to the box when one item is selected)'],
+        ['alignHCenter', 'Align horizontal centres', () => this.alignSelected('hcenter')],
+        ['alignRight', 'Align right', () => this.alignSelected('right')],
+        ['alignTop', 'Align top', () => this.alignSelected('top')],
+        ['alignVMiddle', 'Align vertical centres', () => this.alignSelected('vmiddle')],
+        ['alignBottom', 'Align bottom', () => this.alignSelected('bottom')],
+        ['distH', 'Distribute horizontally', () => this.distributeSelected('h'), '3+ items'],
+        ['distV', 'Distribute vertically', () => this.distributeSelected('v'), '3+ items']]),
+      M('flip', 'Flip and rotate', [
+        ['flip', 'Flip horizontally', () => this.flipSelected('h')],
+        ['flipV', 'Flip vertically', () => this.flipSelected('v')],
+        ['rotate', 'Rotate 90° clockwise', () => this.rotateSelected(90)],
+        ['rotateCcw', 'Rotate 90° counter-clockwise', () => this.rotateSelected(-90)]]),
+      M('lock', 'Element: lock, events, grid array, copy / paste style', [
+        ['lock', 'Lock / unlock position', () => this.toggleLockSelected(), 'Lock or unlock the selected element position (Ctrl+L)'],
+        ['zap', 'Events', one, 'Configure element events (click, mouseover, release, drag&drop)'],
+        ['grid', '2×2 grid array', () => this.arrayDuplicateSelected(), 'Duplicate the selected element into a 2×2 grid'],
+        ['copy', 'Copy style', () => this.copySelectedStyle(), 'Copy fill / stroke / role style from the selected element'],
+        ['paste', 'Paste style', () => this.pasteSelectedStyle(), 'Paste the copied style onto the selected element(s)']])
+    ];
+    this.bar.append(h('span', { class: 'sep-v' }), ...groups);
   },
 
   /** Reference point (9-point grid) of this design; centre ('mc') by default. Stored in the design's meta. */

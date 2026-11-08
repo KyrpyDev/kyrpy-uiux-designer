@@ -709,7 +709,7 @@ export class Designer {
         active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
       }));
     }
-    for (const [key, icon, label, desc] of [['path', 'bezier', 'path tools row', 'Show / hide the row with the path and shape-combine tools'], ['draw', 'pencil', 'drawing tools row', 'Show / hide the row with the drawing tools, undo / redo and zoom']]) {
+    for (const [key, icon, label, desc] of [['draw', 'pencil', 'drawing tools row', 'Show / hide the row with the drawing tools, undo / redo and zoom']]) {
       const hidden = this.toolRowHidden(key);
       kids.push(ibtn(icon, `${hidden ? 'Show' : 'Hide'} the ${label}`, () => { this.setToolRowHidden(key, !this.toolRowHidden(key)); this.buildBar(); }, { desc, active: !hidden, dataset: { tools: '1' } }));
     }
