@@ -399,3 +399,11 @@ test('menu item whose button has no visible body falls back to the plain circle'
   const withBody = draw([{ id: 2, tag: 'circle', attrs: { cx: 32, cy: 32, r: 30 } }, iconNode]);
   assert.match(withBody, /<g transform="translate\(/);
 });
+
+test('hub item toolbar: focus previous / next item buttons on the centre and on hub items (same level, visible only, wrap)', () => {
+  const src = readFileSync(new URL('../interfaces/web/js/components/menu-editor.js', import.meta.url), 'utf8');
+  assert.match(src, /focusButtons\(rows, it, btn\)\s*\{/);
+  assert.match(src, /Focus previous item/); assert.match(src, /Focus next item/);
+  assert.match(src, /this\.focusButtons\(rows, levelItem, btn\)/, 'the centred main item of a sub level offers them');
+  assert.match(src, /data-kind="hub"\]'\)\) this\.toolbar\.append\(\.\.\.this\.focusButtons\(rows, it, btn\)/, 'hub ring / fan items offer them');
+});

@@ -443,6 +443,7 @@ export class MenuEditor {
         this.toolbar.append(
           btn('✎ Edit menu item', 'Edit menu item', () => menuActions.edit(this.d, (levelItem || rows[0]).id, hit.buttonId), 'btn small')
         );
+        if (levelItem) this.toolbar.append(...this.focusButtons(rows, levelItem, btn));
       }
     } else if (hit.item) {
       const it = hit.item;
@@ -454,6 +455,7 @@ export class MenuEditor {
         btn('→', 'Move later', () => menuActions.move(this.d, it.id, 1, hit.buttonId)),
         btn('🗑', 'Delete this item', () => menuActions.remove(this.d, it.id, hit.buttonId))
       );
+      if (this.d.stage.querySelector('.ud-menu[data-kind="hub"]')) this.toolbar.append(...this.focusButtons(rows, it, btn));
       // hub ring item: make it the centre button the menu starts on (between its neighbours of the same level)
       if (hit.el.hasAttribute('data-hub-index')) {
         const host = this.d.doc?.id === hit.buttonId ? this.d.doc : state.library.buttons.find(b => b.id === hit.buttonId);
@@ -463,6 +465,18 @@ export class MenuEditor {
           : btn('◎', `Set “${it.label || it.name}” as the default centre button`, () => this.setDefaultCentre(it.id, hit.buttonId, +hit.el.getAttribute('data-hub-index'))));
       }
     }
+  }
+
+  /** Toolbar buttons that focus the previous / next item on the same level (hub: the sub menu centres on its main item, so its neighbours are one step away). */
+  focusButtons(rows, it, btn) {
+    const sibs = rows.filter(r => (r.parentId ?? null) === (it.parentId ?? null) && r.visible !== false).sort((a, b) => a.ord - b.ord || a.id - b.id);
+    const i = sibs.findIndex(r => r.id === it.id);
+    if (i < 0 || sibs.length < 2) return [];
+    const go = (j, glyph, title) => {
+      const t = sibs[(j + sibs.length) % sibs.length];
+      return btn(glyph, `${title}: “${t.label || t.name}” (same level, wraps around)`, () => this.focusItem(t.id));
+    };
+    return [go(i - 1, '⏴', 'Focus previous item'), go(i + 1, '⏵', 'Focus next item')];
   }
 
   /**
