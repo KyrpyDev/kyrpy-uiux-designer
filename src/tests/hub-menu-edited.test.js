@@ -213,12 +213,13 @@ test('menu settings: distance from parent, hub centre size, item button style, k
   assert.match(svg, /data-r="/);
 });
 
-test('hub menu editor: centre placeholder has no button circle, host body hidden under a hub, swapping an item keeps depth 0 (back button invisible)', () => {
+test('hub menu editor: centre placeholder draws its own body, host body hidden under a hub, swapping an item keeps depth 0 (back button invisible)', () => {
   const tree = buildMenuTree(rowsOf(HUB.items));
   const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
   const centres = svg.match(/<g class="rm-center"[^>]*>.*?<\/g>/g) || [];
   assert.ok(centres.length > 0);
-  for (const c of centres) assert.doesNotMatch(c, /<circle/, 'no button element on the centred placeholder of a hub menu');
+  // the host body is hidden below the first level, so a centred 3rd-level item draws its own body (never an icon on nothing)
+  for (const c of centres) assert.match(c, /<circle/, 'the centred placeholder of a hub menu has a body');
   assert.match(MENU_CSS, /\.ud-btn:not\(\[data-hub\]\)\[data-hubdepth="0"\]/, 'the host button body only shows for non-hub menus');
   // radial menus keep their centre circle
   const radial = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config, kind: 'radial', layout: 'fan' }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });

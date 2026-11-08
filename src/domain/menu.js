@@ -158,7 +158,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     for (const it of items) {
       const rot = cfg.kind === 'rotating' || cfg.kind === 'radial';
       if (rot && it.children.length || rot && ctx.editor || (isHub && parentNode && it.children.length)) {
-        centers.push(`<g class="rm-center" data-for="${esc(it.path)}">${isHub ? '' : `<circle cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}"${itemAttrs({})}/>`}${iconUse(it.iconId, cx, cy, isHub ? hubIcon : lsize * 0.625)}</g>`);
+        centers.push(`<g class="rm-center" data-for="${esc(it.path)}">${isHub
+          // a hub hides the host body below the first level, so the centred item brings its own body (library button / host body / plain circle)
+          ? `<g transform="translate(${round(cx)} ${round(cy)})">${itemBody(it, hub.big / 2, hubIcon)}</g>`
+          : `<circle cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}"${itemAttrs({})}/>${iconUse(it.iconId, cx, cy, lsize * 0.625)}`}</g>`);
       }
       if (it.children.length) walk(it.children, it.path, it);
     }
