@@ -465,9 +465,7 @@ export class Designer {
       lockDocBtn,
       copyToProjBtn,
       moveToProjBtn,
-      lineageBtn,
-      h('span', { class: 'sep-v' }),
-      this.docState
+      lineageBtn
     ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
     this.updateDocBar();
@@ -713,14 +711,14 @@ export class Designer {
     }
     for (const [key, icon, label, desc] of [['path', 'bezier', 'path tools row', 'Show / hide the row with the path and shape-combine tools'], ['draw', 'pencil', 'drawing tools row', 'Show / hide the row with the drawing tools, undo / redo and zoom']]) {
       const hidden = this.toolRowHidden(key);
-      kids.push(ibtn(icon, `${hidden ? 'Show' : 'Hide'} the ${label}`, () => { this.setToolRowHidden(key, !this.toolRowHidden(key)); this.buildBar(); }, { desc, active: !hidden, dataset: { view: '1' } }));
+      kids.push(ibtn(icon, `${hidden ? 'Show' : 'Hide'} the ${label}`, () => { this.setToolRowHidden(key, !this.toolRowHidden(key)); this.buildBar(); }, { desc, active: !hidden, dataset: { tools: '1' } }));
     }
     kids.push(h('span', { class: 'grow' }),
-      ibtn('book', 'Guide', () => openGuide(this.type), { desc: `How to use the ${NAMES[this.type].toLowerCase()}`, kbd: 'F1', dataset: { view: '1' } }),
       ibtn('inspector', 'Inspector', () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; }, { desc: 'Show / hide the inspector panel', active: this.inspectorOpen, dataset: { view: '1' } }),
       ...(this.opts.onClose ? [ibtn('close', 'Close', () => this.opts.onClose(), { desc: 'Close this designer' })] : []));
     this.viewControls = kids.filter(k => k.dataset?.view === '1');
-    this.bar.append(...kids.filter(k => k.dataset?.view !== '1'));
+    this.toolToggles = kids.filter(k => k.dataset?.tools === '1');
+    this.bar.append(...kids.filter(k => k.dataset?.view !== '1' && k.dataset?.tools !== '1'));
     emit('topbar:refresh');
     this.buildPathBar();
   }

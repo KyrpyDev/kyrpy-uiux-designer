@@ -805,6 +805,9 @@ function buildTypeBar() {
   // the designer's doc bar (back, save, targets, visibility, status, new) and canvas toggles live in this row
   const designer = app.designer;
   const inDesigner = state.mode === 'screen' && designer?.doc;
+  // the ownership / save status sits in the top centre, next to the project button
+  const tc = $('#topbar .top-center');
+  if (tc) { tc.querySelector(':scope > .doc-state')?.remove(); if (inDesigner && designer.docState) tc.append(designer.docState); }
   nav.append(...[
     // the per-type page buttons live in the library panel's icon tabs (double-click opens that designer)
     h('div', { class: 'tabs type-tabs', role: 'tablist' },
@@ -814,6 +817,7 @@ function buildTypeBar() {
     newBtn,
     inDesigner ? h('span', { class: 'sep-v' }) : null,
     inDesigner ? designer.docbar : null,
+    ...(inDesigner ? (designer.toolToggles || []) : []),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
     ...(inDesigner ? (designer.viewControls || []) : [])

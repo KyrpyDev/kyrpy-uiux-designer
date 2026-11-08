@@ -843,3 +843,4 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 /* the project selection button in the top centre always has a thick purple edge */
 #topbar .proj-multi-trigger { border: 3px solid #a855f7; box-shadow: 0 0 0 1px rgba(168, 85, 247, .35); }
 #topbar .proj-multi-trigger:hover, #topbar .proj-multi-dd.open .proj-multi-trigger { border-color: #c084fc; }
+#topbar .top-center .doc-state { margin-left: 12px; white-space: nowrap; font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
