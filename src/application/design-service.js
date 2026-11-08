@@ -23,8 +23,8 @@ export class DesignService {
     const rootOwner = this.users ? this.users.get(d.rootOwnerId || d.creatorId || 1) : null;
     return {
       ...d,
-      creatorUsername: creator?.username || 'kyrpy',
-      rootOwnerUsername: rootOwner?.username || 'kyrpy'
+      creatorUsername: creator?.username || 'superadmin',
+      rootOwnerUsername: rootOwner?.username || 'superadmin'
     };
   }
 
@@ -72,8 +72,8 @@ export class DesignService {
     const item = this.get(idOrKey);
     const rootItem = item.rootItemId && item.rootItemId !== item.id ? this.designs.get(item.rootItemId) : item;
     const clonedFrom = item.clonedFromId ? this.designs.get(item.clonedFromId) : null;
-    const creator = this.users ? this.users.get(item.creatorId || 1) : { id: 1, username: 'kyrpy' };
-    const rootOwner = this.users ? this.users.get(item.rootOwnerId || 1) : { id: 1, username: 'kyrpy' };
+    const creator = this.users ? this.users.get(item.creatorId || 1) : { id: 1, username: 'superadmin' };
+    const rootOwner = this.users ? this.users.get(item.rootOwnerId || 1) : { id: 1, username: 'superadmin' };
     const clones = this.designs.list().filter(x => x.id !== item.id && (x.clonedFromId === item.id || x.rootItemId === item.id));
     const chain = [];
     const seen = new Set();
@@ -86,7 +86,7 @@ export class DesignService {
         key: cur.key,
         name: cur.name,
         creatorId: cur.creatorId || 1,
-        creatorUsername: u?.username || 'kyrpy',
+        creatorUsername: u?.username || 'superadmin',
         clonedFromId: cur.clonedFromId || null,
         rootItemId: cur.rootItemId || cur.id,
         rootOwnerId: cur.rootOwnerId || 1
@@ -99,8 +99,8 @@ export class DesignService {
       itemKey: item.key,
       visibility: item.visibility,
       projectId: item.projectId,
-      creator: creator ? { id: creator.id, username: creator.username, displayName: creator.displayName } : { id: 1, username: 'kyrpy' },
-      rootOwner: rootOwner ? { id: rootOwner.id, username: rootOwner.username, displayName: rootOwner.displayName } : { id: 1, username: 'kyrpy' },
+      creator: creator ? { id: creator.id, username: creator.username, displayName: creator.displayName } : { id: 1, username: 'superadmin' },
+      rootOwner: rootOwner ? { id: rootOwner.id, username: rootOwner.username, displayName: rootOwner.displayName } : { id: 1, username: 'superadmin' },
       rootItem: rootItem ? { id: rootItem.id, key: rootItem.key, name: rootItem.name } : { id: item.id, key: item.key, name: item.name },
       clonedFrom: clonedFrom ? { id: clonedFrom.id, key: clonedFrom.key, name: clonedFrom.name } : null,
       chain,

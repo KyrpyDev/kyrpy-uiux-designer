@@ -35,14 +35,14 @@ test('online icons: collections, search, paged listing, import (idempotent, capp
     assert.equal(page.total, 3); assert.equal(page.icons.length, 2);
     await assert.rejects(() => svc.search({}), /search or pick/);
     await assert.rejects(() => svc.svg({ prefix: '../x', name: 'a' }), /invalid/);
-    const r = await svc.importIcons({ prefix: 'line-md', names: ['home', 'account', 'nope'], projectId: 1 }, { actor: { id: 1, username: 'kyrpy', role: 'admin' } });
+    const r = await svc.importIcons({ prefix: 'line-md', names: ['home', 'account', 'nope'], projectId: 1 }, { actor: { id: 1, username: 'superadmin', role: 'admin' } });
     assert.equal(r.imported, 2); assert.equal(r.failed, 1);
-    const again = await svc.importIcons({ prefix: 'line-md', names: ['home'], projectId: 1 }, { actor: { id: 1, username: 'kyrpy', role: 'admin' } });
+    const again = await svc.importIcons({ prefix: 'line-md', names: ['home'], projectId: 1 }, { actor: { id: 1, username: 'superadmin', role: 'admin' } });
     assert.equal(again.skipped, 1);
     const icon = c.services.icon.get(r.ids[0]);
     assert.equal(icon.meta.pack, 'line-md'); assert.equal(icon.category, 'pack-line-md');
     assert.ok(icon.nodes.length > 1);
-    const set = await svc.importSet({ prefix: 'line-md', projectId: 1 }, { actor: { id: 1, username: 'kyrpy', role: 'admin' } });
+    const set = await svc.importSet({ prefix: 'line-md', projectId: 1 }, { actor: { id: 1, username: 'superadmin', role: 'admin' } });
     assert.equal(set.total, 3);
     assert.equal(MAX_IMPORT, 10000);
   } finally { c.close(); }

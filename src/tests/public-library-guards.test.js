@@ -14,7 +14,7 @@ import { PUBLIC_EMAIL } from '../domain/system-users.js';
 function setup() {
   const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
   const pub = c.publicUserId();
-  const kyrpy = c.users.findByUsernameOrEmail('kyrpy');
+  const kyrpy = c.users.findByUsernameOrEmail('superadmin');
   const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret' }).user;
   const bobProj = c.projects.create({ name: 'Bob Project', visibility: 'private' }, { actor: bob });
   return { c, pub, kyrpy, bob, bobProj };

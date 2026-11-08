@@ -20,11 +20,13 @@ export const KEY_RE = /^kud_(live|test)_[0-9A-Za-z]{32}$/;
 export const KEY_PREFIX_LENGTH = 13;
 
 /** `read` is always granted; `request` creates item requests; `propose` stages changesets (never approves);
- *  `create` (account keys only) creates new projects owned by the key's user. */
-export const SCOPES = ['read', 'request', 'propose', 'create'];
+ *  `create` (account keys only) creates new projects owned by the key's user.
+ *  `design` (account keys only) = AI-assisted design: the key edits ONLY the user's own projects, one focused project at a
+ *  time (strict mode: no public / shared / foreign data), and `uiux_save` applies its edits directly (no review step). */
+export const SCOPES = ['read', 'request', 'propose', 'create', 'design'];
 export const DEFAULT_SCOPES = ['read', 'request', 'propose'];
 export const KEY_KINDS = ['project', 'account'];
-export const SCOPES_BY_KIND = { project: ['read', 'request', 'propose'], account: ['read', 'request', 'propose', 'create'] };
+export const SCOPES_BY_KIND = { project: ['read', 'request', 'propose'], account: ['read', 'request', 'propose', 'create', 'design'] };
 export const DEFAULT_SCOPES_BY_KIND = { project: ['read', 'request', 'propose'], account: ['read', 'request', 'propose', 'create'] };
 
 export function normalizeKind(kind) {

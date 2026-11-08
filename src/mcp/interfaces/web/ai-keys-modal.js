@@ -15,7 +15,8 @@ const SCOPE_INFO = {
   read: 'Read the design system, search and download items (always on)',
   request: 'Ask for missing items (item requests)',
   propose: 'Propose new or changed items as a reviewable changeset (never approves)',
-  create: 'Account keys: create new projects of yours (clone a design into a new project)'
+  create: 'Account keys: create new projects of yours (clone a design into a new project)',
+  design: 'Account keys: AI-assisted design — edit ONLY your own projects, one focused project at a time; saves apply directly; no public or foreign data'
 };
 const STATUS_LABEL = { active: 'Active', rotating: 'Rotating (grace period)', expired: 'Expired', revoked: 'Revoked' };
 
@@ -125,7 +126,7 @@ export async function openAiKeysModal() {
     const project = h('select', {}, owned.map(p => h('option', { value: String(p.id), selected: p.id === state.activeProjectId }, `${p.name} (${p.key})`)));
     const expiry = h('select', {}, EXPIRY.map(([v, l]) => h('option', { value: v, selected: v === '90' }, l)));
     const scopeBoxes = Object.entries(SCOPE_INFO).map(([s, info]) => {
-      const box = h('input', { type: 'checkbox', checked: true, disabled: s === 'read', value: s });
+      const box = h('input', { type: 'checkbox', checked: s !== 'design', disabled: s === 'read', value: s });
       return { s, box, el: h('label', {}, box, h('span', {}, h('strong', {}, s), ` — ${info}`)) };
     });
     const projField = h('label', { class: 'field' }, h('span', {}, 'Project'), project);
@@ -133,9 +134,9 @@ export async function openAiKeysModal() {
       const acc = kind.value === 'account';
       projField.hidden = acc;
       for (const x of scopeBoxes) {
-        const allowed = acc || x.s !== 'create'; // "create" (new projects) only for account keys
+        const allowed = acc || (x.s !== 'create' && x.s !== 'design'); // "create" / "design" only for account keys
         x.el.hidden = !allowed;
-        if (!allowed) x.box.checked = false; else if (x.s !== 'read' && !x.box.dataset.touched) x.box.checked = true;
+        if (!allowed) x.box.checked = false; else if (x.s !== 'read' && x.s !== 'design' && !x.box.dataset.touched) x.box.checked = true;
       }
     };
     for (const x of scopeBoxes) x.box.addEventListener('change', () => { x.box.dataset.touched = '1'; });

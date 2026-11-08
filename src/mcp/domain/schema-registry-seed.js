@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 9;
+export const SEED_VERSION = 10;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -528,6 +528,17 @@ export const SCHEMA_REGISTRY_SEED = {
       project_id: 'Project the version belongs to (`projects.id`).',
       item_json: 'The item in the uiux_get_item JSON format at that content.',
       created_at: 'ISO time it was stored.',
+      mcp_context: C.mcp_context
+    }
+  },
+  design_focus: {
+    purpose: 'AI-assisted design: the project an account key with the "design" scope currently works on (its focus).',
+    usage: 'Set by uiux_edit_project / uiux_create_project / uiux_clone_project / uiux_save_as; cleared by uiux_close_project. Local session state: never synced, never published.',
+    constraints: ['One row per API key.', 'Always a project owned by the key\'s user; re-checked on every call.', 'Agents never write this table directly.'],
+    columns: {
+      api_key_id: 'The account API key (`api_keys.id`).',
+      project_id: 'The focused project (`projects.id`).',
+      updated_at: 'ISO time the focus was set.',
       mcp_context: C.mcp_context
     }
   },

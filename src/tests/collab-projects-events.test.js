@@ -12,10 +12,10 @@ const fresh = () => buildContainer({ dbFile: ':memory:' });
 
 test('default admin user kyrpy is seeded and all items default to public + creator/rootOwner kyrpy', () => {
   const c = fresh();
-  const kyrpy = c.users.findByUsernameOrEmail('kyrpy');
+  const kyrpy = c.users.findByUsernameOrEmail('superadmin');
   assert.ok(kyrpy, 'default user kyrpy exists');
   assert.equal(kyrpy.id, 1);
-  assert.equal(kyrpy.username, 'kyrpy');
+  assert.equal(kyrpy.username, 'superadmin');
   assert.equal(kyrpy.role, 'superadmin');
 
   const pathRec = c.path.create({ name: 'Wave Path' });
@@ -37,11 +37,11 @@ test('default admin user kyrpy is seeded and all items default to public + creat
 test('auth & ACL system: register, login with username or email, session token, and admin user management', () => {
   const c = fresh();
   // Default kyrpy login
-  const kyrpyAuth = c.auth.login({ usernameOrEmail: 'kyrpy', password: 'kyrpy' });
-  assert.equal(kyrpyAuth.user.username, 'kyrpy');
+  const kyrpyAuth = c.auth.login({ usernameOrEmail: 'superadmin', password: 'superadmin' });
+  assert.equal(kyrpyAuth.user.username, 'superadmin');
   assert.equal(kyrpyAuth.user.role, 'superadmin');
   assert.ok(kyrpyAuth.token.length > 16);
-  assert.equal(c.auth.resolveToken(kyrpyAuth.token).username, 'kyrpy');
+  assert.equal(c.auth.resolveToken(kyrpyAuth.token).username, 'superadmin');
 
   // Register new user
   const reg = c.auth.register({
@@ -282,12 +282,12 @@ test('HTTP collaboration, auth, project, lineage, template & sync routes', async
   try {
     const boot = await req('GET', '/api/bootstrap');
     assert.equal(boot.status, 200);
-    assert.equal(boot.body.currentUser.username, 'kyrpy');
+    assert.equal(boot.body.currentUser.username, 'superadmin');
     assert.ok(boot.body.projects.length >= 1);
     assert.ok(boot.body.templateDevices.length >= 6);
     assert.ok(boot.body.templateButtons.length >= 6);
 
-    const login = await req('POST', '/api/auth/login', { usernameOrEmail: 'kyrpy', password: 'kyrpy' });
+    const login = await req('POST', '/api/auth/login', { usernameOrEmail: 'superadmin', password: 'superadmin' });
     assert.equal(login.status, 200);
     assert.ok(login.body.token);
 

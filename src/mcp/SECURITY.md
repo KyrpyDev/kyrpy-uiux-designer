@@ -17,6 +17,21 @@ requests) and its PostgreSQL sync. Date: 2026-11-06. Sensors: `tests/mcp-m7.test
 | **D**enial of service | `/mcp` | 1 MB body cap, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, 256 KB per item, 2,000 nodes, 200 bindings per call, 24 h changeset expiry | M2 rate limits, M7 |
 | **E**levation of privilege | scopes | `read` / `request` / `propose` checked per tool; an API key never approves; auto-approve only through the owner's project setting `pushRequiresReview = false` | M5 scope test, M4 |
 
+### AI-assisted design keys (scope `design`, account keys only)
+
+| Threat | Mitigation | Sensor |
+|---|---|---|
+| Agent reads the public library, other users' or shared projects | strict principal: `AccountService` answers `NOT_FOUND` for every project that is not the user's own; search drops the public scope; `getItem` / workflows / item-request fulfil refuse non-project, non-own-private items | `mcp-design.test.js` isolation (+ control with a plain key) |
+| Agent copies foreign data into its project | create / clone / init `fromProject` resolve owned projects only; references to public or foreign items fail validation (`#readable`) instead of being adopted | isolation tests |
+| Agent controls "the whole DB" | no SQL, no generic table tools; a fixed tool list; the designer REST API rejects API keys (401); the only delete is a `-vNNN` copy of the focused master (`uiux_delete_version`, `uiux_purge_versions` with `confirm`) | isolation tests |
+| Agent publishes or shares | design keys create private projects only; visibility `public` is refused; no member / key / settings tools exist | create test |
+| Unreviewed writes | the review step is skipped only for the owner's own design key on the owner's own focused project (`autoApprove` is set by `DesignSessionService` alone, never by a tool argument); every save is a version, every call audited | save tests, M4 review tests |
+| Stale or foreign focus | the focus row is re-checked on every call (project exists, still owned); rows cascade with the key and are private (not synced, purged from public exports) | focus tests |
+| Version purge loses work | `confirm: true` required; the plan names the winner, the deleted versions and the dropped unsaved edits; a failed replace deletes nothing | purge test |
+| Project spam | 10 new projects per hour per key (`save_as`, clone, create), 500 ops per changeset | rate-limit tests |
+
+Residual: a design key can still delete or overwrite anything inside the focused project and its own versions (that is its job); the owner restores through the version history (`uiux_restore_version` is applied directly for design keys) or the designer.
+
 Residual risks (accepted, tracked):
 1. ~~Global `UNIQUE(key)`~~ fixed: keys are unique per project (tenant data cannot collide across projects).
 2. ~~Numeric action targets~~ fixed: actions are portable (`{type, uid, key}`), and targets are resolved with the same visibility checks as instances.

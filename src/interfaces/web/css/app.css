@@ -875,3 +875,6 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 /* designer toolbar: the name field shows 50+ characters when there is room and shrinks (not below 24) before the bar wraps; the hint text makes room */
 .typebar input.doc-title, .typebar b[title] { flex: 0 1 auto; min-width: 12ch; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .typebar:has(.doc-title) .typebar-hint, .typebar:has(.tool-menu-btn) .typebar-hint { display: none; }
+/* "+" New menu in the type bar: opens below the button, never clipped by the bar */
+.new-menu-wrap > .btn.ib { padding: 4px 6px; }
+.new-menu-wrap > .new-menu { min-width: 170px; z-index: 400; }

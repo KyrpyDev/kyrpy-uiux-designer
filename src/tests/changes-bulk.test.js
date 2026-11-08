@@ -114,7 +114,7 @@ test('HTTP: POST /api/changes/bulk, GET /api/changes/counts and ?q=', async () =
     return { status: r.status, body: await r.json().catch(() => null) };
   };
   try {
-    const owner = (await req('POST', '/api/auth/login', { usernameOrEmail: 'kyrpy', password: 'kyrpy' })).body.token;
+    const owner = (await req('POST', '/api/auth/login', { usernameOrEmail: 'superadmin', password: 'superadmin' })).body.token;
     const outsider = (await req('POST', '/api/auth/login', { usernameOrEmail: 'outsider', password: 'password123' })).body.token;
 
     const counts = await req('GET', `/api/changes/counts?projectId=${proj.id}`, null, owner);

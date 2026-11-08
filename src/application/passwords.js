@@ -13,9 +13,16 @@ export const USER_SALT_PREFIX = 'u1:';
 export const PASSWORD_MIN = 8;
 export const PASSWORD_MAX = 256;
 
+/** Published default accounts: superadmin/superadmin, admin/admin, user/user (+ the pre-rename `kyrpy` passwords). Change them after the first start. */
+export const DEFAULT_ACCOUNTS = [
+  { username: 'superadmin', password: 'superadmin', email: 'superadmin@local.dev', displayName: 'Superadmin', role: 'superadmin', avatarColor: '#2e9bff' },
+  { username: 'admin', password: 'admin', email: 'admin@local.dev', displayName: 'Administrator', role: 'admin', avatarColor: '#10b981' },
+  { username: 'user', password: 'user', email: 'user@local.dev', displayName: 'User', role: 'designer', avatarColor: '#f59e0b' }
+];
 const LEGACY_DEFAULTS = {
-  kyrpy: ['kyrpy', 'kyrpy123', 'admin', 'admin123'],
-  admin: ['admin', 'admin123']
+  superadmin: ['superadmin', 'kyrpy', 'kyrpy123'],
+  admin: ['admin', 'admin123'],
+  user: ['user']
 };
 
 export function hashPassword(password, salt = randomBytes(16).toString('hex')) {
@@ -30,7 +37,7 @@ export function hashUserPassword(password) {
 
 export function verifyPassword(password, storedHash, salt) {
   if (!password) return false;
-  if (storedHash === 'default_kyrpy_admin') return LEGACY_DEFAULTS.kyrpy.includes(String(password));
+  if (storedHash === 'default_kyrpy_admin') return LEGACY_DEFAULTS.superadmin.includes(String(password));
   if (!storedHash || !salt) return false;
   try {
     const computed = scryptSync(String(password), salt, 64);

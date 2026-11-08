@@ -62,8 +62,9 @@ export class ChangesetService {
   #mayCreatePublic(projectId) { return this.projects.get(Number(projectId))?.settings?.ai?.mayCreatePublicItems === true; }
 
   #readable(principal, row) {
-    return row.project_id === principal.project.id || row.visibility === 'public'
-      || (row.visibility === 'private' && row.creator_id === principal.user.id);
+    if (row.project_id === principal.project.id) return true;
+    if (principal.strict) return row.visibility === 'private' && row.creator_id === principal.user.id;   // design keys: never public / foreign
+    return row.visibility === 'public' || (row.visibility === 'private' && row.creator_id === principal.user.id);
   }
 
   #scopeOf(principal, row) { return row.project_id === principal.project.id ? 'project' : row.visibility === 'private' ? 'private' : 'public'; }
@@ -485,6 +486,19 @@ export class ChangesetService {
       note: 'Approved deletes go to the designer trash (restorable).' };
   }
 
+  /** Deletes staged operations of an open changeset: by op uid or item key (`ops`), or all of them. */
+  unstage(principal, { changeset, ops = [], all = false } = {}) {
+    const cs = this.#open(principal, changeset);
+    const list = this.repo.ops(cs.id).filter(o => o.status === 'staged');
+    const picked = all ? list : list.filter(o => ops.some(r => r === o.uid || r === o.key || r === `${o.type}:${o.key}`));
+    if (!all) {
+      const unknown = ops.filter(r => !list.some(o => r === o.uid || r === o.key || r === `${o.type}:${o.key}`));
+      if (unknown.length) throw new NotFoundError('staged operation', unknown.join(', '));
+    }
+    this.transaction(() => { for (const o of picked) this.repo.deleteOp(o.id); this.repo.updateChangeset(cs.id, cs.status === 'conflicted' ? { status: 'open' } : {}); });
+    return { changeset: cs.uid, removed: picked.map(o => ({ opUid: o.uid, op: o.op, type: o.type, key: o.key })), staged: this.repo.countOps(cs.id) };
+  }
+
   discard(principal, { changeset } = {}) {
     const cs = this.#open(principal, changeset);
     return this.view(this.repo.updateChangeset(cs.id, { status: 'discarded' }));
@@ -527,7 +541,11 @@ export class ChangesetService {
       ops: ops.map(({ itemId, ...o }) => o) };
   }
 
-  submit(principal, { changeset, message = '', label = '' } = {}) {
+  /**
+   * `autoApprove` is only ever passed by the AI-assisted-design service (a "design" key saving to its owner's own focused
+   * project); no tool argument can set it, so every other push still waits for the human review.
+   */
+  submit(principal, { changeset, message = '', label = '', autoApprove = false } = {}) {
     const cs = this.#open(principal, changeset);
     const ops = this.repo.ops(cs.id);
     if (!ops.length) throw new ValidationFailed('nothing is staged: the app already matches the design. Call uiux_discard_changeset.');
@@ -567,8 +585,8 @@ export class ChangesetService {
       }
       return this.repo.updateChangeset(cs.id, { status: 'submitted', message: String(message).slice(0, 2000), resultVersionId: v.id, submittedAt: this.now().toISOString() });
     });
-    if (project.settings?.ai?.pushRequiresReview === false) {
-      this.review(done.uid, { approve: ops.map(o => o.uid), comment: 'auto-approved (project setting pushRequiresReview = off)' }, null, { auto: true });
+    if (autoApprove || project.settings?.ai?.pushRequiresReview === false) {
+      this.review(done.uid, { approve: ops.map(o => o.uid), comment: autoApprove ? 'saved by the owner\'s AI-assisted design key' : 'auto-approved (project setting pushRequiresReview = off)' }, null, { auto: true });
     }
     return this.view(this.repo.changeset(done.id));
   }
@@ -580,7 +598,7 @@ export class ChangesetService {
    * original uid, rolls changed items back to their stored JSON, deletes items added since). It goes
    * through the normal review; on approval the new head has source "restore".
    */
-  restoreVersion(principal, { version, message = '', submit = true } = {}) {
+  restoreVersion(principal, { version, message = '', submit = true, autoApprove = false } = {}) {
     const P = principal.project.id;
     const head = this.versions.ensureHead(P);
     const target = this.repo.byNumber(P, version);
@@ -609,7 +627,7 @@ export class ChangesetService {
     }
     const row = this.repo.changeset(cs.changeset);
     if (!this.repo.countOps(row.id)) { this.repo.updateChangeset(row.id, { status: 'discarded' }); return { ...this.view(this.repo.changeset(row.id)), restoredFrom: target.number, unchanged: true, skipped }; }
-    const out = submit ? this.submit(principal, { changeset: cs.changeset, message: message || `Restore version ${target.number}` }) : this.view(this.repo.changeset(row.id));
+    const out = submit ? this.submit(principal, { changeset: cs.changeset, message: message || `Restore version ${target.number}`, autoApprove }) : this.view(this.repo.changeset(row.id));
     return { ...out, restoredFrom: target.number, skipped };
   }
 

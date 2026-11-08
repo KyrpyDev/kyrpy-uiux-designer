@@ -304,7 +304,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id, revoked_
       if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()) return;
       const sa = () => db.prepare("SELECT id, username FROM users WHERE role = 'superadmin' ORDER BY (id = 1) DESC, id").all();
       const setRole = (id, role) => db.prepare("UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?").run(role, id);
-      const kyrpy = db.prepare("SELECT id FROM users WHERE id = 1 AND username = 'kyrpy'").get();
+      const kyrpy = db.prepare("SELECT id FROM users WHERE id = 1 AND username IN ('kyrpy', 'superadmin')").get();
       const cur = sa();
       if (kyrpy && (!cur.length || (cur.length === 1 && cur[0].username === 'admin'))) {
         for (const x of cur) setRole(x.id, 'admin');
@@ -313,6 +313,18 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id, revoked_
       for (const x of sa().slice(1)) setRole(x.id, 'admin');
       db.exec("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_single_superadmin ON users(role) WHERE role = 'superadmin'");
     }
+  },
+  {
+    // AI-assisted design: the project an account key ("design" scope) currently works on. One row per key; local session
+    // state (not synced to PostgreSQL, purged from every public export).
+    id: 'm13-001-design-focus', pg: false,
+    sql: `
+CREATE TABLE IF NOT EXISTS design_focus (
+  api_key_id  INTEGER PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE,
+  project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context TEXT NOT NULL DEFAULT '{}'
+);`
   }
 ];
 

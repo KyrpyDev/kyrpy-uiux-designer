@@ -48,7 +48,7 @@ async function main() {
     const cols = await svc.collections();
     if (opt.list) { for (const s of cols) console.log(`${s.prefix.padEnd(28)} ${String(s.total).padStart(6)}  ${s.license.padEnd(14)} ${s.title}`); return; }
     const known = new Map(cols.map(s => [s.prefix, s]));
-    const admin = c.auth?.resolveActor?.({ allowDefault: true }) || { id: 1, username: 'kyrpy', role: 'admin' };
+    const admin = c.auth?.resolveActor?.({ allowDefault: true }) || { id: 1, username: 'superadmin', role: 'admin' };
     console.log(`${opt.dryRun ? '[dry-run] ' : ''}db ${opt.db} · project ${opt.project} · up to ${opt.max} icons per set`);
     const total = { imported: 0, skipped: 0, failed: 0 };
     for (const prefix of opt.sets) {

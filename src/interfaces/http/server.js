@@ -101,7 +101,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
             container.auth.assertCanWrite(actor);
           }
         } else {
-          actor = { id: 1, username: 'kyrpy', role: 'admin' };
+          actor = { id: 1, username: 'superadmin', role: 'admin' };
         }
         const projectId = headerProjectId || (url.searchParams.get('projectId') ? Number(url.searchParams.get('projectId')) : 1);
         const ip = req.socket?.remoteAddress || '';

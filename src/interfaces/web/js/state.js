@@ -27,15 +27,15 @@ export const state = {
   playAnimations: true,
   workflowId: null,
   // New project, user, collaboration, templates & sync state
-  user: { id: 1, username: 'kyrpy', displayName: 'Kyrpy (Admin)', role: 'admin', avatarColor: '#2e9bff' },
+  user: { id: 1, username: 'superadmin', displayName: 'Superadmin', role: 'superadmin', avatarColor: '#2e9bff' },
   publicUserId: null,             // id of the immutable `public` system user (owner of the public library), from /api/bootstrap
   projects: [],
   activeProjectId: 1,
   selectedProjectIds: new Set(),  // multi-selected project IDs in topbar dropdown (empty = activeProjectId or all)
   saveTargetProjectIds: new Set(), // multi-target project IDs selected next to "Save as…" in Designer
-  // Save as… always saves into the user's Global Private Library: the target is locked on and cannot be switched off
-  get saveToUserPrivateLibrary() { return true; },
-  set saveToUserPrivateLibrary(_) { /* locked on */ },
+  // No default Private (All Projects) save target any more: the default target is the active project (see syncSaveTarget)
+  get saveToUserPrivateLibrary() { return false; },
+  set saveToUserPrivateLibrary(_) { /* no private target */ },
   visibilityFilter: 'all',        // 'all' | 'public' | 'private' | 'project'
   trashCount: 0,
   templateDevices: [],
@@ -57,7 +57,7 @@ export function on(evt, fn) { if (!handlers.has(evt)) handlers.set(evt, new Set(
 export function emit(evt, data) { for (const fn of handlers.get(evt) || []) { try { fn(data); } catch (e) { console.error(`handler for ${evt} failed`, e); } } }
 
 /* ---------- public library (immutable `public` system user) ---------- */
-export const isAdminUser = (u = state.user) => !!u && (['admin', 'superadmin'].includes(u.role) || u.username === 'kyrpy' || (u.permissions || []).includes('*'));
+export const isAdminUser = (u = state.user) => !!u && (['admin', 'superadmin'].includes(u.role) || (u.permissions || []).includes('*'));
 /** The single superadmin: the only user who edits the public library in place (everyone else uses Save as… / change requests). */
 export const isSuperadminUser = (u = state.user) => !!u && u.role === 'superadmin';
 /** True when the record belongs to the public library (owned by the `public` system user). */

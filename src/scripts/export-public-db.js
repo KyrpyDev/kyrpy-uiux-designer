@@ -9,7 +9,7 @@
  *    `VACUUM INTO`; all cleaning happens on a temporary copy.
  *  - Builds the GitHub-ready SQLite database `src/data/designer.db` and the synchronized SQL files
  *    (`sql/schema_sqlite.sql`, `sql/schema_postgres.sql`, `sql/sample_data_sqlite.sql`, `sql/sample_data_postgres.sql`).
- *  - Users in the snapshot: `kyrpy` (id 1, password reset to `kyrpy123`) and `admin` (id 2, password reset to `admin`)
+ *  - Users in the snapshot: superadmin/superadmin (id 1), admin/admin (id 2) and user/user (default passwords, always reset)
  *    as bootstrap logins that own NO items, plus the `public` system user (its live id, empty password hash,
  *    `suspended`). Every other account, session and API key is dropped.
  *  - Design rows kept: `visibility = 'public' AND project_id = 1 AND creator_id = root_owner_id = <public user id>`.
@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase, healForeignKeys } from '../infrastructure/sqlite/database.js';
 import { PG_SCHEMA_SQL } from '../infrastructure/postgres/pg-sync-service.js';
 import { buildContainer } from '../composition-root.js';
+import { DEFAULT_ACCOUNTS } from '../application/passwords.js';
 import { PUBLIC_USERNAME, PUBLIC_EMAIL, PUBLIC_DISPLAY_NAME, PUBLIC_AVATAR_COLOR, DESIGN_TABLES } from '../domain/system-users.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -90,7 +91,7 @@ let srcPublic;
   }
 }
 const PUB = Number(srcPublic.id);
-if (PUB === 1 || PUB === 2) abort(`the "${PUBLIC_USERNAME}" user has id ${PUB}, which collides with the kyrpy/admin bootstrap ids`);
+if (PUB === 1 || PUB === 2) abort(`the "${PUBLIC_USERNAME}" user has id ${PUB}, which collides with the superadmin/admin bootstrap ids`);
 
 // Built-in themes and templates are seeded into the COPY (migrations run there too), never into the source.
 {
@@ -116,22 +117,19 @@ db.exec('PRAGMA foreign_keys = OFF;');
 db.exec('BEGIN;');
 try {
   const now = '2026-11-05 00:00:00';
-  const kyrpyHash = hashPassword('kyrpy123', 'kyrpy_salt_v1');
-  const adminHash = hashPassword('admin', 'admin_salt_v1');
-
-  // 3a. Users: `kyrpy` (id=1) and `admin` (id=2) bootstrap logins with reset passwords, plus the `public`
-  //     system user with its live id. No other account survives (the AI agent is re-created on first open).
+  // 3a. Users: the published default accounts superadmin/superadmin (id 1), admin/admin (id 2) and user/user, plus the
+  //     `public` system user with its live id. Passwords are ALWAYS reset to these defaults (see README: change them after cloning).
   db.exec('DELETE FROM sessions;');
   db.exec('DELETE FROM users;');
-  db.prepare(`
+  const insUser = db.prepare(`
     INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '["*"]', ?, ?, ?, NULL)
-  `).run(1, 'kyrpy', 'kyrpy@kyrpy.com', kyrpyHash, 'kyrpy_salt_v1', 'Kyrpy (Admin)', 'superadmin', '#2e9bff', now, now);
-
-  db.prepare(`
-    INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '["*"]', ?, ?, ?, NULL)
-  `).run(2, 'admin', 'admin@local.dev', adminHash, 'admin_salt_v1', 'Administrator', 'admin', '#10b981', now, now);
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)
+  `);
+  const USER_ID = Math.max(PUB, 2) + 1;
+  DEFAULT_ACCOUNTS.forEach((a, i) => {
+    const salt = `${a.username}_salt_v1`;
+    insUser.run(i === 2 ? USER_ID : i + 1, a.username, a.email, hashPassword(a.password, salt), salt, a.displayName, a.role, a.role === 'designer' ? '[]' : '["*"]', a.avatarColor, now, now);
+  });
 
   db.prepare(`
     INSERT INTO users (id, username, email, password_hash, salt, display_name, role, status, permissions, avatar_color, created_at, updated_at, last_login_at)
@@ -220,7 +218,7 @@ try {
 
   // 3e'. MCP layer: keys, audit, versions, changesets, requests and bindings are private per instance;
   //      only the built-in (global, seed) AI pack templates and the schema registry are public.
-  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items']) {
+  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items', 'design_focus']) {
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)) db.exec(`DELETE FROM ${t};`);
   }
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ai_artifacts'").get()) {
@@ -254,10 +252,10 @@ try {
   const strayTranslations = db.prepare(`SELECT COUNT(*) AS n FROM translations WHERE table_name NOT IN (${translatable.map(t => `'${t}'`).join(', ')})`).get().n;
   if (strayTranslations) leaks.push(`${strayTranslations} translation row(s) for non-exported tables`);
   const users = db.prepare('SELECT id, username, password_hash FROM users ORDER BY id').all();
-  const expected = [`1:kyrpy`, `2:admin`, `${PUB}:${PUBLIC_USERNAME}`].sort().join(',');
-  if (users.map(u => `${u.id}:${u.username}`).sort().join(',') !== expected) leaks.push(`users are [${users.map(u => u.username).join(', ')}], expected exactly kyrpy, admin, ${PUBLIC_USERNAME}`);
+  const expected = [`1:superadmin`, `2:admin`, `${Math.max(PUB, 2) + 1}:user`, `${PUB}:${PUBLIC_USERNAME}`].sort().join(',');
+  if (users.map(u => `${u.id}:${u.username}`).sort().join(',') !== expected) leaks.push(`users are [${users.map(u => u.username).join(', ')}], expected exactly superadmin, admin, user, ${PUBLIC_USERNAME}`);
   if (users.some(u => u.username === PUBLIC_USERNAME && u.password_hash !== '')) leaks.push(`"${PUBLIC_USERNAME}" has a password hash`);
-  for (const t of ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changesets', 'changeset_ops', 'item_requests', 'project_versions', 'version_items', 'code_bindings', 'sync_outbox']) {
+  for (const t of ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changesets', 'changeset_ops', 'item_requests', 'project_versions', 'version_items', 'code_bindings', 'design_focus', 'sync_outbox']) {
     if (!hasTable(t)) continue;
     const n = db.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get().n;
     if (n) leaks.push(`${n} row(s) left in ${t}`);

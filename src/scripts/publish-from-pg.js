@@ -15,6 +15,7 @@
  * PUBLISH_DIR (default <repo>/publish), PUBLISH_APPLY_DB, PUBLISH_APPLY_SQL (apply targets; tests).
  * Credentials are read by PostgresSyncService (env / credentials file) and are never printed.
  */
+import { DEFAULT_ACCOUNTS, verifyPassword } from '../application/passwords.js';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, rmSync, copyFileSync, statSync } from 'node:fs';
@@ -29,7 +30,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const srcRoot = resolve(here, '..');
 const repoRoot = resolve(srcRoot, '..');
 const TAG = '[db:publish]';
-const PRIVATE_TABLES = ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items', 'sync_outbox'];
+const PRIVATE_TABLES = ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items', 'design_focus', 'sync_outbox'];
 
 export function parseArgs(argv) {
   const opts = { pushFirst: false, apply: false, keepClone: false, help: false, unknown: [] };
@@ -58,7 +59,7 @@ export function purgeToPublic(db) {
       db.prepare(`DELETE FROM "${t}" WHERE visibility IS NOT 'public' OR COALESCE(project_id, 1) != 1 OR creator_id IS NOT ? OR root_owner_id IS NOT ?`).run(PUB, PUB);
     }
     for (const t of PRIVATE_TABLES) if (hasTable(db, t)) db.exec(`DELETE FROM "${t}";`);
-    db.prepare('DELETE FROM users WHERE username NOT IN (?, ?, ?)').run('kyrpy', 'admin', PUBLIC_USERNAME);
+    db.prepare('DELETE FROM users WHERE username NOT IN (?, ?, ?, ?, ?)').run('superadmin', 'kyrpy', 'admin', 'user', PUBLIC_USERNAME);
     if (hasTable(db, 'projects')) db.exec('DELETE FROM projects WHERE id != 1;');
     if (hasTable(db, 'project_members')) db.exec('DELETE FROM project_members WHERE project_id != 1 OR user_id NOT IN (SELECT id FROM users);');
     db.exec('COMMIT;');
@@ -78,7 +79,12 @@ export function checkPublicDb(file) {
   try {
     const n = sql => db.prepare(sql).get().n;
     const names = db.prepare('SELECT username FROM users ORDER BY username').all().map(r => r.username).join(',');
-    if (names !== 'admin,kyrpy,public') problems.push(`users are [${names}]`);
+    if (names !== 'admin,public,superadmin,user') problems.push(`users are [${names}], expected exactly superadmin, admin, user, public`);
+    // publish rule: the shipped accounts always carry the documented default passwords (superadmin/superadmin, admin/admin, user/user)
+    for (const a of DEFAULT_ACCOUNTS) {
+      const r = db.prepare('SELECT password_hash, salt FROM users WHERE username = ?').get(a.username);
+      if (!r || !verifyPassword(a.password, r.password_hash, r.salt)) problems.push(`user "${a.username}" does not have the default published password`);
+    }
     if (n(`SELECT COUNT(*) AS n FROM users WHERE username = 'public' AND password_hash = '' AND status = 'suspended'`) !== 1) problems.push('public user is not the suspended passwordless system account');
     const pubId = `(SELECT id FROM users WHERE username = 'public')`;
     const designs = DESIGN_TABLES.filter(t => hasTable(db, t)).map(t => `SELECT creator_id, root_owner_id, visibility, project_id FROM ${t}`).join(' UNION ALL ');

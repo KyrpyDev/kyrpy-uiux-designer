@@ -39,9 +39,10 @@ export class AccountService {
   listProjects(principal, { query = '', owned = false, limit = 100 } = {}) {
     const user = this.#user(principal);
     const q = String(query || '').trim().toLowerCase();
+    // strict (AI-assisted design key): the user's OWN projects only — no shared, public or admin-visible ones
     const rows = this.projectService.list({ user })
       .map(p => ({ p, role: this.#role(p, user) }))
-      .filter(({ p, role }) => role && (!owned || role === 'owner')
+      .filter(({ p, role }) => role && (!(owned || principal.strict) || role === 'owner')
         && (!q || `${p.key} ${p.name} ${p.description || ''}`.toLowerCase().includes(q)))
       .sort((a, b) => String(b.p.updatedAt || b.p.createdAt || '').localeCompare(String(a.p.updatedAt || a.p.createdAt || '')) || b.p.id - a.p.id);
     const projects = rows.slice(0, Math.min(Math.max(1, Number(limit) || 100), 500)).map(({ p, role }) => ({
@@ -65,6 +66,8 @@ export class AccountService {
     const p = /^\d+$/.test(raw) ? this.projects.get(Number(raw)) : (this.projects.getByKey?.(raw) || this.projects.list().find(x => x.key === raw));
     const role = p ? this.#role(p, user) : null;
     if (!p || !role) throw new NotFoundError('project', raw);
+    // strict keys never see a project that is not theirs, not even a public one: the same NOT_FOUND as for an unknown key
+    if (principal.strict && role !== 'owner') throw new NotFoundError('project', raw);
     if (NEEDS_OWNER.has(need) && role !== 'owner') {
       const e = new ForbiddenError(`"${p.key}" is not your project: an account key can ${need} only on projects you own. Clone it into a new project with uiux_create_project { fromProject: "${p.key}" }.`);
       e.code = 'SCOPE_DENIED';
@@ -85,6 +88,7 @@ export class AccountService {
     const cleanName = String(name || '').trim();
     if (!cleanName) throw new ValidationError('name is required');
     if (!['private', 'public'].includes(visibility)) throw new ValidationError('visibility must be private or public');
+    if (principal.strict && visibility !== 'private') throw new ValidationError('an AI-assisted design key creates private projects only; publishing is a human decision in the designer');
     const rl = this.limiter?.hit('projects', principal.apiKeyId);
     if (rl && !rl.ok) throw Object.assign(new DomainError(`project limit reached; retry in ${rl.retryAfterSec}s`, 'RATE_LIMITED', 429), { retryAfterSec: rl.retryAfterSec });
     const input = { name: cleanName, ...(key ? { key: String(key).trim() } : {}), description: String(description).slice(0, 2000), visibility };

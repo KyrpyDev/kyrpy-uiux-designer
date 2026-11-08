@@ -158,6 +158,13 @@ CREATE TABLE code_bindings (
   UNIQUE (project_id, item_uid, repo_id, file_path, symbol)
 );
 
+CREATE TABLE design_focus (
+  api_key_id  INTEGER PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE,
+  project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE "elements" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   key             TEXT NOT NULL,          -- variable name used in code (dashed words)

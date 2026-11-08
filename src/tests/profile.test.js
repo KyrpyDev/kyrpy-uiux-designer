@@ -45,7 +45,7 @@ test('profile: release mode needs a session (401); dev mode without a token acts
     process.env.APP_MODE = 'dev';
     const p = c.profile.get(null);
     assert.equal(p.devFallback, true);
-    assert.equal(p.user.username, 'kyrpy');
+    assert.equal(p.user.username, 'superadmin');
     assert.ok(p.sessions.every(s => s.current === false));
   } finally { if (prev === undefined) delete process.env.APP_MODE; else process.env.APP_MODE = prev; }
   // a bad token is always rejected, in any mode
@@ -90,13 +90,13 @@ test('sessions: list, revoke one by sid, revoke all others', () => {
 
 test('legacy default-admin passwords only work until the account password is changed', () => {
   const c = fresh();
-  const k = c.auth.login({ usernameOrEmail: 'kyrpy', password: 'kyrpy' });
+  const k = c.auth.login({ usernameOrEmail: 'superadmin', password: 'superadmin' });
   assert.equal(c.profile.get(k.token).passwordSetByUser, false);
-  c.profile.changePassword(k.token, { currentPassword: 'kyrpy', newPassword: 'Kyrpy-new-2026' });
-  for (const old of ['kyrpy', 'kyrpy123', 'admin', 'admin123']) {
-    assert.throws(() => c.auth.login({ usernameOrEmail: 'kyrpy', password: old }), /Invalid/, `legacy "${old}" rejected`);
+  c.profile.changePassword(k.token, { currentPassword: 'superadmin', newPassword: 'Kyrpy-new-2026' });
+  for (const old of ['superadmin', 'kyrpy', 'kyrpy123', 'admin', 'admin123']) {
+    assert.throws(() => c.auth.login({ usernameOrEmail: 'superadmin', password: old }), /Invalid/, `legacy "${old}" rejected`);
   }
-  assert.ok(c.auth.login({ usernameOrEmail: 'kyrpy', password: 'Kyrpy-new-2026' }).token);
+  assert.ok(c.auth.login({ usernameOrEmail: 'superadmin', password: 'Kyrpy-new-2026' }).token);
   assert.equal(hasUserPassword(c.users.getWithAuth(1)), true);
   c.close();
 });

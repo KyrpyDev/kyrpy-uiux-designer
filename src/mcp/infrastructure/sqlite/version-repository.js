@@ -54,6 +54,14 @@ export class VersionRepository {
       v.createdByUser ?? null, v.createdByKey ?? null, v.approvedBy ?? null, v.approvedAt ?? null);
     return this.version(Number(r.lastInsertRowid));
   }
+  /** Deletes the whole version history of a project (versions, changesets, their ops, stored item JSON). */
+  purgeHistory(projectId) {
+    const p = Number(projectId);
+    this.db.prepare('DELETE FROM changeset_ops WHERE changeset_id IN (SELECT id FROM changesets WHERE project_id = ?)').run(p);
+    this.db.prepare('DELETE FROM changesets WHERE project_id = ?').run(p);
+    this.db.prepare('DELETE FROM project_versions WHERE project_id = ?').run(p);
+    this.db.prepare('DELETE FROM version_items WHERE project_id = ?').run(p);
+  }
   supersedeHead(projectId) {
     this.db.prepare("UPDATE project_versions SET status = 'superseded' WHERE project_id = ? AND status = 'approved'").run(Number(projectId));
   }

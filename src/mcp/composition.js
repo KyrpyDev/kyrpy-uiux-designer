@@ -25,6 +25,8 @@ import { buildClientSetup } from './interfaces/web/client-setup.js';
 import { ProjectLibraryService } from './application/project-library-service.js';
 import { ItemRequestService } from './application/item-request-service.js';
 import { BindingService } from './application/binding-service.js';
+import { DesignSessionService } from './application/design-session-service.js';
+import { FocusRepository } from './infrastructure/sqlite/focus-repository.js';
 import { AGENT_USERNAME } from './domain/agent-user.js';
 import { publicUserId as publicUserIdOf } from '../domain/system-users.js';
 
@@ -92,12 +94,16 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
         review: (ch, decision, opts) => changesets.reviewChangeRequest(ch, decision, opts)
       };
     }
-    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts });
+    // AI-assisted design: focus + edit session + versions for account keys with the "design" scope
+    const design = accounts && changesets
+      ? new DesignSessionService({ focus: new FocusRepository(db), accounts, projectService, projects, users, versions, changesets, query, versionRepo, services, workflows, db, transaction, ...(now ? { now } : {}) })
+      : null;
+    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design });
     const http = createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins, versions, ...(pollMs ? { pollMs } : {}) });
     // live updates for subscribed sessions (resources/subscribe + GET /mcp event stream)
     versions.onChange = projectId => http.notify(projectId, ['uiux://project/manifest', 'uiux://project/versions']);
     requests.onChange = projectId => http.notify(projectId, ['uiux://requests/open']);
-    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, http });
+    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, design, http });
   }
   return out;
 }

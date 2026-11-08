@@ -22,7 +22,7 @@ function buildProdDb(file) {
   const c = buildContainer({ dbFile: file, syncEnabled: false });
   const pub = c.publicUserId();
   const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret' }).user;
-  const kyrpy = c.users.findByUsernameOrEmail('kyrpy');
+  const kyrpy = c.users.findByUsernameOrEmail('superadmin');
 
   // public library items (admin-made public items of project 1 belong to `public`)
   const pubIcon = c.icon.create({ name: 'Library Icon', visibility: 'public' }, { actorId: kyrpy.id });
@@ -72,12 +72,12 @@ test('export-public-db exports only the public user library and never touches th
     const db = new DatabaseSync(out, { readOnly: true });
     try {
       const users = db.prepare('SELECT id, username, password_hash, status FROM users ORDER BY id').all();
-      assert.deepEqual(users.map(u => u.username).sort(), ['admin', 'kyrpy', 'public']);
+      assert.deepEqual(users.map(u => u.username).sort(), ['admin', 'public', 'superadmin', 'user']);
       const p = users.find(u => u.username === 'public');
       assert.equal(p.id, pub, 'public user keeps its live id');
       assert.equal(p.password_hash, '');
       assert.equal(p.status, 'suspended');
-      assert.equal(users.find(u => u.username === 'kyrpy').id, 1);
+      assert.equal(users.find(u => u.username === 'superadmin').id, 1);
       assert.equal(users.find(u => u.username === 'admin').id, 2);
 
       for (const t of DESIGN_TABLES) {

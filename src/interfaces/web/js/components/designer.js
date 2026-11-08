@@ -244,41 +244,12 @@ export class Designer {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear(); // the All Projects library target is locked on: Clear only drops the projects
+                selSet.clear();
                 updateTriggerText();
                 rebuildPanel();
               }
             }, 'Clear')
           )
-        )
-      );
-
-      // User's own All Projects library option
-      const privChk = h('input', {
-        type: 'checkbox',
-        class: 'save-target-private-chk',
-        checked: true,
-        disabled: true,
-        title: 'Always saved to your private library'
-      });
-      panel.append(
-        h('label', {
-          class: 'row save-target-row save-target-private-row',
-          title: 'Always saved to your private library',
-          style: {
-            padding: '6px 8px',
-            borderRadius: '6px',
-            background: 'rgba(16,185,129,0.16)',
-            marginBottom: '6px',
-            cursor: 'default',
-            gap: '8px',
-            fontSize: '12px',
-            fontWeight: '600'
-          }
-        },
-        privChk,
-        h('span', {}, '🗂 All Projects (my global library — user\'s all projects)'),
-        h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 }))
         )
       );
 
@@ -437,7 +408,7 @@ export class Designer {
     }, { desc: 'Lock / unlock positions on this design', active: !!d.locked });
 
     const lineageBtn = ibtn('collab', 'Lineage', () => this.doc && openLineageModal(this.type, this.doc.id),
-      { desc: `Root owner: ${ownerLabel(d.rootOwnerUsername || d.creatorUsername || 'kyrpy', d.rootOwnerId)}${d.clonedFromId ? ` · cloned from #${d.clonedFromId}` : ''}\nView the creator & root owner lineage chain` });
+      { desc: `Root owner: ${ownerLabel(d.rootOwnerUsername || d.creatorUsername || 'superadmin', d.rootOwnerId)}${d.clonedFromId ? ` · cloned from #${d.clonedFromId}` : ''}\nView the creator & root owner lineage chain` });
 
     const copyToProjBtn = ibtn('copy', 'Copy to…', () => this.doc && openCopyMoveToProjectsModal({
       items: [{ type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: d.builtin, creatorId: d.creatorId }],
@@ -459,13 +430,13 @@ export class Designer {
       h('span', { class: 'sep-v' }),
       this.saveBtn,
       this.saveAsBtn,
+      moveToProjBtn,
       this.saveTargetsDropdown,
       this.resetBtn,
       this.deviceMenu,
       h('span', { class: 'sep-v' }),
       lockDocBtn,
       copyToProjBtn,
-      moveToProjBtn,
       lineageBtn
     ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
@@ -543,7 +514,7 @@ export class Designer {
       this.markBaseline();
       // Save copies into the checked projects only; the locked private-library target applies to Save as…
       // (otherwise every Save would add another private copy)
-      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const targetPids = [...(state.saveTargetProjectIds || [])].filter(pid => Number(pid) !== Number(this.doc.projectId));
       const includePriv = false;
       let multiRes = null;
       if (targetPids.length > 0 || includePriv) {
@@ -677,7 +648,7 @@ export class Designer {
   }
 
   /** The path-tools row and the drawing-tools row hide separately (body classes dz-hide-pathbar / dz-hide-drawbar); remembered in the browser. */
-  toolRowHidden(key) { try { return localStorage.getItem(`ud_hide_${key}bar`) === '1'; } catch { return false; } }
+  toolRowHidden(key) { if (key === 'draw') return false; try { return localStorage.getItem(`ud_hide_${key}bar`) === '1'; } catch { return false; } }   // the drawing-tools row has no toggle any more: always shown
   setToolRowHidden(key, v) {
     document.body.classList.toggle(`dz-hide-${key}bar`, !!v);
     try { localStorage.setItem(`ud_hide_${key}bar`, v ? '1' : '0'); } catch { /* storage blocked */ }
@@ -733,10 +704,6 @@ export class Designer {
         desc: 'Interactive mode: test buttons, animations, edit forms, popups/drawers/toolbars and workflow routing (off = edit mode)',
         active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
       }));
-    }
-    for (const [key, icon, label, desc] of [['draw', 'pencil', 'drawing tools row', 'Show / hide the row with the drawing tools, undo / redo and zoom']]) {
-      const hidden = this.toolRowHidden(key);
-      kids.push(ibtn(icon, `${hidden ? 'Show' : 'Hide'} the ${label}`, () => { this.setToolRowHidden(key, !this.toolRowHidden(key)); this.buildBar(); }, { desc, active: !hidden, dataset: { tools: '1' } }));
     }
     kids.push(h('span', { class: 'grow' }),
       ibtn('inspector', 'Inspector', () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; }, { desc: 'Show / hide the inspector panel', active: this.inspectorOpen, dataset: { view: '1' } }),

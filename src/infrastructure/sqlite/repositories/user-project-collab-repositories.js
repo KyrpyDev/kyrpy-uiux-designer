@@ -442,8 +442,8 @@ const toTrash = r => r && ({
   creatorId: r.creator_id ?? 1,
   rootOwnerId: r.root_owner_id ?? 1,
   deletedBy: r.deleted_by ?? 1,
-  deletedByUsername: r.deleted_by_username || 'kyrpy',
-  creatorUsername: r.creator_username || 'kyrpy',
+  deletedByUsername: r.deleted_by_username || 'superadmin',
+  creatorUsername: r.creator_username || 'superadmin',
   deletedAt: r.deleted_at,
   snapshot: JSON.parse(r.snapshot || '{}')
 });

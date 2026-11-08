@@ -9,7 +9,7 @@ Source: `src/mcp/` (details per milestone in [`src/mcp/README.md`](src/mcp/READM
 - Endpoint: `<server>/mcp` (Streamable HTTP, JSON-RPC; `GET /mcp` is an event stream for change notifications). Bundles: `GET /mcp/bundles/<token>` (single use, 15 min, no auth header, so `curl -fsSL -o …` works).
 - Keys are created in the designer: **Profile → AI Access Keys**. The key is shown once and stored only as an HMAC; it never goes into the repository (MCP client config or `KYRPY_UIUX_API_KEY`).
 - **Project key**: bound to one project. **Account key** (user scope): one key for all of the user's projects; every tool then takes `project`.
-- Scopes: `read`, `propose` (changesets), `request` (item requests), `create` (new projects). Per-key rate limits; every call is audited.
+- Scopes: `read`, `propose` (changesets), `request` (item requests), `create` (new projects), `design` (**AI-assisted design**, account keys only, see §3b). Per-key rate limits; every call is audited.
 - Standalone MCP-only server: `src/mcp/server/standalone.js`. Per-client setup snippets (Claude Code, Cursor, Antigravity, Codex, generic; posix / powershell / fish / cmd) are generated in the AI Access Keys modal and by `uiux_init` (`mcpSetup`).
 
 ## 2. First run in a repository: `uiux_init`
@@ -33,10 +33,10 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 | `uiux_init` | read | Call this first in a new repository, and again whenever you want to update. |
 | `uiux_get_ai_pack` | read | Returns the rendered agent and skill files of this project for a client platform, with checksums. |
 | `uiux_check_update` | read | Call at the START of every session: compares the repository's pack checksums, manifestHash and toolsHash with the server (newer agent/skill/config, changed design, new MCP abilities). Cheap, builds no bundle. |
-| `uiux_whoami` | read | Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. |
-| `uiux_list_projects` | read | Account keys only. |
-| `uiux_clone_project` | read | Account keys only. |
-| `uiux_create_project` | create | Account keys with the "create" scope only. |
+| `uiux_whoami` | read | Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. Design keys also show their focused project. |
+| `uiux_list_projects` | read | Account keys only. Lists the visible projects (design keys: only your own) and marks the focused one. |
+| `uiux_clone_project` | create | Account keys. Copies a project into a NEW private project under a NEW name (`name` is always required; the source never changes) and focuses it. Design keys: own projects only. |
+| `uiux_create_project` | create | Account keys with the "create" scope. Creates a new project (design keys: private only) and, for design keys, focuses it. |
 
 ### Read the design
 
@@ -90,6 +90,37 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 | `uiux_bind_code` | propose | Records where project items live in the app code (file + symbol), up to 200 per call; remove:true deletes them. |
 | `uiux_list_bindings` | read | Code bindings of the project, optionally for one item (type + ref) or one file. |
 
+## 3b. AI-assisted design (design the app with a CLI coding agent, no designer GUI)
+
+Create an **account key with the `design` scope** (Profile → AI Access Keys → Account key → tick `design`; usually together with `read`, `request`, `propose`, `create`). Such a key is *strict*: the agent designs inside **one focused project of the user** and nothing else.
+
+**Workflow**
+
+1. `uiux_edit_project` without arguments lists **your** projects; show them to the human, who picks one. `uiux_edit_project { project }` focuses it. Or start fresh: `uiux_create_project { name }` (private, focused at once) or `uiux_clone_project { name, source? }` (copy of one of your projects under a **required new name**, focused at once).
+2. Read and design: `uiux_get_schema`, `uiux_search_items`, `uiux_get_item`, `uiux_stage_item`, `uiux_stage_delete`, … — the `project` and `changeset` arguments are optional now: the focused project and its **edit session** (one open changeset per key and project) are used automatically. Nothing changes in the project yet.
+3. Review the unsaved edits with `uiux_list_edit_ops`; undo with `uiux_delete_edit_ops { ops | all }`.
+4. `uiux_save` applies the edits to the project and records a new version. There is no review step: your own design key is the owner's decision. If the designer changed an item meanwhile you get `CONFLICT` (merge, restage with `baseHash`, save again).
+5. `uiux_save_as` puts the current design **plus the unsaved edits** into a new private project `<master>-v001` (then `-v002` …) and focuses it; the project you came from keeps its last saved state.
+6. Manage the versions: `uiux_manage_versions` lists the master and its versions (`open` focuses one, or `master`), `uiux_delete_version { version }` removes one version project, `uiux_purge_versions { confirm: true }` accepts the latest (or `from`) as the master: its design **replaces the master's**, **every version project is deleted** and the master restarts with a clean history (version 1). Without `confirm` it only returns the plan — ask the human first.
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `uiux_edit_project` | design | Lists your projects (no argument) or focuses one; resumes unsaved edits. |
+| `uiux_create_project` | create | New private project, focused. |
+| `uiux_clone_project` | create | Copy under a required new name, focused. |
+| `uiux_close_project` | design | Clears the focus (`discardEdits` also drops unsaved edits). |
+| `uiux_list_edit_ops` | design | The unsaved edits of the focused project. |
+| `uiux_delete_edit_ops` | design | Removes staged edits by op uid / key / `type:key`, or all. |
+| `uiux_save` | design | Applies the edits, new version. Nothing to save → `saved: false`. |
+| `uiux_save_as` | design | New `-vNNN` project with the current state + unsaved edits, focused. 10 new projects per hour per key. |
+| `uiux_manage_versions` | design | Master + versions (number, key, items, focused, latest); `open` switches. |
+| `uiux_delete_version` | design | Deletes one `-vNNN` project (never the master). |
+| `uiux_purge_versions` | design | Latest becomes the master, all versions deleted, clean history. Needs `confirm: true`. |
+
+Versions are ordinary projects linked to their master (`settings.ai.versionOf`), so the designer shows them in the project list too. Number suffixes are never reused while a version with that number exists.
+
+**What a design key can NOT do** (enforced on the server, not by the agent's good manners): see or search the public library, read, clone or reference public / shared / other users' projects or items (they answer `NOT_FOUND`), make anything public, delete any project other than a `-vNNN` copy of the focused master, approve other keys' changesets, call the designer REST API (API keys are rejected there with 401), or run SQL — it only has the tools listed here. Every call is audited; the focus is checked again on every call (the project must still be the user's own).
+
 ## 4. Standalone prototype, `init-prompt.md` and automatic updates
 
 - **`init-prompt.md`** (repository root, written once by `uiux_init`, never overwritten) orders the AI coding assistant to build the app: it states whether the repository is a **clone** (new named project from an existing one), a **download** (read-only copy) or an **edit** (a version of one of your projects), then lists every task and a definition of done.
@@ -103,6 +134,7 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 - **Build an app from a design**: `uiux_init` (choose clone or download) → `uiux_get_schema` → `uiux_export_app` (working HTML app + `app/interactions.json` with every action, menu, workflow link and developer note) → implement from `uiux/<style>/` (tokens, icon sprite) → verify.
 - **Pull design updates**: `uiux_get_manifest { ifNoneMatch | sinceVersion }` → `uiux_create_bundle` → run the returned install steps → regenerate converted files → update the lockfile.
 - **Push the existing app version** (reverse sync): `uiux_begin_changeset` → `uiux_stage_item` / `uiux_stage_delete` (with `binding`) → `uiux_diff_changeset` → `uiux_submit_changeset`; the owner approves in **Collaborate → Versions & AI Changesets**. Conflicts are resolved by re-staging with the head hash.
+- **AI-assisted design**: `uiux_edit_project` (pick) → `uiux_stage_item` … → `uiux_list_edit_ops` → `uiux_save` → (`uiux_save_as` for milestones) → `uiux_purge_versions { confirm: true }` when done. See §3b.
 - **Missing item**: `uiux_search_items` first → `uiux_request_item` → the designer agent claims, builds, validates and fulfills it → the owner approves.
 
 ## 6. Bundle contents (`uiux/source/`)
@@ -122,4 +154,4 @@ Hierarchy path → icon → button → element → screen → workflow (an item 
 
 ## 9. Security
 
-Keys hashed with an HMAC pepper, scoped, expirable and revocable; rate-limited per key; audit log of every call; SVG sanitised; bundle URLs are single use and short-lived; no secrets in bundles, lockfiles or logs (`grep -rn "kud_live_\|kud_test_" .` must print nothing). See `src/mcp/SECURITY.md`.
+Keys hashed with an HMAC pepper, scoped (`design` = strict AI-assisted design: own projects only, one focused project), expirable and revocable; rate-limited per key; audit log of every call; SVG sanitised; bundle URLs are single use and short-lived; no secrets in bundles, lockfiles or logs (`grep -rn "kud_live_\|kud_test_" .` must print nothing). See `src/mcp/SECURITY.md`.

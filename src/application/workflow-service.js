@@ -13,7 +13,7 @@ export class WorkflowService {
     if (!w) return w;
     const creator = this.users ? this.users.get(w.creatorId || 1) : null;
     const rootOwner = this.users ? this.users.get(w.rootOwnerId || w.creatorId || 1) : null;
-    return { ...w, creatorUsername: creator?.username || 'kyrpy', rootOwnerUsername: rootOwner?.username || 'kyrpy' };
+    return { ...w, creatorUsername: creator?.username || 'superadmin', rootOwnerUsername: rootOwner?.username || 'superadmin' };
   }
 
   #publicUserId() { return this.users?.publicUserId?.() ?? null; }
@@ -64,8 +64,8 @@ export class WorkflowService {
     const w = this.get(idOrKey);
     const rootItem = w.rootItemId && w.rootItemId !== w.id ? this.workflows.get(w.rootItemId) : w;
     const clonedFrom = w.clonedFromId ? this.workflows.get(w.clonedFromId) : null;
-    const creator = this.users ? this.users.get(w.creatorId || 1) : { id: 1, username: 'kyrpy' };
-    const rootOwner = this.users ? this.users.get(w.rootOwnerId || 1) : { id: 1, username: 'kyrpy' };
+    const creator = this.users ? this.users.get(w.creatorId || 1) : { id: 1, username: 'superadmin' };
+    const rootOwner = this.users ? this.users.get(w.rootOwnerId || 1) : { id: 1, username: 'superadmin' };
     const chain = [];
     const seen = new Set();
     let cur = w;
@@ -77,7 +77,7 @@ export class WorkflowService {
         key: cur.key,
         name: cur.name,
         creatorId: cur.creatorId || 1,
-        creatorUsername: u?.username || 'kyrpy',
+        creatorUsername: u?.username || 'superadmin',
         clonedFromId: cur.clonedFromId || null,
         rootItemId: cur.rootItemId || cur.id,
         rootOwnerId: cur.rootOwnerId || 1
@@ -90,8 +90,8 @@ export class WorkflowService {
       itemKey: w.key,
       visibility: w.visibility,
       projectId: w.projectId,
-      creator: creator ? { id: creator.id, username: creator.username } : { id: 1, username: 'kyrpy' },
-      rootOwner: rootOwner ? { id: rootOwner.id, username: rootOwner.username } : { id: 1, username: 'kyrpy' },
+      creator: creator ? { id: creator.id, username: creator.username } : { id: 1, username: 'superadmin' },
+      rootOwner: rootOwner ? { id: rootOwner.id, username: rootOwner.username } : { id: 1, username: 'superadmin' },
       rootItem: rootItem ? { id: rootItem.id, key: rootItem.key, name: rootItem.name } : { id: w.id, key: w.key, name: w.name },
       clonedFrom: clonedFrom ? { id: clonedFrom.id, key: clonedFrom.key, name: clonedFrom.name } : null,
       chain

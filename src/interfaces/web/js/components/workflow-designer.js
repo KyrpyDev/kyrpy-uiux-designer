@@ -138,37 +138,13 @@ export class WorkflowDesigner {
             h('button', {
               class: 'btn small',
               onclick: () => {
-                selSet.clear(); // the All Projects library target is locked on: Clear only drops the projects
+                selSet.clear();
                 updateTriggerText();
                 rebuildPanel();
               }
             }, 'Clear')
           )
         )
-      );
-
-      const privChk = h('input', {
-        type: 'checkbox',
-        class: 'save-target-private-chk',
-        checked: true,
-        disabled: true,
-        title: 'Always saved to your private library'
-      });
-      panel.append(
-        h('label', {
-          class: 'row save-target-row save-target-private-row',
-          title: 'Always saved to your private library',
-          style: {
-            padding: '6px 8px',
-            borderRadius: '6px',
-            background: 'rgba(16,185,129,0.16)',
-            marginBottom: '6px',
-            cursor: 'default',
-            gap: '8px',
-            fontSize: '12px',
-            fontWeight: '600'
-          }
-        }, privChk, h('span', {}, '🗂 All Projects (my global library — user\'s all projects)'), h('span', { class: 'muted', style: { marginLeft: 'auto', display: 'inline-flex' } }, iconEl('lock', { size: 13 })))
       );
 
       for (const p of projects) {
@@ -297,7 +273,7 @@ export class WorkflowDesigner {
       this.markBaseline();
       // Save copies into the checked projects only; the locked private-library target applies to Save as…
       // (otherwise every Save would add another private copy)
-      const targetPids = [...(state.saveTargetProjectIds || [])];
+      const targetPids = [...(state.saveTargetProjectIds || [])].filter(pid => Number(pid) !== Number(this.wf.projectId));
       const includePriv = false;
       if (targetPids.length > 0 || includePriv) {
         const multiRes = await api.saveToTargets({

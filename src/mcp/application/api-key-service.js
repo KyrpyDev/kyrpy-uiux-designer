@@ -230,7 +230,8 @@ export class ApiKeyService {
       const at = this.now().toISOString();
       this.keys.touch(k.id, { at, ip });
       this.audit.record({ apiKeyId: k.id, userId: k.userId, event: 'auth.ok', ip });
-      return { ...base, kind: 'account', project: null };
+      // "design" scope = strict AI-assisted design mode: own projects only, one focused project, no public / foreign data
+      return { ...base, kind: 'account', project: null, strict: Array.isArray(k.scopes) && k.scopes.includes('design') };
     }
     const project = this.projects.get(k.projectId);
     if (!project) throw fail(k.id, 'PROJECT_GONE', ctx);

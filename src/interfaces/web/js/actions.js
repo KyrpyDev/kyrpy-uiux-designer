@@ -93,6 +93,7 @@ export function pickStartupProject(storedId) {
 export async function setActiveProject(projectId) {
   const pid = Number(projectId) || 1;
   state.activeProjectId = pid;
+  state.saveTargetProjectIds = new Set([pid]);   // the active project is always the default save target
   api.setSession({ projectId: pid });
   await reloadLibrary();
   emit('project:changed', pid);
@@ -342,7 +343,7 @@ export async function cloneDesign(type, rec) {
   try {
     const c = await api.cloneDesign(type, rec.id, { name: name.trim(), projectId: state.activeProjectId });
     await reloadLibrary();
-    toast(`cloned as "${c.name}" (root owner: ${c.rootOwnerUsername || 'kyrpy'})`, 'ok');
+    toast(`cloned as "${c.name}" (root owner: ${c.rootOwnerUsername || 'superadmin'})`, 'ok');
     return c;
   } catch (e) { toast(e.message, 'error'); return null; }
 }

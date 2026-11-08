@@ -59,7 +59,7 @@ export async function openAuthModal() {
 
   const renderForm = close => {
     formHost.replaceChildren();
-    const cur = state.user || { username: 'kyrpy', role: 'admin' };
+    const cur = state.user || { username: 'superadmin', role: 'admin' };
     formHost.append(
       h('div', { class: 'card-sub', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'rgba(46,155,255,0.1)', borderRadius: '10px', border: '1px solid var(--line)' } },
         h('div', {},
@@ -370,11 +370,11 @@ export async function openAdminUsersModal() {
     const uName = h('input', { type: 'text', placeholder: 'username' });
     const uEmail = h('input', { type: 'email', placeholder: 'email@domain.com' });
     const uDisplay = h('input', { type: 'text', placeholder: 'Display Name' });
-    const uPass = h('input', { type: 'password', placeholder: 'Password', value: 'kyrpy123' });
+    const uPass = h('input', { type: 'password', placeholder: 'Password (8+ chars, letter + digit)', value: '' });
     const uRole = h('select', {}, Object.entries(ROLE_LABELS).filter(([k]) => k !== 'superadmin').map(([k, v]) => h('option', { value: k, selected: k === 'designer' }, v)));   // only one superadmin: not selectable here
 
     host.append(
-      h('div', { class: 'muted' }, 'Manage system users, ACL levels (superadmin, admin, designer, reviewer, viewer), and account status. Default root owner & admin is @kyrpy.'),
+      h('div', { class: 'muted' }, 'Manage system users, ACL levels (superadmin, admin, designer, reviewer, viewer), and account status. Default root owner & admin is @superadmin.'),
       h('div', { style: { padding: '12px', border: '1px solid var(--line)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' } },
         h('div', { style: { fontWeight: '700', marginBottom: '8px', fontSize: '12px' } }, 'Add New User'),
         h('div', { class: 'row wrap' },
@@ -391,9 +391,9 @@ export async function openAdminUsersModal() {
               try {
                 await api.createUser({
                   username: uName.value.trim(),
-                  email: uEmail.value.trim() || `${uName.value.trim()}@kyrpy.com`,
+                  email: uEmail.value.trim() || `${uName.value.trim()}@superadmin.com`,
                   displayName: uDisplay.value.trim() || uName.value.trim(),
-                  password: uPass.value || 'kyrpy123',
+                  password: uPass.value,
                   role: uRole.value
                 });
                 toast(`User @${uName.value.trim()} created`, 'ok');
@@ -492,7 +492,7 @@ export async function openAdminUsersModal() {
           u.id !== 1 && !sys && !isSuper ? h('button', {
             class: 'btn sm danger',
             onclick: async () => {
-              if (!await confirmBox(`Delete user @${u.username}? Their items will be reassigned to @kyrpy.`)) return;
+              if (!await confirmBox(`Delete user @${u.username}? Their items will be reassigned to @superadmin.`)) return;
               try {
                 await api.deleteUser(u.id);
                 toast(`Deleted @${u.username}`, 'ok');
@@ -621,7 +621,7 @@ export async function openProjectsModal() {
             h('strong', {}, projectLabel(p)),
             h('span', { class: 'badge' }, p.visibility)
           ),
-          h('div', { class: 'muted', style: { fontSize: '11px' } }, `Owner: @${p.ownerUsername || 'kyrpy'}${p.id === state.activeProjectId ? ' · ACTIVE' : ''}`)
+          h('div', { class: 'muted', style: { fontSize: '11px' } }, `Owner: @${p.ownerUsername || 'superadmin'}${p.id === state.activeProjectId ? ' · ACTIVE' : ''}`)
         )
       )
     );
@@ -646,7 +646,7 @@ export async function openProjectsModal() {
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
           h('div', {},
             h('strong', { style: { fontSize: '15px' } }, `${current.name} (#${current.id})`),
-            h('div', { class: 'muted' }, `Owner: @${current.ownerUsername || 'kyrpy'} · Key: ${current.key}`)
+            h('div', { class: 'muted' }, `Owner: @${current.ownerUsername || 'superadmin'} · Key: ${current.key}`)
           ),
           h('div', { class: 'row' },
             current.id !== state.activeProjectId
@@ -1541,7 +1541,7 @@ export async function openLineageModal(type, id) {
   const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
     h('div', { style: { padding: '12px', border: '1px solid var(--line)', borderRadius: '10px', background: 'rgba(46,155,255,0.08)' } },
       h('div', { style: { fontWeight: '700', fontSize: '14px' } }, `${lineage.itemName || lineage.item?.name} (${lineage.itemKey || lineage.item?.key})`),
-      h('div', { class: 'muted', style: { marginTop: '4px' } }, `Current Creator: ${ownerLabel(lineage.creator?.username || 'kyrpy')} · Root Original Owner: ${ownerLabel(lineage.rootOwner?.username || 'kyrpy')}`),
+      h('div', { class: 'muted', style: { marginTop: '4px' } }, `Current Creator: ${ownerLabel(lineage.creator?.username || 'superadmin')} · Root Original Owner: ${ownerLabel(lineage.rootOwner?.username || 'superadmin')}`),
       h('div', { class: 'muted' }, `Visibility: ${lineage.visibility || lineage.item?.visibility} · Project ID: #${lineage.projectId || lineage.item?.projectId}`)
     ),
     h('div', { style: { fontWeight: '700', fontSize: '12px' } }, 'Provenance & Clone Chain (Root → Current):'),

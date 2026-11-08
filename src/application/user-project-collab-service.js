@@ -54,7 +54,7 @@ function hashPassword(password, salt = randomBytes(16).toString('hex')) {
 function verifyPassword(password, storedHash, salt) {
   if (!password) return false;
   if (storedHash === 'default_kyrpy_admin') {
-    return ['kyrpy', 'kyrpy123', 'admin', 'admin123'].includes(String(password));
+    return ['superadmin', 'kyrpy', 'kyrpy123', 'admin', 'admin123'].includes(String(password));
   }
   if (!storedHash || !salt) return false;
   try {
@@ -77,23 +77,30 @@ export class AuthService {
 
   /** Guarantees default admin users `kyrpy` (id = 1) and `admin` (default startup credential `admin`/`admin`) exist. */
   ensureDefaultAdmin() {
-    const existing = this.users.getWithAuth(1) || this.users.getByUsernameOrEmail('kyrpy');
+    const existing = this.users.getWithAuth(1) || this.users.getByUsernameOrEmail('superadmin') || this.users.getByUsernameOrEmail('kyrpy');
     if (!existing) {
-      const { salt, passwordHash } = hashPassword('kyrpy123');
+      const { salt, passwordHash } = hashPassword('superadmin', 'superadmin_salt_v1');
       this.users.create({
-        username: 'kyrpy',
-        email: 'kyrpy@kyrpy.com',
+        username: 'superadmin',
+        email: 'superadmin@local.dev',
         passwordHash,
         salt,
-        displayName: 'Kyrpy (Admin)',
+        displayName: 'Superadmin',
         role: 'superadmin',
         status: 'active',
         permissions: ['*'],
         avatarColor: '#2e9bff'
       });
-    } else if (existing.passwordHash === 'default_kyrpy_admin') {
-      const { salt, passwordHash } = hashPassword('kyrpy123', 'kyrpy_salt_v1');
-      this.users.update(existing.id, { passwordHash, salt });
+    } else {
+      const patch = {};
+      if (existing.username === 'kyrpy') {   // the account is now called `superadmin` (the role name); a password the person set stays
+        Object.assign(patch, { username: 'superadmin', displayName: 'Superadmin' });
+        if (String(existing.email) === 'kyrpy@kyrpy.com') patch.email = 'superadmin@local.dev';
+      }
+      if (existing.passwordHash === 'default_kyrpy_admin' || ['kyrpy_salt_v1', 'superadmin_salt_v1'].includes(existing.salt)) {
+        Object.assign(patch, hashPassword('superadmin', 'superadmin_salt_v1'));   // never changed: default superadmin/superadmin
+      }
+      if (Object.keys(patch).length) this.users.update(existing.id, patch);
     }
 
     const defaultInstallerAdmin = this.users.getByUsernameOrEmail('admin');
@@ -111,6 +118,10 @@ export class AuthService {
         permissions: ['*'],
         avatarColor: '#10b981'
       });
+    }
+    if (!this.users.getByUsernameOrEmail('user')) {
+      const { salt, passwordHash } = hashPassword('user', 'user_salt_v1');
+      this.users.create({ username: 'user', email: 'user@local.dev', passwordHash, salt, displayName: 'User', role: 'designer', status: 'active', permissions: [], avatarColor: '#f59e0b' });
     }
   }
 
@@ -145,7 +156,7 @@ export class AuthService {
   superadminUser() { return this.users.list().find(u => u.role === 'superadmin' && !isSystemUser(u)) || null; }
 
   defaultAdmin() {
-    return this.users.get(1) || this.users.getByUsernameOrEmail('kyrpy');
+    return this.users.get(1) || this.users.getByUsernameOrEmail('superadmin');
   }
 
   /** Resolves the acting user from a session token, user id, or falls back to `kyrpy` in offline/local mode. */
@@ -176,7 +187,7 @@ export class AuthService {
   }
 
   isAdmin(user) {
-    return !!user && (user.role === 'admin' || user.role === 'superadmin' || user.username === 'kyrpy' || (user.permissions || []).includes('*'));
+    return !!user && (user.role === 'admin' || user.role === 'superadmin' || (user.permissions || []).includes('*'));
   }
 
   /** True only for the single `superadmin`: the one user who edits / imports / updates / deletes the public library directly. */
@@ -358,7 +369,7 @@ export class AuthService {
     const effActor = actor && actor.id ? actor : this.defaultAdmin();
     this.assertAdmin(effActor);
     const target = this.getUser(id);
-    if (target.id === 1 || target.username === 'kyrpy') throw new ValidationError('Default admin user kyrpy cannot be deleted');
+    if (target.id === 1 || target.role === 'superadmin') throw new ValidationError('The superadmin user cannot be deleted');
     this.#assertNotSystem(target, 'deleted');
     if (target.role === 'superadmin') throw new ValidationError('The superadmin cannot be deleted; transfer the superadmin role first');
     this.users.delete(target.id);
@@ -439,7 +450,7 @@ export class ProjectService {
       settings,
       buttonStyle: settings.buttonStyle,
       buttonIconSizePct: settings.buttonIconSizePct,
-      ownerUsername: owner?.username || 'kyrpy',
+      ownerUsername: owner?.username || 'superadmin',
       members,
       memberCount: members.length,
       pendingChanges
@@ -788,7 +799,7 @@ export class CollaborationService {
     return {
       ...c,
       title: c.title || c.summary,
-      authorName: c.authorName || c.authorUsername || 'kyrpy',
+      authorName: c.authorName || c.authorUsername || 'superadmin',
       reviewedByName: c.reviewedByName || c.reviewerUsername || null,
       beforeSnapshot,
       afterSnapshot

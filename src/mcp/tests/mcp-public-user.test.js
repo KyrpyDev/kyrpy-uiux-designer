@@ -106,7 +106,7 @@ test('the superadmin curates public-library items without change requests; admin
   const c = fresh();
   const pub = c.publicUserId();
   const admin = c.users.findByUsernameOrEmail('admin');
-  const kyrpy = c.users.findByUsernameOrEmail('kyrpy');
+  const kyrpy = c.users.findByUsernameOrEmail('superadmin');
   assert.equal(kyrpy.role, 'superadmin');
   assert.equal(admin.role, 'admin');
   const dana = c.auth.register({ username: 'dana', email: 'dana@example.com', password: 'secret123' }).user;
@@ -142,7 +142,7 @@ test('the superadmin curates public-library items without change requests; admin
 test('public-library items stay public and keep their owner', () => {
   const c = fresh();
   const pub = c.publicUserId();
-  const admin = c.users.findByUsernameOrEmail('kyrpy');
+  const admin = c.users.findByUsernameOrEmail('superadmin');
   const icon = c.icon.create({ name: 'Locked Public', visibility: 'public' }, { actor: admin });
   const wf = c.workflows.create({ name: 'Locked Flow', visibility: 'public' }, { actor: admin });
   assert.throws(() => c.icon.update(icon.id, { visibility: 'private' }, { actor: admin }), e => e.name === 'ValidationError' && /public library/.test(e.message));

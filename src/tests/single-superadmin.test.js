@@ -15,20 +15,20 @@ const supers = c => c.users.list().filter(x => x.role === 'superadmin');
 
 test('fresh install: kyrpy is the one superadmin, admin is a plain admin; isSuperadmin gates', () => {
   const c = fresh();
-  assert.deepEqual(supers(c).map(x => x.username), ['kyrpy']);
+  assert.deepEqual(supers(c).map(x => x.username), ['superadmin']);
   assert.equal(u(c, 'admin').role, 'admin');
-  assert.equal(c.auth.isSuperadmin(u(c, 'kyrpy')), true);
+  assert.equal(c.auth.isSuperadmin(u(c, 'superadmin')), true);
   assert.equal(c.auth.isSuperadmin(u(c, 'admin')), false);
   assert.equal(c.auth.isAdmin(u(c, 'admin')), true, 'admin stays an admin for user / project management');
   assert.equal(c.auth.isSuperadmin(u(c, 'public')), false);
   assert.equal(c.auth.isSuperadmin(null), false);
-  assert.equal(c.auth.devBypassLogin().user.username, 'kyrpy', 'dev bypass signs in as the superadmin');
+  assert.equal(c.auth.devBypassLogin().user.username, 'superadmin', 'dev bypass signs in as the superadmin');
   c.close();
 });
 
 test('superadmin edits public items directly; admin files a change request; admin cannot trash library items', () => {
   const c = fresh();
-  const kyrpy = u(c, 'kyrpy'), admin = u(c, 'admin');
+  const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
   const pub = c.publicUserId();
   const icon = c.icon.create({ name: 'Sa Icon', visibility: 'public' }, { actor: kyrpy });
   const btn = c.button.create({ name: 'Sa Button', visibility: 'public' }, { actor: kyrpy });
@@ -59,7 +59,7 @@ test('superadmin edits public items directly; admin files a change request; admi
 
 test('there can be only one superadmin (service and DB index)', () => {
   const c = fresh();
-  const kyrpy = u(c, 'kyrpy'), admin = u(c, 'admin');
+  const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
   assert.throws(() => c.auth.createUser({ username: 'second', role: 'superadmin' }, kyrpy), /only one superadmin/);
   assert.throws(() => c.auth.updateUser(admin.id, { role: 'superadmin' }, kyrpy), /only one superadmin/);
   const reg = c.auth.register({ username: 'sneaky', email: 'sneaky@example.com', password: 'secret123', role: 'superadmin' });
@@ -72,20 +72,20 @@ test('there can be only one superadmin (service and DB index)', () => {
 
 test('the superadmin cannot be deleted, suspended or demoted, not even by themselves; admins cannot touch them', () => {
   const c = fresh();
-  const kyrpy = u(c, 'kyrpy'), admin = u(c, 'admin');
+  const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
   assert.throws(() => c.auth.removeUser(kyrpy.id, kyrpy));
   assert.throws(() => c.auth.updateUser(kyrpy.id, { status: 'suspended' }, kyrpy), /suspended/);
   assert.throws(() => c.auth.updateUser(kyrpy.id, { role: 'admin' }, kyrpy), /superadmin/);
   assert.throws(() => c.auth.updateUser(kyrpy.id, { role: 'designer' }, kyrpy));
   assert.throws(() => c.auth.updateUser(kyrpy.id, { displayName: 'x' }, admin), e => e.name === 'ForbiddenError');
   assert.throws(() => c.auth.removeUser(kyrpy.id, admin));
-  assert.equal(u(c, 'kyrpy').role, 'superadmin');
+  assert.equal(u(c, 'superadmin').role, 'superadmin');
   c.close();
 });
 
 test('transfer: needs the superadmin and password/confirm, moves the role atomically, old one becomes admin', () => {
   const c = fresh();
-  const kyrpy = u(c, 'kyrpy'), admin = u(c, 'admin');
+  const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
   const dana = c.auth.register({ username: 'dana', email: 'dana@example.com', password: 'secret123' }).user;
   assert.throws(() => c.auth.transferSuperadmin(admin, dana.id, { confirm: true }), e => e.name === 'ForbiddenError');
   assert.throws(() => c.auth.transferSuperadmin(kyrpy, dana.id, {}), /password/i);
@@ -96,10 +96,10 @@ test('transfer: needs the superadmin and password/confirm, moves the role atomic
   assert.throws(() => c.auth.transferSuperadmin(kyrpy, dana.id, { confirm: true }), /active/);
   c.auth.updateUser(dana.id, { status: 'active' }, kyrpy);
 
-  const r = c.auth.transferSuperadmin(kyrpy, dana.id, { password: 'kyrpy123' });
+  const r = c.auth.transferSuperadmin(kyrpy, dana.id, { password: 'superadmin' });
   assert.equal(r.transferred, true);
   assert.deepEqual(supers(c).map(x => x.username), ['dana']);
-  assert.equal(u(c, 'kyrpy').role, 'admin');
+  assert.equal(u(c, 'superadmin').role, 'admin');
   // the new superadmin now curates directly, the old one no longer does
   const icon = c.icon.create({ name: 'After Transfer', visibility: 'public' }, { actorId: dana.id });
   assert.equal(icon.creatorId, c.publicUserId());
@@ -121,28 +121,28 @@ test('migration m12 promotes kyrpy on a legacy DB, demotes the legacy installer 
     raw.exec("DROP INDEX ux_users_single_superadmin; UPDATE users SET role = 'admin'; DELETE FROM mcp_migrations WHERE id = 'm12-001-single-superadmin'");
     raw.close();
     c = buildContainer({ dbFile: file });
-    assert.deepEqual(supers(c).map(x => x.username), ['kyrpy']);
+    assert.deepEqual(supers(c).map(x => x.username), ['superadmin']);
     assert.equal(u(c, 'admin').role, 'admin');
     assert.ok(c.db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'ux_users_single_superadmin'").get(), 'partial unique index exists');
     c.close();
     // reopen: nothing changes
     c = buildContainer({ dbFile: file });
-    assert.deepEqual(supers(c).map(x => x.username), ['kyrpy']);
+    assert.deepEqual(supers(c).map(x => x.username), ['superadmin']);
     c.close();
     // older installs: the installer account `admin` was the superadmin and kyrpy a plain admin (prod shape) -> kyrpy takes over
     raw = new DatabaseSync(file);
     raw.exec("DROP INDEX ux_users_single_superadmin; UPDATE users SET role = 'admin' WHERE id = 1; UPDATE users SET role = 'superadmin' WHERE username = 'admin'; DELETE FROM mcp_migrations WHERE id = 'm12-001-single-superadmin'");
     raw.close();
     c = buildContainer({ dbFile: file });
-    assert.deepEqual(supers(c).map(x => x.username), ['kyrpy']);
+    assert.deepEqual(supers(c).map(x => x.username), ['superadmin']);
     assert.equal(u(c, 'admin').role, 'admin');
     c.close();
     // several superadmins collapse to one (kyrpy wins), nobody else is touched
     raw = new DatabaseSync(file);
-    raw.exec("DROP INDEX ux_users_single_superadmin; UPDATE users SET role = 'superadmin' WHERE username IN ('kyrpy', 'admin'); DELETE FROM mcp_migrations WHERE id = 'm12-001-single-superadmin'");
+    raw.exec("DROP INDEX ux_users_single_superadmin; UPDATE users SET role = 'superadmin' WHERE username IN ('superadmin', 'admin'); DELETE FROM mcp_migrations WHERE id = 'm12-001-single-superadmin'");
     raw.close();
     c = buildContainer({ dbFile: file });
-    assert.deepEqual(supers(c).map(x => x.username), ['kyrpy']);
+    assert.deepEqual(supers(c).map(x => x.username), ['superadmin']);
     assert.equal(u(c, 'admin').role, 'admin');
     c.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -158,7 +158,7 @@ test('HTTP: superadmin edits a public item with no change request; admin gets on
     return { status: r.status, body: await r.json().catch(() => null) };
   };
   try {
-    const sa = await req('POST', '/api/auth/login', { usernameOrEmail: 'kyrpy', password: 'kyrpy' });
+    const sa = await req('POST', '/api/auth/login', { usernameOrEmail: 'superadmin', password: 'superadmin' });
     const ad = await req('POST', '/api/auth/login', { usernameOrEmail: 'admin', password: 'admin' });
     assert.equal(sa.status, 200); assert.equal(ad.status, 200);
     const saH = { Authorization: `Bearer ${sa.body.token}` }, adH = { Authorization: `Bearer ${ad.body.token}` };
@@ -177,7 +177,7 @@ test('HTTP: superadmin edits a public item with no change request; admin gets on
     assert.equal((await req('POST', `/api/users/${adminId}/transfer-superadmin`, { confirm: true }, adH)).status, 403);
     assert.equal((await req('POST', `/api/users/${adminId}/transfer-superadmin`, { password: 'nope' }, saH)).status, 422);
     assert.equal((await req('DELETE', `/api/users/${sa.body.user.id}`, null, saH)).status, 422);
-    const ok = await req('POST', `/api/users/${adminId}/transfer-superadmin`, { password: 'kyrpy123' }, saH);
+    const ok = await req('POST', `/api/users/${adminId}/transfer-superadmin`, { password: 'superadmin' }, saH);
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
     assert.deepEqual(supers(c).map(x => x.username), ['admin']);
   } finally { server.close(); c.close(); }
@@ -191,7 +191,7 @@ test('PG push: a remote superadmin that is not the local one is demoted before t
   const r = c.pgSync.pushToPostgres();
   assert.equal(r.ok, true);
   const sql = sent.join('\n');
-  const demote = sql.indexOf(`UPDATE "users" SET "role" = 'admin' WHERE "role" = 'superadmin' AND "id" NOT IN (${u(c, 'kyrpy').id})`);
+  const demote = sql.indexOf(`UPDATE "users" SET "role" = 'admin' WHERE "role" = 'superadmin' AND "id" NOT IN (${u(c, 'superadmin').id})`);
   const upsert = sql.indexOf('INSERT INTO "users"');
   assert.ok(demote >= 0, 'demotion statement present');
   assert.ok(demote < upsert, 'runs before the users are written');

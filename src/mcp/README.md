@@ -219,7 +219,7 @@ migration `m11-001-account-keys`, PG parity in `mcp-pg-schema.js`). Account-key 
 | `create` | `uiux_create_project` / clone: new projects owned by the user, private by default (10 per hour) |
 
 Project tools get a required `project` argument for account keys (injected into `tools/list`); account-only tools are
-`uiux_list_projects`, `uiux_clone_project`, `uiux_create_project`. System users never get keys or sessions.
+`uiux_list_projects`, `uiux_clone_project` (new name required), `uiux_create_project`. System users never get keys or sessions. The `design` scope (see below) makes an account key strict.
 
 **Init selection flow** — `uiux_init` with an account key and no choice returns `needsSelection: true`: every visible
 project with role, `canClone` / `canEdit`, head and recent versions, a ready `question`, and `askHuman` rules (the agent
@@ -244,6 +244,23 @@ sprites for the default pair only (tokens still ship for every style; `styles.js
 
 Then push with the changeset tools (`project`: the key from config) and approve in the designer. Sensors:
 `tests/mcp-account.test.js` (visibility, scopes, selection list, clone → stage → submit → approve, edit at a version).
+
+## AI-assisted design (account keys with the `design` scope)
+
+Code: `application/design-session-service.js` (focus, edit session, save, save-as, versions), `infrastructure/sqlite/focus-repository.js`
+(table `design_focus`, migration `m13-001-design-focus`, local only: never synced to PostgreSQL, purged from every public export),
+`domain/version-naming.js` (`<master>-v001`), tools `DESIGN_TOOLS` in `server/tools.js`. User guide: `readme-mcp.md` §3b.
+
+- **Strict principal**: `ApiKeyService.authenticate` sets `principal.strict` for an account key whose scopes include `design`. Strict mode is enforced in the
+  layers, not in the tools: `AccountService` (own projects only; foreign and public projects answer `NOT_FOUND`; private projects only), `DesignQueryService`
+  (search without the public scope, `getItem`, `listWorkflows`), `ChangesetService` (`#readable`: references to public / foreign items fail validation),
+  `ItemRequestService` (fulfil), and `McpProtocol` (`resolveFocused`: the `project` argument is optional and must equal the focus; the owner check runs on every call).
+- **Focus**: one `design_focus` row per key. `uiux_create_project`, `uiux_clone_project`, `uiux_edit_project`, `uiux_save_as`, `uiux_init` (edit / clone) and `uiux_manage_versions { open }` set it.
+- **Edit session** = the key's open changeset on the focused project (24 h). `uiux_stage_item` / `_stage_delete` / `_diff_changeset` / `_discard_changeset` / `_submit_changeset` take no `changeset` argument for design keys.
+  `ChangesetService.unstage` removes staged ops. `submit({ autoApprove: true })` is called **only** by `DesignSessionService` (no tool argument can set it), so every other key still waits for review.
+- **Versions** are separate projects: `<master-key>-v001`, link in `settings.ai.versionOf { master, number }`. `save_as` clones the focused project, replays the unsaved ops into the copy (uids → keys), saves it there and moves the focus;
+  `purge_versions` replays the latest version's items into the master (one changeset, applied directly), hard-deletes every version project (`#destroyProject`: items first, because the design tables have no cascade from `projects`; history, bindings, requests, focus rows), then `VersionRepository.purgeHistory(master)` and a fresh baseline.
+- Sensors: `tests/mcp-design.test.js` (focus, session, save, save-as, versions, purge, isolation incl. a public-item control with a plain key).
 
 ## M8 — prototype, init-prompt, style import, update check
 

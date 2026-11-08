@@ -24,51 +24,37 @@ const ACCOUNT_TOOLS = [
     description: 'Account keys only. Lists the projects the key\'s user can see — owned, shared with them, and public — with role and what this key may do on each (canClone, canPropose). Use a project key from here as "project" in other tools.',
     inputSchema: { type: 'object', properties: { query: str('Filter by key, name or description.', { maxLength: 120 }), owned: { type: 'boolean', description: 'Only projects the user owns.' }, limit: { type: 'integer', minimum: 1, maximum: 500 } }, additionalProperties: false },
     scope: 'read', account: 'none', accountOnly: true,
-    run: ({ principal, accounts }, args) => {
+    run: ({ principal, accounts, design }, args) => {
       const data = accounts.listProjects(principal, args);
+      const focus = design?.current(principal)?.key;
+      for (const p of data.projects) p.focused = p.key === focus;
       return { summary: `${data.total} project(s) visible; ${data.projects.filter(p => p.role === 'owner').length} owned. ${data.projects.slice(0, 8).map(p => `${p.key} (${p.role})`).join(', ')}`, data };
     }
   },
   {
     name: 'uiux_clone_project',
-    title: 'Clone a project\'s design into this repository',
-    description: 'Account keys only. Pulls the full design of a project you can see (yours, shared, or public) into the current repository as a local copy: the same install plan as uiux_init (agent/skill pack, .uiux/config.json with "origin", bundle with shell steps, lockfile) plus the workflow to build an app from it and push the result back as a NEW project of yours (uiux_create_project). The source project is never changed.',
+    title: 'Clone a project under a new name',
+    description: 'Account keys with the "create" scope. Copies a project into a NEW project of yours (private) under a NEW name — the name is always required; the source is never changed. Design keys ("design" scope) can clone only their own projects; source defaults to the focused project. The clone becomes the focused project of this key. To install its files in the repository afterwards call uiux_init { mode: "edit", project: <new key> }.',
     inputSchema: {
       type: 'object',
       properties: {
-        platform: PLATFORM_PROP,
-        framework: str('The app stack you will build, for example "react", "flutter".', { maxLength: 40 }),
-        uiuxRoot: { type: 'string', enum: ['uiux', 'themes'], description: 'Output folder in the repository (default "uiux").' },
-        styles: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40, description: 'Style keys (default: the designer\'s current style and its twin).' },
-        client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client (for mcpSetup).' },
-        shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'] }
+        name: str('Name of the new project (required, must differ from the source and from your other projects).', { minLength: 1, maxLength: 120 }),
+        source: str('Project key to copy (default: the focused project).', { maxLength: 80 }),
+        key: str('Optional key of the new project (dashed lowercase words); default from the name.', { maxLength: 80 }),
+        description: str('What the new project is.', { maxLength: 2000 })
       },
-      additionalProperties: false
+      required: ['name'], additionalProperties: false
     },
-    scope: 'read', accountOnly: true,
-    run: ({ principal, aiPack, bundles, limiter, baseUrl, versions }, args) => {
-      versions?.ensureHead(principal.project.id);
-      const data = aiPack.init(principal, { ...args, origin: true }, {
-        baseUrl,
-        createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
-      });
-      if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
-      const src = principal.project.key;
-      data.workflow = [
-        `1. Install: follow steps[] (writes the design of "${src}" into this repository; .uiux/config.json keeps origin = "${src}").`,
-        '2. Build the app from the design: use only uiux/<style>/ outputs and the kyrpy-uiux-designer agent / skill rules; search before inventing items (uiux_search_items { project }).',
-        `3. Create your own project from it: uiux_create_project { name, fromProject: "${src}" } — it starts as a copy of this design and is owned by you.`,
-        '4. Set "project" in .uiux/config.json to the new project key (keep "origin").',
-        '5. Push what the app added or changed: uiux_begin_changeset { project: <new key> } → uiux_stage_item … → uiux_diff_changeset → uiux_submit_changeset. The user approves it in the designer.'
-      ];
-      data.steps = [...data.steps, ...data.workflow.slice(2)];
-      return { summary: `Clone plan for "${src}" (${principal.accountRole || 'read'} access): ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[], then workflow[] to build and push as a new project.`, data };
+    scope: 'create', account: 'none', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.clone(principal, args);
+      return { summary: `Cloned "${data.clonedFrom.key}" into the new project "${data.project.key}" (${data.copiedItems} item(s)); it is now focused.`, data };
     }
   },
   {
     name: 'uiux_create_project',
     title: 'Create a project of my own',
-    description: 'Account keys with the "create" scope only. Creates a NEW project owned by the key\'s user (private by default). With fromProject (a project you can see, for example the one you cloned), it starts as a full copy of that design. Then push the app\'s changes into it with the changeset tools ("project": the new key); the user approves them in the designer. Never changes the source project.',
+    description: 'Account keys with the "create" scope only. Creates a NEW project owned by the key\'s user (private by default; design keys always private) and puts it in focus: with a design key, the project tools (stage / save …) now act on it. With fromProject (a project you can see — design keys: your own), it starts as a full copy of that design. Never changes the source project.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,14 +62,14 @@ const ACCOUNT_TOOLS = [
         key: str('Optional project key (dashed lowercase words); default from the name.', { maxLength: 80 }),
         description: str('What the project / app is.', { maxLength: 2000 }),
         fromProject: str('Project key to copy the design from (see uiux_list_projects).', { maxLength: 80 }),
-        visibility: { type: 'string', enum: ['private', 'public'], description: 'Default private.' }
+        visibility: { type: 'string', enum: ['private', 'public'], description: 'Default private (design keys: private only).' }
       },
       required: ['name'], additionalProperties: false
     },
     scope: 'create', account: 'none', accountOnly: true, readOnly: false,
-    run: ({ principal, accounts }, args) => {
-      const data = accounts.createProject(principal, args);
-      return { summary: `Created project "${data.project.key}" owned by @${data.project.owner}${data.source ? ` as a copy of "${data.source.key}" (${data.copiedItems} item(s))` : ''}. Next: ${data.next[0]}`, data };
+    run: ({ principal, design, accounts }, args) => {
+      const data = principal.strict ? design.create(principal, args) : accounts.createProject(principal, args);
+      return { summary: `Created project "${data.project.key}" owned by @${data.project.owner}${data.source ? ` as a copy of "${data.source.key}" (${data.copiedItems} item(s))` : ''}${principal.strict ? '; it is now focused' : ''}. Next: ${data.next[0]}`, data };
     }
   }
 ];
@@ -197,6 +183,7 @@ function accountInit(ctx, args) {
       fromProject: src.key, visibility: own.visibility || 'private'
     });
     const target = accounts.resolve(principal, created.project.key, 'propose');
+    ctx.design?.setFocus(principal, target);
     const bound = accounts.bind(principal, target);
     const newHead = versions ? versions.ensureHead(target.id).number : null;
     const data = runInit({ ...ctx, principal: bound }, {
@@ -212,6 +199,7 @@ function accountInit(ctx, args) {
 
   // edit: owned project at a version
   const target = accounts.resolve(principal, own.project, 'propose');
+  ctx.design?.setFocus(principal, target);
   const bound = accounts.bind(principal, target);
   const head = versions ? versions.ensureHead(target.id).number : null;
   const chosen = own.version ? Number(own.version) : head;
@@ -300,8 +288,8 @@ const M4_TOOLS = [
       additionalProperties: false
     },
     scope: 'propose', readOnly: false,
-    run: ({ principal, changesets }, args) => {
-      const data = changesets.begin(principal, args);
+    run: ({ principal, changesets, design }, args) => {
+      const data = principal.strict ? design.beginSession(principal, args) : changesets.begin(principal, args);
       return { summary: `Changeset ${data.changeset} opened on version ${data.baseVersion}${data.behindHead ? ` (head is ${data.headVersion}: pull first to avoid conflicts)` : ''}; expires ${data.expiresAt}.`, data };
     }
   },
@@ -314,9 +302,9 @@ const M4_TOOLS = [
       properties: { changeset: csProp, item: itemProp, svg: str('SVG document (viewBox 0 0 24 24 for icons and paths).', { maxLength: 262144 }), baseHash: hash('contentHash your change is based on.'), allowDuplicate: { type: 'boolean', description: 'Stage even if an identical item exists (default false).' }, binding: bindingProp },
       required: ['changeset', 'item'], additionalProperties: false
     },
-    scope: 'propose', readOnly: false,
-    run: ({ principal, changesets }, args) => {
-      const data = changesets.stage(principal, args);
+    scope: 'propose', readOnly: false, designOptional: ['changeset'],
+    run: ({ principal, changesets, design }, args) => {
+      const data = changesets.stage(principal, principal.strict ? { ...args, changeset: design.sessionFor(principal, args.changeset, { create: true }) } : args);
       return { summary: data.unchanged ? `${data.type} "${data.key}" is unchanged; nothing staged.` : `Staged ${data.op} of ${data.type} "${data.key}" (${data.staged} op(s) in the changeset)${data.warnings.length ? `; ${data.warnings.length} warning(s)` : ''}.`, data };
     }
   },
@@ -329,9 +317,9 @@ const M4_TOOLS = [
       properties: { changeset: csProp, type: typeProp, ref: str('The item uid or key.', { minLength: 1, maxLength: 120 }), baseHash: hash('contentHash the delete is based on.') },
       required: ['changeset', 'type', 'ref'], additionalProperties: false
     },
-    scope: 'propose', readOnly: false,
-    run: ({ principal, changesets }, args) => {
-      const data = changesets.stageDelete(principal, args);
+    scope: 'propose', readOnly: false, designOptional: ['changeset'],
+    run: ({ principal, changesets, design }, args) => {
+      const data = changesets.stageDelete(principal, principal.strict ? { ...args, changeset: design.sessionFor(principal, args.changeset, { create: true }) } : args);
       return { summary: data.unstaged ? `Removed the staged create of ${data.type} "${data.key}".` : `Staged delete of ${data.type} "${data.key}".`, data };
     }
   },
@@ -340,9 +328,9 @@ const M4_TOOLS = [
     title: 'Diff a changeset',
     description: 'Shows what the changeset would change: per operation the base hash, the current head hash, the proposed hash, the changed fields, and whether the item changed in the designer after your base version (conflict). Show this summary to the human before submitting.',
     inputSchema: { type: 'object', properties: { changeset: csProp }, required: ['changeset'], additionalProperties: false },
-    scope: 'read',
-    run: ({ principal, changesets }, args) => {
-      const data = changesets.diff(principal, args);
+    scope: 'read', designOptional: ['changeset'],
+    run: ({ principal, changesets, design }, args) => {
+      const data = changesets.diff(principal, principal.strict ? { ...args, changeset: design.sessionFor(principal, args.changeset) } : args);
       const s = data.summary;
       return { summary: `Changeset ${data.status}: ${s.create} create, ${s.update} update, ${s.delete} delete; ${s.conflicts} conflict(s). Base version ${data.baseVersion}, head ${data.headVersion}.`, data };
     }
@@ -356,8 +344,10 @@ const M4_TOOLS = [
       properties: { changeset: csProp, message: str('Commit-style message for the reviewer.', { maxLength: 2000 }), label: str('Optional version label, for example "1.4.0".', { maxLength: 40 }) },
       required: ['changeset'], additionalProperties: false
     },
-    scope: 'propose', readOnly: false,
-    run: ({ principal, changesets }, args) => {
+    scope: 'propose', readOnly: false, designOptional: ['changeset'],
+    run: ({ principal, changesets, design }, args) => {
+      // a design key saves straight into its own focused project (same as uiux_save); every other key waits for the human review
+      if (principal.strict) { const d = design.save(principal, args); return { summary: d.saved ? `Saved: version ${d.version}.` : 'Nothing to save.', data: d }; }
       const data = changesets.submit(principal, args);
       return { summary: data.status === 'approved' ? `Changeset auto-approved (project setting): head is now version ${data.resultVersion?.number}.` : `Submitted ${data.opCount} operation(s) for review. Poll uiux_get_changeset; after approval pull with uiux_get_manifest { sinceVersion }.`, data };
     }
@@ -379,8 +369,8 @@ const M4_TOOLS = [
     title: 'Discard a changeset',
     description: 'Throws away an open changeset (for example when the push found nothing to change).',
     inputSchema: { type: 'object', properties: { changeset: csProp }, required: ['changeset'], additionalProperties: false },
-    scope: 'propose', readOnly: false,
-    run: ({ principal, changesets }, args) => ({ summary: 'Changeset discarded.', data: changesets.discard(principal, args) })
+    scope: 'propose', readOnly: false, designOptional: ['changeset'],
+    run: ({ principal, changesets, design }, args) => ({ summary: 'Changeset discarded.', data: changesets.discard(principal, principal.strict ? { ...args, changeset: design.sessionFor(principal, args.changeset) } : args) })
   },
   {
     name: 'uiux_restore_version',
@@ -389,7 +379,7 @@ const M4_TOOLS = [
     inputSchema: { type: 'object', properties: { version: { type: 'integer', minimum: 1, description: 'Version number to restore.' }, message: str('Message for the reviewer.', { maxLength: 2000 }) }, required: ['version'], additionalProperties: false },
     scope: 'propose', readOnly: false,
     run: ({ principal, changesets }, args) => {
-      const data = changesets.restoreVersion(principal, args);
+      const data = changesets.restoreVersion(principal, { ...args, autoApprove: principal.strict === true });
       return { summary: data.unchanged ? `The project already matches version ${data.restoredFrom}.` : `Restore of version ${data.restoredFrom} submitted for review: ${data.opCount} operation(s)${data.skipped.length ? `, ${data.skipped.length} skipped` : ''}.`, data };
     }
   },
@@ -493,6 +483,113 @@ const M4_TOOLS = [
   }
 ];
 
+/* ---------- AI-assisted design: focus, edit session, save, versions (account keys with the "design" scope) ---------- */
+
+const versionRefProp = (d) => ({ oneOf: [{ type: 'string', minLength: 1, maxLength: 80 }, { type: 'integer', minimum: 1 }], description: d });
+const opsProp = { type: 'array', maxItems: 500, items: str('Operation uid (opUid), item key, or "type:key".', { minLength: 1, maxLength: 120 }), description: 'Staged operations to delete (see uiux_list_edit_ops).' };
+
+const DESIGN_TOOLS = [
+  {
+    name: 'uiux_edit_project',
+    title: 'Edit a project (focus it)',
+    description: 'AI-assisted design. Without "project": lists YOUR projects (key, name, which one is focused, which are versions) — show the list to the human and ask which to edit. With "project": makes that project the focus of this key; every project tool (search, get item, stage, save …) then acts on it. Resumes unsaved edits you left in it. Own projects only; nothing else is reachable.',
+    inputSchema: { type: 'object', properties: { project: str('Project key from the list. Omit to list.', { maxLength: 80 }) }, additionalProperties: false },
+    scope: 'design', account: 'none', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.edit(principal, args);
+      return { summary: data.needsSelection ? `ASK THE HUMAN which project to edit.\n\n${data.question}` : `Editing "${data.project.key}" (head v${data.head.number}, ${data.head.items} item(s), ${data.edits.staged} unsaved edit(s)).`, data };
+    }
+  },
+  {
+    name: 'uiux_close_project',
+    title: 'Stop editing (clear the focus)',
+    description: 'AI-assisted design. Clears the focused project of this key. Unsaved edits stay in the edit session (24 h) unless discardEdits is true.',
+    inputSchema: { type: 'object', properties: { discardEdits: { type: 'boolean', description: 'Also throw away the unsaved edits.' } }, additionalProperties: false },
+    scope: 'design', account: 'none', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.close(principal, args);
+      return { summary: data.closed ? `Closed "${data.closed}"${data.discardedEdits ? `; ${data.discardedEdits} unsaved edit(s) discarded` : ''}.` : 'No project was focused.', data };
+    }
+  },
+  {
+    name: 'uiux_list_edit_ops',
+    title: 'List unsaved edit operations',
+    description: 'AI-assisted design. The unsaved edits of the focused project (staged creates / updates / deletes with changed fields and conflicts), i.e. what uiux_save would apply. Show it to the human before saving.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    scope: 'design', accountOnly: true, designOptional: [],
+    run: ({ principal, design }) => {
+      const data = design.listEdits(principal);
+      return { summary: data.staged ? `${data.staged} unsaved edit(s): ${data.summary.create} create, ${data.summary.update} update, ${data.summary.delete} delete; ${data.summary.conflicts} conflict(s).` : 'No unsaved edits.', data };
+    }
+  },
+  {
+    name: 'uiux_delete_edit_ops',
+    title: 'Delete unsaved edit operations',
+    description: 'AI-assisted design. Removes staged edit operations of the focused project before saving (by op uid or item key), or all of them. Only unsaved edits are affected; saved versions are never touched.',
+    inputSchema: { type: 'object', properties: { ops: opsProp, all: { type: 'boolean', description: 'Remove every unsaved edit.' } }, additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.deleteEdits(principal, args);
+      return { summary: `Removed ${data.removed.length} unsaved edit(s); ${data.staged} left.`, data };
+    }
+  },
+  {
+    name: 'uiux_save',
+    title: 'Save the edits',
+    description: 'AI-assisted design. Applies the unsaved edits to the focused project and records a new version (the owner\'s own design key is the approval; no review step). If the designer changed an item meanwhile you get CONFLICT: merge, restage with baseHash = headHash, save again. Nothing to save → saved:false.',
+    inputSchema: { type: 'object', properties: { message: str('Commit-style message.', { maxLength: 2000 }), label: str('Optional version label, for example "1.4.0".', { maxLength: 40 }) }, additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.save(principal, args);
+      return { summary: data.nothingToSave ? `Nothing to save (head v${data.version}).` : data.saved ? `Saved "${data.project}" as version ${data.version} (${data.applied} operation(s) applied).` : `Not saved: ${data.status}; see ops[].`, data };
+    }
+  },
+  {
+    name: 'uiux_save_as',
+    title: 'Save as a new version project',
+    description: 'AI-assisted design. Saves the focused project\'s current design PLUS the unsaved edits as a NEW private project "<master>-v001" (then -v002 …) and focuses it; the project you came from keeps its last saved state. Use it for milestones and variants. Limited to 10 new projects per hour per key.',
+    inputSchema: { type: 'object', properties: { message: str('Message recorded with the new version.', { maxLength: 2000 }) }, additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.saveAs(principal, args);
+      return { summary: `Saved as "${data.savedAs}" (${data.carriedEdits} unsaved edit(s) carried over); it is now focused. Master: "${data.master}".`, data };
+    }
+  },
+  {
+    name: 'uiux_manage_versions',
+    title: 'Manage versions (list / open)',
+    description: 'AI-assisted design. Lists the master project of the focused project and all its -vNNN versions (number, key, items, which is focused, which is the latest). With "open" (a number, "v002", the version key or "master") the key switches focus to that version.',
+    inputSchema: { type: 'object', properties: { open: versionRefProp('Version to focus: 2, "v002", the full key, or "master".') }, additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false,
+    run: ({ principal, design }, args) => {
+      const data = design.manageVersions(principal, args);
+      return { summary: `Master "${data.master.key}"${data.master.focused ? ' (focused)' : ''}; ${data.total} version(s)${data.latest ? `, latest "${data.latest}"` : ''}${data.opened ? `; now focused: "${data.opened}"` : ''}.`, data };
+    }
+  },
+  {
+    name: 'uiux_delete_version',
+    title: 'Delete a version',
+    description: 'AI-assisted design. Deletes ONE version project (-vNNN) of the focused master — never the master itself. If it is the focused one, focus returns to the master. Only versions created with uiux_save_as can be deleted; no other project can be deleted with this key.',
+    inputSchema: { type: 'object', properties: { version: versionRefProp('Version number (2), "v002" or the full version key.') }, required: ['version'], additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false, destructive: true,
+    run: ({ principal, design }, args) => {
+      const data = design.deleteVersion(principal, args);
+      return { summary: `Deleted version "${data.deleted}". ${data.remaining.length} version(s) left; focus: "${data.focusedNow}".`, data };
+    }
+  },
+  {
+    name: 'uiux_purge_versions',
+    title: 'Purge all previous versions (latest becomes master)',
+    description: 'AI-assisted design. Accepts the latest version (or "from") as the master: its design replaces the master project\'s design, ALL version projects are deleted, and the master restarts with a clean history (version 1). Destructive: without confirm:true it only returns the plan — ask the human first. Unsaved edits in these projects are dropped.',
+    inputSchema: { type: 'object', properties: { confirm: { type: 'boolean', description: 'Must be true to do it; the human has to agree.' }, from: versionRefProp('Version that becomes the master (default: the latest).') }, additionalProperties: false },
+    scope: 'design', accountOnly: true, readOnly: false, destructive: true,
+    run: ({ principal, design }, args) => {
+      const data = design.purgeVersions(principal, args);
+      return { summary: data.needsConfirm ? `CONFIRM WITH THE HUMAN: ${data.plan.effect}` : `Purged: "${data.master}" now holds the design of "${data.becameMaster}"; ${data.deletedVersions.length} version(s) deleted; head v${data.head}.`, data };
+    }
+  }
+];
+
 /** Fingerprint of this server's tool set (names + descriptions + schemas): a changed hash means new MCP abilities for existing repos. */
 export function toolsHash() {
   const h = createHash('sha256');
@@ -557,13 +654,16 @@ export const TOOLS = [
     description: 'Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. Call it to check the connection. Account keys (kind "account") act for the user on every project: pass "project" to project tools.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     scope: 'read', account: 'none',
-    run: ({ principal, limiter }) => ({
-      summary: principal.kind === 'account'
+    run: ({ principal, limiter, design }) => ({
+      summary: principal.strict
+        ? `Design key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} in AI-assisted design mode: own projects only, focused project ${design?.current(principal)?.key || '(none — call uiux_edit_project or uiux_create_project)'}.`
+        : principal.kind === 'account'
         ? `Account key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} on every project they can see (scopes ${principal.scopes.join(', ')}). Call uiux_list_projects, then pass "project" to project tools.`
         : `Key "${principal.keyName}" (${principal.prefix}…) acts for @${principal.user.username} on project "${principal.project.name}" (${principal.project.key}) with scopes ${principal.scopes.join(', ')}.`,
       data: {
         user: principal.user, project: principal.project, key: { kind: principal.kind || 'project', name: principal.keyName, prefix: principal.prefix, scopes: principal.scopes, expiresAt: principal.expiresAt, status: principal.status },
-        rateLimits: { calls: limiter.status('calls', principal.apiKeyId), bundles: limiter.status('bundles', principal.apiKeyId) }
+        rateLimits: { calls: limiter.status('calls', principal.apiKeyId), bundles: limiter.status('bundles', principal.apiKeyId) },
+        ...(principal.strict ? { mode: 'ai-assisted-design', focus: design?.current(principal) ?? null } : {})
       }
     })
   },
@@ -766,5 +866,6 @@ export const TOOLS = [
     }
   },
   ...M4_TOOLS,
-  ...ACCOUNT_TOOLS
+  ...ACCOUNT_TOOLS,
+  ...DESIGN_TOOLS
 ];

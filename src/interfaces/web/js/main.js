@@ -568,7 +568,7 @@ function menuDef() {
         }
       }]
     ]],
-    ['Help', [['Usage and guide…', () => openGuide(guideTab()), 'F1'], ['Download usage-and-guide.html', () => downloadGuide()], '-', ['Keyboard shortcuts', () => showShortcuts()], ['About', () => modal({ title: 'About', content: h('div', {}, h('p', {}, 'Kyrpy UI/UX App Designer · Offline-First SQLite + PostgreSQL Collaborative Edition.'), h('p', { class: 'muted' }, 'Project-based designs (public & project visibility), User & ACL Management (default root owner @kyrpy), Root Lineage tracking, Collaborative Change Approval/Rejection, Multi-Events (click, mouseover, release, drag&drop), Small Element Toolbars, Editable Templates, and bi-directional PostgreSQL sync (kyrpy-uiux-designer-db).')) })]]]
+    ['Help', [['Usage and guide…', () => openGuide(guideTab()), 'F1'], ['Download usage-and-guide.html', () => downloadGuide()], '-', ['Keyboard shortcuts', () => showShortcuts()], ['About', () => modal({ title: 'About', content: h('div', {}, h('p', {}, 'Kyrpy UI/UX App Designer · Offline-First SQLite + PostgreSQL Collaborative Edition.'), h('p', { class: 'muted' }, 'Project-based designs (public & project visibility), User & ACL Management (default root owner @superadmin), Root Lineage tracking, Collaborative Change Approval/Rejection, Multi-Events (click, mouseover, release, drag&drop), Small Element Toolbars, Editable Templates, and bi-directional PostgreSQL sync (kyrpy-uiux-designer-db).')) })]]]
   ];
 }
 
@@ -751,7 +751,7 @@ function renderTopbar() {
     () => openSyncModal('sync'));
 
   // User / Admin button
-  const curUser = state.user || { username: 'kyrpy', role: 'admin' };
+  const curUser = state.user || { username: 'superadmin', role: 'admin' };
   const userBtn = tbIcon('', 'user',
     `My profile — @${curUser.username} (${curUser.role}): details, password, sessions, AI access keys`,
     () => openProfile());
@@ -796,12 +796,22 @@ function buildTypeBar() {
   const nav = $('#typebar'); if (!nav) return;
   clear(nav);
   const page = currentPageType();
-  const newBtn = page ? ibtn('plus', `New empty ${page === 'workflow' ? 'workflow' : (TYPE_NAV.find(t => t[0] === page)?.[1] || page).replace(' designer', '').toLowerCase()}`, async () => {
-    const r = await createEmptyItem(page);
+  // "+" opens a pop-up menu: New Path / Icon / Button / Element / Screen / Workflow (each creates an empty item and opens it)
+  const NEW_ITEMS = [['path', 'New Path', 'bezier'], ['icon', 'New Icon', 'star'], ['button', 'New Button', 'circle'], ['element', 'New Element', 'rect'], ['screen', 'New Screen', 'monitor'], ['workflow', 'New Workflow', 'workflow']];
+  const createNew = async type => {
+    closeMenus();
+    const r = await createEmptyItem(type);
     if (!r) return;
-    if (page === 'workflow') await app.openWorkflow(r.id); else await app.openDesign(page, r.id);
+    if (type === 'workflow') await app.openWorkflow(r.id); else await app.openDesign(type, r.id);
     buildTopbar();
-  }, { desc: 'Create an empty item of this type and open it', cls: 'new-empty' }) : null;
+  };
+  const newPanel = h('div', { class: 'menu-panel new-menu', role: 'menu' },
+    NEW_ITEMS.map(([type, label, icon]) => h('button', { class: 'menu-item', role: 'menuitem', 'data-new-type': type, onclick: e => { e.stopPropagation(); createNew(type).catch(err => toast(err.message, 'error')); } },
+      h('span', { class: 'ico' }, iconEl(icon, { size: 16 })), h('span', { class: 'mi-label' }, label))));
+  const newBtn = h('div', { class: 'menu new-menu-wrap' },
+    ibtn('plus', 'New — path, icon, button, element, screen or workflow', e => { e.stopPropagation(); const open = !newBtn.classList.contains('open'); closeMenus(); if (open) newBtn.classList.add('open'); },
+      { desc: 'Open the New menu: path, icon, button, element, screen, workflow', cls: 'new-empty' }),
+    newPanel);
   // the designer's doc bar (back, save, targets, visibility, status, new) and canvas toggles live in this row
   const designer = app.designer;
   const inDesigner = state.mode === 'screen' && designer?.doc;
@@ -902,10 +912,13 @@ async function boot() {
   // library filter must agree with it) instead of always falling back to the Default Public Project
   state.projects = b.projects || [];
   state.activeProjectId = pickStartupProject(api.getSession()?.projectId);
+  state.saveTargetProjectIds = new Set([state.activeProjectId]);   // default save target = the active project
   api.setSession({ projectId: state.activeProjectId });
   if (!state.themes.find(t => t.key === state.themeKey)) state.themeKey = state.themes[0].key;
   applyThemeChrome();
   await ensureAuthGate({ authConfig: state.authConfig, authenticated: Boolean(b.authenticated) });
+  // published default accounts (superadmin/superadmin, admin/admin, user/user): demand a new password right after the first start
+  api.profile().then(p => { if (p && p.passwordSetByUser === false && !p.user?.system) { toast('This account still uses the published default password. Choose your own now.', 'error', 6000); openProfile({ tab: 'password' }); } }).catch(() => { /* no profile for system / signed-out sessions */ });
   $('#left').style.width = `${state.settings.leftPanelWidth || 360}px`;
   const right = $('#right');
   right.append(
@@ -925,7 +938,7 @@ async function boot() {
   const refreshCounts = () => {
     const c = state.counts;
     const pName = (state.projects || []).find(p => Number(p.id) === Number(state.activeProjectId))?.name || 'Default';
-    $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'kyrpy'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
+    $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'superadmin'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
   };
   on('library:changed', () => { refreshCounts(); buildTopbar(); });
   on('topbar:refresh', () => buildTopbar());

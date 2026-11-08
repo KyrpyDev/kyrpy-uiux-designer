@@ -68,11 +68,16 @@ flowchart LR
 - **Node.js v22.5+** (uses Node's built-in `node:sqlite` — **zero** external `npm install` packages required!)
 - Optional: PostgreSQL server if you want multi-device cloud synchronization.
 
-### 🔑 Default Startup Installer Credentials
-On first boot or installation, the installer automatically seeds a default administrator account:
-- **Username**: `admin`
-- **Password**: `admin`
-- **Role**: `superadmin` (full system & public library permissions)
+### 🔑 Default Accounts (published credentials)
+Every fresh install and every published snapshot (`src/data/designer.db`, `sql/`) ships exactly these three accounts:
+
+| Username | Password | Role |
+|---|---|---|
+| `superadmin` | `superadmin` | `superadmin` — the one account that edits / imports / updates the public library |
+| `admin` | `admin` | `admin` — manages users, projects and the trash bin |
+| `user` | `user` | `designer` — regular user |
+
+> ⚠️ **These passwords are public. Change all three immediately after you clone the repository and start your own server** (profile icon → *My Profile → Password*; minimum 8 characters with a letter and a digit). While an account still has its default password, the app prompts you to change it at sign-in. Never expose a server that still uses them. (Upgrading? An old `kyrpy` account is renamed to `superadmin`; a password you set yourself is kept.)
 
 ---
 
@@ -96,7 +101,7 @@ cd kyrpy-uiux-designer
 1. **Verifies Node.js v22+**.
 2. **Prompts for Runtime Mode (`dev` vs `release`)**:
    - **`dev` mode (`APP_MODE=dev`, `BYPASS_AUTH=true`)**: Bypasses the Login/Register gate so you land directly inside the studio canvas for rapid local development.
-   - **`release` mode (`APP_MODE=release`, `BYPASS_AUTH=false`)**: Protects the studio page with a full-screen **Login / Register** gate requiring authentication (e.g. `admin` / `admin` or a newly registered user account).
+   - **`release` mode (`APP_MODE=release`, `BYPASS_AUTH=false`)**: Protects the studio page with a full-screen **Login / Register** gate requiring authentication (e.g. `superadmin` / `superadmin`, `admin` / `admin`, `user` / `user` — change them first — or a newly registered account).
 3. **Prompts for Optional `.env` PostgreSQL Credentials**:
    - Asks for your preferred local HTTP port (default: `5180`).
    - Asks if you want to configure a server-side PostgreSQL connection (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGADMINDB`).
@@ -186,10 +191,8 @@ PGDATABASE=kyrpy-uiux-designer-db
 PGADMINDB=postgres
 ```
 
-### Default Local Admin Account
-- **Username**: `kyrpy`
-- **Password**: `kyrpy` (or `admin`)
-- **Role**: `admin` (full permissions to manage users, projects, public libraries, and trash bin)
+### Default Local Accounts
+See **Default Accounts** above: `superadmin` / `superadmin`, `admin` / `admin`, `user` / `user`. Change the passwords right after your first start.
 
 ---
 
