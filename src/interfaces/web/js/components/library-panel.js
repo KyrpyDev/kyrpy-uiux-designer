@@ -115,6 +115,15 @@ export class LibraryPanel {
     for (const el of [...tools.children]) if (el !== search) more.append(el);
     const packRow = this.bodyEl.querySelector(':scope > .lib-pack-row');
     if (packRow) more.append(packRow);
+    // categories, icon packs and the hint form one section that its own tool (next to the pop-up tools) collapses / expands
+    const sect = h('div', { class: 'lib-chips-section' });
+    const part = [...more.children].filter(el => (el.classList.contains('cats') && !el.classList.contains('lib-vis-filter')) || el.classList.contains('lib-pack-row') || (el.classList.contains('dim') && el.tagName === 'DIV'));
+    if (part.length) { part[0].before(sect); part.forEach(el => sect.append(el)); }
+    let sectHidden = false;
+    try { sectHidden = localStorage.getItem('ud_lib_chips_hidden') === '1'; } catch { /* storage unavailable */ }
+    const sectBtn = ibtn('layers', 'Collapse / expand categories and packs', () => { sectHidden = !sectHidden; paintSect(); try { localStorage.setItem('ud_lib_chips_hidden', sectHidden ? '1' : '0'); } catch { /* storage unavailable */ } }, { cls: 'lib-chips-toggle', size: 15 });
+    const paintSect = () => { sect.hidden = sectHidden; sectBtn.classList.toggle('active', !sectHidden); sectBtn.dataset.tip = `${sectHidden ? 'Show' : 'Hide'} the category chips, icon packs and hint`; };
+    paintSect();
     let collapsed = false;
     try { collapsed = localStorage.getItem(TOOLS_COLLAPSED_KEY) === '1'; } catch { /* storage unavailable */ }
     const toggle = ibtn('chevron-up', 'Collapse filters and tools', () => apply(!collapsed, true), { cls: 'lib-tools-toggle', size: 15 });
@@ -130,7 +139,7 @@ export class LibraryPanel {
     };
     const drawer = ibtn('panel-left', 'Hide the library panel', () => window.dispatchEvent(new CustomEvent('ud:toggle-left')), { desc: 'Reopen it from the rail on the left edge', cls: 'lib-drawer-toggle', size: 15 });
     const popBtns = this._toolBtns || []; this._toolBtns = null;
-    tools.prepend(h('div', { class: 'lib-search-row' }, search, toggle, ...popBtns, drawer));
+    tools.prepend(h('div', { class: 'lib-search-row' }, search, toggle, ...popBtns, ...(part.length ? [sectBtn] : []), drawer));
     tools.append(more);
     apply(collapsed, false);
   }
@@ -189,7 +198,7 @@ export class LibraryPanel {
       [['all', 'All items'], ['public', '🌐 Public'], ['mine', '🗂 All Projects'], ['project', '📁 Project-only']].map(([k, lbl]) =>
         h('button', { class: `cat${cur === k ? ' on' : ''}`, dataset: { visFilter: k }, onclick: () => set(k) }, lbl)
       ),
-      editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'Items you edited are listed first with a red edge. Click to clear these marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear edited (${editedKeys().length})`) : null
+      editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'Items you edited are listed first with a red edge. Click to clear these marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear (${editedKeys().length})`) : null
     );
   }
 
