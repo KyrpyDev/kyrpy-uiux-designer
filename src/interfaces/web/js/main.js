@@ -555,7 +555,7 @@ function menuDef() {
     ['Trash', [
       ['🗑 Trash Management (Restore / Purge)…', () => openTrashModal()],
       ['🗂 Open 90% Item Browser Modal (Copy / Move)…', () => openItemBrowserModal()],
-      ['🗂 Center Canvas Full Item Browser', () => { state.mode = 'browser'; renderMode(); }],
+      ['🗂 Center Canvas Full Item Browser', () => { if (state.mode !== 'browser') state.prevMode = state.mode; state.mode = 'browser'; renderMode(); }],
       '-',
       ['🧹 Empty Active Project Library…', async () => {
         const pid = state.activeProjectId || 1;
@@ -811,7 +811,7 @@ function buildTypeBar() {
   nav.append(...[
     // the per-type page buttons live in the library panel's icon tabs (double-click opens that designer)
     h('div', { class: 'tabs type-tabs', role: 'tablist' },
-      h('button', { class: `tab-ico${state.mode === 'browser' ? ' on' : ''}`, 'aria-label': 'Item Browser — full-canvas item list with checkboxes', 'data-tip': 'Item Browser — full-canvas item list with checkboxes', dataset: { modeTab: 'browser' }, onclick: () => { state.mode = 'browser'; renderMode(); buildTopbar(); } }, iconEl('grid', { size: 18 }))
+      h('button', { class: `tab-ico${state.mode === 'browser' ? ' on' : ''}`, 'aria-label': 'Item Browser — full-canvas item list with checkboxes (click again to go back)', 'data-tip': 'Item Browser — full-canvas item list with checkboxes. Click again to return to where you were.', dataset: { modeTab: 'browser' }, onclick: () => { if (state.mode === 'browser') { state.mode = state.prevMode && state.prevMode !== 'browser' ? state.prevMode : 'screen'; } else { state.prevMode = state.mode; state.mode = 'browser'; } renderMode(); buildTopbar(); } }, iconEl('grid', { size: 18 }))
     ),
     h('span', { class: 'sep-v' }),
     newBtn,
