@@ -109,6 +109,7 @@ export function designRoutes(router, c) {
   router.put('/api/buttons/:id/menu/config', ({ params, body }) => c.menus.setConfig(params.id, body));
   router.post('/api/buttons/:id/menu/items', ({ params, body }) => c.menus.addItem(params.id, body));
   router.put('/api/buttons/:id/menu/items/:iid', ({ params, body }) => c.menus.updateItem(params.iid, body));
+  router.post('/api/buttons/:id/menu/items/:iid/move', ({ params, body }) => c.menus.moveItem(params.id, params.iid, body || {}));
   router.delete('/api/buttons/:id/menu/items/:iid', ({ params }) => c.menus.removeItem(params.iid));
 
   router.get('/api/library', ({ query, actor }) => {

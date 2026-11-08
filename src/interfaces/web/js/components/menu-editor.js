@@ -12,7 +12,7 @@ import { ensureIconSymbols } from '../icon-store.js';
 
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
-import { buildMenuTree, menuConfig } from '/domain/menu.js';
+import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
@@ -96,9 +96,10 @@ export function pickButton(currentId = null, excludeId = null) {
 }
 
 export async function menuItemDialog({ buttonId, item = null, parentId = null }) {
-  const [screens, elements] = await Promise.all([
+  const [screens, elements, menuNow] = await Promise.all([
     api.list('screen'),
-    state.library.elements?.length ? Promise.resolve(state.library.elements) : api.list('element')
+    state.library.elements?.length ? Promise.resolve(state.library.elements) : api.list('element'),
+    item ? api.menu(buttonId).catch(() => null) : null
   ]);
   return new Promise(resolve => {
     let done = false, iconId = item?.iconId ?? null, refButtonId = item?.refButtonId ?? null, nameTouched = !!item;
@@ -123,6 +124,24 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
     btnBtn.addEventListener('click', async () => { const r = await pickButton(refButtonId, buttonId); if (r !== null) { refButtonId = r || null; await lookup('button', refButtonId); paintButton(); } });
     paintIcon(); paintButton();
     lookup('icon', iconId).then(paintIcon); lookup('button', refButtonId).then(paintButton);
+    // parent picker (edit only): a tree of every menu item; the item itself and its sub items are not offered
+    let parentId = item?.parentId ?? null;
+    const treeBox = h('div', { class: 'el-list', 'data-f': 'mi-parent-tree', style: { maxHeight: '180px', overflow: 'auto', border: '1px solid var(--line, #8884)', borderRadius: '6px', padding: '4px' } });
+    if (item && menuNow?.items) {
+      const rowsAll = menuNow.items;
+      const blocked = new Set([item.id]);
+      for (let grew = true; grew;) { grew = false; for (const r of rowsAll) if (!blocked.has(r.id) && blocked.has(r.parentId)) { blocked.add(r.id); grew = true; } }
+      const paintTree = () => {
+        clear(treeBox);
+        const row = (label, pid, depth) => h('div', { class: `el-row mi-parent${parentId === pid ? ' on' : ''}`, role: 'option', 'data-parent': pid == null ? '' : String(pid), style: { paddingLeft: `${7 + depth * 14}px`, cursor: 'pointer' },
+          onclick: () => { parentId = pid; paintTree(); } }, h('span', { class: 'grow' }, `${pid == null ? '⌂ ' : ''}${label}`));
+        const walk = (pid, depth) => rowsAll.filter(r => (r.parentId ?? null) === pid && !blocked.has(r.id)).sort((a, b) => a.ord - b.ord || a.id - b.id)
+          .forEach(r => { treeBox.append(row(r.label || r.name, r.id, depth)); walk(r.id, depth + 1); });
+        treeBox.append(row('Top level of the menu', null, 0));
+        walk(null, 1);
+      };
+      paintTree();
+    }
     let m;
     const save = async () => {
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
@@ -138,7 +157,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
         descriptionDev: dev.value
       };
       try {
-        const saved = item ? await api.updateMenuItem(buttonId, item.id, body) : await api.addMenuItem(buttonId, { ...body, parentId });
+        let saved = item ? await api.updateMenuItem(buttonId, item.id, body) : await api.addMenuItem(buttonId, { ...body, parentId });
+        if (item && (parentId ?? null) !== (item.parentId ?? null)) { await api.moveMenuItem(buttonId, item.id, { parentId }); saved = { ...saved, parentId }; }
         fin(saved); m.close();
       } catch (e) { toast(e.message, 'error'); }
     };
@@ -150,6 +170,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
           h('label', { class: 'row', style: { cursor: 'pointer' } }, visCheck, h('span', {}, 'Visible in menu'))
         ),
         h('div', { class: 'row wrap', title: 'The item is drawn with this library button (its shape and style). The icon above replaces the button\'s own icon.' }, btnBtn, btnLabel),
+        item ? h('div', { class: 'field' }, h('span', {}, 'Parent item (click one in the tree to move this item under it)'), treeBox) : null,
         h('div', { class: 'row wrap' },
           h('label', { class: 'field grow' }, h('span', {}, 'Action (event name)'), action),
           h('label', { class: 'field grow' }, h('span', {}, 'Goes to screen'), target)
@@ -265,6 +286,18 @@ export const menuActions = {
     await api.updateMenuItem(bid, it.id, { ord: other.ord === it.ord ? other.ord + dir : other.ord });
     await api.updateMenuItem(bid, other.id, { ord: it.ord === other.ord ? it.ord - dir : it.ord });
     await this.refresh(d, bid);
+  },
+  /** Drag and drop in the inspector tree: put an item before / after / inside another one (or at the end of the top level when `targetId` is null). */
+  async moveTo(d, itemId, targetId, where, buttonId = null) {
+    const bid = resolveButtonId(d, buttonId);
+    if (!bid || itemId === targetId) return false;
+    const rows = getButtonRows(d, bid), it = rows.find(r => r.id === itemId), tg = rows.find(r => r.id === targetId);
+    if (!it || (targetId != null && !tg)) return false;
+    const to = dropTarget(rows, it, tg, where);
+    if (!to) return false;
+    try { await api.moveMenuItem(bid, itemId, to); } catch (e) { toast(e.message, 'error'); return false; }
+    await this.refresh(d, bid);
+    return true;
   },
   async toggleVisible(d, itemId, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);

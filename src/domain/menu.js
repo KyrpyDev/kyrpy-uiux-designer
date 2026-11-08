@@ -228,3 +228,19 @@ export function menuExtent(button, cfg, tree) {
   const pad = 4;
   return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
 }
+
+/** Where a dropped item lands: {parentId, index} for "before" / "after" / "inside" a target row (null target = end of the top level); null when nothing would change. */
+export function dropTarget(rows, it, tg, where) {
+  const order = (a, b) => a.ord - b.ord || a.id - b.id;
+  let parentId, index;
+  if (!tg) { parentId = null; index = null; }
+  else if (where === 'inside') { parentId = tg.id; index = null; }
+  else {
+    parentId = tg.parentId ?? null;
+    const sibs = rows.filter(r => (r.parentId ?? null) === parentId && r.id !== it.id).sort(order);
+    index = sibs.findIndex(r => r.id === tg.id) + (where === 'after' ? 1 : 0);
+  }
+  const sibsNow = rows.filter(r => (r.parentId ?? null) === parentId).sort(order);
+  if ((it.parentId ?? null) === parentId && (index == null ? sibsNow[sibsNow.length - 1]?.id === it.id : sibsNow.findIndex(r => r.id === it.id) === index)) return null;
+  return { parentId, index };
+}

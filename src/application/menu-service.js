@@ -63,6 +63,36 @@ export class MenuService {
     return this.menus.update(it.id, data);
   }
 
+  /**
+   * Moves an item under another parent (null = top level) at `index` among that parent's items, renumbering the order of both levels.
+   * Rejects a move into its own sub items, a parent of another button, a name clash with the new siblings and nesting deeper than MAX_DEPTH.
+   */
+  moveItem(buttonIdOrKey, itemId, { parentId = null, index = null } = {}) {
+    const b = this.#button(buttonIdOrKey);
+    const it = this.menus.get(Number(itemId));
+    if (!it || it.buttonId !== b.id) throw new NotFoundError('menu item', itemId);
+    const all = this.menus.list(b.id);
+    const pid = parentId == null || parentId === '' ? null : Number(parentId);
+    if (pid != null) {
+      if (!all.some(i => i.id === pid)) throw new ValidationError('the parent menu item must belong to the same button');
+      for (let p = pid; p != null; p = all.find(i => i.id === p)?.parentId) if (p === it.id) throw new ValidationError('an item cannot be moved into its own sub items');
+    }
+    const height = id => 1 + Math.max(0, ...all.filter(i => i.parentId === id).map(i => height(i.id)));
+    if (pid !== (it.parentId ?? null) && this.#depth(all, pid) + (pid == null ? 0 : 1) + height(it.id) > MAX_DEPTH) throw new ValidationError(`menus can be nested ${MAX_DEPTH} levels deep`);
+    const order = (a, c) => a.ord - c.ord || a.id - c.id;
+    const target = all.filter(i => (i.parentId ?? null) === pid && i.id !== it.id).sort(order);
+    if (target.some(i => i.name === it.name)) throw new ValidationError(`a sibling already uses the name "${it.name}"`);
+    const at = index == null ? target.length : Math.max(0, Math.min(target.length, Number(index) || 0));
+    target.splice(at, 0, it);
+    const oldParent = it.parentId ?? null;
+    if (this.menus.update(it.id, { parentId: pid }) === undefined) throw new NotFoundError('menu item', itemId);
+    target.forEach((i, n) => { if (i.id === it.id || i.ord !== n) this.menus.update(i.id, { ord: n }); });
+    if (oldParent !== pid) all.filter(i => (i.parentId ?? null) === oldParent && i.id !== it.id).sort(order).forEach((i, n) => { if (i.ord !== n) this.menus.update(i.id, { ord: n }); });
+    // a hub's default centre must stay a top-level item
+    if (pid != null && Number(b.meta?.menu?.hubCenterItemId) === it.id) this.buttons.update(b.id, { meta: { ...b.meta, menu: { ...b.meta.menu, hubCenterItemId: null } } });
+    return this.get(b.id);
+  }
+
   removeItem(itemId) {
     const it = this.menus.get(Number(itemId));
     if (!it) throw new NotFoundError('menu item', itemId);

@@ -374,6 +374,25 @@ export class Inspector {
       const isVisible = n.visible !== false;
       const canFocus = d.menu?.focusItem && d.doc?.id === bid;
       lines.push(h('div', {
+        draggable: 'true', dataset: { menuItem: String(n.id) },
+        ondragstart: e => { e.dataTransfer.setData('text/plain', String(n.id)); e.dataTransfer.effectAllowed = 'move'; this.dragMenuItem = n.id; },
+        ondragend: () => { this.dragMenuItem = null; document.querySelectorAll('.mi-drop-before,.mi-drop-after,.mi-drop-inside').forEach(x => x.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside')); },
+        ondragover: e => {
+          if (this.dragMenuItem == null || this.dragMenuItem === n.id) return;
+          e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move';
+          const el = e.currentTarget, r = el.getBoundingClientRect(), y = (e.clientY - r.top) / (r.height || 1);
+          el.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside');
+          el.classList.add(y < 0.28 ? 'mi-drop-before' : y > 0.72 ? 'mi-drop-after' : 'mi-drop-inside');
+        },
+        ondragleave: e => e.currentTarget.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside'),
+        ondrop: async e => {
+          e.preventDefault(); e.stopPropagation();
+          const el = e.currentTarget, id = this.dragMenuItem;
+          const where = el.classList.contains('mi-drop-before') ? 'before' : el.classList.contains('mi-drop-after') ? 'after' : 'inside';
+          el.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside');
+          this.dragMenuItem = null;
+          if (id != null) await menuActions.moveTo(d, id, n.id, where, bid);
+        },
         class: `el-row${canFocus ? ' mi-focusable' : ''}${canFocus && d.menu.focusedId === n.id ? ' on' : ''}`, style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible ? 1 : 0.45 },
         title: canFocus ? 'Click to show this item on the canvas' : undefined,
         onclick: canFocus ? e => {
@@ -403,9 +422,12 @@ export class Inspector {
     });
     walk(tree, 0);
     return this.section(`Menu Items · ${rows.length} item(s)`,
-      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Order items (↑/↓), add (＋), edit (✎), toggle visible (👁), or remove (🗑). Each item can route to a screen or show an element as a popup/modal box.'),
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Order items (↑/↓) or drag them (top / bottom edge = before / after, middle = inside), add (＋), edit (✎, also changes the parent), toggle visible (👁), or remove (🗑). Each item can route to a screen or show an element as a popup/modal box.'),
       ...settings,
-      h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')),
+      h('div', { class: 'el-list',
+        ondragover: e => { if (this.dragMenuItem != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } },
+        ondrop: async e => { e.preventDefault(); const id = this.dragMenuItem; this.dragMenuItem = null; if (id != null) await menuActions.moveTo(d, id, null, 'after', bid); }   // dropped on the empty area: end of the top level
+      }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')),
       ibtn('plus', 'Add menu item', () => menuActions.add(d, null, bid), { cls: 'primary' }));
   }
 

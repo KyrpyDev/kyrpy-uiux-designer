@@ -266,6 +266,7 @@ export const api = {
   menuConfig: (id, cfg) => api.put(`/api/buttons/${id}/menu/config`, cfg),
   addMenuItem: (id, item) => api.post(`/api/buttons/${id}/menu/items`, item).then(r => { markEdited('button', id); return r; }),
   updateMenuItem: (id, iid, patch) => api.put(`/api/buttons/${id}/menu/items/${iid}`, patch).then(r => { markEdited('button', id); return r; }),
+  moveMenuItem: (id, iid, to) => api.post(`/api/buttons/${id}/menu/items/${iid}/move`, to).then(r => { markEdited('button', id); return r; }),
   deleteMenuItem: (id, iid) => api.del(`/api/buttons/${id}/menu/items/${iid}`).then(r => { markEdited('button', id); return r; }),
 
   themes: () => api.get('/api/themes'),

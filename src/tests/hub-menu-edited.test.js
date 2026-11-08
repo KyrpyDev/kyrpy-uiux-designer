@@ -7,7 +7,7 @@ import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, DEFAULT_MENU, scopeFirst, visClass, isEdited } from '../domain/entities.js';
-import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig, dropTarget } from '../domain/menu.js';
 import { readFileSync } from 'node:fs';
 import { createContext, indexLibrary, renderTree } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
@@ -406,4 +406,47 @@ test('hub item toolbar: focus previous / next item buttons on the centre and on 
   assert.match(src, /Focus previous item/); assert.match(src, /Focus next item/);
   assert.match(src, /this\.focusButtons\(rows, levelItem, btn\)/, 'the centred main item of a sub level offers them');
   assert.match(src, /data-kind="hub"\]'\)\) this\.toolbar\.append\(\.\.\.this\.focusButtons\(rows, it, btn\)/, 'hub ring / fan items offer them');
+});
+
+test('menu item parent change and drag & drop: moveItem re-parents with order, guards cycles / clashes / hub centre; dropTarget maps before / after / inside', () => {
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const host = c.button.create({ name: 'mv', key: 'mv', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 64, height: 64 }, { nodes: [{ tag: 'rect', role: 'button', name: 'surface', attrs: { x: 0, y: 0, width: 64, height: 64 } }] });
+    c.menus.setConfig(host.id, { ...HUB.config });
+    const A = c.menus.addItem(host.id, { label: 'A' }), B = c.menus.addItem(host.id, { label: 'B' }), C = c.menus.addItem(host.id, { label: 'C' });
+    const A1 = c.menus.addItem(host.id, { label: 'A1', parentId: A.id }), A2 = c.menus.addItem(host.id, { label: 'A2', parentId: A.id });
+    const kids = (r, pid) => r.items.filter(i => (i.parentId ?? null) === pid).sort((x, y) => x.ord - y.ord).map(i => i.label).join(',');
+    // C goes under A, between A1 and A2
+    let r = c.menus.moveItem(host.id, C.id, { parentId: A.id, index: 1 });
+    assert.equal(kids(r, A.id), 'A1,C,A2'); assert.equal(kids(r, null), 'A,B');
+    // back to the top level, first
+    r = c.menus.moveItem(host.id, C.id, { parentId: null, index: 0 });
+    assert.equal(kids(r, null), 'C,A,B'); assert.equal(kids(r, A.id), 'A1,A2');
+    // guards
+    assert.throws(() => c.menus.moveItem(host.id, A.id, { parentId: A1.id }), /own sub items/);
+    assert.throws(() => c.menus.moveItem(host.id, A.id, { parentId: A.id }), /own sub items/);
+    assert.throws(() => c.menus.moveItem(host.id, A.id, { parentId: 99999 }), /same button/);
+    const dup = c.menus.addItem(host.id, { label: 'B', parentId: A.id, name: 'b-two' });
+    c.menus.updateItem(dup.id, { name: 'b' });
+    assert.throws(() => c.menus.moveItem(host.id, B.id, { parentId: A.id }), /sibling already uses the name/);
+    // a hub default centre that gets nested is reset
+    c.menus.setConfig(host.id, { hubCenterItemId: C.id });
+    c.menus.moveItem(host.id, C.id, { parentId: A.id });
+    assert.equal(c.menus.get(host.id).config.hubCenterItemId, null);
+    // dropTarget
+    const rows = c.menus.get(host.id).items, it = rows.find(x => x.id === B.id), a = rows.find(x => x.id === A.id);
+    assert.deepEqual(dropTarget(rows, it, a, 'inside'), { parentId: A.id, index: null });
+    assert.deepEqual(dropTarget(rows, it, a, 'before'), { parentId: null, index: 0 });
+    assert.equal(dropTarget(rows, it, a, 'after'), null, 'B already follows A: nothing to do');
+    assert.deepEqual(dropTarget(rows, a, null, 'after'), { parentId: null, index: null });
+  } finally { c.close?.(); }
+});
+
+test('menu item UI: edit dialog has the parent tree, inspector tree rows are draggable and call the move endpoint', () => {
+  const rd = f => readFileSync(new URL(`../interfaces/web/js/${f}`, import.meta.url), 'utf8');
+  const ed = rd('components/menu-editor.js'), ins = rd('components/inspector.js'), api = rd('api.js');
+  assert.match(ed, /mi-parent-tree/); assert.match(ed, /api\.moveMenuItem\(buttonId, item\.id, \{ parentId \}\)/);
+  assert.match(ins, /draggable: 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/);
+  assert.match(api, /menu\/items\/\$\{iid\}\/move/);
 });

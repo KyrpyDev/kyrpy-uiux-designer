@@ -893,3 +893,10 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 /* "+" New menu in the type bar: opens below the button, never clipped by the bar */
 .new-menu-wrap > .btn.ib { padding: 4px 6px; }
 .new-menu-wrap > .new-menu { min-width: 170px; z-index: 400; }
+
+/* menu items tree: drag and drop (top edge = before, bottom edge = after, middle = inside) */
+.el-row[draggable="true"][data-menu-item] { cursor: grab; }
+.el-row.mi-drop-before { box-shadow: inset 0 2px 0 #2e9bff; }
+.el-row.mi-drop-after { box-shadow: inset 0 -2px 0 #2e9bff; }
+.el-row.mi-drop-inside { background: rgba(46, 155, 255, .3); outline: 1px dashed #2e9bff; outline-offset: -1px; }
+.el-row.mi-parent { cursor: pointer; }
