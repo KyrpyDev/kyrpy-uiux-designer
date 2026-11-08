@@ -224,7 +224,7 @@ export class McpProtocol {
         principal = this.accounts.bind(principal, resolved);
         args = rest;
       }
-      const { summary, data } = await tool.run({ ...ctx, principal, accounts: this.accounts, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings, design: this.design }, args);
+      const { summary, data } = await tool.run({ ...ctx, principal, accounts: this.accounts, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings, design: this.design, toolCatalog: pr => this.#toolList(pr) }, args);
       audit('ok');
       return ok(id, { content: [{ type: 'text', text: `${summary}\n\n${JSON.stringify(data)}` }], structuredContent: data });
     } catch (e) {

@@ -1277,22 +1277,23 @@ export class TrashService {
     Object.assign(this, { trash, services, workflows, designs, nodes, animations, menus, auth, transaction });
   }
 
-  list(filter = {}) {
-    return this.trash.list(filter);
+  /** Every user has a trash of their own: with an actor, only the items that actor deleted are visible or actionable. */
+  list(filter = {}, { actor = null } = {}) {
+    return this.trash.list(actor ? { ...filter, deletedBy: actor.id } : filter);
   }
 
-  count(filter = {}) {
-    return this.trash.count(filter);
+  count(filter = {}, { actor = null } = {}) {
+    return this.trash.count(actor ? { ...filter, deletedBy: actor.id } : filter);
   }
 
-  get(id) {
+  get(id, actor = null) {
     const item = this.trash.get(Number(id));
-    if (!item) throw new NotFoundError('trash_item', id);
+    if (!item || (actor && Number(item.deletedBy) !== Number(actor.id))) throw new NotFoundError('trash_item', id);   // another user's trash item does not exist for you
     return item;
   }
 
   restore(trashId, { actor = null } = {}) {
-    const item = this.get(trashId);
+    const item = this.get(trashId, actor);
     const snap = item.snapshot || {};
     return this.transaction(() => {
       if (item.itemType === 'workflow') {
@@ -1430,7 +1431,7 @@ export class TrashService {
   }
 
   purge(trashId, { actor = null } = {}) {
-    const item = this.get(trashId);
+    const item = this.get(trashId, actor);
     const isPublic = item.visibility === 'public' || Boolean(item.builtin);
     if (actor && ((isPublic && !this.auth.isAdmin(actor)) || (this.#inPublicLibrary(item) && !this.auth.isSuperadmin(actor)))) {
       throw new ForbiddenError('Only admin or superadmin can trash or purge public items (public-library items: superadmin only)');
@@ -1440,7 +1441,7 @@ export class TrashService {
   }
 
   empty({ projectId = null, itemType = '', actor = null } = {}) {
-    const items = this.trash.list({ projectId, itemType });
+    const items = this.trash.list({ projectId, itemType, deletedBy: actor ? actor.id : null });
     const hasPublic = items.some(it => it.visibility === 'public' || Boolean(it.builtin));
     if (actor && ((hasPublic && !this.auth.isAdmin(actor)) || (items.some(it => this.#inPublicLibrary(it)) && !this.auth.isSuperadmin(actor)))) {
       throw new ForbiddenError('Only admin or superadmin can trash or purge public items (public-library items: superadmin only)');

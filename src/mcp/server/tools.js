@@ -5,6 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
+import { SCHEMA_VERSION } from '../application/design-query-service.js';
 
 const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
@@ -839,6 +840,48 @@ export const TOOLS = [
     run: ({ principal, aiPack, baseUrl }, args) => {
       const data = aiPack.checkUpdate(principal, args, { baseUrl, toolsHash: toolsHash() });
       return { summary: data.updateAvailable ? `UPDATE AVAILABLE (pack v${data.packVersion}: ${data.packChanged.length} file(s)${data.designChanged ? ', design changed' : ''}${data.toolsChanged ? ', new MCP abilities' : ''}${data.conflicts.length ? `, ${data.conflicts.length} conflict(s)` : ''}). ${data.next}` : 'Repository is up to date.', data };
+    }
+  },
+  {
+    name: 'uiux_refresh_info',
+    title: 'Refresh MCP information from the server',
+    description: 'Call when this session may be OLD (the client cached an earlier tool list, or the server was updated): returns the server\'s CURRENT information — toolsHash, schema/pack versions, the tools this key can use right now (name, title, description, input schema) and what changed compared with what the session knows (pass knownTools and/or toolsHash), the key\'s user/scopes/focus and, for account keys, the visible projects. Always read from the live server, never cached. When toolsChanged is true, trust this catalog over the session\'s cached tool list (call the added tools by name) and, in a repository with .uiux/uiux.lock.json, follow up with uiux_check_update / uiux_init.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        toolsHash: str('toolsHash the session / lockfile knows (reports toolsChanged when it differs).', { maxLength: 64 }),
+        knownTools: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 300, description: 'Tool names this session currently has; the answer lists which are added / removed.' },
+        includeSchemas: { type: 'boolean', description: 'Include every tool\'s description and input schema (default true). false = names and titles only.' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read', account: 'none',
+    run: ({ principal, accounts, design, limiter, toolCatalog }, args) => {
+      const hash = toolsHash();
+      const catalog = toolCatalog(principal);
+      const names = catalog.map(t => t.name);
+      const known = Array.isArray(args.knownTools) ? args.knownTools : null;
+      const added = known ? names.filter(n => !known.includes(n)) : [];
+      const removed = known ? known.filter(n => !names.includes(n)) : [];
+      const toolsChanged = (Boolean(args.toolsHash) && args.toolsHash !== hash) || added.length > 0 || removed.length > 0;
+      const withSchemas = args.includeSchemas !== false;
+      const data = {
+        refreshedAt: new Date().toISOString(),
+        server: { toolsHash: hash, schemaVersion: SCHEMA_VERSION, toolCount: catalog.length },
+        toolsChanged, added, removed,
+        tools: catalog.map(t => withSchemas ? { name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema } : { name: t.name, title: t.title }),
+        whoami: { user: principal.user, project: principal.project ?? null, key: { kind: principal.kind || 'project', name: principal.keyName, prefix: principal.prefix, scopes: principal.scopes, expiresAt: principal.expiresAt, status: principal.status }, focus: design?.current(principal) ?? null },
+        rateLimits: { calls: limiter.status('calls', principal.apiKeyId), bundles: limiter.status('bundles', principal.apiKeyId) },
+        next: toolsChanged
+          ? 'The tool set changed: use the tools listed here by name (your cached list is stale). In a repository with .uiux/uiux.lock.json run uiux_check_update, then uiux_init if it reports updateAvailable.'
+          : 'Nothing new in the tool set. Continue; uiux_check_update covers repository files and the design.'
+      };
+      if (principal.kind === 'account' && accounts) {
+        const l = accounts.listProjects(principal, { limit: 100 });
+        data.projects = l.projects.map(p => ({ key: p.key, name: p.name, role: p.role, focused: p.key === data.whoami.focus?.key }));
+        data.projectTotal = l.total;
+      }
+      return { summary: `${toolsChanged ? `TOOLS CHANGED (+${added.length} / -${removed.length}) — ` : ''}server toolsHash ${hash}, ${catalog.length} tool(s) available to this key${data.projects ? `, ${data.projectTotal} project(s) visible` : ''}. ${data.next}`, data };
     }
   },
   {

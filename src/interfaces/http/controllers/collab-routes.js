@@ -151,13 +151,13 @@ export function collabRoutes(router, c) {
   router.post('/api/sync/pull', () => c.pgSync.pullFromPostgres());
 
   // ---- Trash Management (Restore, Purge, Empty) ----
-  router.get('/api/trash', ({ query }) =>
+  router.get('/api/trash', ({ query, actor }) =>
     c.trash.list({
       itemType: query.get('itemType') || query.get('type') || '',
       projectId: query.get('projectId') ? Number(query.get('projectId')) : null,
       visibility: query.get('visibility') || '',
       q: query.get('q') || ''
-    })
+    }, { actor })
   );
   router.post('/api/trash/:id/restore', ({ params, actor }) => c.trash.restore(params.id, { actor }));
   router.delete('/api/trash/:id', ({ params, actor }) => c.trash.purge(params.id, { actor }));

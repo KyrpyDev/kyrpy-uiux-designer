@@ -212,9 +212,9 @@ export function designRoutes(router, c) {
         projects: projects.length,
         users: c.auth ? c.auth.listUsers({ includeSystem: false }).length : 1,
         pendingChanges: pendingChangesCount,
-        trash: c.trash ? c.trash.count() : 0
+        trash: c.trash ? c.trash.count({}, { actor }) : 0
       },
-      trashCount: c.trash ? c.trash.count() : 0
+      trashCount: c.trash ? c.trash.count({}, { actor }) : 0
     };
   });
 }

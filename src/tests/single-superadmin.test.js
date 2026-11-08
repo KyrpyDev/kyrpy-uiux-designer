@@ -48,7 +48,7 @@ test('superadmin edits public items directly; admin files a change request; admi
   assert.throws(() => c.icon.remove(icon.id, { actor: admin }), e => e.name === 'ForbiddenError');
   assert.doesNotThrow(() => c.icon.remove(icon.id, { actor: kyrpy }));
   const trashed = c.trash.list({ itemType: 'icon' })[0];
-  assert.throws(() => c.trash.purge(trashed.id, { actor: admin }), e => e.name === 'ForbiddenError');
+  assert.throws(() => c.trash.purge(trashed.id, { actor: admin }), e => e.name === 'NotFoundError', "another user's trash is invisible, so it cannot be purged");
   assert.equal(c.trash.purge(trashed.id, { actor: kyrpy }).purged, true);
   // an admin may still trash their own public (non-library) items
   const own = c.icon.create({ name: 'Admin Own', visibility: 'public' }, { actorId: admin.id });
@@ -195,5 +195,24 @@ test('PG push: a remote superadmin that is not the local one is demoted before t
   const upsert = sql.indexOf('INSERT INTO "users"');
   assert.ok(demote >= 0, 'demotion statement present');
   assert.ok(demote < upsert, 'runs before the users are written');
+  c.close();
+});
+
+test('trash is per user: each user lists, counts, restores, purges and empties only their own deleted items', () => {
+  const c = fresh();
+  const sa = u(c, 'superadmin'), admin = u(c, 'admin');
+  const a = c.icon.create({ name: 'Sa Own', visibility: 'public' }, { actor: sa });
+  const b = c.icon.create({ name: 'Admin Own', visibility: 'public' }, { actorId: admin.id });
+  c.icon.remove(a.id, { actor: sa });
+  c.icon.remove(b.id, { actor: admin });
+  const mine = c.trash.list({}, { actor: admin });
+  assert.deepEqual(mine.map(t => t.originalId), [b.id]);
+  assert.equal(c.trash.count({}, { actor: admin }), 1);
+  assert.equal(c.trash.count({}, { actor: sa }), 1);
+  const saItem = c.trash.list({}, { actor: sa })[0];
+  assert.throws(() => c.trash.restore(saItem.id, { actor: admin }), e => e.name === 'NotFoundError');
+  assert.throws(() => c.trash.purge(saItem.id, { actor: admin }), e => e.name === 'NotFoundError');
+  assert.equal(c.trash.empty({ actor: admin }).purgedCount, 1, 'empty only touches the actor\'s trash');
+  assert.equal(c.trash.count({}, { actor: sa }), 1, "the other user's trash is untouched");
   c.close();
 });

@@ -191,3 +191,37 @@ test('account key: download installs a read-only copy with ALL design styles, bu
     } finally { rmSync(dir, { recursive: true, force: true }); }
   } finally { w.close(); }
 });
+
+test('uiux_refresh_info: live tool catalog, diff against a stale session, projects, project-key variant, and create_project follows', async () => {
+  const w = await world();
+  try {
+    const fresh = await w.ok('uiux_refresh_info', {});
+    assert.match(fresh.server.toolsHash, /^[0-9a-f]{16}$/);
+    assert.equal(fresh.toolsChanged, false);
+    const names = fresh.tools.map(t => t.name);
+    assert.ok(names.includes('uiux_refresh_info') && names.includes('uiux_create_project'));
+    assert.ok(fresh.tools.every(t => t.inputSchema), 'schemas included by default');
+    assert.ok(fresh.projects.some(p => p.key === w.mine.key), 'account key sees its projects');
+
+    // an old session: stale hash, missing some tools, still holding a tool that no longer exists
+    const stale = await w.ok('uiux_refresh_info', { toolsHash: '0000000000000000', knownTools: ['uiux_whoami', 'uiux_removed_tool'], includeSchemas: false });
+    assert.equal(stale.toolsChanged, true);
+    assert.ok(stale.added.includes('uiux_create_project'));
+    assert.deepEqual(stale.removed, ['uiux_removed_tool']);
+    assert.ok(stale.tools.every(t => !t.inputSchema), 'includeSchemas:false is names only');
+
+    // matching hash + exact tool list = nothing changed
+    const same = await w.ok('uiux_refresh_info', { toolsHash: fresh.server.toolsHash, knownTools: names });
+    assert.equal(same.toolsChanged, false);
+
+    // project keys get the catalog they can use (no account-only tools, no project list)
+    const pk = await w.ok('uiux_refresh_info', {}, w.projKey);
+    assert.ok(!pk.tools.some(t => t.name === 'uiux_list_projects'));
+    assert.equal(pk.projects, undefined);
+
+    // the refreshed catalog lets an old session discover and use project creation
+    const made = await w.ok('uiux_create_project', { name: 'Fresh Start' });
+    assert.equal(made.project.key, 'fresh-start');
+    assert.ok((await w.ok('uiux_refresh_info', {})).projects.some(p => p.key === 'fresh-start'));
+  } finally { w.close(); }
+});

@@ -451,8 +451,9 @@ const toTrash = r => r && ({
 export class TrashRepository {
   constructor(db, sync = null) { this.db = db; this.sync = sync; }
 
-  list({ itemType = '', projectId = null, visibility = '', q = '' } = {}) {
+  list({ itemType = '', projectId = null, visibility = '', q = '', deletedBy = null } = {}) {
     const where = [], args = [];
+    if (deletedBy != null && deletedBy !== '') { where.push('t.deleted_by = ?'); args.push(Number(deletedBy)); }   // a trash is per user
     if (itemType) { where.push('t.item_type = ?'); args.push(itemType); }
     if (projectId != null && projectId !== '') { where.push('t.project_id = ?'); args.push(Number(projectId)); }
     if (visibility) { where.push('t.visibility = ?'); args.push(visibility); }
@@ -477,7 +478,8 @@ export class TrashRepository {
       WHERE t.id = ?`).get(Number(id)));
   }
 
-  count() {
+  count({ deletedBy = null } = {}) {
+    if (deletedBy != null && deletedBy !== '') return this.db.prepare('SELECT COUNT(*) AS n FROM trash_items WHERE deleted_by = ?').get(Number(deletedBy)).n;
     return this.db.prepare('SELECT COUNT(*) AS n FROM trash_items').get().n;
   }
 
