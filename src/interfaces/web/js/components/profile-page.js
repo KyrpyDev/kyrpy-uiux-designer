@@ -9,7 +9,7 @@ import { openAuthModal, ensureAuthGate, openChangesModal, openProjectsModal } fr
 
 const TABS = [['profile', 'Profile'], ['password', 'Password'], ['sessions', 'Sessions'], ['activity', 'Activity']];
 const SWATCHES = ['#2e9bff', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#ef4444', '#64748b'];
-const ROLE_TEXT = { superadmin: 'Super Admin', admin: 'Admin', designer: 'Designer', reviewer: 'Reviewer', viewer: 'Viewer' };
+const ROLE_TEXT = { superadmin: 'superadmin', admin: 'Admin', designer: 'Designer', reviewer: 'Reviewer', viewer: 'Viewer' };
 const ITEM_LABELS = { path: 'Paths', icon: 'Icons', button: 'Buttons', element: 'Elements', screen: 'Screens', workflow: 'Workflows' };
 
 const initials = u => (String(u?.displayName || u?.username || '?').replace(/\(.*?\)/g, ' ').match(/[\p{L}\p{N}]+/gu) || ['?']).slice(0, 2).map(w => w[0]).join('').toUpperCase();

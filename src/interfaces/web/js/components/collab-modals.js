@@ -16,7 +16,7 @@ import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
 
 const ROLE_LABELS = {
-  superadmin: 'Super Admin (Full System)',
+  superadmin: 'superadmin (Full System)',
   admin: 'Admin (Users + All Projects)',
   designer: 'Designer (Create & Edit)',
   reviewer: 'Reviewer (Approve / Reject)',
