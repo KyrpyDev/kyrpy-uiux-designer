@@ -42,6 +42,9 @@ test('buildProjectHtml: one self-contained file with workflows (left) and screen
     for (const id of ['pv-device', 'pv-theme', 'pv-btnstyle', 'pv-split']) assert.match(html, new RegExp(`id="${id}"`));
     assert.match(html, /\.pv-frame\[data-frame="iphone"\]/); assert.match(html, /scrollbar-width: thin/);
     assert.ok(data.devices['iphone-15'] && 'device' in data.screens[0]);
+    assert.ok(Object.keys(data.devices).length >= 12, 'every device template is exported');
+    const one = w.c.exporter.buildProjectHtml({ projectId: w.p.id, themeKeys: ['liquid'], title: 'x' });
+    assert.equal(JSON.parse(/<script type="application\/json" id="pv-data">([\s\S]*?)<\/script>/.exec(one.content)[1]).themes.length, 1, 'one design style only');
     // the runtime is valid javascript
     const runtime = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
     assert.doesNotThrow(() => new Function(runtime));

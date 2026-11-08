@@ -18,8 +18,8 @@ const xml = svg => `<?xml version="1.0" encoding="UTF-8"?>\n${svg}\n`;
  *  - exportToFolder  buildBundle + write to a folder through the writer port
  */
 export class ExportService {
-  constructor({ services, workflows, themes, menus, render, settings, writer }) {
-    Object.assign(this, { services, workflows, themes, menus, render, settings, writer });
+  constructor({ services, workflows, themes, menus, render, settings, templates, writer }) {
+    Object.assign(this, { services, workflows, themes, menus, render, settings, templates, writer });
   }
 
   /** Standalone svg of one design. opts: theme, animated (default true), frame (icons), size (icons) */
@@ -232,8 +232,11 @@ export class ExportService {
       key: info.key, name: info.name, label: info.label, descriptionDev: info.descriptionDev, width: info.width, height: info.height, device: info.device, links: info.links,
       parts: T.screenParts({ screen: info, inlineSvgs: info.inline, links: info.links, components: info.components, actions: info.actionRows, overlays: info.overlays })
     }));
+    // every device template (built-in + custom) so the screens can be inspected on each of them
+    let devices;
+    try { devices = this.templates?.devicesMap?.(); } catch { devices = undefined; }
     const content = projectViewerHtml({
-      title, themes: internal.themes, primary: internal.primary, screens,
+      devices, title, themes: internal.themes, primary: internal.primary, screens,
       workflows: workflows.map(w => ({ ...w, screens: w.ids.map(id => keyById.get(id)).filter(Boolean) })).filter(w => w.screens.length),
       menuRuntime: bindMenus.toString(), repeaterRuntime: [repeaterPlan, repeaterMarkup, bindRepeaters].map(f => f.toString()).join('\n')
     });

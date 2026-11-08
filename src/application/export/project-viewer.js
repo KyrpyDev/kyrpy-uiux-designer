@@ -142,21 +142,24 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   var devSel = document.getElementById('pv-device'), btnSel = document.getElementById('pv-btnstyle'), frameChoice = 'auto';
   var FRAMES = { mobile: 'iphone', tablet: 'tablet', desktop: 'desktop', kiosk: 'tablet', wearable: 'watch' };
   function frameKind(s) {
-    var c = frameChoice;
-    if (c === 'none' || c === 'iphone' || c === 'android' || c === 'tablet' || c === 'desktop' || c === 'watch') return c;
-    var d = DATA.devices[s.device] || {}, k = s.device || '';
+    var k = frameChoice === 'auto' ? (s.device || '') : frameChoice;
+    if (k === 'none') return 'none';
+    var d = DATA.devices[k] || {};
     if (/android|pixel|galaxy/.test(k)) return 'android';
     return FRAMES[d.category] || 'iphone';
   }
+  /** the device being inspected: the chosen template, else the screen's own (auto) */
+  function devOf(s) { return frameChoice === 'auto' ? null : DATA.devices[frameChoice] || null; }
   function applyFrame(s) {
     var dev = stage.querySelector(':scope > .ud-device'); if (!dev) return;
     var kind = frameKind(s), f = document.createElement('div'); f.className = 'pv-frame'; f.setAttribute('data-frame', kind);
-    var d = DATA.devices[s.device]; if (d && d.cornerRadius) f.style.setProperty('--pv-r', Math.round(d.cornerRadius * Math.min(1, s.width / d.width)) + 'px');
+    var d = DATA.devices[frameChoice === 'auto' ? s.device : frameChoice]; if (d && d.cornerRadius) f.style.setProperty('--pv-r', Math.round(d.cornerRadius * Math.min(1, s.width / d.width)) + 'px');
     dev.parentNode.insertBefore(f, dev); f.appendChild(dev);
   }
   if (devSel) {
     var o0 = document.createElement('option'); o0.value = 'auto'; o0.textContent = 'Device: screen default'; devSel.appendChild(o0);
-    [['iphone', 'iPhone'], ['android', 'Android'], ['tablet', 'Tablet'], ['desktop', 'Desktop'], ['watch', 'Watch'], ['none', 'No frame']].forEach(function (p) { var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; devSel.appendChild(o); });
+    [['none', 'No frame']].forEach(function (p) { var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1]; devSel.appendChild(o); });
+    Object.keys(DATA.devices).forEach(function (k) { var d = DATA.devices[k], o = document.createElement('option'); o.value = k; o.textContent = d.name + ' (' + d.width + '×' + d.height + ')'; devSel.appendChild(o); });
     try { var sd = localStorage.getItem('ud-pv-device'); if (sd && devSel.querySelector('option[value="' + sd + '"]')) { devSel.value = sd; frameChoice = sd; } } catch (e) {}
     devSel.addEventListener('change', function () { frameChoice = devSel.value; try { localStorage.setItem('ud-pv-device', frameChoice); } catch (e) {} if (cur.screen) go(cur.screen, { back: true, keep: true }); });
   }
@@ -172,7 +175,17 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     if (!dev || !s) return;
     var fr = dev.closest('.pv-frame'), padW = fr ? 80 : 0;
     var availW = canvas.clientWidth - 36 - padW, availH = canvas.clientHeight - 36 - padW;
-    var w = Math.max(160, Math.min(s.width, availW, availH * s.width / s.height));
+    var td = devOf(s), w;
+    if (td && fr) {
+      // inspect the screen on another device: the frame has that device's size and shape, the screen is scaled to fit inside it
+      var k = Math.min(availW / td.width, availH / td.height, 1.6), bw = td.width * k, bh = td.height * k;
+      var sk = Math.min(bw / s.width, bh / s.height);
+      w = Math.max(60, s.width * sk);
+      fr.style.width = bw + 'px'; fr.style.height = bh + 'px'; fr.style.display = 'flex'; fr.style.alignItems = 'center'; fr.style.justifyContent = 'center';
+    } else {
+      w = Math.max(160, Math.min(s.width, availW, availH * s.width / s.height));
+      if (fr) { fr.style.width = ''; fr.style.height = ''; fr.style.display = ''; }
+    }
     stage.style.setProperty('--ud-device-w', w + 'px');
     stage.querySelectorAll('.ud-device').forEach(function (d) { if (d === dev) d.style.setProperty('--ud-device-w', w + 'px'); });
   }
@@ -316,12 +329,12 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
  * @param {{title: string, themes: object[], primary: object, workflows: {key,name,label,descriptionDev,screens: string[]}[],
  *          screens: {key,name,label,descriptionDev,width,height,links,parts}[], menuRuntime: string, repeaterRuntime: string}} p
  */
-export function projectViewerHtml({ title, themes, primary, workflows, screens, menuRuntime, repeaterRuntime }) {
+export function projectViewerHtml({ title, themes, primary, workflows, screens, menuRuntime, repeaterRuntime, devices = DEVICES }) {
   const data = {
     title,
     themes: themes.map(t => ({ key: t.key, name: t.name })),
     workflows: workflows.map(w => ({ key: w.key, name: w.name, label: w.label, descriptionDev: w.descriptionDev, screens: w.screens })),
-    devices: Object.fromEntries(Object.entries(DEVICES).map(([k, d]) => [k, { name: d.name, width: d.width, height: d.height, category: d.category, cornerRadius: d.cornerRadius }])),
+    devices: Object.fromEntries(Object.entries(devices || DEVICES).map(([k, d]) => [k, { name: d.name, width: d.width, height: d.height, category: d.category, cornerRadius: d.cornerRadius }])),
     screens: screens.map(s => ({ key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height, device: s.device || null,
       links: (s.links || []).map(l => ({ name: l.name, to: l.to, trigger: l.trigger })) }))
   };

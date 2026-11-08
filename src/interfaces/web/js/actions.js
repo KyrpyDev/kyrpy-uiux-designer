@@ -165,13 +165,33 @@ export function downloadSvg(type, id, extra = {}) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-/** "Export all project": every workflow and screen of the active project as ONE browsable html file (download). */
+/**
+ * "Export all project": every workflow and screen of the active project as ONE browsable html file (download).
+ * A dialog asks for the design style (template): only that one is embedded to keep the file small. Every device template is
+ * always included, so the viewer can show each screen on any device.
+ */
 export function downloadProjectHtml() {
   const proj = state.projects.find(p => p.id === state.activeProjectId);
-  const qs = new URLSearchParams({ projectId: String(state.activeProjectId || 1), theme: state.themeKey, download: '1' });
-  const a = h('a', { href: `/api/export/project.html?${qs}` });
-  document.body.appendChild(a); a.click(); a.remove();
-  toast(`Exporting "${proj?.name || 'project'}" as one html file…`, 'ok', 2400);
+  const themes = state.themes || [];
+  const sel = h('select', { 'aria-label': 'Design style' }, themes.map(t => h('option', { value: t.key, selected: t.key === state.themeKey }, `${t.name}${t.tokens?.mode ? ` · ${t.tokens.mode}` : ''}`)));
+  const devs = Object.values(state.devices || DEVICES);
+  modal({
+    title: `Export "${proj?.name || 'project'}" as one html file`,
+    content: h('div', { class: 'col', style: { gap: '10px' } },
+      h('label', { class: 'field' }, h('span', {}, 'Design style (template) to export'), sel),
+      h('p', { class: 'muted' }, 'Only this one design style is embedded, which keeps the file small. Pick another one to export the project in a different look.'),
+      h('p', { class: 'muted' }, `All ${devs.length} device templates are included: in the exported file the "Device" list shows every screen on ${devs.slice(0, 4).map(d => d.name).join(', ')}… and the rest, so it can be inspected on each.`)),
+    actions: close => [
+      h('button', { class: 'btn', onclick: close }, 'Cancel'),
+      h('button', { class: 'btn primary', onclick: () => {
+        const qs = new URLSearchParams({ projectId: String(state.activeProjectId || 1), theme: sel.value, download: '1' });
+        const a = h('a', { href: `/api/export/project.html?${qs}` });
+        document.body.appendChild(a); a.click(); a.remove();
+        toast(`Exporting "${proj?.name || 'project'}" as one html file…`, 'ok', 2400);
+        close();
+      } }, 'Export')
+    ]
+  });
 }
 
 const BOX = (w, h2, extra = {}) => ({ tag: 'rect', role: 'card', name: 'surface', attrs: { x: 0, y: 0, width: w, height: h2, rx: 16 }, ...extra });

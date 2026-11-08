@@ -170,7 +170,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   });
   projects.services = services;
   projects.libraryTransfer = libraryTransfer;
-  const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, writer: new FsBundleWriter() });
+  const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, templates, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
