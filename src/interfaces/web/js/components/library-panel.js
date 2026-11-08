@@ -432,7 +432,7 @@ export class LibraryPanel {
   /* ---------- icons (drawn from the shared sprite; virtualized for libraries with thousands of pack icons) ---------- */
   /** Show / hide switch of the online icon sources (free Iconify API sets); remembered in the browser. */
   onlineToggle() {
-    if (onlineOk === null) { probeOnline().then(() => { if (onlineOk === false) this.renderBody(); }); return null; }
+    if (onlineOk === null) { probeOnline().then(() => { this.renderBody(); }); return null; }
     if (onlineOk === false) return null;       // API failing: the online source is removed from the library
     const on = onlineShown();
     return h('button', { class: `btn small${on ? ' active' : ''}`, 'aria-pressed': on, title: on ? 'Hide online icon sources' : 'Show online icon sources: search and import SVG icons from free APIs (Tabler, Lucide, Line MD, Spinners, Meteocons, Devicon, brands…)', onclick: () => { setOnlineShown(!on); this.renderBody(); } }, on ? '🌐 Online: shown' : '🌐 Online');

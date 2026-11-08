@@ -387,6 +387,27 @@ If you find this project useful, please **⭐ Star this repository** on GitHub a
 
 ---
 
+## 🙏 Acknowledgements — Open-Source Icon Sources
+
+The library's online icon import and the bundled icon packs stand on the work of these open-source projects. Thank you to every author and contributor — please respect each set's license when you reuse its icons.
+
+| Source | License |
+|---|---|
+| [Iconify API](https://iconify.design) and its [icon-set JSON](https://github.com/iconify/icon-sets) (served via jsDelivr) | MIT (API / tooling) |
+| [Tabler Icons](https://github.com/tabler/tabler-icons) | MIT |
+| [Lucide](https://lucide.dev) / [Lucide Animated](https://lucide-animated.com) | ISC |
+| [Line MD](https://github.com/cyberalien/line-md) (Material Design line icons by Vjacheslav Trushkin) | MIT |
+| [SVG Spinners](https://github.com/n3r4zzurr0/svg-spinners) | MIT |
+| [Meteocons](https://meteocons.com) (Bas Milius) | MIT |
+| [Devicon](https://devicon.dev) | MIT |
+| [Heroicons](https://heroicons.com) / [Heroicons Animated](https://www.heroicons-animated.com) (Tailwind Labs) | MIT |
+| [Simple Icons](https://simpleicons.org) | CC0 1.0 |
+| [itshover](https://github.com/itshover/itshover), [Hamburger React](https://hamburger-react.netlify.app), [Moving Icons](https://www.movingicons.dev), [Animate Icons](https://animateicons.in), [AllSVGIcons](https://allsvgicons.com) | inspiration / reference sources |
+
+Imported icons keep their per-set license in the icon metadata (`source: online/iconify`).
+
+---
+
 ## 📄 License
 
 Released under the [MIT License](./LICENSE).

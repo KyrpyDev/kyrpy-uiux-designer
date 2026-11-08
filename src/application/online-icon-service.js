@@ -11,6 +11,8 @@ import { ValidationError } from '../domain/errors.js';
 import { packSvgToNodes } from '../scripts/import-icon-packs.js';
 
 export const ICONIFY_API = 'https://api.iconify.design';
+/** Whole icon sets (one request each, no per-icon API calls): the @iconify-json packages on the jsDelivr CDN. */
+export const ICONIFY_CDN = 'https://cdn.jsdelivr.net/npm/@iconify-json';
 export const MAX_IMPORT = 10000;
 const CHUNK = 100;
 const TTL = 60 * 60 * 1000;
@@ -68,7 +70,8 @@ export class OnlineIconService {
   constructor({ services, fetchImpl = globalThis.fetch, transaction = fn => fn(), backoffMs = 1500 }) {
     Object.assign(this, { services, fetchImpl, transaction, backoffMs });
     this.cache = new Map();            // url -> { at, value }
-    this.svgCache = new Map();         // `${prefix}:${name}:${color}` -> svg (small LRU)
+    this.svgCache = new Map();
+    this.setCache = new Map();         // prefix -> full set json (kept small: sets can be several MB)         // `${prefix}:${name}:${color}` -> svg (small LRU)
   }
 
   async #json(url) {
@@ -102,12 +105,27 @@ export class OnlineIconService {
     return rows.sort((a, b) => rank(a.prefix) - rank(b.prefix) || a.title.localeCompare(b.title));
   }
 
-  async #names(prefix) {
+  /** The full set (icons, aliases, info) from the CDN; cached for the last few sets. */
+  async #setData(prefix) {
     if (!PREFIX_RE.test(prefix)) throw new ValidationError('invalid set prefix');
-    const c = await this.#json(`${ICONIFY_API}/collection?prefix=${encodeURIComponent(prefix)}`);
-    const names = new Set(c.uncategorized || []);
-    for (const list of Object.values(c.categories || {})) for (const n of list) names.add(n);
-    return { names: [...names].sort(), info: c };
+    if (this.setCache.has(prefix)) return this.setCache.get(prefix);
+    let res;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      res = await this.fetchImpl(`${ICONIFY_CDN}/${prefix}/icons.json`, { signal: AbortSignal.timeout(90000) });
+      if (res.status !== 429 && res.status < 500) break;
+      await new Promise(r => setTimeout(r, this.backoffMs * 2 ** attempt));
+    }
+    if (!res.ok) throw new ValidationError(res.status === 404 ? `set "${prefix}" is not available` : `icon source answered ${res.status}`);
+    const data = await res.json();
+    this.setCache.set(prefix, data);
+    if (this.setCache.size > 3) this.setCache.delete(this.setCache.keys().next().value);
+    return data;
+  }
+
+  async #names(prefix) {
+    const data = await this.#setData(prefix);
+    const names = [...new Set([...Object.keys(data.icons || {}), ...Object.keys(data.aliases || {})])].sort();
+    return { names, info: data.info || {} };
   }
 
   /**
@@ -157,13 +175,16 @@ export class OnlineIconService {
     const pid = Number(projectId) || 1;
     const vis = visibility || (pid === 1 ? 'public' : 'project');
     const res = { imported: 0, skipped: 0, failed: 0, errors: [], truncated, ids: [] };
-    let info = null;
-    try { info = (await this.#json(`${ICONIFY_API}/collections?prefix=${encodeURIComponent(prefix)}`))[prefix] || null; } catch { /* license info is optional */ }
+    let full = null;
+    try { full = await this.#setData(prefix); } catch { /* falls back to the per-icon API below */ }
+    const info = full?.info || null;
     for (let i = 0; i < list.length; i += CHUNK) {
       const chunk = list.slice(i, i + CHUNK);
-      let data;
-      try { data = await this.#json(`${ICONIFY_API}/${prefix}.json?icons=${chunk.join(',')}`); }
-      catch (e) { res.failed += chunk.length; res.errors.push(`${chunk[0]}…: ${e.message}`); continue; }
+      let data = full;
+      if (!data) {
+        try { data = await this.#json(`${ICONIFY_API}/${prefix}.json?icons=${chunk.join(',')}`); }
+        catch (e) { res.failed += chunk.length; res.errors.push(`${chunk[0]}…: ${e.message}`); continue; }
+      }
       const defW = data.width || 24, defH = data.height || 24;
       this.transaction(() => {
         for (const name of chunk) {

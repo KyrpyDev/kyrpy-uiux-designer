@@ -9,7 +9,8 @@ const fakeFetch = async url => {
   const ok = body => ({ ok: true, status: 200, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
   if (u.includes('/collections?prefix=')) return ok({ 'line-md': { name: 'Line MD', license: { title: 'MIT', url: 'https://x' } } });
   if (u.endsWith('/collections')) return ok({ 'line-md': { name: 'Line MD', total: 2, license: { title: 'MIT' } }, zzz: { name: 'Zzz', total: 1 } });
-  if (u.includes('/collection?prefix=line-md')) return ok({ uncategorized: ['home', 'account'], categories: { More: ['gear'] } });
+  if (u.includes('cdn.jsdelivr.net') && u.includes('/line-md/')) return ok({ info: { name: 'Line MD', license: { title: 'MIT', url: 'https://x' } }, width: 24, height: 24, icons: { home: { body: ANIM }, account: { body: '<circle cx="12" cy="12" r="5"/>' }, gear: { body: '<circle cx="12" cy="12" r="3"/>' } } });
+  if (u.includes('cdn.jsdelivr.net')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
   if (u.includes('/search?')) return ok({ icons: ['line-md:home', 'tabler:home'], total: 2 });
   if (u.includes('/line-md.json')) return ok({ width: 24, height: 24, icons: { home: { body: ANIM }, account: { body: '<circle cx="12" cy="12" r="5"/>' } } });
   if (u.endsWith('.svg') || u.includes('.svg?')) return ok('<svg viewBox="0 0 24 24"><path d="M0 0h24"/></svg>');
