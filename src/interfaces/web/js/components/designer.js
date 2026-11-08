@@ -647,10 +647,10 @@ export class Designer {
   titleField() {
     const name = this.doc.name;
     if (!this.isOwnedByCurrentUser(this.doc)) {
-      return h('b', { style: { padding: '0 8px', maxWidth: '50ch', minWidth: '12ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
+      return h('b', { style: { padding: '0 8px', maxWidth: '20ch', minWidth: '12ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
     }
     const input = h('input', { class: 'doc-title', type: 'text', value: name, title: `Click to rename · variable name: ${this.doc.key}`, 'aria-label': 'Item name', maxlength: '80', spellcheck: 'false' });
-    const fit = () => { input.style.width = `${Math.min(80, Math.max(50, input.value.length + 2))}ch`; };
+    const fit = () => { input.style.width = '20ch'; };
     const commit = async () => {
       const v = input.value.trim();
       if (!v || v === this.doc.name) { input.value = this.doc.name; fit(); return; }

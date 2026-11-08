@@ -814,7 +814,7 @@ button.profile-stat:hover { border-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { .proj-trigger-wrap.proj-none { animation: none; } }
 
 /* editable item name in the designer bar */
-input.doc-title { font: inherit; font-weight: 700; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px; min-width: 0; max-width: 80ch; }
+input.doc-title { font: inherit; font-weight: 700; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px; min-width: 0; max-width: 20ch; text-overflow: ellipsis; }
 input.doc-title:hover { border-color: var(--line); }
 input.doc-title:focus { outline: none; border-color: var(--accent); background: var(--panel2); }
 .lib-card .tb button.tb-order-front, .lib-card .tb button.tb-order-back, .cell .tb button.tb-order-front, .cell .tb button.tb-order-back { font-size: 10px; }
@@ -873,5 +873,5 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .dz > .dz-bar:not(.dz-pathbar) { display: none; }
 
 /* designer toolbar: the name field shows 50+ characters when there is room and shrinks (not below 24) before the bar wraps; the hint text makes room */
-.typebar input.doc-title, .typebar b[title] { flex: 0 1 auto; min-width: 24ch; }
+.typebar input.doc-title, .typebar b[title] { flex: 0 1 auto; min-width: 12ch; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .typebar:has(.doc-title) .typebar-hint, .typebar:has(.tool-menu-btn) .typebar-hint { display: none; }
