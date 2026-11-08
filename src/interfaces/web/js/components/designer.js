@@ -455,13 +455,14 @@ export class Designer {
     });
 
     this.docbar.append(...[
+      this.historyMenu(),
+      h('span', { class: 'sep-v' }),
       this.saveBtn,
       this.saveAsBtn,
       this.saveTargetsDropdown,
       this.resetBtn,
       this.deviceMenu,
       h('span', { class: 'sep-v' }),
-      visSeg,
       lockDocBtn,
       copyToProjBtn,
       moveToProjBtn,
@@ -707,7 +708,7 @@ export class Designer {
     const kids = [
       h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
       this.titleField(),
-      h('span', { class: 'sep-v' }), ...toolGroups, this.historyMenu(), h('span', { class: 'sep-v' }),
+      h('span', { class: 'sep-v' }), ...toolGroups, h('span', { class: 'sep-v' }),
       ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
       ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
       ibtn('copy', 'Duplicate', () => this.duplicateSelected(), { kbd: 'Ctrl+D' }),
