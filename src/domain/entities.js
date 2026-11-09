@@ -434,6 +434,9 @@ export const DEFAULT_MENU = {
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
   hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)
+  hubCenterSize: 1,     // hub bar sizes as a fraction of the centre item size: centre (even bars have two centres) ...
+  hubSideSize: 0.6,     // ... the buttons next to the centre ...
+  hubEdgeSize: 0.4,     // ... and the outer ones: even 0.4 0.6 1 1 0.6 0.4, odd 0.4 0.6 1 0.6 0.4
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

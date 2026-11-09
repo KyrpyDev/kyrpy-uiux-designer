@@ -10,7 +10,7 @@
  *   centre click:  closed -> open root | open at root -> close | open inside an item -> one level back
  *   item click:    has sub items -> enter it (centre shows its icon in the "rotating" kind) | leaf -> action + close
  *
- * Hub kind (`data-kind="hub"`): a ring of 3+ root items shown as 3 buttons (small left, DOUBLE-size centre, small right), always open.
+ * Hub kind (`data-kind="hub"`): a ring of root items shown as a bar of up to 5 (odd) / 6 (even) buttons sized edge / side / centre, always open.
  *   state { open:true, path, c: ring index of the centre, prev: ring index to return to }
  *   side click:   the clicked button swaps place and size with the centre; with sub items they fan out around the centre
  *   centre click: sub items of the centre item fan out | in a fan: one level back (at the first level: back to the previous ring position)
@@ -26,11 +26,11 @@ export function bindMenus(root, opts) {
   function get(btn) { var s = states.get(btn); if (!s) { if (isHub(btn)) { var m0 = btn.querySelector('.ud-menu'), c0 = +(m0 && m0.getAttribute('data-hub-start')) || 0; s = { open: true, path: [], c: c0, prev: c0 }; } else s = { open: false, path: [] };   /* hub: starts on its default centre item */ states.set(btn, s); } return s; }
   function hubItems(btn) { return Array.prototype.slice.call(btn.querySelectorAll('.rm-level[data-level=""] .rm-hub-item')); }
   /*
-   * The hub bar shows `data-hub-visible` items (default 3). Odd (3 / 5): the current item is the big centre, the others small at its
-   * sides. Even (2 / 4 / 6): every item is small; the current one sits just left of (above) the middle. When the menu has more items
-   * than slots, the two end slots are drawn 30 % smaller (there are more items), and the bar shrinks to fit the device screen.
+   * The hub bar size follows the number of top-level items: even -> up to 6 slots, odd -> up to 5. Slot sizes go by the distance
+   * from the middle, as fractions of the centre size (data-hub-sizes = centre, side, edge): even 0.4 0.6 1 1 0.6 0.4, odd
+   * 0.4 0.6 1 0.6 0.4. With more items than slots the bar scrolls (a click on a far end steps it). Even bars have two middle
+   * items and no centre hit area; the bar shrinks to fit the device screen.
    */
-  // bar slots follow the number of top-level items: even -> up to 6, all small; odd -> up to 5 with a big centre
   function hubSlots(m, n) {
     var odd = n % 2 === 1, v = Math.min(n, odd ? 5 : 6);
     return { v: Math.max(1, v), odd: odd, more: n > v };
@@ -72,16 +72,19 @@ export function bindMenus(root, opts) {
     var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), small = +m.getAttribute('data-hub-small'), gap = +m.getAttribute('data-hub-gap');
     var big = +m.getAttribute('data-hub-big') || small * 2, hk = +m.getAttribute('data-hub-k') || 0.5;
     var vert = m.getAttribute('data-hub-vertical') === '1', fan = st.path.length > 0;
-    var sl = hubSlots(m, n), v = sl.v, END = 0.7;
+    var sl = hubSlots(m, n), v = sl.v;
+    // sizes by distance from the middle, as fractions of the centre size: centre, side, edge (data-hub-sizes)
+    var fr = String(m.getAttribute('data-hub-sizes') || '1,0.6,0.4').split(',').map(Number);
+    var frac = function (dist) { return dist <= 0 ? (fr[0] || 1) : dist === 1 ? (fr[1] || 0.6) : (fr[2] || 0.4); };
     if (btn.setAttribute) btn.setAttribute('data-hub-even', sl.odd ? '0' : '1');
     // slot -> {dx, size}: positions along the bar, centred on the button
     var slots = {}, lo, hi;
     if (sl.odd) { var h = (v - 1) / 2; lo = -h; hi = h; } else { lo = -(v / 2 - 1); hi = v / 2; }
-    var sizeOf = function (d) { if (sl.odd && d === 0) return big; return small * (sl.more && (d === lo || d === hi) && v > 1 ? END : 1); };
+    var sizeOf = function (d) { return big * frac(sl.odd ? Math.abs(d) : (d <= 0 ? -d : d - 1)); };
     if (sl.odd) {
-      slots[0] = { dx: 0, s: big };
+      slots[0] = { dx: 0, s: sizeOf(0) };
       for (var side = -1; side <= 1; side += 2) {
-        var edge = big / 2;
+        var edge = sizeOf(0) / 2;
         for (var j = 1; j <= (v - 1) / 2; j++) { var d = side * j, s = sizeOf(d); slots[d] = { dx: side * (edge + gap + s / 2), s: s }; edge += gap + s; }
       }
     } else {
@@ -103,7 +106,7 @@ export function bindMenus(root, opts) {
       if (!sl.odd && n > v && d > hi) d -= n; if (!sl.odd && n > v && d < lo) d += n;
       var slot = slots[d], dx = 0, k = 0, o = 0, pos = 'hidden';
       if (fan) {                                                 // a fan is open: only the current item stays, in the middle
-        if (d === 0) { k = sl.odd ? 1 : hk; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
+        if (d === 0) { k = sizeOf(0) / big; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
       } else if (slot) {
         dx = slot.dx * f; k = (slot.s / big) * f; o = 1;
         pos = d === 0 ? 'center' : d < 0 ? (d === -1 ? 'prev' : 'prev' + (-d)) : (d === 1 ? 'next' : 'next' + d);
@@ -111,7 +114,7 @@ export function bindMenus(root, opts) {
       }
       el.style.setProperty('--x', (cx + (vert ? 0 : dx)) + 'px');
       el.style.setProperty('--y', (cy + (vert ? dx : 0)) + 'px');
-      el.style.setProperty('--k', String(k));
+      el.style.setProperty('--k', String(Math.round(k * 1000) / 1000));
       el.style.setProperty('--o', String(o));
       el.setAttribute('data-hub-pos', pos);
     });

@@ -78,11 +78,11 @@ function hubWorld(n = 5, children = { 0: true }, extra = {}) {
   return { btn, items, click, centre, fanItem, ctl, actions, pos, sub, rootLevel, handlers };
 }
 
-test('hub runtime: initial layout is big centre with small sides; 7 items show 5, the outer ones 30 % smaller', () => {
+test('hub runtime: initial layout is edge / side / centre / side / edge; 7 items show 5', () => {
   const w = hubWorld(7, {});
   assert.deepEqual(w.pos(), ['center', 'next', 'next2', 'hidden', 'hidden', 'prev2', 'prev']);
-  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.5'); assert.equal(w.items[6].styleVars['--k'], '0.5');
-  assert.equal(w.items[2].styleVars['--k'], '0.35'); assert.equal(w.items[5].styleVars['--k'], '0.35');   // ends: 0.5 x 0.7
+  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.6'); assert.equal(w.items[6].styleVars['--k'], '0.6');
+  assert.equal(w.items[2].styleVars['--k'], '0.4'); assert.equal(w.items[5].styleVars['--k'], '0.4');
   assert.ok(parseFloat(w.items[1].styleVars['--x']) > 28 && parseFloat(w.items[6].styleVars['--x']) < 28);   // right of / left of the centre
   assert.equal(w.items[0].styleVars['--y'], '28px');                                                     // horizontal bar: same y
   assert.equal(w.btn.attrs['data-open'], '1');
@@ -533,22 +533,31 @@ test('menu item "goes to screen" picker: toolbar button, copy into this project 
   assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id \}\)/, 'the new tab links the created screen back');
 });
 
-test('hub bar size follows the item count: even -> up to 6 all small, odd -> up to 5 with a big centre; more -> ends 30 % smaller', () => {
-  assert.equal(DEFAULT_MENU.hubVisible, undefined, 'no setting any more');
-  const bar = n => { const w = hubWorld(n, {}); w.ctl.set(w.btn, { open: true, path: [], c: 0, prev: 0 }); return w; };
-  const k = (w, i) => w.items[i].styleVars['--k'];
-  const shown = w => w.pos().filter(p => p !== 'hidden').length;
-  let w = bar(3);
-  assert.deepEqual(w.pos(), ['center', 'next', 'prev']); assert.equal(k(w, 1), '0.5'); assert.equal(w.btn.attrs['data-hub-even'], '0');
-  w = bar(5);
-  assert.equal(shown(w), 5); assert.ok([1, 2, 3, 4].every(i => k(w, i) === '0.5'), 'all fit: no end shrinks');
-  w = bar(9);
-  assert.equal(shown(w), 5); assert.equal(k(w, 0), '1'); assert.equal(k(w, 2), '0.35'); assert.equal(k(w, 7), '0.35');
-  w = bar(4);
-  assert.equal(w.btn.attrs['data-hub-even'], '1'); assert.equal(shown(w), 4); assert.ok(w.items.every((x, i) => k(w, i) === '0.5'), 'even: all equal');
-  w = bar(10);
-  assert.equal(shown(w), 6); assert.equal(w.items.filter((x, i) => w.pos()[i] !== 'hidden' && k(w, i) === '0.35').length, 2);
-  assert.ok(w.items.every((x, i) => w.pos()[i] === 'hidden' || ['0.5', '0.35'].includes(k(w, i))));
+test('hub bar size follows the item count: even 0.4 0.6 1 1 0.6 0.4 (max 6), odd 0.4 0.6 1 0.6 0.4 (max 5); sizes come from the settings', () => {
+  assert.equal(DEFAULT_MENU.hubVisible, undefined, 'no visible-count setting');
+  assert.deepEqual([DEFAULT_MENU.hubCenterSize, DEFAULT_MENU.hubSideSize, DEFAULT_MENU.hubEdgeSize], [1, 0.6, 0.4]);
+  const bar = (n, sizes) => { const w = hubWorld(n, {}); if (sizes) w.btn.querySelector('.ud-menu').attrs['data-hub-sizes'] = sizes; w.ctl.set(w.btn, { open: true, path: [], c: 0, prev: 0 }); return w; };
+  const ks = w => w.items.map((x, i) => [w.items[i].styleVars['--x'], w.pos()[i], x.styleVars['--k']]).filter(r => r[1] !== 'hidden').sort((a, b) => parseFloat(a[0]) - parseFloat(b[0])).map(r => r[2]);
+  assert.deepEqual(ks(bar(3)), ['0.6', '1', '0.6']);
+  assert.deepEqual(ks(bar(5)), ['0.4', '0.6', '1', '0.6', '0.4']);
+  assert.deepEqual(ks(bar(9)), ['0.4', '0.6', '1', '0.6', '0.4'], 'more odd items: still 5 shown');
+  assert.deepEqual(ks(bar(2)), ['1', '1']);
+  assert.deepEqual(ks(bar(4)), ['0.6', '1', '1', '0.6']);
+  assert.deepEqual(ks(bar(6)), ['0.4', '0.6', '1', '1', '0.6', '0.4']);
+  assert.deepEqual(ks(bar(10)), ['0.4', '0.6', '1', '1', '0.6', '0.4'], 'more even items: still 6 shown');
+  assert.equal(bar(4).btn.attrs['data-hub-even'], '1'); assert.equal(bar(5).btn.attrs['data-hub-even'], '0');
+  assert.deepEqual(ks(bar(5, '0.9,0.5,0.3')), ['0.3', '0.5', '0.9', '0.5', '0.3'], 'adjustable sizes');
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'hs', key: 'hub-hs', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 56, height: 56 }, { nodes: [] });
+    c.menus.setConfig(b.id, { ...HUB.config });
+    ['a', 'b', 'c'].forEach(l => c.menus.addItem(b.id, { label: l }));
+    assert.throws(() => c.menus.setConfig(b.id, { hubEdgeSize: 5 }), /hubEdgeSize must be a number from 0.1 to 2/);
+    assert.equal(c.menus.setConfig(b.id, { hubSideSize: '0.7' }).hubSideSize, 0.7);
+    assert.match(c.render.boxSvg('button', b.id, null, {}), /data-hub-sizes="1,0.7,0.4"/);
+  } finally { c.close(); }
+  let w;
   assert.match(MENU_CSS, /\[data-hub-even="1"\] \.rm-hit\{pointer-events:none\}/);
   // an end item further out scrolls the bar by one step instead of acting
   w = bar(9);

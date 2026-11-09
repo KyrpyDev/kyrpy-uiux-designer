@@ -106,6 +106,12 @@ export class MenuService {
     if (cfg.kind !== undefined && !MENU_KINDS.includes(cfg.kind)) throw new ValidationError(`kind must be one of ${MENU_KINDS.join(', ')}`);
     if (cfg.layout !== undefined && !MENU_LAYOUTS.includes(cfg.layout)) throw new ValidationError(`layout must be one of ${MENU_LAYOUTS.join(', ')}`);
     if (cfg.fanCorner !== undefined && !MENU_FAN_CORNERS.includes(cfg.fanCorner || '')) throw new ValidationError(`fanCorner must be one of ${MENU_FAN_CORNERS.filter(Boolean).join(', ')} (or empty)`);
+    for (const k of ['hubCenterSize', 'hubSideSize', 'hubEdgeSize']) {
+      if (cfg[k] === undefined) continue;
+      const v = Number(cfg[k]);
+      if (!(v >= 0.1 && v <= 2)) throw new ValidationError(`${k} must be a number from 0.1 to 2 (a fraction of the centre item size)`);
+      cfg = { ...cfg, [k]: v };
+    }
     if (cfg.hubCenterItemId != null) {
       const it = this.menus.list(b.id).find(m => m.id === Number(cfg.hubCenterItemId));
       if (!it || it.parentId != null) throw new ValidationError('hubCenterItemId must be a top-level item of this menu');
