@@ -1028,11 +1028,23 @@ function connectSync() {
       for (const d of live) { if (d.dirty) continue; await d.reload(false); d.markBaseline(); }
       await reloadLibrary({ silent: true });
       for (const d of live) d.renderStage();
-      app.library?.renderBody?.();
+      // the library panel re-renders itself on library:changed only when what it shows changed
       await app.browser?.reload?.();
       emit('library:changed');
     } catch (e) { console.warn('resync failed', e); }
   }, 300);
+  // fast path for a design under live test: the event names the design that changed (e.g. a button whose menu was edited in
+  // another tab); fetch just that one, patch it into the library and redraw at once, before the full library reload lands
+  const fastPatch = async msg => {
+    const live = [app.designer, ...app.modals].filter(d => d?.actionsLive && d.doc);
+    if (!live.length || !msg.designType || msg.designId == null) return;
+    try {
+      const rec = await api.getDesign(msg.designType, msg.designId);
+      const list = state.library?.[PLURAL[msg.designType]];
+      if (Array.isArray(list)) { const i = list.findIndex(x => x.id === rec.id); if (i >= 0) list[i] = { ...list[i], ...rec }; else list.push(rec); }
+      for (const d of live) if (!(d.type === msg.designType && d.doc.id === rec.id)) d.renderStage();
+    } catch { /* the full resync follows anyway */ }
+  };
   const es = new EventSource('/api/events');
   let seen = null;
   es.onmessage = ev => {
@@ -1040,6 +1052,7 @@ function connectSync() {
     if (msg.type !== 'library-changed') return;
     if (seen !== null && msg.version === seen) return;
     seen = msg.version;
+    fastPatch(msg);
     resync();
   };
 }

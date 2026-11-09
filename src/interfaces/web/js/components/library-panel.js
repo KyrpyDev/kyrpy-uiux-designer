@@ -47,7 +47,8 @@ export class LibraryPanel {
     this.root = root; this.app = app;
     this.q = {}; this.cat = {};
     this.workflows = [];
-    on('library:changed', () => { this.screensList = null; this.loadWorkflows(); this.renderBody(); });
+    // sync events arrive on every write (also our own edits): re-render only when what this tab shows really changed
+    on('library:changed', () => { this.loadWorkflows(); this.softRefresh(); });
     on('project:changed', () => { this.screensList = null; this.loadWorkflows(); this.renderBody(); });
     on('theme:changed', () => this.renderBody());
     on('screen:saved', () => this.renderBody());
@@ -91,14 +92,37 @@ export class LibraryPanel {
     if (state.tab === 'workflow') this.renderBody();
   }
 
+  /** What the open tab shows (rows + edit marks + filters): equal signatures mean the list on screen is still right. */
+  bodySig() {
+    const tab = state.tab;
+    const rows = tab === 'screen' ? this.screensList : tab === 'workflow' ? this.workflows : state.library?.[PLURAL[tab]];
+    if (!rows) return null;
+    const rowSig = tab === 'icon' ? `${rows.length}:${state.library?.iconsVersion || ''}` : rows.map(r => `${r.id}:${r.updatedAt || ''}:${r.name}:${r.visibility || ''}`).join('|');
+    return `${tab}#${state.themeKey}#${state.visibilityFilter}#${state.activeProjectId}#${editedKeys().join(',')}#${rowSig}`;
+  }
+
+  /** Background refresh: fetches the screen list again and re-renders only when the signature moved (scroll and cells stay put otherwise). */
+  async softRefresh() {
+    if (state.tab === 'screen') {
+      try { this.screensList = await api.list('screen', '', { includePublic: true }); } catch { /* keep the old list */ }
+    }
+    const sig = this.bodySig();
+    if (sig != null && sig === this.renderedSig) return;
+    this.renderBody();
+  }
+
   renderBody() {
     this.renderTabs();
+    const keepScroll = this.bodyEl.querySelector('.lib-scroll')?.scrollTop || 0;
     clear(this.bodyEl);
     if (state.tab === 'screen') this.screensTab();
     else if (state.tab === 'workflow') this.workflowsTab();
     else if (state.tab === 'icon') this.iconsTab();
     else this.thumbTab(state.tab);
     this.decorateTools();
+    this.renderedSig = this.bodySig();
+    const sc = this.bodyEl.querySelector('.lib-scroll');
+    if (sc && keepScroll) sc.scrollTop = keepScroll;
   }
 
   /**
@@ -922,7 +946,7 @@ export class LibraryPanel {
   }
 
   /** Called by the app when a screen record changed (rename, thumbnails). */
-  invalidateScreens() { this.screensList = null; if (state.tab === 'screen') this.renderBody(); }
+  invalidateScreens() { if (state.tab === 'screen') this.softRefresh(); else this.screensList = null; }
 }
 
 /* A cell's hover toolbar can be wider than the cell: nudge it back inside the library panel instead of leaving the screen. */

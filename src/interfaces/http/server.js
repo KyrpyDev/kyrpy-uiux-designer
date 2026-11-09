@@ -59,9 +59,12 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
   const syncClients = new Set();
   let syncVersion = 0;
   const MUTATIONS = ['POST', 'PUT', 'PATCH', 'DELETE'];
-  const broadcastSync = () => {
+  // the design a write touched (e.g. PUT /api/buttons/12/menu/items/3 -> button 12) lets clients refresh just that one at once
+  const PLURAL_TYPES = { paths: 'path', icons: 'icon', buttons: 'button', elements: 'element', screens: 'screen' };
+  const touched = path => { const m = /^\/api\/(paths|icons|buttons|elements|screens)\/(\d+)(?:\/|$)/.exec(path || ''); return m ? { designType: PLURAL_TYPES[m[1]], designId: Number(m[2]) } : {}; };
+  const broadcastSync = (path = '') => {
     syncVersion += 1;
-    const msg = `data: ${JSON.stringify({ type: 'library-changed', version: syncVersion })}\n\n`;
+    const msg = `data: ${JSON.stringify({ type: 'library-changed', version: syncVersion, ...touched(path) })}\n\n`;
     for (const c of syncClients) c.write(msg);
   };
 
@@ -107,7 +110,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
         const ip = req.socket?.remoteAddress || '';
         const baseUrl = publicBaseUrl(req);
         const out = await hit.handler({ params: hit.params, query: url.searchParams, body, token, actor, projectId, ip, baseUrl });
-        if (MUTATIONS.includes(req.method)) broadcastSync();
+        if (MUTATIONS.includes(req.method)) broadcastSync(url.pathname);
         if (out && out.raw !== undefined) {
           const h = { 'content-type': out.contentType || 'text/plain', 'cache-control': out.cacheControl || 'no-store' };
           if (out.filename) h['content-disposition'] = `attachment; filename="${out.filename}"`;

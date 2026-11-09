@@ -24,6 +24,11 @@ const FORM_ELEMENT_KEYS = new Set([
   'html-form'
 ]);
 
+/** The ✎ edit pills of the live test are a per-viewer setting (on by default). */
+const LIVE_PILLS_KEY = 'ud_live_edit_pills';
+export function livePillsShown() { try { return localStorage.getItem(LIVE_PILLS_KEY) !== '0'; } catch { return true; } }
+function setLivePills(on) { try { localStorage.setItem(LIVE_PILLS_KEY, on ? '1' : '0'); } catch { /* storage unavailable */ } }
+
 export function installTestActions(Designer) {
   const proto = Designer.prototype;
 
@@ -197,7 +202,7 @@ export function installTestActions(Designer) {
     tip.addEventListener('mouseleave', hide);
     tip.addEventListener('click', ev => { ev.stopPropagation(); if (cur) this.editInNewTab('button', cur.btnId, { item: cur.itemId }); tip.hidden = true; });
     this.stage.addEventListener('mouseover', ev => {
-      if (!this.actionsLive) return;
+      if (!this.actionsLive || !livePillsShown()) return hide();
       const it = ev.target.closest?.('.rm-item[data-menu-id]');
       const btnEl = it?.closest('.ud-btn[data-btn-id]');
       if (!it || !btnEl || it.getAttribute('data-hub-pos') === 'hidden') return hide();
@@ -288,6 +293,8 @@ export function installTestActions(Designer) {
 
     hudItems.push(
       h('span', { class: 'grow' }),
+      h('button', { class: `btn small${livePillsShown() ? ' primary' : ''}`, title: 'Show / hide the ✎ edit pills on the tested items (remembered in this browser)',
+        onclick: () => { setLivePills(!livePillsShown()); this.renderLiveTestLayer(); } }, livePillsShown() ? '✎ Pills on' : '✎ Pills off'),
       h('button', { class: 'btn small', title: `Edit this ${this.type} in a new tab (saved edits show up here at once)`, onclick: () => this.editInNewTab(this.type, d.id) }, `✎ Edit ${this.type} ↗`),
       h('button', {
         class: 'btn small danger',
@@ -307,7 +314,7 @@ export function installTestActions(Designer) {
     this.mountLiveActionHotspots(links);
 
     // 5. Edit pills: every placed item / menu (and menu items on hover) open their designer in a new tab
-    this.mountLiveEditPills();
+    if (livePillsShown()) this.mountLiveEditPills();
     this.installLiveItemPill();
   };
 

@@ -487,3 +487,33 @@ test('live test UI: hotspots forward clicks to menus under them, edit pills open
   assert.match(ed, /this\.d\.navigateLiveToScreen\(targetScreen\.id/, 'menu navigation stays in the live test');
   assert.match(ed, /if \(!this\.active\) \{\s*for \(const b of this\.d\.stage\.querySelectorAll\('\.ud-btn'\)\)/, 'hub bars placed on screens are laid out after every render');
 });
+
+test('rotation: item icons turn about their own centre and keep the angle across a redraw', () => {
+  const rows = [{ id: 1, parentId: null, ord: 0, name: 'a', label: 'A', iconId: 7 }, { id: 2, parentId: null, ord: 1, name: 'b', label: 'B', iconId: 7 }, { id: 3, parentId: null, ord: 2, name: 'c', label: 'C', iconId: 7 }];
+  const ctx = createContext({ theme: BUILTIN_THEMES[0] });
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config }, tree: buildMenuTree(rows), ctx, iconKey: () => 'dot' });
+  assert.match(svg, /class="rm-icon" style="transform-origin:0px 0px"/, 'item icons are drawn around (0,0): that is their pivot');
+  assert.match(MENU_CSS, /\.rm-item \.rm-icon\{transform-box:view-box;/);
+  assert.doesNotMatch(MENU_CSS, /fill-box/, 'fill-box gives a wrong pivot on <use>');
+  // the turned angle lives in the menu state: a fresh markup (new elements) gets it back
+  const w = hubWorld(5, {});
+  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '45';
+  w.items.forEach(it => { it.style.getPropertyValue = k => it.styleVars[k] ?? ''; it.sel2 = '.rm-item'; });
+  w.click(w.items[1]);
+  assert.equal(w.items[1].styleVars['--spin'], '45deg');
+  const st = w.ctl.get(w.btn);
+  assert.deepEqual(st.spins, { i1: 45 });
+  w.items[1].styleVars = {};                                     // a redraw lost the inline style
+  w.btn.querySelectorAll = s => (s === '.rm-item' ? w.items : w.btn.kids.filter(k => k.sel === s));
+  w.ctl.set(w.btn, { ...st, spins: undefined });                 // state objects without spins keep the old ones
+  assert.equal(w.items[1].styleVars['--spin'], '45deg');
+});
+
+test('sync: the server names the design a write touched; live designs patch it at once; library panel redraws only on real changes; pills can be hidden', () => {
+  const rd = f => readFileSync(new URL(f, import.meta.url), 'utf8');
+  const server = rd('../interfaces/http/server.js'), main = rd('../interfaces/web/js/main.js'), lib = rd('../interfaces/web/js/components/library-panel.js'), ta = rd('../interfaces/web/js/components/designer-test-actions.js');
+  assert.match(server, /broadcastSync\(url\.pathname\)/); assert.match(server, /designType: PLURAL_TYPES\[m\[1\]\], designId: Number\(m\[2\]\)/);
+  assert.match(main, /fastPatch\(msg\);/); assert.doesNotMatch(main, /app\.library\?\.renderBody\?\.\(\);/);
+  assert.match(lib, /on\('library:changed', \(\) => \{ this\.loadWorkflows\(\); this\.softRefresh\(\); \}\);/); assert.match(lib, /sig === this\.renderedSig\) return;/);
+  assert.match(ta, /if \(livePillsShown\(\)\) this\.mountLiveEditPills\(\);/);
+});

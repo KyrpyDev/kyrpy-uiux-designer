@@ -144,13 +144,14 @@ export function bindMenus(root, opts) {
     btn.setAttribute('data-hubdepth', hub ? String(st.path.length) : '0');
     if (hub) btn.setAttribute('data-hub', '1');
     if (hub) layoutHub(btn, st);
+    restoreSpins(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
     // a corner fan is already placed inside the screen: the rest of the menu stays where it is
     var m = btn.querySelector('.ud-menu');
     if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
     else { downsize(btn, screenBox(btn)); fit(btn); }
   }
-  function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
+  function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; var old = states.get(btn); if (st && !st.spins && old && old.spins) st.spins = old.spins; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
     if (opts.onAction) opts.onAction({
       menu: btn.getAttribute('data-menu'), item: el.getAttribute('data-item'), id: el.getAttribute('data-menu-id'), action: el.getAttribute('data-action'),
@@ -164,6 +165,16 @@ export function bindMenus(root, opts) {
     var cur = parseFloat(el.style.getPropertyValue('--spin')) || 0;
     if (on == null) on = !cur;
     el.style.setProperty('--spin', (on ? deg : 0) + 'deg');
+    // remembered in the menu state, so a redraw of the markup keeps the icon where it stopped
+    var st = get(btn), key = el.getAttribute('data-item');
+    if (key) { st.spins = st.spins || {}; if (on) st.spins[key] = deg; else delete st.spins[key]; }
+  }
+  function restoreSpins(btn, st) {
+    if (!st.spins) return;
+    Array.prototype.forEach.call(btn.querySelectorAll('.rm-item'), function (el) {
+      var v = st.spins[el.getAttribute('data-item')];
+      if (v != null && el.style) el.style.setProperty('--spin', v + 'deg');
+    });
   }
   function hubStep(btn, t, st) {
     var items = hubItems(btn), n = items.length, c = st.c || 0, prev = st.prev == null ? c : st.prev;

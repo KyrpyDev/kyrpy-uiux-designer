@@ -163,7 +163,11 @@ function renderInstance(el, a, ctx, all) {
   if (el.refType === 'icon') {
     ctx.usedIcons.add(el.refId);
     const attrs = commonAttrs(el, { ...resolvedIconDefaults(ctx), ...a, href: `#i-${target.key}`, x, y, width: w || 24, height: h || 24 }, ctx, all);
-    if (ctx.inHub) attrs.class = [attrs.class, 'rm-hub-icon'].filter(Boolean).join(' ');
+    if (ctx.inHub) {
+      attrs.class = [attrs.class, 'rm-hub-icon'].filter(Boolean).join(' ');
+      // turns about its own centre (transform-box: view-box + an explicit origin; fill-box is unreliable on <use>)
+      attrs.style = [attrs.style, `transform-origin:${round(x + (w || 24) / 2)}px ${round(y + (h || 24) / 2)}px`].filter(Boolean).join(';');
+    }
     return `<use${attrString(attrs)}/>`;
   }
 
