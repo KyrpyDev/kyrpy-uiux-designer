@@ -81,7 +81,8 @@ function hubWorld(n = 5, children = { 0: true }, extra = {}) {
 test('hub runtime: initial layout is left small / centre big / right small, rest hidden', () => {
   const w = hubWorld();
   assert.deepEqual(w.pos(), ['center', 'next', 'hidden', 'hidden', 'prev']);
-  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.5'); assert.equal(w.items[4].styleVars['--k'], '0.5');
+  // 5 items on a 3-slot bar: the side (end) buttons are 30 % smaller than small (0.5 x 0.7), marking more items
+  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.35'); assert.equal(w.items[4].styleVars['--k'], '0.35');
   assert.ok(parseFloat(w.items[1].styleVars['--x']) > 28 && parseFloat(w.items[4].styleVars['--x']) < 28);   // right of / left of the centre
   assert.equal(w.items[0].styleVars['--y'], '28px');                                                     // horizontal bar: same y
   assert.equal(w.btn.attrs['data-open'], '1');
@@ -529,4 +530,45 @@ test('menu item "goes to screen" picker: toolbar button, copy into this project 
   assert.match(ed, /api\.cloneDesign\('screen', target\.id, \{ name: name\.trim\(\), projectId \}\)/);
   assert.match(ed, /new: 'screen', link: `\$\{bid\}:\$\{itemId\}`/);
   assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id \}\)/, 'the new tab links the created screen back');
+});
+
+test('hub visible items: odd = big centre (max 5), even = all small (max 6); more items -> end buttons 30 % smaller; validated setting', () => {
+  assert.equal(DEFAULT_MENU.hubVisible, 3);
+  const bar = (n, v) => { const w = hubWorld(n, {}); w.btn.querySelector('.ud-menu').attrs['data-hub-visible'] = String(v); w.ctl.set(w.btn, { open: true, path: [], c: 0, prev: 0 }); return w; };
+  const k = (w, i) => w.items[i].styleVars['--k'];
+  // 3 items, 3 slots: nothing is hidden, the sides keep the small size
+  let w = bar(3, 3);
+  assert.deepEqual(w.pos(), ['center', 'next', 'prev']); assert.equal(k(w, 1), '0.5');
+  // 5 slots, 7 items: centre big, two small on each side, the outer ones 30 % smaller
+  w = bar(7, 5);
+  assert.deepEqual(w.pos(), ['center', 'next', 'next2', 'hidden', 'hidden', 'prev2', 'prev']);
+  assert.equal(k(w, 0), '1'); assert.equal(k(w, 1), '0.5'); assert.equal(k(w, 2), '0.35'); assert.equal(k(w, 5), '0.35');
+  assert.ok(parseFloat(w.items[2].styleVars['--x']) > parseFloat(w.items[1].styleVars['--x']));
+  assert.equal(w.btn.attrs['data-hub-even'], '0');
+  // 4 slots (even), 6 items: all small, the end ones 30 % smaller, no big centre; the centre hit is off
+  w = bar(6, 4);
+  assert.equal(w.btn.attrs['data-hub-even'], '1');
+  assert.equal(w.pos().filter(p => p !== 'hidden').length, 4);
+  assert.equal(k(w, 0), '0.5'); assert.ok(w.items.every((it, i) => w.pos()[i] === 'hidden' || ['0.5', '0.35'].includes(k(w, i))));
+  assert.equal(w.items.filter((it, i) => w.pos()[i] !== 'hidden' && k(w, i) === '0.35').length, 2);
+  assert.match(MENU_CSS, /\[data-hub-even="1"\] \.rm-hit\{pointer-events:none\}/);
+  // 6 slots, 6 items: all fit, nobody shrinks
+  w = bar(6, 6);
+  assert.ok(w.items.every(it => it.styleVars['--k'] === '0.5'));
+  // an end item further out scrolls the bar by one step instead of acting
+  w = bar(7, 5);
+  w.items[2].attrs['data-hub-end'] = '1';
+  w.click(w.items[2]);
+  assert.equal(w.ctl.get(w.btn).c, 1); assert.equal(w.actions.length, 0);
+  // validated + rendered
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'hv', key: 'hub-hv', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 56, height: 56 }, { nodes: [] });
+    c.menus.setConfig(b.id, { ...HUB.config });
+    ['a', 'b', 'c'].forEach(l => c.menus.addItem(b.id, { label: l }));
+    assert.throws(() => c.menus.setConfig(b.id, { hubVisible: 7 }), /hubVisible must be one of/);
+    assert.equal(c.menus.setConfig(b.id, { hubVisible: '4' }).hubVisible, 4);
+    assert.match(c.render.boxSvg('button', b.id, null, {}), /data-hub-visible="4"/);
+  } finally { c.close(); }
 });

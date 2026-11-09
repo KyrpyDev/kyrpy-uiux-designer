@@ -8,7 +8,7 @@
  *   - click the centre again      goes one level back (the previous icon / items return)
  *   - click a leaf item           fires its action and closes the menu
  */
-import { DEFAULT_MENU } from './entities.js';
+import { hubVisibleOf, DEFAULT_MENU } from './entities.js';
 import { esc, attrString } from './svg-util.js';
 import { roleAttrs, resolveTokens } from './theme.js';
 
@@ -176,7 +176,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
-  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}"` : '';
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-visible="${hubVisibleOf(cfg)}"` : '';
   return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-hub-spin="${Number(cfg.hubSpin) || 0}" data-hub-fit="${cfg.hubFit ? 1 : 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }
 
@@ -198,6 +198,7 @@ export const MENU_CSS = `
 .ud-btn .rm-item.rm-hub-item{transition:transform .35s cubic-bezier(.3,.8,.3,1),opacity .25s ease}
 .ud-btn .rm-level.is-active .rm-item.rm-hub-item{transform:translate(calc(var(--x) + var(--sx,0px)),calc(var(--y) + var(--sy,0px))) scale(var(--k,1));opacity:var(--o,1);transition-delay:0ms}
 .ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
+.ud-btn[data-hub-even="1"] .rm-hit{pointer-events:none}
 .ud-btn .rm-hub-icon{transform-box:view-box;transition:transform .3s ease}
 .ud-btn .rm-hub-icon{transform:rotate(var(--spin,0deg))}
 .ud-btn .rm-item .rm-icon{transform-box:view-box;transform:rotate(var(--spin,0deg));transition:transform .5s cubic-bezier(.3,.8,.3,1)}

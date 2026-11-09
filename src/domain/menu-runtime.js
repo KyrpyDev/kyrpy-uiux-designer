@@ -25,16 +25,59 @@ export function bindMenus(root, opts) {
   function isHub(btn) { return !!(btn.querySelector && btn.querySelector('.ud-menu[data-kind="hub"]')); }
   function get(btn) { var s = states.get(btn); if (!s) { if (isHub(btn)) { var m0 = btn.querySelector('.ud-menu'), c0 = +(m0 && m0.getAttribute('data-hub-start')) || 0; s = { open: true, path: [], c: c0, prev: c0 }; } else s = { open: false, path: [] };   /* hub: starts on its default centre item */ states.set(btn, s); } return s; }
   function hubItems(btn) { return Array.prototype.slice.call(btn.querySelectorAll('.rm-level[data-level=""] .rm-hub-item')); }
+  /*
+   * The hub bar shows `data-hub-visible` items (default 3). Odd (3 / 5): the current item is the big centre, the others small at its
+   * sides. Even (2 / 4 / 6): every item is small; the current one sits just left of (above) the middle. When the menu has more items
+   * than slots, the two end slots are drawn 30 % smaller (there are more items), and the bar shrinks to fit the device screen.
+   */
+  function hubSlots(m, n) {
+    var v = +m.getAttribute('data-hub-visible') || 3, odd = v % 2 === 1;
+    v = Math.min(v, odd ? 5 : 6);
+    if (n < v) v = odd ? (n % 2 ? n : n - 1) : (n % 2 ? n - 1 : n);
+    return { v: Math.max(1, v), odd: odd || v === 1, more: n > v };
+  }
   function layoutHub(btn, st) {
     var m = btn.querySelector('.ud-menu'), items = hubItems(btn), n = items.length, c = st.c || 0;
     var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), small = +m.getAttribute('data-hub-small'), gap = +m.getAttribute('data-hub-gap');
     var big = +m.getAttribute('data-hub-big') || small * 2, hk = +m.getAttribute('data-hub-k') || 0.5;
-    var vert = m.getAttribute('data-hub-vertical') === '1', off = big / 2 + gap + small / 2, fan = st.path.length > 0;
+    var vert = m.getAttribute('data-hub-vertical') === '1', fan = st.path.length > 0;
+    var sl = hubSlots(m, n), v = sl.v, END = 0.7;
+    if (btn.setAttribute) btn.setAttribute('data-hub-even', sl.odd ? '0' : '1');
+    // slot -> {dx, size}: positions along the bar, centred on the button
+    var slots = {}, lo, hi;
+    if (sl.odd) { var h = (v - 1) / 2; lo = -h; hi = h; } else { lo = -(v / 2 - 1); hi = v / 2; }
+    var sizeOf = function (d) { if (sl.odd && d === 0) return big; return small * (sl.more && (d === lo || d === hi) && v > 1 ? END : 1); };
+    if (sl.odd) {
+      slots[0] = { dx: 0, s: big };
+      for (var side = -1; side <= 1; side += 2) {
+        var edge = big / 2;
+        for (var j = 1; j <= (v - 1) / 2; j++) { var d = side * j, s = sizeOf(d); slots[d] = { dx: side * (edge + gap + s / 2), s: s }; edge += gap + s; }
+      }
+    } else {
+      var total = 0, d2;
+      for (d2 = lo; d2 <= hi; d2++) total += sizeOf(d2) + (d2 > lo ? gap : 0);
+      var at = -total / 2;
+      for (d2 = lo; d2 <= hi; d2++) { var s2 = sizeOf(d2); slots[d2] = { dx: at + s2 / 2, s: s2 }; at += s2 + gap; }
+    }
+    // shrink the whole bar when it would leave the device screen (keep-inside menus)
+    var f = 1, box = m.getAttribute('data-keep') === '1' ? screenBox(btn) : null;
+    // (the button designer draws the button on its own small canvas: that is not a device screen, so nothing shrinks there)
+    if (box && (vert ? box.B - box.T : box.R - box.L) > big * 1.5) {
+      var reach = 0; for (var key in slots) reach = Math.max(reach, Math.abs(slots[key].dx) + slots[key].s / 2);
+      var avail = vert ? Math.min(cy - box.T, box.B - cy) : Math.min(cx - box.L, box.R - cx);
+      if (reach > 0 && avail > 0) f = Math.max(0.3, Math.min(1, (avail - 4) / reach));
+    }
     items.forEach(function (el, i) {
-      var d = (i - c + n) % n, dx = 0, k = 0, o = 0, pos = 'hidden';
-      if (d === 0) { k = 1; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
-      else if (d === 1) { dx = off; k = hk; o = fan ? 0 : 1; pos = 'next'; }
-      else if (d === n - 1) { dx = -off; k = hk; o = fan ? 0 : 1; pos = 'prev'; }
+      var d = (i - c + n) % n; if (d > n / 2) d -= n;          // signed ring distance from the current item
+      if (!sl.odd && n > v && d > hi) d -= n; if (!sl.odd && n > v && d < lo) d += n;
+      var slot = slots[d], dx = 0, k = 0, o = 0, pos = 'hidden';
+      if (fan) {                                                 // a fan is open: only the current item stays, in the middle
+        if (d === 0) { k = sl.odd ? 1 : hk; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
+      } else if (slot) {
+        dx = slot.dx * f; k = (slot.s / big) * f; o = 1;
+        pos = d === 0 ? 'center' : d < 0 ? (d === -1 ? 'prev' : 'prev' + (-d)) : (d === 1 ? 'next' : 'next' + d);
+        if (sl.more && (d === lo || d === hi)) el.setAttribute('data-hub-end', '1'); else if (el.removeAttribute) el.removeAttribute('data-hub-end');
+      }
       el.style.setProperty('--x', (cx + (vert ? 0 : dx)) + 'px');
       el.style.setProperty('--y', (cy + (vert ? dx : 0)) + 'px');
       el.style.setProperty('--k', String(k));
@@ -194,6 +237,9 @@ export function bindMenus(root, opts) {
     if (t.hasAttribute && t.hasAttribute('data-hub-index')) {
       if (st.path.length) return st;
       var i = +t.getAttribute('data-hub-index');
+      // an end item that marks more items (30 % smaller) scrolls the bar one step towards it instead of acting
+      var dd = (i - c + n) % n, far = Math.min(dd, n - dd) > 1;
+      if (t.getAttribute('data-hub-end') === '1' && far) { var nc = (c + (dd > n / 2 ? -1 : 1) + n) % n; return { open: true, path: [], c: nc, prev: nc }; }
       if (opts.onItem) opts.onItem(btn, t);
       if (items[c] && items[c] !== t) spin(btn, items[c], false);   // the item leaving the centre turns back
       spin(btn, t, t.getAttribute('data-children') === '1' ? true : null);

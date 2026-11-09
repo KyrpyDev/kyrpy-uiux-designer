@@ -408,6 +408,10 @@ export function buttonStyleFrameNodes(styleKey, { width = 64, height = 64 } = {}
 export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
 /** Screen corner a menu's fan levels open at ('' = around the button); e.g. a burger item fanning out from the lower right corner. */
 export const MENU_FAN_CORNERS = ['', 'bottom-left', 'bottom-right', 'top-left', 'top-right'];
+/** Allowed hub bar sizes: odd up to 5 (big centre), even up to 6 (all small). */
+export const HUB_VISIBLE = [2, 3, 4, 5, 6];
+export const hubVisibleOf = cfg => (HUB_VISIBLE.includes(Number(cfg?.hubVisible)) ? Number(cfg.hubVisible) : 3);
+
 export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element', 'hub'];
 /** Default menu settings of a button. Sizes are ratios of the button size so the menu scales with the button. */
 export const DEFAULT_MENU = {
@@ -431,6 +435,7 @@ export const DEFAULT_MENU = {
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
   hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)
+  hubVisible: 3,        // hub: items shown on the bar: odd (3 / 5) = big centre + small sides, even (2 / 4 / 6) = all small; with more items the two end ones are 30 % smaller
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 
