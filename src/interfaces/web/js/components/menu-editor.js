@@ -362,10 +362,7 @@ export class MenuEditor {
         if (a.target) {
           const screens = await api.list('screen');
           const targetScreen = screens.find(s => s.key === a.target || String(s.id) === String(a.target));
-          if (targetScreen) {
-            toast(`Menu "${a.item}" → ${targetScreen.name}`, 'ok', 1800);
-            return this.d.opts.openDesign?.('screen', targetScreen.id);
-          }
+          if (targetScreen) return this.d.navigateLiveToScreen(targetScreen.id, `Menu “${a.item}”`);   // stays in the live test
         }
         toast(`⚡ Menu Action: "${a.action || a.item}" (${a.menu || 'button'})`, 'ok', 1800);
       }
@@ -394,7 +391,11 @@ export class MenuEditor {
 
   /** Called after every stage render: the DOM was replaced, restore the open/level state. */
   afterRender() {
-    if (!this.active) return;
+    // menus placed on a screen / element: lay out every hub bar again (the stage markup was replaced)
+    if (!this.active) {
+      for (const b of this.d.stage.querySelectorAll('.ud-btn')) if (b.querySelector('.ud-menu[data-kind="hub"]')) this.ctl.apply(b, this.ctl.get(b));
+      return;
+    }
     const btn = this.d.stage.querySelector('.ud-btn');
     if (btn) this.ctl.set(btn, this.menuState);
     this.hideToolbar();

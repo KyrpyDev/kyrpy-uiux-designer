@@ -125,6 +125,92 @@ export function installTestActions(Designer) {
     };
   };
 
+  /** The menu element (`.ud-btn` item or centre) under a pointer event on the live layer, or null. */
+  proto.menuUnder = function (ev) {
+    if (!this.liveLayer || ev.clientX == null) return null;
+    const prev = this.liveLayer.style.visibility;
+    this.liveLayer.style.visibility = 'hidden';
+    let t = null;
+    try { t = document.elementFromPoint(ev.clientX, ev.clientY); } finally { this.liveLayer.style.visibility = prev; }
+    return t && this.stage.contains(t) && t.closest?.('.ud-btn') ? t : null;
+  };
+
+  /** Re-dispatches a hotspot click to the menu under it; true when a menu took it. */
+  proto.forwardToMenu = function (ev) {
+    const t = this.menuUnder(ev);
+    if (!t) return false;
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: ev.clientX, clientY: ev.clientY }));
+    return true;
+  };
+
+  /** URL that opens a design (and optionally a menu item of a button) in the designer, e.g. in a new browser tab. */
+  proto.designUrl = function (type, id, extra = {}) {
+    const q = new URLSearchParams({ open: `${type}:${id}`, ...extra });
+    return `${location.origin}${location.pathname}?${q}`;
+  };
+
+  /** Opens a design in a new browser tab to edit it while this tab keeps testing; the edits come back through the sync event. */
+  proto.editInNewTab = function (type, id, extra = {}) {
+    const w = window.open(this.designUrl(type, id, extra), '_blank');
+    if (!w) toast('The browser blocked the new tab: allow pop-ups for this site', 'error');
+    else toast('Editing in a new tab: saved changes show up here at once', 'info', 2200);
+  };
+
+  /** Small ✎ pills over every placed button / element / icon (and every menu) of the tested design: edit it in a new tab. */
+  proto.mountLiveEditPills = function () {
+    const pill = (box, title, onClick) => {
+      const b = h('button', { type: 'button', class: 'dz-live-edit', title, 'aria-label': title,
+        style: { left: `${Math.round(box.x + box.w - 6)}px`, top: `${Math.round(box.y - 10)}px` } }, '✎');
+      b.addEventListener('pointerdown', ev => ev.stopPropagation());
+      b.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); onClick(); });
+      this.liveLayer.append(b);
+    };
+    const seen = new Set();
+    for (const n of this.nodes) {
+      if (n.visible === false || n.kind !== 'instance' || !['button', 'element', 'icon'].includes(n.refType)) continue;
+      const lib = findDesign(n.refType, n.refId);
+      if (!lib) continue;
+      seen.add(`${n.refType}:${n.refId}`);
+      pill(nodeBBox(n, this.nodes), `Edit ${n.refType} “${lib.label || lib.name}” in a new tab`, () => this.editInNewTab(n.refType, n.refId));
+    }
+    // menu buttons nested inside placed elements: one pill per menu, at its place on the canvas
+    const sr = this.stage.getBoundingClientRect(), k = sr.width / (this.doc.width || 1) || 1;
+    for (const el of this.stage.querySelectorAll('.ud-btn[data-btn-id]')) {
+      const id = Number(el.getAttribute('data-btn-id'));
+      if (!id || seen.has(`button:${id}`) || (this.type === 'button' && id === this.doc.id)) continue;
+      seen.add(`button:${id}`);
+      const r = (el.querySelector('.rm-hit') || el).getBoundingClientRect();
+      const lib = findDesign('button', id);
+      pill({ x: (r.left - sr.left) / k, y: (r.top - sr.top) / k, w: r.width / k, h: r.height / k }, `Edit menu button “${lib?.label || lib?.name || el.getAttribute('data-menu')}” in a new tab`, () => this.editInNewTab('button', id));
+    }
+  };
+
+  /** While testing, hovering a menu item shows a ✎ pill that opens the item in its button's designer in a new tab. */
+  proto.installLiveItemPill = function () {
+    if (this._liveItemPill) return;
+    const tip = h('button', { type: 'button', class: 'dz-live-edit dz-live-item-edit', hidden: true });
+    document.body.append(tip);
+    this._liveItemPill = tip;
+    let hideT = null, cur = null;
+    const hide = () => { clearTimeout(hideT); hideT = setTimeout(() => { tip.hidden = true; cur = null; }, 700); };
+    tip.addEventListener('mouseenter', () => clearTimeout(hideT));
+    tip.addEventListener('mouseleave', hide);
+    tip.addEventListener('click', ev => { ev.stopPropagation(); if (cur) this.editInNewTab('button', cur.btnId, { item: cur.itemId }); tip.hidden = true; });
+    this.stage.addEventListener('mouseover', ev => {
+      if (!this.actionsLive) return;
+      const it = ev.target.closest?.('.rm-item[data-menu-id]');
+      const btnEl = it?.closest('.ud-btn[data-btn-id]');
+      if (!it || !btnEl || it.getAttribute('data-hub-pos') === 'hidden') return hide();
+      clearTimeout(hideT);
+      cur = { btnId: Number(btnEl.getAttribute('data-btn-id')), itemId: Number(it.getAttribute('data-menu-id')) };
+      const r = it.getBoundingClientRect();
+      tip.textContent = `✎ ${it.querySelector('title')?.textContent || 'item'}`;
+      tip.title = 'Edit this menu item in its button designer (new tab)';
+      Object.assign(tip.style, { position: 'fixed', left: `${Math.round(r.right - 4)}px`, top: `${Math.round(r.top - 14)}px` });
+      tip.hidden = false;
+    });
+  };
+
   /** Builds the floating Test Actions HUD and the interactive overlay layer (`this.liveLayer`) over `this.stage`. */
   proto.renderLiveTestLayer = function () {
     if (!this.liveLayer || !this.liveHud) return;
@@ -202,6 +288,7 @@ export function installTestActions(Designer) {
 
     hudItems.push(
       h('span', { class: 'grow' }),
+      h('button', { class: 'btn small', title: `Edit this ${this.type} in a new tab (saved edits show up here at once)`, onclick: () => this.editInNewTab(this.type, d.id) }, `✎ Edit ${this.type} ↗`),
       h('button', {
         class: 'btn small danger',
         title: 'Exit Test actions mode and return to editing',
@@ -218,6 +305,10 @@ export function installTestActions(Designer) {
 
     // 4. Render Interactive Action, Button & Workflow Route Hotspots
     this.mountLiveActionHotspots(links);
+
+    // 5. Edit pills: every placed item / menu (and menu items on hover) open their designer in a new tab
+    this.mountLiveEditPills();
+    this.installLiveItemPill();
   };
 
   /** Mounts real HTML <input>, <textarea>, and <select> controls over form fields in `this.liveLayer`. */
@@ -531,6 +622,8 @@ export function installTestActions(Designer) {
       if (onClick) {
         btn.addEventListener('click', ev => {
           ev.stopPropagation();
+          // a menu drawn under this hotspot gets the click (its own items / centre), not the hotspot's event
+          if (this.forwardToMenu(ev)) return;
           btn.classList.remove('ud-pulse');
           void btn.offsetWidth;
           btn.classList.add('ud-pulse');

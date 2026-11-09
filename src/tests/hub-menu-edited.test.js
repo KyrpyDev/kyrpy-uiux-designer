@@ -464,3 +464,26 @@ test('menu item UI: edit dialog has the parent tree, inspector tree rows are dra
   assert.match(ins, /draggable: 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/);
   assert.match(api, /menu\/items\/\$\{iid\}\/move/);
 });
+
+test('live test on screens: menu items carry their target screen id on the canvas, placed menus carry their button id', () => {
+  const rows = [{ id: 1, parentId: null, ord: 0, name: 'go', label: 'Go', iconId: null, targetScreenId: 42 }, { id: 2, parentId: null, ord: 1, name: 'keyed', label: 'K', iconId: null, targetScreenId: 42, targetKey: 'home' }];
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...menuConfig({ menu: { kind: 'popup', layout: 'list' } }) }, tree: buildMenuTree(rows), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(svg, /data-item="go"[^>]*data-target="42"/, 'no targetKey (designer canvas): the screen id');
+  assert.match(svg, /data-item="keyed"[^>]*data-target="home"/, 'targetKey (server render / export) wins');
+  const host = { id: 5, key: 'host', width: 64, height: 64, nodes: [{ id: 2, tag: 'circle', attrs: { cx: 32, cy: 32, r: 30 } }], meta: { menu: { kind: 'popup' } } };
+  const lib = indexLibrary({ buttons: [host] }, new Map([[5, rows]]));
+  const out = renderTree([{ id: 9, tag: 'use', kind: 'instance', refType: 'button', refId: 5, attrs: { x: 0, y: 0, width: 64, height: 64 } }], createContext({ theme: BUILTIN_THEMES[0], lib }));
+  assert.match(out, /data-menu="host"[^>]*data-btn-id="5"|data-btn-id="5"[^>]*data-menu="host"/);
+});
+
+test('live test UI: hotspots forward clicks to menus under them, edit pills open designs in a new tab, deep link + live sync', () => {
+  const rd = f => readFileSync(new URL(`../interfaces/web/js/${f}`, import.meta.url), 'utf8');
+  const ta = rd('components/designer-test-actions.js'), main = rd('main.js'), ed = rd('components/menu-editor.js');
+  assert.match(ta, /if \(this\.forwardToMenu\(ev\)\) return;/);
+  assert.match(ta, /proto\.mountLiveEditPills = function/); assert.match(ta, /proto\.installLiveItemPill = function/);
+  assert.match(ta, /window\.open\(this\.designUrl\(type, id, extra\), '_blank'\)/);
+  assert.match(main, /\(path\|icon\|button\|element\|screen\):\(\\d\+\)/, 'deep link ?open=type:id');
+  assert.match(main, /d\?\.actionsLive && d\.doc/, 'live designs reload on the sync event');
+  assert.match(ed, /this\.d\.navigateLiveToScreen\(targetScreen\.id/, 'menu navigation stays in the live test');
+  assert.match(ed, /if \(!this\.active\) \{\s*for \(const b of this\.d\.stage\.querySelectorAll\('\.ud-btn'\)\)/, 'hub bars placed on screens are laid out after every render');
+});

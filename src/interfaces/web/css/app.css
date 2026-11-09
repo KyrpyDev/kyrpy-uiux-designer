@@ -900,3 +900,10 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .el-row.mi-drop-after { box-shadow: inset 0 -2px 0 #2e9bff; }
 .el-row.mi-drop-inside { background: rgba(46, 155, 255, .3); outline: 1px dashed #2e9bff; outline-offset: -1px; }
 .el-row.mi-parent { cursor: pointer; }
+
+/* live test: ✎ pills that open an item's designer in a new tab */
+.dz-live-edit { position: absolute; pointer-events: all; z-index: 3; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; border: 1px solid #38bdf8;
+  background: rgba(8, 15, 29, 0.92); color: #e0f2fe; font-size: 11px; line-height: 18px; cursor: pointer; opacity: .55; transition: opacity .15s, transform .15s; white-space: nowrap; }
+.dz-live-edit:hover { opacity: 1; transform: scale(1.08); }
+.dz-live-item-edit { position: fixed; z-index: 9999; opacity: 1; }
+.dz-live-item-edit[hidden] { display: none; }

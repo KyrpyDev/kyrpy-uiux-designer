@@ -174,7 +174,7 @@ function renderInstance(el, a, ctx, all) {
   const { x: _x, y: _y, width: _w, height: _h, ...rest } = a;
   const menu = el.refType === 'button' && target.menu?.items?.length ? target.menu : null;
   const attrs = commonAttrs(el, { ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
-  if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
+  if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs['data-btn-id'] = el.refId; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
   ctx.depth++;
   ctx.activeInstances?.add(instKey);
   const wasHub = ctx.inHub; ctx.inHub = !!menu;   // the button's own icons turn while open and are hidden while a sub level shows its icon

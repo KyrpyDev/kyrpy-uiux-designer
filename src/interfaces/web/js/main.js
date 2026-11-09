@@ -993,7 +993,18 @@ async function boot() {
   app.designer.on('record', () => app.library.invalidateScreens());
 
   // after a page reload the browser still has our history entry: open that page again, else open a first screen so the canvas is not empty
-  const hs = history.state;
+  // deep link (e.g. the ✎ pills of the live test open a design in a new tab): ?open=<type>:<id>[&item=<menu item id>][&test=1]
+  const qp = new URLSearchParams(location.search), deep = /^(path|icon|button|element|screen):(\d+)$/.exec(qp.get('open') || '');
+  if (deep) {
+    const [, dType, dId] = deep;
+    history.replaceState(null, '', location.pathname);
+    if (await app.openDesign(dType, Number(dId), { push: 'replace' })) {
+      if (qp.get('test') === '1') app.designer.setTestActions(true);
+      const item = Number(qp.get('item'));
+      if (item && dType === 'button') setTimeout(() => app.designer.menu?.focusItem(item), 450);
+    }
+  }
+  const hs = deep ? null : history.state;
   if (hs?.view) { nav.idx = hs.idx; nav.labels[hs.idx] = hs.label; if (!(await app.openView(hs.view, { push: false }))) history.replaceState(null, ''); }
   if (!app.current && state.mode !== 'workflow') {
     const screens = await api.list('screen');
@@ -1011,7 +1022,12 @@ function connectSync() {
   if (typeof EventSource === 'undefined') return;
   const resync = debounce(async () => {
     try {
+      // a design under live test follows edits made elsewhere (e.g. in the tab its ✎ pill opened) at once:
+      // its own record first (fast), then again once the (large) library has nested buttons / elements / menus fresh
+      const live = [app.designer, ...app.modals].filter(d => d?.actionsLive && d.doc);
+      for (const d of live) { if (d.dirty) continue; await d.reload(false); d.markBaseline(); }
       await reloadLibrary({ silent: true });
+      for (const d of live) d.renderStage();
       app.library?.renderBody?.();
       await app.browser?.reload?.();
       emit('library:changed');
