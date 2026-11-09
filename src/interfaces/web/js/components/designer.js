@@ -18,7 +18,7 @@ import {
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterFitBox, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign } from '../actions.js';
@@ -1045,7 +1045,9 @@ export class Designer {
             openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
           }, { cls: 'hb-btn', disabled: !canMoveRef });
         })(),
-        ['screen', 'element'].includes(this.type) ? ibtn('export', 'Extract as element: save this shape (with what is drawn inside it) as a new element in the library', async e => { e.stopPropagation(); await this.extractAsElement(target); }, { cls: 'hb-btn', dataset: { act: 'extract-element' } }) : null,
+        // labelled: the export / download glyphs are already used by "copy / move to project" on this toolbar
+        ['screen', 'element'].includes(this.type) ? h('button', { type: 'button', class: 'hb-btn hb-extract', 'data-act': 'extract-element', title: 'Extract as element: save this shape (with what is drawn inside it) as a new element in the library', 'aria-label': 'Extract as element',
+          onclick: async e => { e.stopPropagation(); await this.extractAsElement(target); } }, iconEl('template', { size: 15 }), h('span', { style: { fontSize: '11px', fontWeight: 700, marginLeft: '3px' } }, 'Extract')) : null,
         ibtn('copy', 'Duplicate element (Ctrl+D)', async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }, { cls: 'hb-btn' }),
         ibtn('trash', 'Delete element (Del)', async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }, { cls: 'hb-btn danger' })
       ].filter(Boolean));   // Element.append() would render a skipped (null) tool as the text "null"
@@ -1550,7 +1552,7 @@ export class Designer {
           const hitCont = cand ? this.containerAtPoint(dropPt, cand.id) : null;
           const hb = hitCont ? nodeBBox(hitCont, this.nodes) : null;
           if (hitCont && isRepeaterNode(hitCont, state.library.elements) && dropPt.x >= hb.x && dropPt.x <= hb.x + hb.w && dropPt.y >= hb.y && dropPt.y <= hb.y + hb.h) {
-            const { patches, parkedIds } = repeaterAdoptOps(this.nodes, hitCont, cand, containerInnerBox(hitCont, this.nodes, state.library.elements));
+            const { patches, parkedIds } = repeaterAdoptOps(this.nodes, hitCont, cand, containerInnerBox(hitCont, this.nodes, state.library.elements), { keepSize: true });
             for (const { id, patch } of patches) Object.assign(this.byId(id), await api.patchNode(this.type, this.doc.id, id, patch));
             adopted = { id: cand.id, rep: hitCont, parked: parkedIds.length };
           }
@@ -1571,6 +1573,7 @@ export class Designer {
           const saved = await api.patchNode(this.type, this.doc.id, id, patch);
           Object.assign(node, saved);
         }));
+        if (adopted) await this.fitRepeater(adopted.rep.id);
         if (adopted) toast(`"${this.byId(adopted.id)?.name || 'node'}" is now the template of repeater "${adopted.rep.name || 'repeater'}"${adopted.parked ? ' (the previous template was moved out beside it)' : ''}`, 'ok', 2200);
       }
       catch (e) { toast(e.message, 'error'); await this.reload(); return; }
@@ -1785,10 +1788,27 @@ export class Designer {
     if (el) toast(parentId ? `Added ${refType} "${lib.key}" inside container "${targetContainer.name}" (clamped to inner margin)` : `added ${refType} ${lib.key}`, 'ok', 1800);
   }
 
-  /** The library item becomes the repeater's template (replacing the previous one), placed on the first slot and fitted inside it. */
+  /**
+   * Resizes a repeater around its template: lists hold every copy (count × item + gaps), moving layouts fit the item
+   * across their viewport; the template moves to the first slot. Called after a drop, a move into it and any setting change.
+   */
+  async fitRepeater(repId, { quiet = true } = {}) {
+    const rep = this.byId(repId), tpl = rep && repeaterTemplate(this.nodes, rep.id);
+    if (!rep || !tpl) return;
+    const cfg = repeaterConfig(rep), outer = nodeBBox(rep, this.nodes), inner = containerInnerBox(rep, this.nodes, state.library.elements);
+    const tb = nodeBBox(tpl, this.nodes), item = { w: cfg.itemWidth || tb.w || 64, h: cfg.itemHeight || tb.h || 64 };
+    const box = repeaterFitBox(cfg, outer, inner, item, { w: Math.max(outer.w, this.doc.width - outer.x), h: Math.max(outer.h, this.doc.height - outer.y) });
+    if (Math.abs(box.w - outer.w) > 0.5 || Math.abs(box.h - outer.h) > 0.5) await this.patchNode(rep.id, { attrs: resizeAttrs(rep, outer, box) }, { quiet });
+    const cur = this.byId(rep.id), t2 = repeaterTemplate(this.nodes, rep.id);
+    if (!cur || !t2 || !['use', 'rect', 'image'].includes(t2.tag)) return;
+    const b = nodeBBox(t2, this.nodes), first = repeaterPlan(repeaterConfig(cur), containerInnerBox(cur, this.nodes, state.library.elements), item).copies[0];
+    if (Math.abs(first.x - b.x) > 0.5 || Math.abs(first.y - b.y) > 0.5) await this.patchNode(t2.id, { attrs: { ...t2.attrs, x: first.x, y: first.y } }, { quiet });
+  }
+
+  /** The library item becomes the repeater's template (replacing the previous one) at its own size; the repeater grows to hold the copies. */
   async setRepeaterTemplate(rep, refType, refId, lib, pl) {
     const inner = containerInnerBox(rep, this.nodes, state.library.elements);
-    const k = Math.min(1, inner.w / Math.max(1, pl.w), inner.h / Math.max(1, pl.h));
+    const k = Math.min(1, (this.doc.width - 32) / Math.max(1, pl.w));   // only a template wider than the design shrinks
     const w = Math.max(4, Math.round(pl.w * k)), hh = Math.max(4, Math.round(pl.h * k));
     const cfg = repeaterConfig(rep);
     const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || hh }).copies[0];
@@ -1802,6 +1822,7 @@ export class Designer {
       return made;
     });
     if (el) {
+      await this.fitRepeater(rep.id);
       this.emit('selection', this.selectedNodes());
       toast(`${removeIds.length ? 'Replaced' : 'Set'} the template of repeater "${rep.name || 'repeater'}": ${lib.key} × ${cfg.itemCount}`, 'ok', 1800);
     }

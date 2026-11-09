@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -273,4 +273,25 @@ test('repeater: moving an existing node onto a repeater makes it the template an
   assert.equal(count(svg, /fill="#0f0"/g), 4); assert.equal(count(svg, /fill="#f00"/g), 1, 'the parked old template is still drawn once');
   // an empty repeater: nothing to park
   assert.deepEqual(repeaterAdoptOps([rep, nodes[2]], rep, nodes[2], inner).parkedIds, []);
+});
+
+test('repeater fit: lists hold every copy, moving layouts fit the item across; corner stays; capped; adopt can keep the size', async () => {
+  const { repeaterFitBox, repeaterConfig: cfgOf } = await import('../domain/repeater.js');
+  const outer = { x: 10, y: 20, w: 300, h: 200 }, inner = { x: 22, y: 32, w: 276, h: 176 }, item = { w: 100, h: 40 };
+  const cfg = over => ({ ...cfgOf({ attrs: {} }), ...over });
+  assert.deepEqual(repeaterFitBox(cfg({ layout: 'vertical', itemCount: 5, gap: 10 }), outer, inner, item), { x: 10, y: 20, w: 124, h: 5 * 40 + 4 * 10 + 24 });
+  assert.deepEqual(repeaterFitBox(cfg({ layout: 'horizontal', itemCount: 3, gap: 8 }), outer, inner, item), { x: 10, y: 20, w: 3 * 100 + 2 * 8 + 24, h: 64 });
+  assert.deepEqual(repeaterFitBox(cfg({ layout: 'carousel', dimension: '2d', itemCount: 9 }), outer, inner, item), { x: 10, y: 20, w: 300, h: 64 }, 'carousel keeps its viewport length');
+  assert.deepEqual(repeaterFitBox(cfg({ layout: 'scroll', direction: 'vertical', itemCount: 30 }), outer, inner, item), { x: 10, y: 20, w: 124, h: 200 });
+  assert.equal(repeaterFitBox(cfg({ layout: 'vertical', itemCount: 50, gap: 10 }), outer, inner, item, { w: 380, h: 600 }).h, 600, 'capped by the design');
+  // moving a node in keeps its size when asked (the repeater grows around it instead)
+  const rep = { id: 1, parentId: null, tag: 'rect', role: 'repeater-container', attrs: { x: 10, y: 20, width: 300, height: 200, 'data-container': 'repeater' } };
+  const big = { id: 2, parentId: null, ord: 1, tag: 'rect', attrs: { x: 400, y: 0, width: 500, height: 80 } };
+  const keep = repeaterAdoptOps([rep, big], rep, big, inner, { keepSize: true }).patches.at(-1).patch.attrs;
+  assert.equal(keep.width, 500); assert.equal(keep.height, 80);
+  const shrink = repeaterAdoptOps([rep, big], rep, big, inner).patches.at(-1).patch.attrs;
+  assert.ok(shrink.width <= inner.w);
+  const des = readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8');
+  assert.match(des, /async fitRepeater\(repId/); assert.match(des, /if \(el\) \{\s*await this\.fitRepeater\(rep\.id\);/); assert.match(des, /if \(adopted\) await this\.fitRepeater\(adopted\.rep\.id\);/);
+  assert.match(readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8'), /await d\.fitRepeater\(e\.id\);/);
 });

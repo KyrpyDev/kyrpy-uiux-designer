@@ -672,5 +672,5 @@ test('extract as element: the shape, its sub tree and what lies inside it become
     assert.ok(stored.every(n => !nodes.some(o => o.id === n.id)), 'new node ids');
     assert.equal(c.screen.get(scr.id).nodes.length, 5, 'the screen is unchanged');
   } finally { c.close(); }
-  assert.match(readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8'), /dataset: \{ act: 'extract-element' \}/);
+  assert.match(readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8'), /'data-act': 'extract-element'/);
 });

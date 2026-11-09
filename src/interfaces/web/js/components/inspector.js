@@ -698,13 +698,8 @@ export class Inspector {
     const extra = Math.max(0, d.nodes.filter(n => n.parentId === e.id).length - 1);   // children beyond the template are ignored by the renderer
     const set = async patchAttrs => {
       await d.patchNode(e.id, { attrs: { ...(e.attrs || {}), ...patchAttrs } });
-      // keep the stored template on the first slot so its selection box matches the first copy
-      const cur = d.byId(e.id), t = repeaterTemplate(d.nodes, e.id);
-      if (cur && t && ['use', 'rect', 'image'].includes(t.tag)) {
-        const c2 = repeaterConfig(cur), b = nodeBBox(t, d.nodes);
-        const first = repeaterPlan(c2, containerInnerBox(cur, d.nodes, state.library.elements), { w: c2.itemWidth || b.w || 64, h: c2.itemHeight || b.h || 64 }).copies[0];
-        if (Math.abs(first.x - b.x) > 0.5 || Math.abs(first.y - b.y) > 0.5) await d.patchNode(t.id, { attrs: { ...t.attrs, x: first.x, y: first.y } }, { quiet: true });
-      }
+      // the repeater grows / shrinks around its copies and keeps the template on the first slot (count, layout, gap ... changed)
+      await d.fitRepeater(e.id);
     };
     const ring = (cfg.layout === 'carousel' || cfg.layout === 'roll') && cfg.dimension === '3d';
     const dimToggle = h('div', { class: 'row', role: 'group', 'aria-label': '2D or 3D' },

@@ -98,7 +98,7 @@ export function repeaterTemplateOps(nodes, repeater, def, slot = null) {
  * the first slot) and the previous template(s) are moved out next to the repeater (into the repeater's parent) instead
  * of being deleted. Returns { patches: [{ id, patch }] } in apply order: the parked old templates first, then the node.
  */
-export function repeaterAdoptOps(nodes, repeater, moved, inner) {
+export function repeaterAdoptOps(nodes, repeater, moved, inner, { keepSize = false } = {}) {
   const all = nodes || [];
   const { removeIds } = repeaterTemplateOps(all.filter(n => n.id !== moved.id), repeater, moved);
   const patches = [];
@@ -111,7 +111,7 @@ export function repeaterAdoptOps(nodes, repeater, moved, inner) {
   }
   const from = nodeBBox(moved, all);
   const fw = from.w > 0 ? from.w : 24, fh = from.h > 0 ? from.h : 24;
-  const k = Math.min(1, inner.w / fw, inner.h / fh);
+  const k = keepSize ? 1 : Math.min(1, inner.w / fw, inner.h / fh);   // keepSize: the repeater grows around it instead (fitRepeater)
   const w = Math.max(4, Math.round(fw * k)), h = Math.max(4, Math.round(fh * k));
   const cfg = repeaterConfig(repeater);
   const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || h }).copies[0];
@@ -250,4 +250,24 @@ export function bindRepeaters(root) {
     if (style.textContent.indexOf('@keyframes ud-rpt-' + data.id + '-') < 0) style.textContent += out.css;
     g.removeAttribute('data-rpt');
   }
+}
+
+/**
+ * Container box that fits a repeater around its items: outer = current container box, inner = its content box, item = slot
+ * size. Lists (vertical / horizontal) hold every copy (count × item + gaps); moving layouts (carousel / roll / slide /
+ * scroll) keep their viewport length and fit the item across it. The top-left corner stays put; `max` ({w,h}) caps the size.
+ */
+export function repeaterFitBox(cfg, outer, inner, item, max = null) {
+  const n = clampN(Math.round(cfg.itemCount) || 1, 1, REPEATER_MAX_ITEMS), gap = Math.max(0, cfg.gap || 0);
+  const padX = Math.max(0, outer.w - inner.w), padY = Math.max(0, outer.h - inner.h);
+  const iw = Math.max(1, item.w), ih = Math.max(1, item.h);
+  const ring = (cfg.layout === 'carousel' || cfg.layout === 'roll') && cfg.dimension === '3d';
+  const axisX = cfg.layout === 'horizontal' || cfg.layout === 'carousel' || ((cfg.layout === 'slide' || cfg.layout === 'scroll') && cfg.direction === 'horizontal');
+  let w, h;
+  if (cfg.layout === 'vertical') { w = iw + padX; h = n * ih + (n - 1) * gap + padY; }
+  else if (cfg.layout === 'horizontal') { w = n * iw + (n - 1) * gap + padX; h = ih + padY; }
+  else if (axisX) { w = Math.max(outer.w, iw + padX); h = ih + padY + (ring ? ih * 0.4 : 0); }
+  else { w = iw + padX + (ring ? iw * 0.4 : 0); h = Math.max(outer.h, ih + padY); }
+  if (max) { w = Math.min(w, max.w); h = Math.min(h, max.h); }
+  return { x: outer.x, y: outer.y, w: Math.round(w), h: Math.round(h) };
 }
