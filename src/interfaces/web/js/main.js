@@ -1004,7 +1004,19 @@ async function boot() {
       if (item && dType === 'button') setTimeout(() => app.designer.menu?.focusItem(item), 450);
     }
   }
-  const hs = deep ? null : history.state;
+  // ?new=screen&link=<buttonId>:<itemId> (from a menu item's screen picker): create a screen here and link the item to it
+  const mk = qp.get('new') === 'screen' ? /^(\d+):(\d+)$/.exec(qp.get('link') || '') : null;
+  if (qp.get('new') === 'screen') {
+    history.replaceState(null, '', location.pathname);
+    const pid = Number(qp.get('projectId'));
+    if (pid && state.projects?.some(p => Number(p.id) === pid) && state.activeProjectId !== pid) await setActiveProject(pid);   // the new screen belongs to the menu button's project
+    const rec = await newDesign('screen');
+    if (rec) {
+      if (mk) { try { await api.updateMenuItem(Number(mk[1]), Number(mk[2]), { targetScreenId: rec.id }); toast(`Linked to the menu item: it goes to “${rec.name}”`, 'ok', 2600); } catch (e) { toast(e.message, 'error'); } }
+      await app.openDesign('screen', rec.id, { push: 'replace' });
+    }
+  }
+  const hs = deep || qp.get('new') === 'screen' ? null : history.state;
   if (hs?.view) { nav.idx = hs.idx; nav.labels[hs.idx] = hs.label; if (!(await app.openView(hs.view, { push: false }))) history.replaceState(null, ''); }
   if (!app.current && state.mode !== 'workflow') {
     const screens = await api.list('screen');

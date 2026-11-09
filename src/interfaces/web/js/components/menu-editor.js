@@ -4,9 +4,9 @@
  *    (add sub item · edit · delete) and the same click behaviour as the exported page (via menu-runtime).
  *  - menuActions: add / edit / delete / move / settings, shared with the inspector.
  */
-import { h, modal, toast, confirmBox, clear } from '../dom.js';
+import { h, modal, toast, confirmBox, clear, promptBox } from '../dom.js';
 import { api } from '../api.js';
-import { state, findDesign } from '../state.js';
+import { state, findDesign, isPublicLibraryItem } from '../state.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
 
@@ -91,6 +91,45 @@ export function pickButton(currentId = null, excludeId = null) {
     Promise.all([api.list('button', '', { visibility: 'mine', includePublic: false }), api.list('button', '', { visibility: 'public' })])
       .then(([mine, pub]) => { const ownIds = new Set(mine.map(b => b.id)); all = [...mine.map(b => ({ b, own: true })), ...pub.filter(b => !ownIds.has(b.id)).map(b => ({ b, own: false }))]; fill(); })
       .catch(e => { clear(list); list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Could not load buttons: ${e.message}`)); });
+    setTimeout(() => q.focus(), 30);
+  });
+}
+
+/**
+ * Pick the screen a menu item goes to: this project's screens, my other projects' and the public ones, with previews.
+ * Resolves to { screen } (a record), { create: true } (make a new one in a new tab), { none: true } or null (cancelled).
+ */
+export function pickScreen({ currentId = null, projectId = null } = {}) {
+  return new Promise(resolve => {
+    let done = false, m, all = [];
+    const fin = v => { if (!done) { done = true; resolve(v); } };
+    const q = h('input', { type: 'search', placeholder: 'Search screens of this project, my projects and the public library…', 'data-f': 'pick-screen-q' });
+    const list = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '10px', maxHeight: '440px', overflow: 'auto' } });
+    const group = s => (projectId != null && Number(s.projectId) === Number(projectId) && !isPublicLibraryItem(s) ? 'here' : isPublicLibraryItem(s) ? 'public' : 'other');
+    const card = s => h('button', { class: `cell${s.id === currentId ? ' sel' : ''}`, type: 'button', 'data-screen-id': String(s.id), title: `${s.label || s.name} (${s.key})`,
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px', cursor: 'pointer' }, onclick: () => { fin({ screen: s }); m.close(); } },
+      h('img', { loading: 'lazy', alt: s.name, style: { width: '96px', height: '160px', objectFit: 'contain' }, src: api.svgUrl('screen', s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
+      h('div', { style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.name),
+      group(s) !== 'here' ? h('span', { class: 'badge', title: 'Selecting it copies the screen into this project (you name the copy)' }, '⧉ copied') : null);
+    const fill = () => {
+      clear(list);
+      const t = q.value.trim().toLowerCase();
+      const rows = all.filter(s => !t || `${s.key} ${s.name} ${s.label} ${s.category}`.toLowerCase().includes(t));
+      const head = txt => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, txt);
+      for (const [g, title] of [['here', 'This project'], ['other', 'My other projects (copied into this project)'], ['public', 'Public library (copied into this project)']]) {
+        const part = rows.filter(s => group(s) === g);
+        if (part.length) list.append(head(`${title} · ${part.length}`), ...part.slice(0, 120).map(card));
+      }
+      if (!rows.length) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, all.length ? 'No screens match.' : 'Loading screens…'));
+    };
+    q.addEventListener('input', fill);
+    m = modal({ title: 'Goes to screen', wide: true, onClose: () => fin(null), content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, q, list),
+      actions: close => [
+        h('button', { class: 'btn primary', 'data-f': 'pick-screen-new', onclick: () => { fin({ create: true }); close(); } }, '＋ New screen (new tab)'),
+        h('button', { class: 'btn', onclick: () => { fin({ none: true }); close(); } }, 'No screen'),
+        h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
+    fill();
+    api.list('screen', '', { includePublic: true }).then(rows => { all = rows; fill(); }).catch(e => { clear(list); list.append(h('div', { class: 'muted' }, `Could not load screens: ${e.message}`)); });
     setTimeout(() => q.focus(), 30);
   });
 }
@@ -299,6 +338,34 @@ export const menuActions = {
     await this.refresh(d, bid);
     return true;
   },
+  /**
+   * "Goes to screen" of a menu item from the screen picker. A screen of another project or of the public library is copied into
+   * this button's project first (the user names the copy); "new screen" opens a new tab that creates one and links it back.
+   */
+  async linkScreen(d, itemId, buttonId = null) {
+    const bid = resolveButtonId(d, buttonId);
+    if (!bid) return;
+    const host = d.doc?.id === bid ? d.doc : findDesign('button', bid);
+    const projectId = host?.projectId ?? state.activeProjectId;
+    const it = getButtonRows(d, bid).find(r => r.id === itemId);
+    if (!it) return;
+    const r = await pickScreen({ currentId: it.targetScreenId ?? null, projectId });
+    if (!r) return;
+    if (r.create) {
+      const w = window.open(`${location.origin}${location.pathname}?${new URLSearchParams({ new: 'screen', link: `${bid}:${itemId}`, projectId: String(projectId ?? '') })}`, '_blank');
+      return w ? toast('Create the screen in the new tab: it is linked to this item when it is created', 'info', 3000) : toast('The browser blocked the new tab: allow pop-ups for this site', 'error');
+    }
+    let target = r.none ? null : r.screen;
+    if (target && (Number(target.projectId) !== Number(projectId) || isPublicLibraryItem(target))) {
+      const name = await promptBox(`Copy “${target.name}” into this project`, { label: 'Name of the copy', value: `${target.name} copy`, okLabel: 'Copy and link' });
+      if (!name?.trim()) return;
+      try { target = await api.cloneDesign('screen', target.id, { name: name.trim(), projectId }); } catch (e) { return toast(e.message, 'error'); }
+      toast(`Copied as “${target.name}”`, 'ok', 1800);
+    }
+    try { await api.updateMenuItem(bid, itemId, { targetScreenId: target ? target.id : null }); } catch (e) { return toast(e.message, 'error'); }
+    await this.refresh(d, bid);
+    toast(target ? `“${it.label || it.name}” → ${target.name}` : `“${it.label || it.name}” goes to no screen`, 'ok', 1800);
+  },
   async toggleVisible(d, itemId, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);
     if (!bid) return;
@@ -477,13 +544,14 @@ export class MenuEditor {
         this.toolbar.append(
           btn('✎ Edit menu item', 'Edit menu item', () => menuActions.edit(this.d, (levelItem || rows[0]).id, hit.buttonId), 'btn small')
         );
-        if (levelItem) this.toolbar.append(...this.focusButtons(rows, levelItem, btn));
+        if (levelItem) this.toolbar.append(btn('🖥', `Goes to screen… (${levelItem.targetScreenId ? 'linked' : 'none'})`, () => menuActions.linkScreen(this.d, levelItem.id, hit.buttonId)), ...this.focusButtons(rows, levelItem, btn));
       }
     } else if (hit.item) {
       const it = hit.item;
       this.toolbar.append(
         btn('✎ Edit menu item', `Edit menu item “${it.label || it.name}” (double-click the item to open its button)`, () => menuActions.edit(this.d, it.id, hit.buttonId), 'btn small primary'),
         btn('＋', `Add a sub item to “${it.label || it.name}”`, () => menuActions.add(this.d, it.id, hit.buttonId)),
+        btn('🖥', `Goes to screen… (${it.targetScreenId ? 'linked' : 'none'}): pick one, copy one into this project or create a new one`, () => menuActions.linkScreen(this.d, it.id, hit.buttonId)),
         btn(it.visible === false ? '—' : '👁', it.visible === false ? 'Show menu item' : 'Hide menu item', () => menuActions.toggleVisible(this.d, it.id, hit.buttonId)),
         btn('←', 'Move earlier', () => menuActions.move(this.d, it.id, -1, hit.buttonId)),
         btn('→', 'Move later', () => menuActions.move(this.d, it.id, 1, hit.buttonId)),

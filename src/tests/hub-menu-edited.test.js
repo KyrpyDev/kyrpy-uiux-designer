@@ -517,3 +517,16 @@ test('sync: the server names the design a write touched; live designs patch it a
   assert.match(lib, /on\('library:changed', \(\) => \{ this\.loadWorkflows\(\); this\.softRefresh\(\); \}\);/); assert.match(lib, /sig === this\.renderedSig\) return;/);
   assert.match(ta, /if \(livePillsShown\(\)\) this\.mountLiveEditPills\(\);/);
 });
+
+test('menu item "goes to screen" picker: toolbar button, copy into this project with a rename, create in a new tab and link back', () => {
+  const rd = f => readFileSync(new URL(f, import.meta.url), 'utf8');
+  const ed = rd('../interfaces/web/js/components/menu-editor.js'), main = rd('../interfaces/web/js/main.js');
+  assert.match(ed, /export function pickScreen\(/);
+  assert.match(ed, /menuActions\.linkScreen\(this\.d, levelItem\.id, hit\.buttonId\)/, 'centre toolbar');
+  assert.match(ed, /menuActions\.linkScreen\(this\.d, it\.id, hit\.buttonId\)/, 'item toolbar');
+  assert.match(ed, /Number\(target\.projectId\) !== Number\(projectId\) \|\| isPublicLibraryItem\(target\)/, 'other project / public screens are copied');
+  assert.match(ed, /promptBox\(`Copy “\$\{target\.name\}” into this project`/, 'the copy is renamed');
+  assert.match(ed, /api\.cloneDesign\('screen', target\.id, \{ name: name\.trim\(\), projectId \}\)/);
+  assert.match(ed, /new: 'screen', link: `\$\{bid\}:\$\{itemId\}`/);
+  assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id \}\)/, 'the new tab links the created screen back');
+});
