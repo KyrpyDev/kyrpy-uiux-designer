@@ -911,3 +911,7 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .dz-live-edit:hover { opacity: 1; transform: scale(1.08); }
 .dz-live-item-edit { position: fixed; z-index: 9999; opacity: 1; }
 .dz-live-item-edit[hidden] { display: none; }
+
+/* test runner: only the live test toolbar (HUD); no edit toolbar, selection handles or hints */
+.test-runner .dz-toprow, .test-runner .dz-docbar, .test-runner .dz-bar, .test-runner .dz-pathbar, .test-runner .dz-hint, .test-runner .dz-inspector, .test-runner .dz-insp-split { display: none !important; }
+.test-runner svg.dz-overlay, .test-runner .dz-overlay { display: none !important; }

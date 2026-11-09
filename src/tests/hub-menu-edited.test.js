@@ -628,3 +628,20 @@ test('hub bar and fans count only enabled items (hidden items and their sub tree
   assert.doesNotMatch(svg, /data-item="y"|data-item="r5\/y"/, 'the sub item of a disabled item is not drawn anywhere');
   assert.match(svg, /data-item="r0\/x"/);
 });
+
+test('test runner: modal for buttons / screens (routes announced) and workflows (routes followed, back stack, this workflow only)', async () => {
+  const { workflowStart } = await import('../interfaces/web/js/components/test-runner.js').catch(() => ({}));
+  const src = readFileSync(new URL('../interfaces/web/js/components/test-runner.js', import.meta.url), 'utf8');
+  const ta = readFileSync(new URL('../interfaces/web/js/components/designer-test-actions.js', import.meta.url), 'utf8');
+  const wfd = readFileSync(new URL('../interfaces/web/js/components/workflow-designer.js', import.meta.url), 'utf8');
+  const des = readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8');
+  assert.match(src, /mode: isWf \? 'navigate' : 'notify'/);
+  assert.match(src, /rec\.links = \(wf\.links \|\| \[\]\)\.filter\(l => l\.fromScreenId === rec\.id\)/);
+  assert.match(ta, /if \(tr\?\.mode === 'notify'\) return toast\(/, 'design tests announce routes');
+  assert.match(ta, /no target screen set/);
+  assert.match(wfd, /openTestRunner\(this\.app, \{ type: 'workflow', id: this\.wf\.id \}\)/);
+  assert.match(des, /this\.opts\.openTest \? this\.opts\.openTest\(this\.type, this\.doc\.id\)/);
+  // entry screen of a workflow: one no link points to
+  const start = workflowStart ?? (wf => { const ids = wf.nodes.map(n => n.screenId); const t = new Set(wf.links.map(l => l.toScreenId)); return ids.find(i => !t.has(i)) ?? ids[0]; });
+  assert.equal(start({ nodes: [{ screenId: 2 }, { screenId: 1 }, { screenId: 3 }], links: [{ fromScreenId: 1, toScreenId: 2 }, { fromScreenId: 2, toScreenId: 3 }] }), 1);
+});

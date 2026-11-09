@@ -88,9 +88,13 @@ export function installTestActions(Designer) {
 
   /** Routes to a target screen ID while keeping Test actions mode active. */
   proto.navigateLiveToScreen = async function (targetScreenId, label = '') {
+    const tr = this.opts.testRunner;
+    if (targetScreenId == null || targetScreenId === '') return toast(`${label ? `${label}: ` : ''}no target screen set`, 'info', 2200);
     const screens = await api.list('screen');
     const s = screens.find(x => Number(x.id) === Number(targetScreenId) || x.key === String(targetScreenId));
     if (!s) return toast('Target screen no longer exists', 'error');
+    // design test (button / screen): the route is announced, the screen stays; workflow test: it is followed
+    if (tr?.mode === 'notify') return toast(`🔗 ${label ? `${label} → ` : ''}would go to “${s.name}” (test the workflow to follow routes)`, 'info', 2600);
     toast(`🔗 ${label ? `${label} → ` : '→ '}${s.name}`, 'ok', 1800);
     this._keepActionsLive = true;
     return this.opts.openDesign?.('screen', s.id);
@@ -201,6 +205,12 @@ export function installTestActions(Designer) {
     tip.addEventListener('mouseenter', () => clearTimeout(hideT));
     tip.addEventListener('mouseleave', hide);
     tip.addEventListener('click', ev => { ev.stopPropagation(); if (cur) this.editInNewTab('button', cur.btnId, { item: cur.itemId }); tip.hidden = true; });
+    this.stage.addEventListener('mouseleave', hide);
+    // the pill lives on <body>: it goes with this designer (e.g. a test window that closes)
+    if (this.opts.modal) {
+      const gone = new MutationObserver(() => { if (!this.root.isConnected) { tip.remove(); gone.disconnect(); } });
+      gone.observe(document.getElementById('modal-root') || document.body, { childList: true });
+    }
     this.stage.addEventListener('mouseover', ev => {
       if (!this.actionsLive || !livePillsShown()) return hide();
       const it = ev.target.closest?.('.rm-item[data-menu-id]');
@@ -291,6 +301,10 @@ export function installTestActions(Designer) {
       }
     }
 
+    const tr = this.opts.testRunner;
+    if (tr) hudItems.push(
+      h('span', { class: 'badge', title: tr.mode === 'navigate' ? 'Routes are followed: a full browsable app' : 'Routes only say where they would go' }, tr.mode === 'navigate' ? '🧭 Workflow: routes navigate' : '🔔 Design test: routes are announced'),
+      h('button', { class: 'btn small', title: 'Start the test again from the beginning', onclick: () => tr.restart() }, '⟲ Restart'));
     hudItems.push(
       h('span', { class: 'grow' }),
       h('button', { class: `btn small${livePillsShown() ? ' primary' : ''}`, title: 'Show / hide the ✎ edit pills on the tested items (remembered in this browser)',
@@ -298,9 +312,9 @@ export function installTestActions(Designer) {
       h('button', { class: 'btn small', title: `Edit this ${this.type} in a new tab (saved edits show up here at once)`, onclick: () => this.editInNewTab(this.type, d.id) }, `✎ Edit ${this.type} ↗`),
       h('button', {
         class: 'btn small danger',
-        title: 'Exit Test actions mode and return to editing',
-        onclick: () => this.setTestActions(false)
-      }, '✕ Exit Test')
+        title: tr ? 'Close the test window' : 'Exit Test actions mode and return to editing',
+        onclick: () => (tr ? tr.close() : this.setTestActions(false))
+      }, tr ? '✕ Close test' : '✕ Exit Test')
     );
     this.liveHud.append(...hudItems.filter(Boolean));
 

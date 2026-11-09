@@ -27,6 +27,7 @@ const tbIcon = (cls, icon, tip, onclick, badge = 0, on = false) => h('button', {
   class: `btn sm tb-icon ${cls}${on ? ' primary' : ''}`.trim(),
   'aria-label': tip, 'data-tip': tip, onclick
 }, iconEl(icon, { size: 17 }), badge ? h('span', { class: 'tb-badge' }, String(badge)) : null);
+import { openTestRunner } from './components/test-runner.js';
 import {
   openAuthModal,
   ensureAuthGate,
@@ -123,7 +124,7 @@ const app = {
     let d = null;
     // closing (✕, Esc, Close) asks about unsaved changes first
     const m = modal({ title, full: true, content: root, beforeClose: () => d.confirmLeave(), onClose: () => { this.modals = this.modals.filter(x => x !== d); onClose?.(); } });
-    d = new Designer(root, { modal: true, onClose: () => m.requestClose(),
+    d = new Designer(root, { modal: true, onClose: () => m.requestClose(), openTest: (t, i) => openTestRunner(this, { type: t, id: i }),
       openDesign: async (t, i) => {
         if (d.actionsLive && t === 'screen') {
           d._keepActionsLive = true;
@@ -935,7 +936,7 @@ async function boot() {
   );
   $('#statusbar').append(h('span', { id: 'status-msg' }, 'ready'), h('span', { id: 'statusbar-xy', class: 'dim' }), h('span', { class: 'grow' }), h('span', { id: 'status-counts', class: 'dim' }));
   await reloadLibrary({ silent: true });
-  app.designer = new Designer($('#dz-root'), { openDesign: (t, i) => app.openDesign(t, i), onBack: () => app.back(), canBack: app.canBack, backTarget: app.backTarget });
+  app.designer = new Designer($('#dz-root'), { openDesign: (t, i) => app.openDesign(t, i), onBack: () => app.back(), canBack: app.canBack, backTarget: app.backTarget, openTest: (t, i) => openTestRunner(app, { type: t, id: i }) });
   new Inspector(app.designer.inspectorEl, app.designer);
   app.workflow = new WorkflowDesigner($('#wf-root'), app);
   app.browser = new ItemBrowserView($('#browser-root'));

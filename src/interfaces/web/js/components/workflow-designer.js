@@ -10,6 +10,7 @@ import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js
 import { nodeBBox } from '/domain/geometry.js';
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
+import { openTestRunner } from './test-runner.js';
 import { openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
 
@@ -425,9 +426,9 @@ export class WorkflowDesigner {
     this.testBtn = h('button', {
       class: `btn small${this.testMode ? ' active' : ''}`,
       dataset: { act: 'test-actions' },
-      title: 'Test actions & workflow routing interactively: click links or buttons on screens to follow routes',
-      onclick: () => this.setTestMode(!this.testMode)
-    }, '▶ Test actions');
+      title: 'Run this workflow as a browsable app in a test window: every route, menu item and popup works; Back walks back. Edit items in a new tab while it runs.',
+      onclick: () => openTestRunner(this.app, { type: 'workflow', id: this.wf.id })
+    }, '▶ Test workflow');
     const nameIn = h('input', {
       class: 'wf-title-input', value: wf.name, spellcheck: 'false',
       'aria-label': 'Workflow name', title: 'Workflow name: click to rename, Enter to save, Esc to cancel'
@@ -495,7 +496,7 @@ export class WorkflowDesigner {
       const el = h('div', { class: `wf-node${n.collapsed ? ' collapsed' : ''}${n.locked ? ' locked' : ''}${isActiveRoute ? ' active-route' : ''}`, style: { left: `${n.x}px`, top: `${n.y}px`, width: `${s.width}px` }, dataset: { screen: s.id } },
         h('header', { dataset: { drag: s.id } },
           h('b', { title: s.key }, s.name),
-          h('button', { title: 'Test this screen interactively (animations, buttons, edit forms, routing)', onclick: e => { e.stopPropagation(); this.app.openScreenModal(s.id, () => this.refresh(), { testActions: true }); } }, '▶'),
+          h('button', { title: 'Test the workflow from this screen (routes are followed)', onclick: e => { e.stopPropagation(); openTestRunner(this.app, { type: 'workflow', id: this.wf.id, startScreenId: s.id }); } }, '▶'),
           h('button', { title: n.locked ? 'Unlock position' : 'Lock position', onclick: async e => { e.stopPropagation(); n.locked = !n.locked; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed, locked: n.locked }); await this.refresh(); } }, n.locked ? '🔒' : '🔓'),
           h('button', { title: n.collapsed ? 'Expand' : 'Collapse', onclick: e => { e.stopPropagation(); this.toggleCollapse(n); } }, n.collapsed ? '▸' : '▾'),
           h('button', { title: 'Edit this screen (opens the screen designer)', onclick: e => { e.stopPropagation(); this.app.openScreenModal(s.id, () => this.refresh()); } }, '✎'),

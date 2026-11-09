@@ -721,9 +721,10 @@ export class Designer {
       this.menuLive = v; this.stage.classList.toggle('menu-live', v || this.actionsLive);
       this.menu.menuState = v ? { open: false, path: [] } : { open: true, path: [] }; this.renderStage();
     }, 'Click the button and its items like in the finished app (off = edit mode, the menu stays open)'));
-    if (['button', 'element', 'screen'].includes(this.type)) {
-      kids.push(ibtn('testMode', this.actionsLive ? 'Testing actions (on)' : 'Test actions', () => this.setTestActions(!this.actionsLive), {
-        desc: 'Interactive mode: test buttons, animations, edit forms, popups/drawers/toolbars and workflow routing (off = edit mode)',
+    if (['button', 'element', 'screen'].includes(this.type) && !this.opts.testRunner) {
+      // the test runner: a modal that runs this design live (menus, popups, actions; routes are announced, not followed)
+      kids.push(ibtn('testMode', 'Test', () => (this.opts.openTest ? this.opts.openTest(this.type, this.doc.id) : this.setTestActions(!this.actionsLive)), {
+        desc: 'Run this design in a test window: menus with their effects, popups and actions work; routes say where they would go. Edit items in a new tab while it runs.',
         active: this.actionsLive, dataset: { act: 'test-actions', view: '1' }
       }));
     }

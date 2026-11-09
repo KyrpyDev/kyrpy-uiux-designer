@@ -431,7 +431,7 @@ export class MenuEditor {
           const targetScreen = screens.find(s => s.key === a.target || String(s.id) === String(a.target));
           if (targetScreen) return this.d.navigateLiveToScreen(targetScreen.id, `Menu “${a.item}”`);   // stays in the live test
         }
-        toast(`⚡ Menu Action: "${a.action || a.item}" (${a.menu || 'button'})`, 'ok', 1800);
+        toast(`⚡ Menu item “${a.item}”${a.action ? ` fires “${a.action}”` : ''} · no target screen`, 'ok', 2200);
       }
     });
   }
