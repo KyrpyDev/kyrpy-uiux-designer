@@ -1,5 +1,5 @@
 import { NotFoundError, ValidationError } from '../domain/errors.js';
-import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS, MENU_FAN_CORNERS, HUB_VISIBLE } from '../domain/entities.js';
+import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS, MENU_FAN_CORNERS } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { buildMenuTree, menuConfig } from '../domain/menu.js';
 
@@ -106,8 +106,6 @@ export class MenuService {
     if (cfg.kind !== undefined && !MENU_KINDS.includes(cfg.kind)) throw new ValidationError(`kind must be one of ${MENU_KINDS.join(', ')}`);
     if (cfg.layout !== undefined && !MENU_LAYOUTS.includes(cfg.layout)) throw new ValidationError(`layout must be one of ${MENU_LAYOUTS.join(', ')}`);
     if (cfg.fanCorner !== undefined && !MENU_FAN_CORNERS.includes(cfg.fanCorner || '')) throw new ValidationError(`fanCorner must be one of ${MENU_FAN_CORNERS.filter(Boolean).join(', ')} (or empty)`);
-    if (cfg.hubVisible !== undefined && !HUB_VISIBLE.includes(Number(cfg.hubVisible))) throw new ValidationError(`hubVisible must be one of ${HUB_VISIBLE.join(', ')} (odd: big centre, max 5; even: all small, max 6)`);
-    if (cfg.hubVisible !== undefined) cfg = { ...cfg, hubVisible: Number(cfg.hubVisible) };
     if (cfg.hubCenterItemId != null) {
       const it = this.menus.list(b.id).find(m => m.id === Number(cfg.hubCenterItemId));
       if (!it || it.parentId != null) throw new ValidationError('hubCenterItemId must be a top-level item of this menu');

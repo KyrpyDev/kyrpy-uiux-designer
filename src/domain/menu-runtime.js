@@ -30,11 +30,42 @@ export function bindMenus(root, opts) {
    * sides. Even (2 / 4 / 6): every item is small; the current one sits just left of (above) the middle. When the menu has more items
    * than slots, the two end slots are drawn 30 % smaller (there are more items), and the bar shrinks to fit the device screen.
    */
+  // bar slots follow the number of top-level items: even -> up to 6, all small; odd -> up to 5 with a big centre
   function hubSlots(m, n) {
-    var v = +m.getAttribute('data-hub-visible') || 3, odd = v % 2 === 1;
-    v = Math.min(v, odd ? 5 : 6);
-    if (n < v) v = odd ? (n % 2 ? n : n - 1) : (n % 2 ? n - 1 : n);
-    return { v: Math.max(1, v), odd: odd || v === 1, more: n > v };
+    var odd = n % 2 === 1, v = Math.min(n, odd ? 5 : 6);
+    return { v: Math.max(1, v), odd: odd, more: n > v };
+  }
+  /* a fan level with more items than its arc holds (8 when even, 9 when odd) shows a window of them; the first and the last
+     are 30 % smaller and scroll the window when clicked (st.fo = { level path: offset }) */
+  function layoutFan(btn, st) {
+    var key = st.path.join('/');
+    Array.prototype.forEach.call(btn.querySelectorAll('.rm-level[data-fan-r]'), function (level) {
+      var items = Array.prototype.slice.call(level.querySelectorAll('.rm-item')), n = items.length, cap = n % 2 ? 9 : 8;
+      if (!items.length || level.getAttribute('data-level') !== key) return;
+      if (n <= cap) { items.forEach(function (el) { if (el.removeAttribute) { el.removeAttribute('data-fan-hidden'); el.removeAttribute('data-fan-end'); } if (el.style) el.style.setProperty('--end', '1'); }); return; }
+      var m = btn.querySelector('.ud-menu'), cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy');
+      var a0 = +level.getAttribute('data-fan-start'), sw = +level.getAttribute('data-fan-sweep'), R = +level.getAttribute('data-fan-r');
+      var off = ((st.fo && st.fo[key]) || 0) % n;
+      items.forEach(function (el, i) {
+        var t = (i - off + n) % n, shown = t < cap;
+        el.setAttribute('data-fan-hidden', shown ? '0' : '1');
+        el.setAttribute('data-fan-end', shown && (t === 0 || t === cap - 1) ? (t === 0 ? 'first' : 'last') : '0');
+        el.style.setProperty('--end', shown && (t === 0 || t === cap - 1) ? '0.7' : '1');
+        var a = (a0 + sw * Math.min(t, cap - 1) / (cap - 1)) * Math.PI / 180, x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+        el._ox = x; el._oy = y;
+        el.style.setProperty('--x', x + 'px'); el.style.setProperty('--y', y + 'px');
+      });
+    });
+  }
+  /* click on the first / last item of an overflowing fan: scroll the window by one, no action */
+  function fanScroll(btn, t, st) {
+    var end = t.getAttribute && t.getAttribute('data-fan-end');
+    if (end !== 'first' && end !== 'last') return null;
+    var key = st.path.join('/'), level = t.parentNode, n = level && level.querySelectorAll ? level.querySelectorAll('.rm-item').length : 0;
+    var fo = {}; for (var k in (st.fo || {})) fo[k] = st.fo[k];
+    fo[key] = (((fo[key] || 0) + (end === 'last' ? 1 : -1)) % (n || 1) + (n || 1)) % (n || 1);
+    var next = {}; for (var k2 in st) next[k2] = st[k2]; next.fo = fo;
+    return next;
   }
   function layoutHub(btn, st) {
     var m = btn.querySelector('.ud-menu'), items = hubItems(btn), n = items.length, c = st.c || 0;
@@ -139,7 +170,7 @@ export function bindMenus(root, opts) {
     var a = p1.matrixTransform(inv), b = p2.matrixTransform(inv), pad = 4;
     var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     btn.querySelectorAll('.rm-level.is-active .rm-item').forEach(function (el) {
-      if (el.getAttribute('data-hub-pos') === 'hidden') return;
+      if (el.getAttribute('data-hub-pos') === 'hidden' || el.getAttribute('data-fan-hidden') === '1') return;
       var k = el.hasAttribute('data-hub-index') ? (parseFloat(el.style.getPropertyValue('--k')) || 1) : (parseFloat(el.style.getPropertyValue('--fit')) || 1);
       if (k === 0) return;
       var r = (+el.getAttribute('data-r') || 0) * k, x = px(el.style.getPropertyValue('--x')), y = px(el.style.getPropertyValue('--y'));
@@ -154,7 +185,7 @@ export function bindMenus(root, opts) {
   }
   /* hub "auto downsize": the sub items of the open level are scaled down (size and distance from the centre) when they would not fit the screen */
   function downsize(btn, box) {
-    var m = btn.querySelector('.ud-menu'), items = Array.prototype.slice.call(btn.querySelectorAll('.rm-level.is-active:not([data-level=""]) .rm-item'));
+    var m = btn.querySelector('.ud-menu'), items = Array.prototype.slice.call(btn.querySelectorAll('.rm-level.is-active:not([data-level=""]) .rm-item')).filter(function (el) { return el.getAttribute('data-fan-hidden') !== '1'; });
     if (!m || !items.length) return;
     var on = m.getAttribute('data-kind') === 'hub' && m.getAttribute('data-hub-fit') === '1' && m.getAttribute('data-keep') === '1' && box;
     var svg = btn.ownerSVGElement;
@@ -187,6 +218,7 @@ export function bindMenus(root, opts) {
     btn.setAttribute('data-hubdepth', hub ? String(st.path.length) : '0');
     if (hub) btn.setAttribute('data-hub', '1');
     if (hub) layoutHub(btn, st);
+    layoutFan(btn, st);
     restoreSpins(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
     // a corner fan is already placed inside the screen: the rest of the menu stays where it is
@@ -194,7 +226,7 @@ export function bindMenus(root, opts) {
     if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
     else { downsize(btn, screenBox(btn)); fit(btn); }
   }
-  function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; var old = states.get(btn); if (st && !st.spins && old && old.spins) st.spins = old.spins; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
+  function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; var old = states.get(btn); if (st && !st.spins && old && old.spins) st.spins = old.spins; if (st && !st.fo && old && old.fo && (st.path || []).join('/') === (old.path || []).join('/')) st.fo = old.fo; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
     if (opts.onAction) opts.onAction({
       menu: btn.getAttribute('data-menu'), item: el.getAttribute('data-item'), id: el.getAttribute('data-menu-id'), action: el.getAttribute('data-action'),
@@ -246,7 +278,8 @@ export function bindMenus(root, opts) {
       // the clicked item swaps into the centre; its existing sub items fan out at once (also in the editor)
       return { open: true, path: t.getAttribute('data-children') === '1' ? t.getAttribute('data-item').split('/') : [], c: i, prev: c };
     }
-    // an item of a fan (sub level)
+    // an item of a fan (sub level): the ends of an overflowing fan scroll it
+    var sc = fanScroll(btn, t, st); if (sc) return sc;
     if (opts.onItem) opts.onItem(btn, t);
     spin(btn, t);
     if (t.getAttribute('data-children') === '1') return { open: true, path: t.getAttribute('data-item').split('/'), c: c, prev: prev };
@@ -295,6 +328,8 @@ export function bindMenus(root, opts) {
       else if (st.path.length) next = { open: true, path: st.path.slice(0, -1) };
       else next = { open: false, path: [] };
     } else {
+      var sc2 = fanScroll(btn, t, st);
+      if (sc2) { ev.stopPropagation(); set(btn, sc2); return; }
       var item = t.getAttribute('data-item');
       if (opts.onItem) opts.onItem(btn, t);
       if (t.getAttribute('data-children') === '1') next = { open: true, path: item.split('/') };

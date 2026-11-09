@@ -78,34 +78,34 @@ function hubWorld(n = 5, children = { 0: true }, extra = {}) {
   return { btn, items, click, centre, fanItem, ctl, actions, pos, sub, rootLevel, handlers };
 }
 
-test('hub runtime: initial layout is left small / centre big / right small, rest hidden', () => {
-  const w = hubWorld();
-  assert.deepEqual(w.pos(), ['center', 'next', 'hidden', 'hidden', 'prev']);
-  // 5 items on a 3-slot bar: the side (end) buttons are 30 % smaller than small (0.5 x 0.7), marking more items
-  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.35'); assert.equal(w.items[4].styleVars['--k'], '0.35');
-  assert.ok(parseFloat(w.items[1].styleVars['--x']) > 28 && parseFloat(w.items[4].styleVars['--x']) < 28);   // right of / left of the centre
+test('hub runtime: initial layout is big centre with small sides; 7 items show 5, the outer ones 30 % smaller', () => {
+  const w = hubWorld(7, {});
+  assert.deepEqual(w.pos(), ['center', 'next', 'next2', 'hidden', 'hidden', 'prev2', 'prev']);
+  assert.equal(w.items[0].styleVars['--k'], '1'); assert.equal(w.items[1].styleVars['--k'], '0.5'); assert.equal(w.items[6].styleVars['--k'], '0.5');
+  assert.equal(w.items[2].styleVars['--k'], '0.35'); assert.equal(w.items[5].styleVars['--k'], '0.35');   // ends: 0.5 x 0.7
+  assert.ok(parseFloat(w.items[1].styleVars['--x']) > 28 && parseFloat(w.items[6].styleVars['--x']) < 28);   // right of / left of the centre
   assert.equal(w.items[0].styleVars['--y'], '28px');                                                     // horizontal bar: same y
   assert.equal(w.btn.attrs['data-open'], '1');
 });
 
 test('hub runtime: clicking a side button swaps place and size; the ring is infinite', () => {
-  const w = hubWorld(5, {});
+  const w = hubWorld(7, {});
   w.click(w.items[1]);                                                  // right button -> centre
-  assert.deepEqual(w.pos(), ['prev', 'center', 'next', 'hidden', 'hidden']);
-  w.click(w.items[2]); w.click(w.items[3]); w.click(w.items[4]);        // keeps scrolling to the right
-  assert.deepEqual(w.pos(), ['next', 'hidden', 'hidden', 'prev', 'center']);   // item 0 wrapped around to the right side
-  w.click(w.items[3]);                                                  // left button -> centre (scrolling back)
-  assert.equal(w.items[3].attrs['data-hub-pos'], 'center');
+  assert.deepEqual(w.pos(), ['prev', 'center', 'next', 'next2', 'hidden', 'hidden', 'prev2']);
+  w.click(w.items[2]); w.click(w.items[3]); w.click(w.items[4]); w.click(w.items[5]); w.click(w.items[6]);   // keeps scrolling to the right
+  assert.deepEqual(w.pos(), ['next', 'next2', 'hidden', 'hidden', 'prev2', 'prev', 'center']);   // items 0 and 1 wrapped around to the right side
+  w.click(w.items[5]);                                                  // left button -> centre (scrolling back)
+  assert.equal(w.items[5].attrs['data-hub-pos'], 'center');
 });
 
 test('hub runtime: sub items fan out; second click on the centre or an outside click closes them and keeps the item in the centre', () => {
-  const w = hubWorld(5, { 1: true });
+  const w = hubWorld(7, { 1: true });
   w.click(w.items[1]);                                                  // right button has sub items: swaps into the centre and fans out
   assert.deepEqual(w.ctl.get(w.btn).path, ['i1']); assert.equal(w.ctl.get(w.btn).c, 1);
   assert.equal(w.items[0].styleVars['--o'], '0', 'side buttons hide while the fan is open');
   w.click(w.centre);                                                    // second click: closes the sub items, the same item stays in the centre
   assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(w.ctl.get(w.btn).c, 1);
-  assert.deepEqual(w.pos(), ['prev', 'center', 'next', 'hidden', 'hidden']);
+  assert.deepEqual(w.pos(), ['prev', 'center', 'next', 'next2', 'hidden', 'hidden', 'prev2']);
   w.click(w.items[1]);                                                  // fan open again, then click OUTSIDE the button
   assert.deepEqual(w.ctl.get(w.btn).path, ['i1']);
   w.handlers.docClick({ target: { outside: true } });
@@ -533,43 +533,60 @@ test('menu item "goes to screen" picker: toolbar button, copy into this project 
   assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id \}\)/, 'the new tab links the created screen back');
 });
 
-test('hub visible items: odd = big centre (max 5), even = all small (max 6); more items -> end buttons 30 % smaller; validated setting', () => {
-  assert.equal(DEFAULT_MENU.hubVisible, 3);
-  const bar = (n, v) => { const w = hubWorld(n, {}); w.btn.querySelector('.ud-menu').attrs['data-hub-visible'] = String(v); w.ctl.set(w.btn, { open: true, path: [], c: 0, prev: 0 }); return w; };
+test('hub bar size follows the item count: even -> up to 6 all small, odd -> up to 5 with a big centre; more -> ends 30 % smaller', () => {
+  assert.equal(DEFAULT_MENU.hubVisible, undefined, 'no setting any more');
+  const bar = n => { const w = hubWorld(n, {}); w.ctl.set(w.btn, { open: true, path: [], c: 0, prev: 0 }); return w; };
   const k = (w, i) => w.items[i].styleVars['--k'];
-  // 3 items, 3 slots: nothing is hidden, the sides keep the small size
-  let w = bar(3, 3);
-  assert.deepEqual(w.pos(), ['center', 'next', 'prev']); assert.equal(k(w, 1), '0.5');
-  // 5 slots, 7 items: centre big, two small on each side, the outer ones 30 % smaller
-  w = bar(7, 5);
-  assert.deepEqual(w.pos(), ['center', 'next', 'next2', 'hidden', 'hidden', 'prev2', 'prev']);
-  assert.equal(k(w, 0), '1'); assert.equal(k(w, 1), '0.5'); assert.equal(k(w, 2), '0.35'); assert.equal(k(w, 5), '0.35');
-  assert.ok(parseFloat(w.items[2].styleVars['--x']) > parseFloat(w.items[1].styleVars['--x']));
-  assert.equal(w.btn.attrs['data-hub-even'], '0');
-  // 4 slots (even), 6 items: all small, the end ones 30 % smaller, no big centre; the centre hit is off
-  w = bar(6, 4);
-  assert.equal(w.btn.attrs['data-hub-even'], '1');
-  assert.equal(w.pos().filter(p => p !== 'hidden').length, 4);
-  assert.equal(k(w, 0), '0.5'); assert.ok(w.items.every((it, i) => w.pos()[i] === 'hidden' || ['0.5', '0.35'].includes(k(w, i))));
-  assert.equal(w.items.filter((it, i) => w.pos()[i] !== 'hidden' && k(w, i) === '0.35').length, 2);
+  const shown = w => w.pos().filter(p => p !== 'hidden').length;
+  let w = bar(3);
+  assert.deepEqual(w.pos(), ['center', 'next', 'prev']); assert.equal(k(w, 1), '0.5'); assert.equal(w.btn.attrs['data-hub-even'], '0');
+  w = bar(5);
+  assert.equal(shown(w), 5); assert.ok([1, 2, 3, 4].every(i => k(w, i) === '0.5'), 'all fit: no end shrinks');
+  w = bar(9);
+  assert.equal(shown(w), 5); assert.equal(k(w, 0), '1'); assert.equal(k(w, 2), '0.35'); assert.equal(k(w, 7), '0.35');
+  w = bar(4);
+  assert.equal(w.btn.attrs['data-hub-even'], '1'); assert.equal(shown(w), 4); assert.ok(w.items.every((x, i) => k(w, i) === '0.5'), 'even: all equal');
+  w = bar(10);
+  assert.equal(shown(w), 6); assert.equal(w.items.filter((x, i) => w.pos()[i] !== 'hidden' && k(w, i) === '0.35').length, 2);
+  assert.ok(w.items.every((x, i) => w.pos()[i] === 'hidden' || ['0.5', '0.35'].includes(k(w, i))));
   assert.match(MENU_CSS, /\[data-hub-even="1"\] \.rm-hit\{pointer-events:none\}/);
-  // 6 slots, 6 items: all fit, nobody shrinks
-  w = bar(6, 6);
-  assert.ok(w.items.every(it => it.styleVars['--k'] === '0.5'));
   // an end item further out scrolls the bar by one step instead of acting
-  w = bar(7, 5);
+  w = bar(9);
   w.items[2].attrs['data-hub-end'] = '1';
   w.click(w.items[2]);
   assert.equal(w.ctl.get(w.btn).c, 1); assert.equal(w.actions.length, 0);
-  // validated + rendered
-  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
-  try {
-    const pub = c.publicUserId();
-    const b = c.button.create({ name: 'hv', key: 'hub-hv', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 56, height: 56 }, { nodes: [] });
-    c.menus.setConfig(b.id, { ...HUB.config });
-    ['a', 'b', 'c'].forEach(l => c.menus.addItem(b.id, { label: l }));
-    assert.throws(() => c.menus.setConfig(b.id, { hubVisible: 7 }), /hubVisible must be one of/);
-    assert.equal(c.menus.setConfig(b.id, { hubVisible: '4' }).hubVisible, 4);
-    assert.match(c.render.boxSvg('button', b.id, null, {}), /data-hub-visible="4"/);
-  } finally { c.close(); }
+});
+
+test('fan sub items: more than 8 (even) / 9 (odd) show a window; first and last 30 % smaller and scroll it', () => {
+  const mk = (attrs = {}) => { const el = { attrs: { ...attrs }, styleVars: {}, style: { setProperty: (k2, v) => { el.styleVars[k2] = v; }, getPropertyValue: k2 => el.styleVars[k2] ?? '' },
+    getAttribute: k2 => el.attrs[k2] ?? null, setAttribute: (k2, v) => { el.attrs[k2] = String(v); }, removeAttribute: k2 => { delete el.attrs[k2]; }, hasAttribute: k2 => k2 in el.attrs, classList: { toggle() {} } }; return el; };
+  const world = n => {
+    const level = mk({ 'data-level': 'a', 'data-fan-start': '-160', 'data-fan-sweep': '140', 'data-fan-r': '60' });
+    const items = Array.from({ length: n }, (_, i) => { const it = mk({ 'data-item': `a/x${i}`, 'data-children': '0', 'data-action': `x${i}` }); it.parentNode = level; return it; });
+    level.querySelectorAll = () => items;
+    const menu = mk({ 'data-kind': 'radial', 'data-cx': '28', 'data-cy': '28', 'data-keep': '0' });
+    const btn = mk({ 'data-menu': 'm' });
+    btn.querySelector = s2 => (s2 === '.ud-menu' ? menu : null);
+    btn.querySelectorAll = s2 => (s2 === '.rm-level[data-fan-r]' ? [level] : []);
+    items.forEach(it => { it.closest = s2 => (s2 === '.ud-btn' ? btn : s2 === '[data-rm="center"], .rm-item' ? it : null); });
+    const handlers = {}, actions = [];
+    const ctl = bindMenus({ addEventListener: (t, fn) => { handlers[t] = fn; }, querySelectorAll: () => [] }, { onAction: a => actions.push(a) });
+    ctl.set(btn, { open: true, path: ['a'] });
+    return { items, ctl, btn, actions, click: t => handlers.click({ target: t, stopPropagation() {} }) };
+  };
+  const visible = w => w.items.filter(it => it.attrs['data-fan-hidden'] === '0');
+  let w = world(8);
+  assert.ok(w.items.every(it => it.attrs['data-fan-hidden'] === undefined && it.styleVars['--end'] === '1'), '8 even items fit');
+  w = world(11);                                                // odd: window of 9
+  assert.equal(visible(w).length, 9); assert.equal(w.items[0].styleVars['--end'], '0.7'); assert.equal(w.items[8].styleVars['--end'], '0.7'); assert.equal(w.items[4].styleVars['--end'], '1');
+  w = world(10);                                                // even: window of 8
+  assert.equal(visible(w).length, 8); assert.equal(w.items[0].attrs['data-fan-end'], 'first'); assert.equal(w.items[7].attrs['data-fan-end'], 'last');
+  w.click(w.items[7]);                                          // last: scroll forward, no action
+  assert.equal(w.actions.length, 0); assert.equal(w.ctl.get(w.btn).fo.a, 1);
+  assert.equal(w.items[1].attrs['data-fan-end'], 'first'); assert.equal(w.items[8].attrs['data-fan-end'], 'last'); assert.equal(w.items[0].attrs['data-fan-hidden'], '1');
+  w.click(w.items[1]);                                          // first: scroll back
+  assert.equal(w.ctl.get(w.btn).fo.a, 0);
+  w.click(w.items[3]);                                          // a middle item acts
+  assert.equal(w.actions.at(-1).action, 'x3');
+  assert.match(MENU_CSS, /scale\(calc\(var\(--fit,1\) \* var\(--end,1\)\)\)/);
 });

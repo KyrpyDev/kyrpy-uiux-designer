@@ -4,7 +4,7 @@ import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton } from './menu-editor.js';
-import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, hubVisibleOf, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
+import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
 import { buildMenuTree, hubDirectionPatch } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
@@ -329,13 +329,6 @@ export class Inspector {
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
             this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set(hubDirectionPatch(cfg, v)))),
-            (() => {
-              const sel = this.select(`mc-${bid}-hubvis`, String(hubVisibleOf(cfg)), [
-                ['2', '2 · all small'], ['3', '3 · big centre (default)'], ['4', '4 · all small'], ['5', '5 · big centre (max odd)'], ['6', '6 · all small (max)']
-              ], v => set({ hubVisible: Number(v) }));
-              sel.title = 'Odd: the current item is the big centre. Even: all items are small. With more menu items than this, the two end buttons are 30 % smaller and the bar shrinks to fit the screen.';
-              return this.field('Visible items on the bar', sel);
-            })(),
             num('hubScale', 'Small items size × button'), num('centerScale', 'Centre item size × button (0 = 2 × small)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the sub items would not fit the screen they are scaled down (size and distance) until they do' },
               h('input', { type: 'checkbox', checked: !!cfg.hubFit, 'data-f': `mc-${bid}-hubfit`, onchange: e => set({ hubFit: e.target.checked }) }), h('span', {}, 'Auto downsize sub items to fit the screen')),
