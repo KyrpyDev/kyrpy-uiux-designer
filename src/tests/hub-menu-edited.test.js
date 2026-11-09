@@ -148,18 +148,19 @@ test('hub menus reach an existing library once and are idempotent (button + elem
   } finally { c.close(); }
 });
 
-test('edited items: red edge and listed first (most recent first), before project / private / used / public', () => {
+test('edited items: the one being edited red and first, the other edited purple, then project (orange), my scope (green), public', () => {
   const edited = new Map([['icon:5', 0], ['icon:2', 1]]);   // 5 was edited last
   const list = [
     { id: 1, visibility: 'public' }, { id: 2, visibility: 'public' }, { id: 3, visibility: 'project' },
     { id: 4, visibility: 'private', creatorId: 7 }, { id: 5, visibility: 'project' }, { id: 6, visibility: 'public' }
   ];
   const used = new Set(['icon:6']);
-  assert.deepEqual(scopeFirst(list, 7, used, 'icon', edited).map(d => d.id), [5, 2, 3, 4, 6, 1]);
-  assert.deepEqual(scopeFirst(list, 7, used, 'icon').map(d => d.id), [3, 5, 4, 6, 1, 2], 'no edits: unchanged order');
+  assert.deepEqual(scopeFirst(list, 7, used, 'icon', edited).map(d => d.id), [5, 2, 3, 4, 1, 6]);
+  assert.deepEqual(scopeFirst(list, 7, used, 'icon').map(d => d.id), [3, 5, 4, 1, 2, 6], 'no edits: project, mine, public (in order)');
   assert.equal(visClass({ id: 5, visibility: 'project' }, used, 'icon', edited), ' vis-edited');
-  assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'icon', edited), ' vis-edited');
+  assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'icon', edited), ' vis-recent');
   assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'button', edited), '', 'type is part of the key');
+  assert.match(readFileSync(new URL('../interfaces/web/css/app.css', import.meta.url), 'utf8'), /\.cell\.vis-project[^{]*\{ border-color: #f97316/);
   assert.equal(isEdited({ id: 1 }, new Map(), 'icon'), false);
 });
 

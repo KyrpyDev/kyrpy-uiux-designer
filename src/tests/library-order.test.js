@@ -25,22 +25,21 @@ test('privateFirst stays linear for a large icon library', () => {
   assert.equal(out[11].id, 1);
 });
 
-test('scopeFirst orders project items, then own private, then public (stable) and visClass tags them', () => {
+test('scopeFirst orders the active project (orange), then the rest of my scope (green), then public (stable) and visClass tags them', () => {
   const list = [
-    { id: 1, visibility: 'public' }, { id: 2, visibility: 'project' }, { id: 3, visibility: 'private', creatorId: 7 },
-    { id: 4, visibility: 'public' }, { id: 5, visibility: 'project' }, { id: 6, visibility: 'private', creatorId: 7 }
+    { id: 1, visibility: 'public' }, { id: 2, visibility: 'project', projectId: 9 }, { id: 3, visibility: 'private', creatorId: 7, projectId: 4 },
+    { id: 4, visibility: 'public' }, { id: 5, visibility: 'project', projectId: 9 }, { id: 6, visibility: 'project', creatorId: 7, projectId: 4 }
   ];
-  assert.deepEqual(scopeFirst(list, 7).map(d => d.id), [2, 5, 3, 6, 1, 4]);
+  const scope = { projectId: 9, publicUserId: null };
+  assert.deepEqual(scopeFirst(list, 7, null, 'icon', null, scope).map(d => d.id), [2, 5, 3, 6, 1, 4]);
   assert.deepEqual(scopeFirst(list.filter(d => d.visibility === 'public'), 7).map(d => d.id), [1, 4]);
-  assert.equal(visClass({ visibility: 'project' }), ' vis-own');
-  assert.equal(visClass({ visibility: 'private' }), ' vis-own');
+  assert.equal(visClass({ visibility: 'project', projectId: 9 }, null, 'icon', null, scope), ' vis-project');
+  assert.equal(visClass({ visibility: 'project', projectId: 4 }, null, 'icon', null, scope), ' vis-own', 'another project of mine: green');
+  assert.equal(visClass({ visibility: 'private' }, null, 'icon', null, scope), ' vis-own');
   assert.equal(visClass({ visibility: 'public' }), '');
-  // public items the active project uses: purple and listed right after the green ones
-  const used = new Set(['icon:4']);
-  assert.equal(visClass({ id: 4, visibility: 'public' }, used, 'icon'), ' vis-used');
-  assert.equal(visClass({ id: 1, visibility: 'public' }, used, 'icon'), '');
-  assert.equal(visClass({ id: 4, visibility: 'public' }, used, 'button'), '');
-  assert.deepEqual(scopeFirst(list, 7, used, 'icon').map(d => d.id), [2, 5, 3, 6, 4, 1]);
+  // a public-visibility item of a user (not the public library) stays in the user's scope
+  assert.equal(visClass({ visibility: 'public', creatorId: 7, projectId: 9 }, null, 'icon', null, { projectId: 9, publicUserId: 15 }), ' vis-project');
+  assert.equal(visClass({ visibility: 'public', creatorId: 15, projectId: 9 }, null, 'icon', null, { projectId: 9, publicUserId: 15 }), '');
 });
 
 test('NodeRepository.usedByProject follows screen -> element -> button -> icon references', async () => {

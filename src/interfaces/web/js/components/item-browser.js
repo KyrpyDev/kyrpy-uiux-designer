@@ -5,7 +5,7 @@
  * and Trash Management Modal (Restore / Purge / Empty with Admin guard on public items).
  */
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
-import { visClass } from '/domain/entities.js';
+import { visClass, scopeTier } from '/domain/entities.js';
 import { editedIndex } from '../edited.js';
 import { api } from '../api.js';
 import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
@@ -352,11 +352,9 @@ export function buildItemBrowserElement({
         out.push({ type: t, item });
       }
     }
-    // project-scope items first, then the user's own private items, then public ones; each group keeps its order
-    // green (project/private/cloned) first, then purple (public items the active project uses), then plain public
-    // red (edited, most recent first) comes before all of them
-    const used = new Set(state.library?.usedKeys || []), edited = editedIndex();
-    const rank = ({ type, item }) => (edited.has(`${type}:${item.id}`) ? -1 : item.visibility === 'project' ? 0 : item.visibility === 'private' ? 1 : used.has(`${type}:${item.id}`) ? 2 : 3);
+    // red (being edited) > purple (other edited, most recent first) > orange (active project) > green (rest of my scope) > public
+    const edited = editedIndex(), scope = { projectId: state.activeProjectId ?? null, publicUserId: state.publicUserId ?? null };
+    const rank = ({ type, item }) => scopeTier(item, null, type, edited, scope);
     const hot = ({ type, item }) => edited.get(`${type}:${item.id}`) ?? 0;
     return out.map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || hot(a[0]) - hot(b[0]) || a[1] - b[1]).map(x => x[0]);
   }
@@ -661,7 +659,7 @@ export function buildItemBrowserElement({
       );
 
       const card = h('div', {
-        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item, new Set(state.library?.usedKeys || []), type, editedIndex())}`,
+        class: `lib-card ib-card${isChecked ? ' checked' : ''}${visClass(item, new Set(state.library?.usedKeys || []), type, editedIndex(), { projectId: state.activeProjectId ?? null, publicUserId: state.publicUserId ?? null })}`,
         dataset: { ibCardType: type, ibCardId: String(item.id) },
         onclick: () => {
           const next = !selectedKeys.has(k);

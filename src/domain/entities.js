@@ -44,18 +44,29 @@ export function privateFirst(list, userId) {
  * Library order: project-scope items first, then the user's own private items, then public items; every group keeps
  * its existing order (stable, O(n)).
  */
-export function scopeFirst(list, userId, used = null, type = '', edited = null) {
-  const uid = Number(userId || 1);
-  const hot = [], project = [], own = [], inUse = [], rest = [];
-  for (const d of list || []) {
-    if (isEdited(d, edited, type)) hot.push(d);
-    else if (d.visibility === 'project') project.push(d);
-    else if (d.visibility === 'private' && Number(d.creatorId || 1) === uid) own.push(d);
-    else if (isUsed(d, used, type)) inUse.push(d);
-    else rest.push(d);
-  }
-  if (hot.length) hot.sort((a, b) => edited.get(`${type}:${a.id}`) - edited.get(`${type}:${b.id}`));
-  return hot.length || project.length || own.length || inUse.length ? hot.concat(project, own, inUse, rest) : rest;
+/**
+ * Library order and edge colour (one tier per item, each tier keeps the incoming order):
+ *   0 red     (vis-edited)  the item being edited (most recently edited)
+ *   1 purple  (vis-recent)  the other edited items, most recent first
+ *   2 orange  (vis-project) items of the active project
+ *   3 green   (vis-own)     the rest of the user's scope (own private items, other projects)
+ *   4 plain                 public library items
+ * `scope` = { projectId, publicUserId }; without a projectId, project-visibility items count as the active project's.
+ */
+export function scopeTier(d, userId, type = '', edited = null, scope = {}) {
+  if (isEdited(d, edited, type)) return edited.get(`${type}:${d.id}`) === Math.min(...edited.values()) ? 0 : 1;
+  const pub = scope.publicUserId;
+  const isPublic = (d?.visibility || 'public') === 'public' && (pub == null || Number(d.creatorId ?? d.rootOwnerId ?? pub) === Number(pub));
+  if (isPublic) return 4;
+  if (scope.projectId != null ? Number(d.projectId) === Number(scope.projectId) : d.visibility === 'project') return 2;
+  return 3;
+}
+
+export function scopeFirst(list, userId, used = null, type = '', edited = null, scope = {}) {
+  const tiers = [[], [], [], [], []];
+  for (const d of list || []) tiers[scopeTier(d, userId, type, edited, scope)].push(d);
+  if (tiers[1].length) tiers[1].sort((a, b) => edited.get(`${type}:${a.id}`) - edited.get(`${type}:${b.id}`));
+  return [].concat(...tiers);
 }
 
 /** True when the active project uses this item (`used` = Set of "type:id" keys from /api/library `usedKeys`). */
@@ -68,17 +79,9 @@ export function isEdited(d, edited, type) {
   return Boolean(edited && edited.size && type && d && edited.has(`${type}:${d.id}`));
 }
 
-/**
- * CSS class for the card edge of a library item:
- *   red    (vis-edited) items the user edited: listed before everything else, most recent first
- *   green  (vis-own)    project-scope, private or cloned items: they belong to the user's projects and are listed next
- *   purple (vis-used)   public items the active project uses
- *   plain               public, immutable items that are not in use
- */
-export function visClass(d, used = null, type = '', edited = null) {
-  if (isEdited(d, edited, type)) return ' vis-edited';
-  if (d?.visibility === 'project' || d?.visibility === 'private') return ' vis-own';
-  return isUsed(d, used, type) ? ' vis-used' : '';
+/** CSS class for the card edge of a library item (see scopeTier): red, purple, orange, green or none. */
+export function visClass(d, used = null, type = '', edited = null, scope = {}) {
+  return ['vis-edited', 'vis-recent', 'vis-project', 'vis-own', ''].map(c => (c ? ` ${c}` : ''))[scopeTier(d, null, type, edited, scope)];
 }
 
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];
