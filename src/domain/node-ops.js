@@ -167,3 +167,28 @@ export function stepLayer(nodes, id, dir) {
   const next = sibs[sibs.indexOf(node) + (dir > 0 ? 1 : -1)];
   return next ? reorderLayer(nodes, id, next.id, dir > 0 ? 'above' : 'below') : null;
 }
+
+/**
+ * "Extract as element": the selected node, its sub tree and the shapes of its own level that lie fully inside it (the content
+ * drawn on a card / bar), moved to the new element's origin. `bbox(node)` gives a node's box in the design.
+ * Returns { box, nodes }: the element size is the box; the nodes keep their ids / parent ids (the store maps them) under one
+ * wrapper group that shifts them by -box.x, -box.y. Full-screen backgrounds never come along.
+ */
+export function extractNodes(all, rootId, bbox) {
+  const root = all.find(n => n.id === rootId);
+  if (!root) return null;
+  const box = bbox(root);
+  const inside = b => b.w > 0 && b.h > 0 && b.x >= box.x - 0.5 && b.y >= box.y - 0.5 && b.x + b.w <= box.x + box.w + 0.5 && b.y + b.h <= box.y + box.h + 0.5;
+  const take = new Set([root.id]);
+  for (const n of all) {
+    if (n.id === root.id || (n.parentId ?? null) !== (root.parentId ?? null) || n.role === 'bg' || n.role === 'bg-glow') continue;
+    if ((n.ord ?? 0) >= (root.ord ?? 0) && inside(bbox(n))) take.add(n.id);
+  }
+  for (let grew = true; grew;) { grew = false; for (const n of all) if (!take.has(n.id) && take.has(n.parentId)) { take.add(n.id); grew = true; } }
+  const WRAP = -1;
+  const nodes = [{ id: WRAP, tag: 'g', name: 'content', parentId: null, ord: 0, visible: true, attrs: { transform: `translate(${-box.x} ${-box.y})` } }];
+  for (const n of all.filter(x => take.has(x.id)).sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0))) {
+    nodes.push({ ...n, parentId: take.has(n.parentId) ? n.parentId : WRAP });
+  }
+  return { box: { x: box.x, y: box.y, w: Math.max(1, Math.round(box.w)), h: Math.max(1, Math.round(box.h)) }, nodes };
+}

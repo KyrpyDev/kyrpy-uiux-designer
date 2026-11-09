@@ -645,3 +645,32 @@ test('test runner: modal for buttons / screens (routes announced) and workflows 
   const start = workflowStart ?? (wf => { const ids = wf.nodes.map(n => n.screenId); const t = new Set(wf.links.map(l => l.toScreenId)); return ids.find(i => !t.has(i)) ?? ids[0]; });
   assert.equal(start({ nodes: [{ screenId: 2 }, { screenId: 1 }, { screenId: 3 }], links: [{ fromScreenId: 1, toScreenId: 2 }, { fromScreenId: 2, toScreenId: 3 }] }), 1);
 });
+
+test('extract as element: the shape, its sub tree and what lies inside it become a new element; the screen keeps its nodes', async () => {
+  const { extractNodes } = await import('../domain/node-ops.js');
+  const { nodeBBox } = await import('../domain/geometry.js');
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const scr = c.screen.create({ name: 'ex', key: 'ex-screen', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: 390, height: 844 }, { nodes: [
+      { tag: 'rect', role: 'bg', name: 'background', attrs: { x: 0, y: 0, width: 390, height: 844 } },
+      { tag: 'rect', name: 'bar', attrs: { x: 20, y: 700, width: 350, height: 120, rx: 16 } },
+      { tag: 'text', name: 'label', text: 'Hi', attrs: { x: 40, y: 740, 'font-size': 14 } },
+      { tag: 'circle', name: 'dot', attrs: { cx: 300, cy: 760, r: 10 } },
+      { tag: 'circle', name: 'outside', attrs: { cx: 100, cy: 100, r: 10 } }
+    ] });
+    const nodes = c.screen.get(scr.id).nodes, bar = nodes.find(n => n.name === 'bar');
+    const ex = extractNodes(nodes, bar.id, n => nodeBBox(n, nodes));
+    assert.deepEqual(ex.box, { x: 20, y: 700, w: 350, h: 120 });
+    assert.equal(ex.nodes[0].name, 'content'); assert.equal(ex.nodes.length, 4);
+    assert.ok(['bar', 'label', 'dot'].every(k => ex.nodes.some(n => n.name === k)), 'the bar and what is drawn inside it');
+    assert.ok(!ex.nodes.some(n => n.name === 'outside' || n.name === 'background'));
+    assert.equal(ex.nodes[0].attrs.transform, 'translate(-20 -700)');
+    const el = c.element.create({ name: 'bar element', key: 'bar-element', projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, width: ex.box.w, height: ex.box.h }, { nodes: ex.nodes });
+    const stored = c.element.get(el.id).nodes;
+    assert.equal(stored.length, 4); assert.equal(stored.filter(n => n.parentId == null).length, 1, 'one wrapper group at the top');
+    assert.ok(stored.every(n => !nodes.some(o => o.id === n.id)), 'new node ids');
+    assert.equal(c.screen.get(scr.id).nodes.length, 5, 'the screen is unchanged');
+  } finally { c.close(); }
+  assert.match(readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8'), /dataset: \{ act: 'extract-element' \}/);
+});

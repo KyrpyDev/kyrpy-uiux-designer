@@ -17,7 +17,7 @@ import {
   clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
-import { reorderLayer, stepLayer } from '/domain/node-ops.js';
+import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
@@ -1045,6 +1045,7 @@ export class Designer {
             openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
           }, { cls: 'hb-btn', disabled: !canMoveRef });
         })(),
+        ['screen', 'element'].includes(this.type) ? ibtn('export', 'Extract as element: save this shape (with what is drawn inside it) as a new element in the library', async e => { e.stopPropagation(); await this.extractAsElement(target); }, { cls: 'hb-btn', dataset: { act: 'extract-element' } }) : null,
         ibtn('copy', 'Duplicate element (Ctrl+D)', async e => { e.stopPropagation(); this.select([target.id]); await this.duplicateSelected(); }, { cls: 'hb-btn' }),
         ibtn('trash', 'Delete element (Del)', async e => { e.stopPropagation(); this.select([target.id]); await this.deleteSelected(); }, { cls: 'hb-btn danger' })
       ].filter(Boolean));   // Element.append() would render a skipped (null) tool as the text "null"
@@ -1697,6 +1698,23 @@ export class Designer {
     const c = at || this.worldPoint({ clientX: r.left + this.viewport.clientWidth / 2, clientY: r.top + this.viewport.clientHeight / 2 });
     const q = this.snapPoint({ x: c.x - w / 2, y: c.y - hh / 2 });
     return { x: q.x, y: q.y, w, h: hh };
+  }
+
+  /** Saves the node (its sub tree and the shapes drawn inside it) as a new element in the library; the design stays as it is. */
+  async extractAsElement(target) {
+    const ex = extractNodes(this.nodes, target.id, n => nodeBBox(n, this.nodes));
+    if (!ex) return;
+    const name = await promptBox('Extract as element', { label: 'Element name', value: `${target.name || target.tag} element`, okLabel: 'Extract' });
+    if (!name?.trim()) return;
+    const activeProj = state.projects.find(p => p.id === state.activeProjectId);
+    try {
+      const rec = await api.createDesign('element', { name: name.trim(), category: 'custom', projectId: state.activeProjectId, visibility: activeProj?.visibility === 'project' ? 'project' : 'private',
+        width: ex.box.w, height: ex.box.h, meta: { htmlTag: 'div', extractedFrom: { type: this.type, id: this.doc.id, nodeId: target.id } },
+        descriptionDev: `Extracted from ${this.type} "${this.doc.name}" (${ex.nodes.length - 1} node(s)).`, nodes: ex.nodes });
+      await reloadLibrary({ silent: true });
+      emit('library:changed');
+      toast(`Saved as element “${rec.name}” (${ex.box.w}×${ex.box.h}) in the library`, 'ok', 2600);
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   async addInstance(refType, id, at) {
