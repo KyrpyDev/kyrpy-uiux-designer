@@ -371,7 +371,7 @@ export class Inspector {
       const ic = findDesign('icon', n.iconId);
       const popEl = n.targetElementId ? findDesign('element', n.targetElementId) : null;
       const scr = n.targetScreenId ? this.screenChoices().find(s => s.id === n.targetScreenId) : null;
-      const isVisible = n.visible !== false;
+      const isVisible = n.visible !== false, offByParent = !!n.hiddenByParent;   // a hidden parent disables its whole sub tree
       const canFocus = d.menu?.focusItem && d.doc?.id === bid;
       lines.push(h('div', {
         draggable: 'true', dataset: { menuItem: String(n.id) },
@@ -393,8 +393,8 @@ export class Inspector {
           this.dragMenuItem = null;
           if (id != null) await menuActions.moveTo(d, id, n.id, where, bid);
         },
-        class: `el-row${canFocus ? ' mi-focusable' : ''}${canFocus && d.menu.focusedId === n.id ? ' on' : ''}`, style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible ? 1 : 0.45 },
-        title: canFocus ? 'Click to show this item on the canvas' : undefined,
+        class: `el-row${canFocus ? ' mi-focusable' : ''}${canFocus && d.menu.focusedId === n.id ? ' on' : ''}`, style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible && !offByParent ? 1 : 0.45, fontStyle: offByParent ? 'italic' : '' },
+        title: offByParent ? 'Hidden because a parent item is hidden (shows again with it)' : canFocus ? 'Click to show this item on the canvas' : undefined,
         onclick: canFocus ? e => {
           if (e.target.closest('button, input, select, a')) return;
           e.currentTarget.parentElement?.querySelectorAll(':scope > .el-row.on').forEach(r => r.classList.remove('on'));

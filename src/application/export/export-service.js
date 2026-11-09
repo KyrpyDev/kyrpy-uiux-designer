@@ -3,6 +3,7 @@ import { nodeBBox } from '../../domain/geometry.js';
 import { suffixIds } from '../../domain/svg.js';
 import { TYPES } from '../../domain/entities.js';
 import { bindMenus } from '../../domain/menu-runtime.js';
+import { isMenuItemShown } from '../../domain/menu.js';
 import { repeaterPlan, repeaterMarkup, bindRepeaters } from '../../domain/repeater.js';
 import * as T from './templates.js';
 import { projectViewerHtml } from './project-viewer.js';
@@ -157,7 +158,7 @@ export class ExportService {
           target: m.targetScreenId != null ? keyById.get(m.targetScreenId) ?? null : null,
           targetElement: m.targetElementId != null ? elementById.get(m.targetElementId)?.key ?? null : null,
           button: m.refButtonId != null ? (S.button.get(m.refButtonId)?.key ?? null) : null,
-          visible: m.visible !== false,
+          visible: isMenuItemShown(menu.items, m),
           descriptionDev: m.descriptionDev })) } : null };
     });
     const elementInfos = [...used.element].map(id => {

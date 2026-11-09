@@ -14,10 +14,21 @@ import { roleAttrs, resolveTokens } from './theme.js';
 
 export function menuConfig(buttonMeta) { return { ...DEFAULT_MENU, ...(buttonMeta?.menu || {}) }; }
 
+/** True when a menu item is shown: its own switch is on and no item above it is hidden (a hidden item disables its sub tree). */
+export function isMenuItemShown(rows, item) {
+  const by = new Map((rows || []).map(r => [r.id, r]));
+  for (let r = item, guard = 0; r && guard < 64; r = by.get(r.parentId), guard++) if (r.visible === false) return false;
+  return true;
+}
+
 /** Flat rows (id, parentId, ord ...) -> nested tree with `path` (dashed names joined by "/"). */
 export function buildMenuTree(rows, { includeHidden = false } = {}) {
-  const filtered = includeHidden ? (rows || []) : (rows || []).filter(r => r.visible !== false);
-  const by = new Map(filtered.map(r => [r.id, { ...r, children: [] }]));
+  // an item hidden (disabled) hides its whole sub tree: its sub items are never promoted to the level above.
+  // `hiddenByParent` marks items that are only hidden through an ancestor (their own switch is kept for when it is shown again)
+  const all = new Map((rows || []).map(r => [r.id, r]));
+  const hiddenAbove = r => { for (let p = all.get(r.parentId), guard = 0; p && guard < 64; p = all.get(p.parentId), guard++) if (p.visible === false) return true; return false; };
+  const filtered = includeHidden ? (rows || []) : (rows || []).filter(r => r.visible !== false && !hiddenAbove(r));
+  const by = new Map(filtered.map(r => [r.id, { ...r, children: [], ...(includeHidden && hiddenAbove(r) ? { hiddenByParent: true } : {}) }]));
   const roots = [];
   for (const r of [...by.values()].sort((a, b) => a.ord - b.ord || a.id - b.id)) {
     const parent = r.parentId != null ? by.get(r.parentId) : null;

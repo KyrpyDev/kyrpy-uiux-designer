@@ -7,7 +7,7 @@ import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, DEFAULT_MENU, scopeFirst, visClass, isEdited } from '../domain/entities.js';
-import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig, dropTarget } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig, dropTarget, isMenuItemShown } from '../domain/menu.js';
 import { readFileSync } from 'node:fs';
 import { createContext, indexLibrary, renderTree } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
@@ -598,4 +598,33 @@ test('fan sub items: more than 8 (even) / 9 (odd) show a window; first and last 
   w.click(w.items[3]);                                          // a middle item acts
   assert.equal(w.actions.at(-1).action, 'x3');
   assert.match(MENU_CSS, /scale\(calc\(var\(--fit,1\) \* var\(--end,1\)\)\)/);
+});
+
+test('a hidden (disabled) menu item disables its whole sub tree; sub items are never promoted to the level above', () => {
+  const rows = [
+    { id: 1, parentId: null, ord: 0, name: 'a', visible: true }, { id: 2, parentId: 1, ord: 0, name: 'a1', visible: true },
+    { id: 3, parentId: null, ord: 1, name: 'b', visible: false }, { id: 4, parentId: 3, ord: 0, name: 'b1', visible: true },
+    { id: 5, parentId: 4, ord: 0, name: 'b11', visible: true }, { id: 6, parentId: 3, ord: 1, name: 'b2', visible: false }
+  ];
+  const shown = buildMenuTree(rows);
+  assert.deepEqual(shown.map(n => n.name), ['a'], 'b1 / b11 / b2 are not promoted to the top level');
+  assert.deepEqual(shown[0].children.map(n => n.name), ['a1']);
+  const all = buildMenuTree(rows, { includeHidden: true });
+  const b = all.find(n => n.name === 'b');
+  assert.equal(b.hiddenByParent, undefined, 'b is hidden by its own switch');
+  assert.equal(b.children[0].hiddenByParent, true); assert.equal(b.children[0].children[0].hiddenByParent, true);
+  assert.equal(b.children[0].visible, true, 'the own switch is kept: showing b shows b1 again');
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(id => isMenuItemShown(rows, rows.find(r => r.id === id))), [true, true, false, false, false, false]);
+  // showing the parent again restores the children's own state
+  const back = buildMenuTree(rows.map(r => (r.id === 3 ? { ...r, visible: true } : r)));
+  assert.deepEqual(back.find(n => n.name === 'b').children.map(n => n.name), ['b1']);
+});
+
+test('hub bar and fans count only enabled items (hidden items and their sub trees are not drawn)', () => {
+  const rows = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, parentId: null, ord: i, name: `r${i}`, label: `R${i}`, iconId: null, visible: i < 5 }));
+  rows.push({ id: 20, parentId: 1, ord: 0, name: 'x', visible: true }, { id: 21, parentId: 6, ord: 0, name: 'y', visible: true });
+  const svg = renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...HUB.config }, tree: buildMenuTree(rows), ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.equal((svg.match(/data-hub-index="/g) || []).length, 5, '7 items, 2 disabled: an odd bar of 5');
+  assert.doesNotMatch(svg, /data-item="y"|data-item="r5\/y"/, 'the sub item of a disabled item is not drawn anywhere');
+  assert.match(svg, /data-item="r0\/x"/);
 });
