@@ -97,18 +97,18 @@ test('hub runtime: clicking a side button swaps place and size; the ring is infi
   assert.equal(w.items[3].attrs['data-hub-pos'], 'center');
 });
 
-test('hub runtime: sub items fan out; second click on the centre or an outside click goes back', () => {
+test('hub runtime: sub items fan out; second click on the centre or an outside click closes them and keeps the item in the centre', () => {
   const w = hubWorld(5, { 1: true });
   w.click(w.items[1]);                                                  // right button has sub items: swaps into the centre and fans out
   assert.deepEqual(w.ctl.get(w.btn).path, ['i1']); assert.equal(w.ctl.get(w.btn).c, 1);
   assert.equal(w.items[0].styleVars['--o'], '0', 'side buttons hide while the fan is open');
-  w.click(w.centre);                                                    // second click: back to the previous ring position
-  assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(w.ctl.get(w.btn).c, 0);
-  assert.deepEqual(w.pos(), ['center', 'next', 'hidden', 'hidden', 'prev']);
+  w.click(w.centre);                                                    // second click: closes the sub items, the same item stays in the centre
+  assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(w.ctl.get(w.btn).c, 1);
+  assert.deepEqual(w.pos(), ['prev', 'center', 'next', 'hidden', 'hidden']);
   w.click(w.items[1]);                                                  // fan open again, then click OUTSIDE the button
   assert.deepEqual(w.ctl.get(w.btn).path, ['i1']);
   w.handlers.docClick({ target: { outside: true } });
-  assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(w.ctl.get(w.btn).c, 0, 'outside click acts as back');
+  assert.deepEqual(w.ctl.get(w.btn).path, []); assert.equal(w.ctl.get(w.btn).c, 1, 'outside click acts as back (the item stays in the centre)');
   w.handlers.docClick({ target: w.items[0] });                          // a click inside the button never triggers back
   // leaf of a fan fires its action and returns to the root position
   w.click(w.items[1]);

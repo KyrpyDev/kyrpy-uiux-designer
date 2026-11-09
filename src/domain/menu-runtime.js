@@ -180,7 +180,7 @@ export function bindMenus(root, opts) {
     var items = hubItems(btn), n = items.length, c = st.c || 0, prev = st.prev == null ? c : st.prev;
     if (t.getAttribute('data-rm') === 'center') {
       // second click on the centre: back one level (the centre icon turns back)
-      if (st.path.length) { var np = st.path.slice(0, -1); if (!np.length) spin(btn, items[c], false); return { open: true, path: np, c: np.length ? c : prev, prev: prev }; }
+      if (st.path.length) { var np = st.path.slice(0, -1); if (!np.length) spin(btn, items[c], false); return { open: true, path: np, c: c, prev: c }; }   // closes this level; the same item stays in the centre
       var cur = items[c];
       if (!cur) return st;
       if (opts.onItem) opts.onItem(btn, cur);
