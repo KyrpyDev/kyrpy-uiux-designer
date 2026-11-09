@@ -991,9 +991,15 @@ export class Designer {
           this.select([target.id]);
           openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
         }, { cls: `hb-btn${evCount ? ' active' : ''}` }),
-        ibtn('layers', 'Preview or attach Small Element Floating Toolbar', async e => {
+        ibtn('layers', (target.events || []).some(x => x.trigger === 'click' && x.type === 'toolbar') ? 'Remove the attached Small Element Floating Toolbar (click event)' : 'Attach Small Element Floating Toolbar (opens on click)', async e => {
             e.stopPropagation();
             this.select([target.id]);
+            // a second click detaches it again: the toolbar is a real click event, not only a preview
+            if ((target.events || []).some(x => x.trigger === 'click' && x.type === 'toolbar')) {
+              await this.patchNode(target.id, { events: (target.events || []).filter(x => !(x.trigger === 'click' && x.type === 'toolbar')) });
+              this.tbPv?.remove(); this.tbPv = null;
+              return toast('Floating toolbar removed from this item', 'ok', 1800);
+            }
             const tbEl = state.library.elements.find(x => x.key === 'html-floating-toolbar');
             const evs = [...(target.events || []).filter(x => !(x.trigger === 'click' && x.type === 'toolbar')), { trigger: 'click', type: 'toolbar', ...(tbEl ? { targetId: tbEl.id } : {}), position: 'top' }];
             await this.patchNode(target.id, { events: evs });

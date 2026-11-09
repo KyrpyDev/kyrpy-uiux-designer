@@ -336,22 +336,36 @@ test('hub default centre: a top-level item can be the starting centre button (va
   assert.equal(st.c, 3); assert.equal(st.prev, 3);
 });
 
-test('hub "when clicked rotate": hubSpin is rendered and every click turns the clicked item\'s icon (accumulating); 0 = off', () => {
+test('hub "when clicked rotate": a click turns the item\'s icon to hubSpin degrees, the second click turns it back to 0; 0 = off', () => {
   assert.equal(DEFAULT_MENU.hubSpin, 0);
-  const w = hubWorld(5, {});
-  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '360';
+  const w = hubWorld(5, { 0: true });
+  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '450';
   w.items.forEach(it => { it.style.getPropertyValue = k => it.styleVars[k] ?? ''; });
+  w.click(w.centre);                                            // centre with sub items: opens them, icon turns
+  assert.equal(w.items[0].styleVars['--spin'], '450deg');
+  assert.equal(w.ctl.get(w.btn).path.join('/'), 'i0');
+  w.click(w.centre);                                            // second click: back, icon turns back
+  assert.equal(w.items[0].styleVars['--spin'], '0deg');
+  assert.equal(w.ctl.get(w.btn).path.length, 0);
+  w.click(w.items[1]);                                          // leaf swapped into the centre: toggles
+  assert.equal(w.items[1].styleVars['--spin'], '450deg');
   w.click(w.items[1]);
-  assert.equal(w.items[1].styleVars['--spin'], '360deg');
-  w.click(w.items[1]);          // clicked again: keeps turning the same way
-  assert.equal(w.items[1].styleVars['--spin'], '720deg');
+  assert.equal(w.items[1].styleVars['--spin'], '0deg');
   w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '0';
   w.click(w.items[2]);
-  assert.equal(w.items[2].styleVars['--spin'], undefined);
-  w.btn.querySelector('.ud-menu').attrs['data-hub-spin'] = '90';
-  w.fanItem.style.getPropertyValue = k => w.fanItem.styleVars[k] ?? '';
-  w.click(w.fanItem);                                           // a fan sub item turns too
-  assert.equal(w.fanItem.styleVars['--spin'], '90deg');
+  assert.equal(w.items[2].styleVars['--spin'], undefined, '0 = off');
+  assert.match(MENU_CSS, /\.rm-item \.rm-icon\{[^}]*rotate\(var\(--spin,0deg\)\)[^}]*transition/, 'item icons turn, animated');
+});
+
+test('hub live test: never closed (shows the bar), centre action fires and its sub items pop up, back button hidden in the live test', () => {
+  const w = hubWorld(5, { 0: true });
+  w.ctl.set(w.btn, { open: false, path: [] });                  // the live test starts "closed"
+  assert.equal(w.ctl.get(w.btn).open, true, 'a hub bar is always open');
+  assert.equal(w.rootLevel.cls.has('is-active'), true, 'the bar level is shown');
+  w.click(w.centre);
+  assert.deepEqual(w.actions.map(a => a.action), ['act0'], 'the centre item\'s own action fires');
+  assert.equal(w.ctl.get(w.btn).path.join('/'), 'i0', 'and its sub items pop up');
+  assert.match(MENU_CSS, /\.menu-live \.ud-btn \.rm-back\{display:none\}/);
 });
 
 test('hub auto downsize: sub items wider than the screen are scaled (size and distance) to fit; off or fitting = untouched', () => {

@@ -424,9 +424,14 @@ const methods = {
         fn: () => openEventsModal({ node: one, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(one.id, patch) })
       },
       {
-        label: '🧰 Attach Small Element Floating Toolbar',
+        label: (one?.events || []).some(x => x.trigger === 'click' && x.type === 'toolbar') ? '🧰 Remove Small Element Floating Toolbar' : '🧰 Attach Small Element Floating Toolbar',
         disabled: !one,
         fn: async () => {
+          if ((one.events || []).some(x => x.trigger === 'click' && x.type === 'toolbar')) {
+            await this.patchNode(one.id, { events: one.events.filter(x => !(x.trigger === 'click' && x.type === 'toolbar')) });
+            this.tbPv?.remove(); this.tbPv = null;
+            return;
+          }
           const tbEl = state.library.elements.find(x => x.key === 'html-floating-toolbar');
           const evs = [...(one.events || []).filter(x => !(x.trigger === 'click' && x.type === 'toolbar')), { trigger: 'click', type: 'toolbar', ...(tbEl ? { targetId: tbEl.id } : {}), position: 'top' }];
           await this.patchNode(one.id, { events: evs });

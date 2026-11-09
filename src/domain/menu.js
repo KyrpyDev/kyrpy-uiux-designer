@@ -121,7 +121,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     if (!key) return '';
     ctx.usedIcons.add(id);
     const stroke = resolveTokens('{{sw}}', ctx.theme.tokens);
-    return `<use href="#i-${esc(key)}" x="${round(x - sz / 2)}" y="${round(y - sz / 2)}" width="${round(sz)}" height="${round(sz)}" fill="none" stroke="url(#lgS)" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>`;
+    return `<use href="#i-${esc(key)}" x="${round(x - sz / 2)}" y="${round(y - sz / 2)}" width="${round(sz)}" height="${round(sz)}" fill="none" stroke="url(#lgS)" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" class="rm-icon"/>`;
   };
   // body of one item, drawn around its own centre (0,0): a referenced library button (its own icon unless the item has one), else circle + icon
   const itemBody = (it, r, iconSz) => {
@@ -200,6 +200,8 @@ export const MENU_CSS = `
 .ud-btn .rm-hub-item[data-hub-pos="hidden"]{pointer-events:none}
 .ud-btn .rm-hub-icon{transform-box:fill-box;transform-origin:center;transition:transform .3s ease}
 .ud-btn .rm-hub-icon{transform:rotate(var(--spin,0deg))}
+.ud-btn .rm-item .rm-icon{transform-box:fill-box;transform-origin:center;transform:rotate(var(--spin,0deg));transition:transform .5s cubic-bezier(.3,.8,.3,1)}
+.menu-live .ud-btn .rm-back{display:none}
 .ud-btn[data-open="1"] .rm-hub-icon{transform:rotate(calc(var(--rot,0deg) + var(--spin,0deg)))}
 .ud-btn[data-center="1"] .rm-hub-icon{opacity:0}
 .ud-btn .rm-hub-icon{transition:transform .3s ease,opacity .2s ease}

@@ -136,6 +136,7 @@ export function bindMenus(root, opts) {
     var kind = menu ? menu.getAttribute('data-kind') : '';
     var rotating = kind === 'rotating' || kind === 'radial' || kind === 'hub';
     var hub = kind === 'hub';
+    if (hub && !st.open) st = { open: true, path: [], c: st.c, prev: st.prev };   // a hub bar is always shown: "closed" means back at the bar
     var key = st.path.join('/');
     btn.setAttribute('data-open', st.open ? '1' : '0');
     btn.setAttribute('data-center', rotating && !hub && st.open && st.path.length ? '1' : '0');
@@ -149,36 +150,42 @@ export function bindMenus(root, opts) {
     if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
     else { downsize(btn, screenBox(btn)); fit(btn); }
   }
-  function set(btn, st) { states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
+  function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
     if (opts.onAction) opts.onAction({
       menu: btn.getAttribute('data-menu'), item: el.getAttribute('data-item'), id: el.getAttribute('data-menu-id'), action: el.getAttribute('data-action'),
       target: el.getAttribute('data-target'), targetElement: el.getAttribute('data-popup-element'), targetElementId: el.getAttribute('data-popup-element-id')
     });
   }
-  /* hub "when clicked rotate": the clicked item's icon turns by data-hub-spin degrees on every click (accumulates, so it always turns the same way) */
-  function spin(btn, el) {
+  /* hub "when clicked rotate": a click turns the item's icon to data-hub-spin degrees (animated); the second click turns it back to 0 */
+  function spin(btn, el, on) {
     var m = btn.querySelector('.ud-menu'), deg = +(m && m.getAttribute('data-hub-spin')) || 0;
     if (!deg || !el || !el.style) return;
-    el.style.setProperty('--spin', ((parseFloat(el.style.getPropertyValue('--spin')) || 0) + deg) + 'deg');
+    var cur = parseFloat(el.style.getPropertyValue('--spin')) || 0;
+    if (on == null) on = !cur;
+    el.style.setProperty('--spin', (on ? deg : 0) + 'deg');
   }
   function hubStep(btn, t, st) {
     var items = hubItems(btn), n = items.length, c = st.c || 0, prev = st.prev == null ? c : st.prev;
     if (t.getAttribute('data-rm') === 'center') {
-      if (st.path.length) { var np = st.path.slice(0, -1); return { open: true, path: np, c: np.length ? c : prev, prev: prev }; }
+      // second click on the centre: back one level (the centre icon turns back)
+      if (st.path.length) { var np = st.path.slice(0, -1); if (!np.length) spin(btn, items[c], false); return { open: true, path: np, c: np.length ? c : prev, prev: prev }; }
       var cur = items[c];
       if (!cur) return st;
       if (opts.onItem) opts.onItem(btn, cur);
+      // the centre item's own action fires too, and its sub items (if any) pop up around it
+      if (cur.getAttribute('data-action') || cur.getAttribute('data-target')) fire(btn, cur);
+      if (cur.getAttribute('data-children') === '1') { spin(btn, cur, true); return { open: true, path: cur.getAttribute('data-item').split('/'), c: c, prev: c }; }
       spin(btn, cur);
-      if (cur.getAttribute('data-children') === '1') return { open: true, path: cur.getAttribute('data-item').split('/'), c: c, prev: c };
-      fire(btn, cur);
+      if (!cur.getAttribute('data-action') && !cur.getAttribute('data-target')) fire(btn, cur);
       return st;
     }
     if (t.hasAttribute && t.hasAttribute('data-hub-index')) {
       if (st.path.length) return st;
       var i = +t.getAttribute('data-hub-index');
       if (opts.onItem) opts.onItem(btn, t);
-      spin(btn, t);
+      if (items[c] && items[c] !== t) spin(btn, items[c], false);   // the item leaving the centre turns back
+      spin(btn, t, t.getAttribute('data-children') === '1' ? true : null);
       // the clicked item swaps into the centre; its existing sub items fan out at once (also in the editor)
       return { open: true, path: t.getAttribute('data-children') === '1' ? t.getAttribute('data-item').split('/') : [], c: i, prev: c };
     }
@@ -196,7 +203,7 @@ export function bindMenus(root, opts) {
       var st = states.get(btn);
       if (!st || !st.path || !st.path.length || !isHub(btn)) return;
       var inside = false; try { inside = btn.contains(ev.target); } catch (e) { inside = false; }
-      if (!inside) set(btn, { open: true, path: [], c: st.prev == null ? st.c : st.prev, prev: st.prev });
+      if (!inside) { spin(btn, hubItems(btn)[st.c || 0], false); set(btn, { open: true, path: [], c: st.prev == null ? st.c : st.prev, prev: st.prev }); }
     });
   }
   if (doc && doc.addEventListener) doc.addEventListener('click', hubBack);
