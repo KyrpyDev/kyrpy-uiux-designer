@@ -435,6 +435,7 @@ export const DEFAULT_MENU = {
   hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
   hubCount: 3,          // hub: how many buttons the bar shows at once (1-6); the other items are reached by turning the ring
   hubSubInside: true,   // hub: sub items stay inside the device screen around a centre that does not move; the ones without room are reached through the end items
+  hubIconSize: 0,       // hub: icon size inside every hub button as a fraction of the button (0 = auto: follows the button's own icon, 1 = fills the button)
   hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)
   hubCenterSize: 1,     // hub bar sizes as a fraction of the centre item size: centre (even bars have two centres) ...
   hubSideSize: 0.6,     // ... the buttons next to the centre ...

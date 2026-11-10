@@ -112,6 +112,11 @@ export class MenuService {
       if (!(v >= 0.1 && v <= 2)) throw new ValidationError(`${k} must be a number from 0.1 to 2 (a fraction of the centre item size)`);
       cfg = { ...cfg, [k]: v };
     }
+    if (cfg.hubIconSize !== undefined) {
+      const v = Number(cfg.hubIconSize) || 0;
+      if (!(v >= 0 && v <= 1)) throw new ValidationError('hubIconSize must be a number from 0 (automatic) to 1 (the icon fills the button)');
+      cfg = { ...cfg, hubIconSize: v };
+    }
     if (cfg.hubCount !== undefined) {
       const v = Number(cfg.hubCount);
       if (!Number.isInteger(v) || v < 1 || v > 6) throw new ValidationError('hubCount must be a whole number from 1 to 6 (buttons the hub bar shows at once)');

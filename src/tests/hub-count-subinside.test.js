@@ -134,3 +134,22 @@ test('designer switch + session history + sync lock: wired', async () => {
   assert.equal((collab.match(/await withSyncProgress\(/g) || []).length, 3, 'the three sync buttons lock the page behind a progress bar');
   assert.match(read('../interfaces/web/css/app.css'), /\.sync-lock \{ position: fixed; inset: 0; z-index: 10000/);
 });
+
+test('hub icon size: hubIconSize sets the icon inside every hub button, up to the button itself (0 = automatic)', async () => {
+  const { hubIconSize } = await import('../domain/menu.js');
+  assert.equal(DEFAULT_MENU.hubIconSize, 0); assert.equal(hubIconSize({}), 0); assert.equal(hubIconSize({ hubIconSize: 3 }), 1); assert.equal(hubIconSize({ hubIconSize: 0.5 }), 0.5);
+  const tree = buildMenuTree([{ id: 1, parentId: null, ord: 1, name: 'a', label: 'A', iconId: 9 }, { id: 2, parentId: 1, ord: 1, name: 'b', label: 'B', iconId: 9 }]);
+  const widths = cfg => [...renderMenu({ button: { key: 'k', width: 50, height: 50 }, cfg: { ...DEFAULT_MENU, kind: 'hub', layout: 'fan', centerScale: 2, itemScale: 0.5, ...cfg }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => 'star' }).matchAll(/<use href="#i-star"[^>]* width="([\d.]+)"/g)].map(m => Number(m[1]));
+  const auto = widths({}), full = widths({ hubIconSize: 1 }), half = widths({ hubIconSize: 0.5 });
+  assert.ok(auto.includes(62), 'automatic: 62 % of the 100 px centre button');
+  assert.ok(full.includes(100) && full.includes(50), 'fills the centre button (100) and the sub item (50)');
+  assert.ok(half.includes(50) && half.includes(25));
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'hi', key: 'hi', width: 48, height: 48, projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub }, { nodes: [] });
+    assert.equal(c.menus.setConfig(b.id, { kind: 'hub', hubIconSize: '0.8' }).hubIconSize, 0.8);
+    assert.throws(() => c.menus.setConfig(b.id, { hubIconSize: 1.5 }), /hubIconSize/);
+  } finally { c.close(); }
+  assert.match(readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8'), /mc-\$\{bid\}-hubiconsize/);
+});

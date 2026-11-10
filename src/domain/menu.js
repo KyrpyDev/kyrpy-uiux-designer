@@ -96,6 +96,12 @@ export function hubCount(cfg) {
   return v >= 1 && v <= 6 ? v : 3;
 }
 
+/** Hub icon size as a fraction of the button it sits in: 0 = automatic, else 0.1-1 (1 = the button's full extent). */
+export function hubIconSize(cfg) {
+  const v = Number(cfg?.hubIconSize);
+  return v > 0 ? Math.max(0.1, Math.min(1, v)) : 0;
+}
+
 /** Hub "back" button: lower right, out past the centre button and below the right side button (vertical bar: mirrored, below the centre). */
 export function hubBackSpot(hub, cx, cy) {
   const r = hub.big * 0.13, along = hub.big / 2 + hub.gap + hub.small / 2 + hub.big * 0.6, across = hub.big * 0.4;
@@ -125,10 +131,12 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   const isHub = cfg.kind === 'hub';
   const hub = hubGeometry(cfg, size);
   const lsize = isHub ? hub.big : size;                    // fan sizes are relative to the centre button in a hub
-  const iconSize = lsize * cfg.itemScale * 0.62;
+  // hub: an explicit icon size (fraction of each button, up to the whole button) replaces the automatic 62 % glyph
+  const hubFrac = isHub ? hubIconSize(cfg) : 0;
+  const iconSize = lsize * cfg.itemScale * (hubFrac || 0.62);
   // hub glyphs follow the button's own icon: an icon as big as the button draws the usual 62% glyph, a bigger icon scales it
   // up until it fills the centre circle (its container), a smaller one scales it down
-  const hubIcon = Math.min(hub.big, hub.big * 0.62 * (Number(iconFrac) > 0 ? Number(iconFrac) : 1));
+  const hubIcon = hubFrac ? hub.big * hubFrac : Math.min(hub.big, hub.big * 0.62 * (Number(iconFrac) > 0 ? Number(iconFrac) : 1));
   const isCarousel = cfg.layout === 'carousel' || cfg.kind === 'carousel';
   if (isCarousel) ctx.hasCarousel = true;
   const carDim = cfg.dimension === '2d' ? '2d' : '3d';
