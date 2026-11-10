@@ -90,6 +90,12 @@ export function hubGeometry(cfg, size) {
   return { small, big, k: small / big, gap: (cfg.gap ?? 0.2) * size, vertical: cfg.direction === 'vertical' || cfg.direction === 'up' || cfg.direction === 'down' };
 }
 
+/** Buttons a hub bar shows at once: 1-6 (default 3). */
+export function hubCount(cfg) {
+  const v = Math.round(Number(cfg?.hubCount));
+  return v >= 1 && v <= 6 ? v : 3;
+}
+
 /** Hub "back" button: lower right, out past the centre button and below the right side button (vertical bar: mirrored, below the centre). */
 export function hubBackSpot(hub, cx, cy) {
   const r = hub.big * 0.13, along = hub.big / 2 + hub.gap + hub.small / 2 + hub.big * 0.6, across = hub.big * 0.4;
@@ -190,7 +196,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
-  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}"` : '';
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}" data-hub-count="${hubCount(cfg)}" data-sub-inside="${cfg.hubSubInside === false ? 0 : 1}"` : '';
   return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-hub-spin="${Number(cfg.hubSpin) || 0}" data-hub-fit="${cfg.hubFit ? 1 : 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }
 

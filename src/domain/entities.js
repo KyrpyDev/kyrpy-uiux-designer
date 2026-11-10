@@ -46,8 +46,8 @@ export function privateFirst(list, userId) {
  */
 /**
  * Library order and edge colour (one tier per item, each tier keeps the incoming order):
- *   0 red     (vis-edited)  the item being edited (most recently edited)
- *   1 purple  (vis-recent)  the other edited items, most recent first
+ *   0 red     (vis-edited)  the most recently edited item
+ *   1 red     (vis-edited)  the other edited items, most recent first
  *   2 orange  (vis-project) items of the active project
  *   3 green   (vis-own)     the rest of the user's scope (own private items, other projects)
  *   4 plain                 public library items
@@ -79,9 +79,9 @@ export function isEdited(d, edited, type) {
   return Boolean(edited && edited.size && type && d && edited.has(`${type}:${d.id}`));
 }
 
-/** CSS class for the card edge of a library item (see scopeTier): red, purple, orange, green or none. */
+/** CSS class for the card edge of a library item (see scopeTier): red (every edited item), orange, green or none. */
 export function visClass(d, used = null, type = '', edited = null, scope = {}) {
-  return ['vis-edited', 'vis-recent', 'vis-project', 'vis-own', ''].map(c => (c ? ` ${c}` : ''))[scopeTier(d, null, type, edited, scope)];
+  return ['vis-edited', 'vis-edited', 'vis-project', 'vis-own', ''].map(c => (c ? ` ${c}` : ''))[scopeTier(d, null, type, edited, scope)];
 }
 
 export const USER_ROLES = ['superadmin', 'admin', 'designer', 'reviewer', 'viewer'];
@@ -433,6 +433,8 @@ export const DEFAULT_MENU = {
   keepInside: true,     // keep the opened menu inside the device screen (shifts it back when it would leave the screen)
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
+  hubCount: 3,          // hub: how many buttons the bar shows at once (1-6); the other items are reached by turning the ring
+  hubSubInside: true,   // hub: sub items stay inside the device screen around a centre that does not move; the ones without room are reached through the end items
   hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)
   hubCenterSize: 1,     // hub bar sizes as a fraction of the centre item size: centre (even bars have two centres) ...
   hubSideSize: 0.6,     // ... the buttons next to the centre ...

@@ -352,7 +352,7 @@ export function buildItemBrowserElement({
         out.push({ type: t, item });
       }
     }
-    // red (being edited) > purple (other edited, most recent first) > orange (active project) > green (rest of my scope) > public
+    // red (edited, most recent first) > orange (active project) > green (rest of my scope) > public
     const edited = editedIndex(), scope = { projectId: state.activeProjectId ?? null, publicUserId: state.publicUserId ?? null };
     const rank = ({ type, item }) => scopeTier(item, null, type, edited, scope);
     const hot = ({ type, item }) => edited.get(`${type}:${item.id}`) ?? 0;

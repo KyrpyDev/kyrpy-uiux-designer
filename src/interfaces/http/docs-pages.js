@@ -28,6 +28,8 @@ const ROUTE_NOTES = {
   'PUT /api/settings': 'Updates designer settings.',
   'GET /api/themes': 'Design styles (themes).',
   'GET /api/workflows': 'Workflow list (filters: q, projectId, visibility, creatorId).',
+  'POST /api/workflows/from-screen': 'New workflow from a screen: the screen and every screen its menu items / click actions route to, recursively ({ screenId, name }).',
+  'POST /api/workflows/:id/import-routes': 'Adds a screen and every screen its routes reach to the workflow, linked ({ screenId, x, y }).',
   'GET /api/projects': 'Projects visible to the actor.',
   'GET /api/changes': 'Collaborative change requests.',
   'GET /api/trash': 'Deleted items waiting for restore or purge.',

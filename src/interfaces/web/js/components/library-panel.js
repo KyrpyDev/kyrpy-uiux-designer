@@ -224,7 +224,7 @@ export class LibraryPanel {
       [['all', 'All items'], ['public', '🌐 Public'], ['mine', '🗂 All Projects'], ['project', '📁 Project-only']].map(([k, lbl]) =>
         h('button', { class: `cat${cur === k ? ' on' : ''}`, dataset: { visFilter: k }, onclick: () => set(k) }, lbl)
       ),
-      editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'The item you are editing is listed first (red edge), the other edited items next (purple), then this project (orange), the rest of your items (green) and the public library (no edge). Click to clear the edit marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear (${editedKeys().length})`) : null
+      editedKeys().length ? h('button', { class: 'cat', dataset: { clearEdited: '1' }, title: 'The items you edited are listed first with a red edge (most recent first), then this project (orange), the rest of your items (green) and the public library (no edge). Click to clear the edit marks.', onclick: () => { clearEdited(); onChange(); } }, `🔴 Clear (${editedKeys().length})`) : null
     );
   }
 
@@ -788,7 +788,7 @@ export class LibraryPanel {
             selBar._updateInfo?.();
           }
         });
-        const cell = h('div', { class: `cell screen-cell${visClass(s, usedSet(), 'screen', editedIndex(), libScope())}`, title: `${s.label}\n${s.key} · ${s.width}×${s.height}`, onclick: () => this.app.openDesign('screen', s.id) },
+        const cell = h('div', { class: `cell screen-cell${visClass(s, usedSet(), 'screen', editedIndex(), libScope())}`, title: `${s.label}\n${s.key} · ${s.width}×${s.height}\n(click to edit, drag into a workflow to add it with the screens it routes to)`, draggable: 'true', ondragstart: this.dragData('screen', s), onclick: () => this.app.openDesign('screen', s.id) },
           chk, this.toolbar('screen', s),
           h('img', { class: 'thumb', loading: 'lazy', alt: s.label, src: api.svgUrl('screen', s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
           h('div', { class: 'lbl' }, s.name));

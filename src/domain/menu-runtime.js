@@ -32,16 +32,89 @@ export function bindMenus(root, opts) {
    * items and no centre hit area; the bar shrinks to fit the device screen.
    */
   function hubSlots(m, n) {
+    // data-hub-count (1-6): the bar shows that many buttons, the other items are reached by turning the ring
+    var cnt = Math.round(+m.getAttribute('data-hub-count'));
+    if (cnt >= 1) { var vc = Math.max(1, Math.min(n, cnt, 6)); return { v: vc, odd: vc % 2 === 1, more: n > vc }; }
     var odd = n % 2 === 1, v = Math.min(n, odd ? 5 : 6);
     return { v: Math.max(1, v), odd: odd, more: n > v };
   }
   /* a fan level with more items than its arc holds (8 when even, 9 when odd) shows a window of them; the first and the last
      are 30 % smaller and scroll the window when clicked (st.fo = { level path: offset }) */
+  /*
+   * "Sub items stay inside the screen" (data-sub-inside="1"): the centre does not move; the open level uses only the part
+   * of its ring that lies inside the device screen. Returns { start, sweep, cap } (degrees, items that fit) or null when
+   * the screen cannot be measured / the whole fan already fits where it was designed.
+   */
+  function insideArc(btn, m, level, items) {
+    if (m.getAttribute('data-sub-inside') !== '1' || m.getAttribute('data-keep') === '0') return null;
+    var box = screenBox(btn), svg = btn.ownerSVGElement;
+    if (!box || !svg || !btn.getBoundingClientRect || btn.getBoundingClientRect().width >= svg.getBoundingClientRect().width * 0.8) return null;   // the button designer: no device screen
+    var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), R = +level.getAttribute('data-fan-r');
+    var a0 = +level.getAttribute('data-fan-start') || 0, sw = Math.max(1, Math.min(360, Math.abs(+level.getAttribute('data-fan-sweep') || 0)));
+    var r = 0, pad = 4; items.forEach(function (el) { r = Math.max(r, +el.getAttribute('data-r') || 0); });
+    if (!(R > 0) || !(r > 0)) return null;
+    var ok = [], free = 0, d;
+    for (d = 0; d < 360; d++) {
+      var a = d * Math.PI / 180, x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+      ok[d] = x - r >= box.L + pad && x + r <= box.R - pad && y - r >= box.T + pad && y + r <= box.B - pad;
+      if (ok[d]) free++;
+    }
+    if (!free) return null;
+    var norm = function (v) { return ((Math.round(v) % 360) + 360) % 360; };
+    var start = a0, sweep = sw, designed = true;
+    for (d = 0; d <= sw; d++) if (!ok[norm(a0 + d)]) { designed = false; break; }
+    if (!designed && free < 360) {
+      // free runs of the ring; take the one that shares most with the designed fan (else the longest)
+      var runs = [], first = 0; while (ok[first]) first++;
+      for (d = first; d < first + 360; d++) {
+        if (!ok[d % 360]) continue;
+        var s0 = d; while (d + 1 < first + 360 && ok[(d + 1) % 360]) d++;
+        runs.push({ s: s0, len: d - s0 });
+      }
+      var best = null;
+      runs.forEach(function (run) {
+        var ov = 0; for (var q = 0; q <= sw; q++) { var t = norm(a0 + q), rel = ((t - run.s) % 360 + 360) % 360; if (rel <= run.len) ov++; }
+        run.ov = ov;
+        if (!best || run.ov > best.ov || (run.ov === best.ov && run.len > best.len)) best = run;
+      });
+      if (best.len >= sw) {
+        // room for the whole sweep: slide the designed fan along the ring until it is inside
+        var rel0 = ((norm(a0) - best.s) % 360 + 360) % 360; if (rel0 > 180 + best.len / 2) rel0 -= 360;
+        start = best.s + Math.max(0, Math.min(best.len - sw, rel0)); sweep = sw;
+      } else { start = best.s; sweep = best.len; }
+    }
+    // items may shrink to 80 % before the level starts hiding some of them
+    var cap = Math.max(1, Math.floor((R * sweep * Math.PI / 180) / (r * 2.16 * 0.8)) + 1);
+    return { start: start, sweep: sweep, cap: cap, len: R * sweep * Math.PI / 180, r: r };
+  }
   function layoutFan(btn, st) {
-    var key = st.path.join('/');
+    var key = st.path.join('/'), handled = false;
     Array.prototype.forEach.call(btn.querySelectorAll('.rm-level[data-fan-r]'), function (level) {
       var items = Array.prototype.slice.call(level.querySelectorAll('.rm-item')), n = items.length, cap = n % 2 ? 9 : 8;
       if (!items.length || level.getAttribute('data-level') !== key) return;
+      var mm = btn.querySelector('.ud-menu'), arc = insideArc(btn, mm, level, items);
+      if (arc) {
+        handled = true;
+        var acx = +mm.getAttribute('data-cx'), acy = +mm.getAttribute('data-cy'), aR = +level.getAttribute('data-fan-r');
+        var win = Math.min(cap, arc.cap), over = n > win;
+        if (over && win < 3) win = Math.min(n, 3);              // a window needs its two end items and one to click
+        var show = over ? win : n;
+        // items that share a short arc shrink (never below half) instead of overlapping
+        var sc = show > 1 ? Math.max(0.5, Math.min(1, arc.len / ((show - 1) * arc.r * 2.16))) : 1;
+        var aoff = over ? (((st.fo && st.fo[key]) || 0) % n) : 0;
+        items.forEach(function (el, i) {
+          var t = over ? (i - aoff + n) % n : i, shown = t < show, end = over && shown && (t === 0 || t === show - 1);
+          el.setAttribute('data-fan-hidden', shown ? '0' : '1');
+          el.setAttribute('data-fan-end', end ? (t === 0 ? 'first' : 'last') : '0');
+          el.style.setProperty('--end', end ? '0.7' : '1');
+          el.style.setProperty('--fit', String(Math.round(sc * 1000) / 1000));
+          var ang = (show > 1 ? arc.start + arc.sweep * Math.min(t, show - 1) / (show - 1) : arc.start + arc.sweep / 2) * Math.PI / 180;
+          var ax = acx + aR * Math.cos(ang), ay = acy + aR * Math.sin(ang);
+          el._ox = ax; el._oy = ay;
+          el.style.setProperty('--x', ax + 'px'); el.style.setProperty('--y', ay + 'px');
+        });
+        return;
+      }
       if (n <= cap) { items.forEach(function (el) { if (el.removeAttribute) { el.removeAttribute('data-fan-hidden'); el.removeAttribute('data-fan-end'); } if (el.style) el.style.setProperty('--end', '1'); }); return; }
       var m = btn.querySelector('.ud-menu'), cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy');
       var a0 = +level.getAttribute('data-fan-start'), sw = +level.getAttribute('data-fan-sweep'), R = +level.getAttribute('data-fan-r');
@@ -56,6 +129,7 @@ export function bindMenus(root, opts) {
         el.style.setProperty('--x', x + 'px'); el.style.setProperty('--y', y + 'px');
       });
     });
+    return handled;
   }
   /* click on the first / last item of an overflowing fan: scroll the window by one, no action */
   function fanScroll(btn, t, st) {
@@ -221,12 +295,12 @@ export function bindMenus(root, opts) {
     btn.setAttribute('data-hubdepth', hub ? String(st.path.length) : '0');
     if (hub) btn.setAttribute('data-hub', '1');
     if (hub) layoutHub(btn, st);
-    layoutFan(btn, st);
+    var fixed = layoutFan(btn, st);   // true: the open level was placed inside the screen around a centre that stays put
     restoreSpins(btn, st);
     btn.querySelectorAll('.rm-center').forEach(function (c) { c.classList.toggle('is-active', st.open && rotating && st.path.length > 0 && c.getAttribute('data-for') === key); });
     // a corner fan is already placed inside the screen: the rest of the menu stays where it is
     var m = btn.querySelector('.ud-menu');
-    if (layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
+    if (fixed || layoutCorner(btn, screenBox(btn))) { if (m && m.style) { m.style.setProperty('--sx', '0px'); m.style.setProperty('--sy', '0px'); } }
     else { downsize(btn, screenBox(btn)); fit(btn); }
   }
   function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; var old = states.get(btn); if (st && !st.spins && old && old.spins) st.spins = old.spins; if (st && !st.fo && old && old.fo && (st.path || []).join('/') === (old.path || []).join('/')) st.fo = old.fo; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }

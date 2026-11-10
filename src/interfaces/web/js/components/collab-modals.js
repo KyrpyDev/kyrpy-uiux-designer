@@ -1574,6 +1574,49 @@ export async function openLineageModal(type, id) {
 /* ============================================================================
  * 8. Offline-First & PostgreSQL Sync + Translations Modal
  * ========================================================================== */
+/**
+ * Runs a long server job behind a full-page lock: nothing can be clicked or typed until it ends. The bar follows the
+ * server's outbox (`pendingCount` going down from where it started) when that is known, else it just keeps moving.
+ */
+export async function withSyncProgress(label, job, { startPending = 0 } = {}) {
+  const fill = h('div', { class: 'sync-lock-fill' });
+  const note = h('div', { class: 'muted sync-lock-note' }, 'Starting…');
+  const bar = h('div', { class: 'sync-lock-bar indet', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100' }, fill);
+  const lock = h('div', { class: 'sync-lock', role: 'alertdialog', 'aria-modal': 'true', 'aria-busy': 'true', tabindex: '-1' },
+    h('div', { class: 'sync-lock-card' }, h('div', { class: 'sync-lock-title' }, label), bar, note,
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'The page is locked until this finishes. Do not close the tab.')));
+  const block = e => { e.stopPropagation(); e.preventDefault(); };
+  const KEYS = ['keydown', 'keyup', 'keypress'];
+  KEYS.forEach(k => document.addEventListener(k, block, true));
+  document.body.append(lock);
+  lock.focus();
+  const t0 = Date.now();
+  let pending = null, done = false;
+  const paint = () => {
+    const secs = Math.round((Date.now() - t0) / 1000);
+    if (startPending > 0 && pending != null) {
+      const pct = Math.max(0, Math.min(100, Math.round((startPending - pending) / startPending * 100)));
+      bar.classList.remove('indet'); fill.style.width = `${pct}%`; bar.setAttribute('aria-valuenow', String(pct));
+      note.textContent = `${pct}% · ${Math.max(0, startPending - pending)} of ${startPending} changes · ${secs}s`;
+    } else note.textContent = `Working… ${secs}s`;
+  };
+  const tick = setInterval(paint, 500);
+  const poll = async () => {
+    while (!done) {
+      await new Promise(r => setTimeout(r, 900));
+      if (done) break;
+      try { const st = await api.syncStatus(); if (Number.isFinite(Number(st?.pendingCount))) pending = Number(st.pendingCount); } catch { /* the job itself reports errors */ }
+    }
+  };
+  if (startPending > 0) poll();
+  try { return await job(); }
+  finally {
+    done = true; clearInterval(tick);
+    KEYS.forEach(k => document.removeEventListener(k, block, true));
+    lock.remove();
+  }
+}
+
 export async function openSyncModal(initialTab = 'sync') {
   let tab = initialTab;
   const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '360px' } });
@@ -1603,9 +1646,12 @@ export async function openSyncModal(initialTab = 'sync') {
             class: 'btn primary',
             onclick: async () => {
               try {
-                await api.flushOutbox();
-                const res = await api.syncNow({ pull: true, forceFullPush: false });
-                await reloadLibrary();
+                const res = await withSyncProgress('Syncing with PostgreSQL (push & pull)…', async () => {
+                  await api.flushOutbox();
+                  const r = await api.syncNow({ pull: true, forceFullPush: false });
+                  await reloadLibrary();
+                  return r;
+                }, { startPending: st.pendingCount });
                 toast(`Synced with PostgreSQL! Pushed ${res.push?.pushed ?? 0} changes.`, 'ok');
                 await refresh();
               } catch (e) {
@@ -1617,7 +1663,7 @@ export async function openSyncModal(initialTab = 'sync') {
             class: 'btn',
             onclick: async () => {
               try {
-                const res = await api.syncPush({ forceFull: true });
+                const res = await withSyncProgress('Pushing the full snapshot to PostgreSQL…', () => api.syncPush({ forceFull: true }));
                 toast(`Full snapshot pushed to PostgreSQL (${res.pushed} tables/batches)`, 'ok');
                 await refresh();
               } catch (e) {
@@ -1629,8 +1675,7 @@ export async function openSyncModal(initialTab = 'sync') {
             class: 'btn',
             onclick: async () => {
               try {
-                const res = await api.syncPull();
-                await reloadLibrary();
+                const res = await withSyncProgress('Pulling from PostgreSQL…', async () => { const r = await api.syncPull(); await reloadLibrary(); return r; });
                 toast(`Pulled ${res.pulledUsers} users & ${res.pulledProjects} projects from PostgreSQL`, 'ok');
                 await refresh();
               } catch (e) {

@@ -885,7 +885,7 @@ test('Persona 8 (@kyrpy-gru & @kyrpy-testusers-team): Workflow Filters, Copy/Mov
 
     const menuEditorJs = await req('GET', '/js/components/menu-editor.js');
     assert.equal(menuEditorJs.status, 200);
-    assert.ok(String(menuEditorJs.body).includes('Show element as popup/modal box'), 'menu-editor.js must include Show element as popup/modal box selector');
+    assert.ok(String(menuEditorJs.body).includes('Show element as popup'), 'menu-editor.js target picker must offer showing an element as a popup/modal box');
     assert.ok(String(menuEditorJs.body).includes('Edit menu item'), 'menu-editor.js hover toolbar must show Edit menu item button');
   });
 });

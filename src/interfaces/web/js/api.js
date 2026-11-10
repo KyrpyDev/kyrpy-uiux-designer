@@ -163,6 +163,9 @@ async function req(method, url, body) {
   }
 }
 
+/** Marks a workflow as edited once its write succeeded (see edited.js). */
+const wfEdited = id => r => { markEdited('workflow', id); return r; };
+
 const PLURAL = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens' };
 
 /** GET without the offline localStorage cache (icon catalog pages, sprites). `text` returns the body as text. */
@@ -287,14 +290,18 @@ export const api = {
   },
   workflow: id => api.get(`/api/workflows/${id}`),
   createWorkflow: b => api.post('/api/workflows', b),
-  updateWorkflow: (id, b) => api.put(`/api/workflows/${id}`, b),
+  updateWorkflow: (id, b) => api.put(`/api/workflows/${id}`, b).then(wfEdited(id)),
   deleteWorkflow: id => api.del(`/api/workflows/${id}`),
   cloneWorkflow: (id, nameOrBody) =>
     api.post(`/api/workflows/${id}/clone`, typeof nameOrBody === 'string' ? { name: nameOrBody } : nameOrBody || {}),
-  placeScreen: (id, b) => api.put(`/api/workflows/${id}/screens`, b),
+  placeScreen: (id, b) => api.put(`/api/workflows/${id}/screens`, b).then(wfEdited(id)),
+  /** New workflow with the screen and every screen its menu / click routes reach, recursively. */
+  workflowFromScreen: b => api.post('/api/workflows/from-screen', b),
+  /** Adds the screen and every screen its routes reach to the workflow (linked); body = { screenId, x, y }. */
+  importScreenRoutes: (id, b) => api.post(`/api/workflows/${id}/import-routes`, b).then(wfEdited(id)),
   removeWfScreen: (id, sid) => api.del(`/api/workflows/${id}/screens/${sid}`),
-  addLink: (id, b) => api.post(`/api/workflows/${id}/links`, b),
-  updateLink: (id, lid, b) => api.put(`/api/workflows/${id}/links/${lid}`, b),
+  addLink: (id, b) => api.post(`/api/workflows/${id}/links`, b).then(wfEdited(id)),
+  updateLink: (id, lid, b) => api.put(`/api/workflows/${id}/links/${lid}`, b).then(wfEdited(id)),
   deleteLink: (id, lid) => api.del(`/api/workflows/${id}/links/${lid}`),
 
   exportBundle: b => api.post('/api/export/bundle', b),

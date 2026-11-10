@@ -96,58 +96,110 @@ export function pickButton(currentId = null, excludeId = null) {
 }
 
 /**
- * Pick the screen a menu item goes to: this project's screens, my other projects' and the public ones, with previews.
- * Resolves to { screen } (a record), { create: true } (make a new one in a new tab), { none: true } or null (cancelled).
+ * Pick what a menu item does when it is clicked: route to a screen OR show an element as a popup / modal box (one or the other).
+ * Two tabs (Screen · Element), each listing this project's items, my other projects' and the public ones, with previews.
+ * Resolves to { screen } | { element } (records), { create: true } (new screen in a new tab), { none: true } or null (cancelled).
  */
-export function pickScreen({ currentId = null, projectId = null } = {}) {
+export function pickTarget({ currentScreenId = null, currentElementId = null, projectId = null, allowCreate = true } = {}) {
   return new Promise(resolve => {
-    let done = false, m, all = [];
+    let done = false, m, tab = currentElementId && !currentScreenId ? 'element' : 'screen';
+    const all = { screen: null, element: null };
     const fin = v => { if (!done) { done = true; resolve(v); } };
-    const q = h('input', { type: 'search', placeholder: 'Search screens of this project, my projects and the public library…', 'data-f': 'pick-screen-q' });
-    const list = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '10px', maxHeight: '440px', overflow: 'auto' } });
+    const q = h('input', { type: 'search', 'data-f': 'pick-target-q' });
+    const list = h('div', { 'data-f': 'pick-target-list', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '10px', maxHeight: '440px', overflow: 'auto' } });
     const group = s => (projectId != null && Number(s.projectId) === Number(projectId) && !isPublicLibraryItem(s) ? 'here' : isPublicLibraryItem(s) ? 'public' : 'other');
-    const card = s => h('button', { class: `cell${s.id === currentId ? ' sel' : ''}`, type: 'button', 'data-screen-id': String(s.id), title: `${s.label || s.name} (${s.key})`,
-      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px', cursor: 'pointer' }, onclick: () => { fin({ screen: s }); m.close(); } },
-      h('img', { loading: 'lazy', alt: s.name, style: { width: '96px', height: '160px', objectFit: 'contain' }, src: api.svgUrl('screen', s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
-      h('div', { style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.name),
-      group(s) !== 'here' ? h('span', { class: 'badge', title: 'Selecting it copies the screen into this project (you name the copy)' }, '⧉ copied') : null);
+    const card = (type, s) => {
+      const cur = type === 'screen' ? currentScreenId : currentElementId;
+      return h('button', { class: `cell${s.id === cur ? ' sel' : ''}`, type: 'button', [`data-${type}-id`]: String(s.id), title: `${s.label || s.name} (${s.key})`,
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px', cursor: 'pointer' }, onclick: () => { fin({ [type]: s }); m.close(); } },
+        h('img', { loading: 'lazy', alt: s.name, style: type === 'screen' ? { width: '96px', height: '160px', objectFit: 'contain' } : { width: '104px', height: '104px', objectFit: 'contain' }, src: api.svgUrl(type, s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
+        h('div', { style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.name),
+        group(s) !== 'here' ? h('span', { class: 'badge', title: `Selecting it copies the ${type} into this project (you name the copy)` }, '⧉ copied') : null);
+    };
+    const tabBtn = (t, txt) => h('button', { type: 'button', class: `btn small${tab === t ? ' primary' : ''}`, role: 'tab', 'aria-selected': String(tab === t), 'data-f': `pick-target-tab-${t}`, onclick: () => { tab = t; paint(); } }, txt);
+    const tabs = h('div', { class: 'row', role: 'tablist' });
     const fill = () => {
       clear(list);
+      const rows = all[tab];
+      if (!rows) return list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Loading ${tab}s…`));
       const t = q.value.trim().toLowerCase();
-      const rows = all.filter(s => !t || `${s.key} ${s.name} ${s.label} ${s.category}`.toLowerCase().includes(t));
+      const hit = rows.filter(s => !t || `${s.key} ${s.name} ${s.label} ${s.category}`.toLowerCase().includes(t));
       const head = txt => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, txt);
       for (const [g, title] of [['here', 'This project'], ['other', 'My other projects (copied into this project)'], ['public', 'Public library (copied into this project)']]) {
-        const part = rows.filter(s => group(s) === g);
-        if (part.length) list.append(head(`${title} · ${part.length}`), ...part.slice(0, 120).map(card));
+        const part = hit.filter(s => group(s) === g);
+        if (part.length) list.append(head(`${title} · ${part.length}`), ...part.slice(0, 120).map(s => card(tab, s)));
       }
-      if (!rows.length) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, all.length ? 'No screens match.' : 'Loading screens…'));
+      if (!hit.length) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, rows.length ? `No ${tab}s match.` : `No ${tab}s yet.`));
+    };
+    const newBtn = allowCreate ? h('button', { class: 'btn primary', 'data-f': 'pick-screen-new', onclick: () => { fin({ create: true }); m.close(); } }, '＋ New screen (new tab)') : null;
+    const paint = () => {
+      clear(tabs); tabs.append(tabBtn('screen', '🖥 Go to screen'), tabBtn('element', '▣ Show element as popup'));
+      q.placeholder = tab === 'screen' ? 'Search screens of this project, my projects and the public library…' : 'Search elements of this project, my projects and the public library…';
+      if (newBtn) newBtn.hidden = tab !== 'screen';
+      fill();
     };
     q.addEventListener('input', fill);
-    m = modal({ title: 'Goes to screen', wide: true, onClose: () => fin(null), content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, q, list),
-      actions: close => [
-        h('button', { class: 'btn primary', 'data-f': 'pick-screen-new', onclick: () => { fin({ create: true }); close(); } }, '＋ New screen (new tab)'),
-        h('button', { class: 'btn', onclick: () => { fin({ none: true }); close(); } }, 'No screen'),
-        h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')] });
-    fill();
-    api.list('screen', '', { includePublic: true }).then(rows => { all = rows; fill(); }).catch(e => { clear(list); list.append(h('div', { class: 'muted' }, `Could not load screens: ${e.message}`)); });
+    m = modal({ title: 'When clicked: go to a screen or show an element', wide: true, onClose: () => fin(null),
+      content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item either routes to a screen or opens an element as a popup / modal box: choosing one clears the other.'), q, list),
+      actions: close => [newBtn,
+        h('button', { class: 'btn', 'data-f': 'pick-target-none', onclick: () => { fin({ none: true }); close(); } }, 'Nothing (no screen, no popup)'),
+        h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')].filter(Boolean) });
+    paint();
+    for (const type of ['screen', 'element']) api.list(type, '', { includePublic: true }).then(rows => { all[type] = rows; if (tab === type) fill(); })
+      .catch(e => { all[type] = []; if (tab === type) { clear(list); list.append(h('div', { class: 'muted' }, `Could not load ${type}s: ${e.message}`)); } });
     setTimeout(() => q.focus(), 30);
   });
 }
 
+/**
+ * Turns a pickTarget result into the menu item fields { targetScreenId, targetElementId } (exactly one set, or both null).
+ * A screen / element of another project or of the public library is copied into `projectId` first (the user names the copy).
+ * Returns null when cancelled; `create` results are handled by the caller.
+ */
+export async function targetPatch(r, projectId) {
+  if (!r || r.create) return null;
+  if (r.none) return { targetScreenId: null, targetElementId: null };
+  const type = r.screen ? 'screen' : 'element';
+  let target = r[type];
+  if (Number(target.projectId) !== Number(projectId) || isPublicLibraryItem(target)) {
+    const name = await promptBox(`Copy “${target.name}” into this project`, { label: 'Name of the copy', value: `${target.name} copy`, okLabel: 'Copy and link' });
+    if (!name?.trim()) return null;
+    try { target = await api.cloneDesign(type, target.id, { name: name.trim(), projectId }); } catch (e) { toast(e.message, 'error'); return null; }
+    toast(`Copied as “${target.name}”`, 'ok', 1800);
+  }
+  return { targetScreenId: type === 'screen' ? target.id : null, targetElementId: type === 'element' ? target.id : null, target, type };
+}
+
+/** One-line summary of what a menu item does when clicked. */
+export function targetSummary(screenId, elementId, recs = {}) {
+  if (screenId) { const s = recs.screen || findDesign('screen', screenId); return `🖥 Goes to screen “${s?.name ?? `#${screenId}`}”`; }
+  if (elementId) { const e = recs.element || findDesign('element', elementId); return `▣ Shows element “${e?.name ?? `#${elementId}`}” as popup`; }
+  return 'Choose screen or element…';
+}
+
 export async function menuItemDialog({ buttonId, item = null, parentId = null }) {
-  const [screens, elements, menuNow] = await Promise.all([
-    api.list('screen'),
-    state.library.elements?.length ? Promise.resolve(state.library.elements) : api.list('element'),
-    item ? api.menu(buttonId).catch(() => null) : null
-  ]);
+  const menuNow = item ? await api.menu(buttonId).catch(() => null) : null;
+  const host = findDesign('button', buttonId);
+  const projectId = host?.projectId ?? state.activeProjectId;
   return new Promise(resolve => {
     let done = false, iconId = item?.iconId ?? null, refButtonId = item?.refButtonId ?? null, nameTouched = !!item;
+    // what the item does when clicked: a screen to route to OR an element shown as a popup (picked in one modal)
+    let targetScreenId = item?.targetScreenId ?? null, targetElementId = targetScreenId ? null : item?.targetElementId ?? null, targetRecs = {};
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const label = h('input', { type: 'text', value: item?.label ?? '', placeholder: 'Shown to users' });
     const name = h('input', { type: 'text', value: item?.name ?? '', placeholder: 'variable-name (dashed words)', style: { fontFamily: 'Consolas, monospace' } });
     const action = h('input', { type: 'text', value: item?.action ?? '', placeholder: 'event name for leaf items, e.g. delete-folder' });
-    const target = h('select', { 'data-f': 'mi-target-screen' }, h('option', { value: '' }, '(none)'), screens.map(s => h('option', { value: s.id, selected: s.id === item?.targetScreenId }, s.name)));
-    const targetElement = h('select', { 'data-f': 'mi-target-element' }, h('option', { value: '' }, '(none)'), [...elements].sort((a, b) => a.name.localeCompare(b.name)).map(el => h('option', { value: el.id, selected: el.id === item?.targetElementId }, `${el.name} (${el.key})`)));
+    const targetBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-target', style: { width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
+    const paintTarget = () => { targetBtn.textContent = targetSummary(targetScreenId, targetElementId, targetRecs); targetBtn.title = `${targetBtn.textContent}: click to choose a screen to go to or an element to show as a popup`; };
+    targetBtn.addEventListener('click', async () => {
+      const r = await pickTarget({ currentScreenId: targetScreenId, currentElementId: targetElementId, projectId, allowCreate: false });
+      const p = await targetPatch(r, projectId);
+      if (!p) return;
+      targetScreenId = p.targetScreenId; targetElementId = p.targetElementId; targetRecs = p.target ? { [p.type]: p.target } : {};
+      paintTarget();
+    });
+    paintTarget();
     const visCheck = h('input', { type: 'checkbox', checked: item?.visible !== false });
     const dev = h('textarea', { rows: 4, placeholder: 'description-dev: what the dev team must implement for this item' }); dev.value = item?.descriptionDev ?? '';
     const iconBtn = h('button', { class: 'btn', type: 'button' }), iconLabel = h('span', { class: 'muted' });
@@ -190,8 +242,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
         iconId,
         refButtonId,
         action: action.value.trim(),
-        targetScreenId: target.value ? Number(target.value) : null,
-        targetElementId: targetElement.value ? Number(targetElement.value) : null,
+        targetScreenId,
+        targetElementId,
         visible: visCheck.checked,
         descriptionDev: dev.value
       };
@@ -212,9 +264,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
         item ? h('div', { class: 'field' }, h('span', {}, 'Parent item (click one in the tree to move this item under it)'), treeBox) : null,
         h('div', { class: 'row wrap' },
           h('label', { class: 'field grow' }, h('span', {}, 'Action (event name)'), action),
-          h('label', { class: 'field grow' }, h('span', {}, 'Goes to screen'), target)
+          h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked (screen or popup element)'), targetBtn)
         ),
-        h('label', { class: 'field' }, h('span', {}, 'Show element as popup/modal box'), targetElement),
         h('label', { class: 'field' }, h('span', {}, 'description-dev'), dev)),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')] });
     setTimeout(() => label.focus(), 30);
@@ -339,32 +390,29 @@ export const menuActions = {
     return true;
   },
   /**
-   * "Goes to screen" of a menu item from the screen picker. A screen of another project or of the public library is copied into
-   * this button's project first (the user names the copy); "new screen" opens a new tab that creates one and links it back.
+   * What a menu item does when clicked, from the screen / element picker (toolbar 🖥 and the edit dialog use the same modal):
+   * route to a screen OR show an element as a popup. A screen / element of another project or of the public library is copied
+   * into this button's project first (the user names the copy); "new screen" opens a new tab that creates one and links it back.
    */
-  async linkScreen(d, itemId, buttonId = null) {
+  async linkTarget(d, itemId, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);
     if (!bid) return;
     const host = d.doc?.id === bid ? d.doc : findDesign('button', bid);
     const projectId = host?.projectId ?? state.activeProjectId;
     const it = getButtonRows(d, bid).find(r => r.id === itemId);
     if (!it) return;
-    const r = await pickScreen({ currentId: it.targetScreenId ?? null, projectId });
+    const r = await pickTarget({ currentScreenId: it.targetScreenId ?? null, currentElementId: it.targetElementId ?? null, projectId });
     if (!r) return;
     if (r.create) {
       const w = window.open(`${location.origin}${location.pathname}?${new URLSearchParams({ new: 'screen', link: `${bid}:${itemId}`, projectId: String(projectId ?? '') })}`, '_blank');
       return w ? toast('Create the screen in the new tab: it is linked to this item when it is created', 'info', 3000) : toast('The browser blocked the new tab: allow pop-ups for this site', 'error');
     }
-    let target = r.none ? null : r.screen;
-    if (target && (Number(target.projectId) !== Number(projectId) || isPublicLibraryItem(target))) {
-      const name = await promptBox(`Copy “${target.name}” into this project`, { label: 'Name of the copy', value: `${target.name} copy`, okLabel: 'Copy and link' });
-      if (!name?.trim()) return;
-      try { target = await api.cloneDesign('screen', target.id, { name: name.trim(), projectId }); } catch (e) { return toast(e.message, 'error'); }
-      toast(`Copied as “${target.name}”`, 'ok', 1800);
-    }
-    try { await api.updateMenuItem(bid, itemId, { targetScreenId: target ? target.id : null }); } catch (e) { return toast(e.message, 'error'); }
+    const p = await targetPatch(r, projectId);
+    if (!p) return;
+    try { await api.updateMenuItem(bid, itemId, { targetScreenId: p.targetScreenId, targetElementId: p.targetElementId }); } catch (e) { return toast(e.message, 'error'); }
     await this.refresh(d, bid);
-    toast(target ? `“${it.label || it.name}” → ${target.name}` : `“${it.label || it.name}” goes to no screen`, 'ok', 1800);
+    const who = it.label || it.name;
+    toast(p.type === 'screen' ? `“${who}” → ${p.target.name}` : p.type === 'element' ? `“${who}” shows ${p.target.name} as a popup` : `“${who}” goes nowhere`, 'ok', 1800);
   },
   async toggleVisible(d, itemId, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);
@@ -544,14 +592,14 @@ export class MenuEditor {
         this.toolbar.append(
           btn('✎ Edit menu item', 'Edit menu item', () => menuActions.edit(this.d, (levelItem || rows[0]).id, hit.buttonId), 'btn small')
         );
-        if (levelItem) this.toolbar.append(btn('🖥', `Goes to screen… (${levelItem.targetScreenId ? 'linked' : 'none'})`, () => menuActions.linkScreen(this.d, levelItem.id, hit.buttonId)), ...this.focusButtons(rows, levelItem, btn));
+        if (levelItem) this.toolbar.append(btn('🖥', `${targetSummary(levelItem.targetScreenId, levelItem.targetElementId)}: choose a screen or a popup element`, () => menuActions.linkTarget(this.d, levelItem.id, hit.buttonId)), ...this.focusButtons(rows, levelItem, btn));
       }
     } else if (hit.item) {
       const it = hit.item;
       this.toolbar.append(
         btn('✎ Edit menu item', `Edit menu item “${it.label || it.name}” (double-click the item to open its button)`, () => menuActions.edit(this.d, it.id, hit.buttonId), 'btn small primary'),
         btn('＋', `Add a sub item to “${it.label || it.name}”`, () => menuActions.add(this.d, it.id, hit.buttonId)),
-        btn('🖥', `Goes to screen… (${it.targetScreenId ? 'linked' : 'none'}): pick one, copy one into this project or create a new one`, () => menuActions.linkScreen(this.d, it.id, hit.buttonId)),
+        btn('🖥', `${targetSummary(it.targetScreenId, it.targetElementId)}: choose a screen to go to or an element to show as a popup (copy one into this project or create a new screen)`, () => menuActions.linkTarget(this.d, it.id, hit.buttonId)),
         btn(it.visible === false ? '—' : '👁', it.visible === false ? 'Show menu item' : 'Hide menu item', () => menuActions.toggleVisible(this.d, it.id, hit.buttonId)),
         btn('←', 'Move earlier', () => menuActions.move(this.d, it.id, -1, hit.buttonId)),
         btn('→', 'Move later', () => menuActions.move(this.d, it.id, 1, hit.buttonId)),

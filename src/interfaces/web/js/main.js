@@ -4,6 +4,7 @@ import { api, ApiError, setWriteGuard } from './api.js';
 import { state, on, emit, projectLabel, PLURAL, findDesign, isPublicLibraryItem, isSuperadminUser } from './state.js';
 import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, downloadProjectHtml, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
+import { lastEdited, setEditedSessionUser } from './edited.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
 import { WorkflowDesigner } from './components/workflow-designer.js';
@@ -781,13 +782,15 @@ const TYPE_NAV = [
 function currentPageType() { return state.mode === 'workflow' ? 'workflow' : state.mode === 'screen' ? (app.current?.type || state.tab) : null; }
 async function openPageType(type) {
   if (type === 'workflow') {
-    const id = state.workflowId || app.library.workflows[0]?.id;
+    const lastWf = lastEdited('workflow');
+    const id = (lastWf != null && app.library.workflows.find(w => Number(w.id) === lastWf)?.id) || state.workflowId || app.library.workflows[0]?.id;
     if (!id) { toast('Create a workflow first (+ New in this page)'); return; }
     await app.openWorkflow(id);
   } else {
     state.mode = 'screen'; state.tab = type;
     const list = type === 'screen' ? await api.list('screen') : (state.library[TYPE_NAV.find(t => t[0] === type)[3]] || []);
-    const first = list[0];
+    // the item of this type that was edited last, else the first one
+    const last = lastEdited(type), first = (last != null && list.find(d => Number(d.id) === last)) || list[0];
     if (first) await app.openDesign(type, first.id);
     else { renderMode(); app.library.renderTabs(); app.library.renderBody(); }
   }
@@ -936,7 +939,7 @@ async function boot() {
   );
   $('#statusbar').append(h('span', { id: 'status-msg' }, 'ready'), h('span', { id: 'statusbar-xy', class: 'dim' }), h('span', { class: 'grow' }), h('span', { id: 'status-counts', class: 'dim' }));
   await reloadLibrary({ silent: true });
-  app.designer = new Designer($('#dz-root'), { openDesign: (t, i) => app.openDesign(t, i), onBack: () => app.back(), canBack: app.canBack, backTarget: app.backTarget, openTest: (t, i) => openTestRunner(app, { type: t, id: i }) });
+  app.designer = new Designer($('#dz-root'), { openPage: t => openPageType(t).catch(err => toast(err.message, 'error')), openDesign: (t, i) => app.openDesign(t, i), onBack: () => app.back(), canBack: app.canBack, backTarget: app.backTarget, openTest: (t, i) => openTestRunner(app, { type: t, id: i }) });
   new Inspector(app.designer.inspectorEl, app.designer);
   app.workflow = new WorkflowDesigner($('#wf-root'), app);
   app.browser = new ItemBrowserView($('#browser-root'));
@@ -955,7 +958,8 @@ async function boot() {
   on('mode:set', m => { state.mode = m; renderMode(); });
   on('designer:open', ({ type, id }) => app.openDesign(type, id));
   on('workflow:select', id => app.openWorkflow(id));
-  on('auth:changed', () => { refreshCounts(); buildTopbar(); });
+  on('auth:changed', () => { setEditedSessionUser(state.user?.id); refreshCounts(); buildTopbar(); });
+  setEditedSessionUser(state.user?.id);
   on('project:changed', () => { refreshCounts(); buildTopbar(); app.library.renderBody(); });
   // the change list reviews in place: only the pending badge (topbar + status bar) follows each review
   on('changes:count', () => { refreshCounts(); buildTopbar(); });
@@ -1013,7 +1017,7 @@ async function boot() {
     if (pid && state.projects?.some(p => Number(p.id) === pid) && state.activeProjectId !== pid) await setActiveProject(pid);   // the new screen belongs to the menu button's project
     const rec = await newDesign('screen');
     if (rec) {
-      if (mk) { try { await api.updateMenuItem(Number(mk[1]), Number(mk[2]), { targetScreenId: rec.id }); toast(`Linked to the menu item: it goes to “${rec.name}”`, 'ok', 2600); } catch (e) { toast(e.message, 'error'); } }
+      if (mk) { try { await api.updateMenuItem(Number(mk[1]), Number(mk[2]), { targetScreenId: rec.id, targetElementId: null }); toast(`Linked to the menu item: it goes to “${rec.name}”`, 'ok', 2600); } catch (e) { toast(e.message, 'error'); } }
       await app.openDesign('screen', rec.id, { push: 'replace' });
     }
   }

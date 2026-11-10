@@ -5,7 +5,7 @@ import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
-import { buildMenuTree, hubDirectionPatch } from '/domain/menu.js';
+import { buildMenuTree, hubDirectionPatch, hubCount } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, ANCHORS,
@@ -329,7 +329,10 @@ export class Inspector {
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
             this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set(hubDirectionPatch(cfg, v)))),
+            this.field('Buttons shown at once (the rest: turn the ring)', this.select(`mc-${bid}-hubcount`, hubCount(cfg), [1, 2, 3, 4, 5, 6].map(n => [n, String(n)]), v => set({ hubCount: Number(v) }))),
             num('centerScale', 'Centre item size × button (0 = 2 × base small)'), num('hubCenterSize', 'Bar: centre size × centre (even bars: both middle ones)'), num('hubSideSize', 'Bar: side size × centre'), num('hubEdgeSize', 'Bar: edge size × centre'), num('hubScale', 'Base small size × button (gaps, back button)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),
+            h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The centre stays where it is and the sub items use only the part of the ring around it that is inside the device screen. Sub items without room are not drawn: the first and last (smaller) ones turn the ring to reach them.' },
+              h('input', { type: 'checkbox', checked: cfg.hubSubInside !== false, 'data-f': `mc-${bid}-hubsubinside`, onchange: e => set({ hubSubInside: e.target.checked }) }), h('span', {}, 'Sub items stay inside the screen (centre fixed)')),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the sub items would not fit the screen they are scaled down (size and distance) until they do' },
               h('input', { type: 'checkbox', checked: !!cfg.hubFit, 'data-f': `mc-${bid}-hubfit`, onchange: e => set({ hubFit: e.target.checked }) }), h('span', {}, 'Auto downsize sub items to fit the screen')),
             this.field('When clicked rotate (° per click, 0 = off, 360 = full turn)', this.num(`mc-${bid}-hubspin`, cfg.hubSpin, v => set({ hubSpin: v }), { step: 45 })))
@@ -713,7 +716,7 @@ export class Inspector {
         `This repeater holds ${extra + 1} children; only the first (by order) is repeated, the other ${extra} ${extra === 1 ? 'is' : 'are'} not drawn. Drag them out or delete them.`) : null,
       h('div', { class: 'grid2' },
         this.field('Layout', this.select(`rp-layout-${e.id}`, cfg.layout, [
-          ['vertical', 'Vertical list'], ['horizontal', 'Horizontal row'], ['carousel', 'Carousel'], ['roll', 'Roll (ticker / wheel)'], ['slide', 'Slide (one at a time)'], ['scroll', 'Scroll (clipped overflow)']
+          ['vertical', 'Vertical list'], ['horizontal', 'Horizontal row'], ['carousel', 'Carousel'], ['roll', 'Roll (ticker / wheel)'], ['slide', 'Slide (one at a time)'], ['scroll', 'Scroll (infinite loop)']
         ], v => set({ [A.layout]: v }))),
         this.field('Dimension', dimToggle)),
       h('div', { class: 'grid2' },

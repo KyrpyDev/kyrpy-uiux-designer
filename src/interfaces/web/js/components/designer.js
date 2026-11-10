@@ -7,7 +7,7 @@
 import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
-import { editedKeys } from '../edited.js';
+import { markEdited, sessionEdited, lastEdited, rememberName, editedName } from '../edited.js';
 import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
@@ -365,6 +365,7 @@ export class Designer {
 
   buildDocBar() {
     clear(this.docbar);
+    if (this.doc) rememberName(this.type, this.doc.id, this.doc.name);
     const o = this.opts;
     const d = this.doc || {};
     const ownedByMe = this.isOwnedByCurrentUser(d);
@@ -459,7 +460,8 @@ export class Designer {
       h('span', { class: 'sep-v' }),
       lockDocBtn,
       copyToProjBtn,
-      lineageBtn
+      lineageBtn,
+      this.type === 'screen' ? ibtn('workflow', 'Generate workflow', () => this.generateWorkflow(), { desc: 'New workflow from this screen: follows every menu item and click action that goes to another screen, screen after screen, and links them all as routes' }) : null
     ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
     this.updateDocBar();
@@ -494,13 +496,34 @@ export class Designer {
   }
 
   /** The old Back button, now a history tool: a scrollable drop-down of the items edited in this session (most recent first), plus Back. */
+  /**
+   * The designer name in the tool bar. On the main page it is a drop-down that switches to another designer and opens the
+   * item of that type that was edited last (a dialog designer keeps the plain label).
+   */
+  typeSwitch() {
+    const label = h('span', { class: 'badge' }, NAMES[this.type]);
+    if (!this.opts.openPage) { label.style.marginLeft = '6px'; return label; }
+    const btn = this.toolMenu(TAB_GLYPH[this.type] || 'dot', 'Switch designer: opens the item of that type you edited last', () =>
+      ['path', 'icon', 'button', 'element', 'screen', 'workflow'].map(t => {
+        const id = lastEdited(t), name = id != null ? (findDesign(t, id)?.name || editedName(t, id)) : '';
+        const title = t === 'workflow' ? 'Workflow designer' : NAMES[t];
+        return [TAB_GLYPH[t] || 'dot', `${title}${t === this.type ? '  ·  current' : name ? `  ·  ${name}` : ''}`, () => { if (t !== this.type) this.opts.openPage(t); }, name ? `Open the ${t} edited last: "${name}"` : `Open the ${t} designer`];
+      }));
+    btn.classList.add('type-switch'); btn.dataset.act = 'type-switch'; btn.style.marginLeft = '6px';
+    btn.firstChild.replaceWith(label);
+    return btn;
+  }
+
   historyMenu() {
-    const btn = this.toolMenu('back', 'History: items edited in this session', () => {
+    // the history of this designer: the items of its own type that were edited in this session, most recent first
+    const btn = this.toolMenu('back', `History: ${this.type}s edited in this session`, () => {
       const rows = [];
       if (this.opts.canBack?.()) rows.push(['back', `Back to ${this.opts.backTarget?.() || 'the previous page'}`, () => this.opts.onBack?.(), 'Alt+←']);
-      for (const k of editedKeys()) {
-        const [type, id] = k.split(':'), rec = findDesign(type, Number(id));
-        if (rec) rows.push([TAB_GLYPH[type] || 'dot', `${rec.name || rec.key}  ·  ${type}`, () => this.opts.openDesign?.(type, Number(id)), `Open ${type} "${rec.name}"`]);
+      for (const k of sessionEdited(this.type)) {
+        const id = Number(k.split(':')[1]), name = findDesign(this.type, id)?.name || editedName(this.type, id);
+        if (!name) continue;
+        const here = this.doc && id === Number(this.doc.id);
+        rows.push([TAB_GLYPH[this.type] || 'dot', `${name}${here ? '  ·  open now' : ''}`, () => { if (!here) this.opts.openDesign?.(this.type, id); }, here ? 'This is the item that is open' : `Open ${this.type} "${name}"`]);
       }
       return rows;
     });
@@ -699,7 +722,7 @@ export class Designer {
     const toggle = (icon, tip, get, set, desc = '') => { const b = ibtn(icon, tip, () => { set(!get()); b.classList.toggle('active', get()); }, { desc, active: get() }); b.dataset.view = '1'; return b; };
     this.zoomLabel = h('span', { class: 'muted', style: { minWidth: '46px', textAlign: 'center' } }, '100%');
     const kids = [
-      h('span', { class: 'badge', style: { marginLeft: '6px' } }, NAMES[this.type]),
+      this.typeSwitch(),
       this.titleField(),
       h('span', { class: 'sep-v' }), ...toolGroups, h('span', { class: 'sep-v' }),
       this.toolMenu('undo', 'Edit: undo, redo, duplicate, delete, order', [
@@ -1703,6 +1726,25 @@ export class Designer {
     return { x: q.x, y: q.y, w, h: hh };
   }
 
+  /**
+   * Screen → workflow: the server follows the routes of this screen (menu items and click actions that go to another
+   * screen, also inside the buttons / elements / popups it shows) screen after screen and lays them all out, linked.
+   */
+  async generateWorkflow() {
+    if (!this.doc || this.type !== 'screen') return;
+    const name = await promptBox('Generate workflow from this screen', { label: 'Workflow name', value: `${this.doc.name} workflow`, okLabel: 'Generate' });
+    if (!name?.trim()) return;
+    const activeProj = state.projects.find(p => p.id === state.activeProjectId);
+    try {
+      await this.settle();   // routes are read on the server: pending edits first
+      const wf = await api.workflowFromScreen({ screenId: this.doc.id, name: name.trim(), projectId: state.activeProjectId, visibility: activeProj?.visibility === 'project' ? 'project' : 'private' });
+      markEdited('workflow', wf.id);
+      emit('workflows:changed');
+      toast(`Workflow “${wf.name}”: ${wf.nodes.length} screen(s), ${wf.links.length} route(s)`, 'ok', 3200);
+      emit('workflow:select', wf.id);
+    } catch (e) { toast(e.message, 'error', 3600); }
+  }
+
   /** Saves the node (its sub tree and the shapes drawn inside it) as a new element in the library; the design stays as it is. */
   async extractAsElement(target) {
     const ex = extractNodes(this.nodes, target.id, n => nodeBBox(n, this.nodes));
@@ -1714,8 +1756,12 @@ export class Designer {
       const rec = await api.createDesign('element', { name: name.trim(), category: 'custom', projectId: state.activeProjectId, visibility: activeProj?.visibility === 'project' ? 'project' : 'private',
         width: ex.box.w, height: ex.box.h, meta: { htmlTag: 'div', extractedFrom: { type: this.type, id: this.doc.id, nodeId: target.id } },
         descriptionDev: `Extracted from ${this.type} "${this.doc.name}" (${ex.nodes.length - 1} node(s)).`, nodes: ex.nodes });
-      await reloadLibrary({ silent: true });
+      // show it at once: first in the Elements library (red edge), whatever tab / scope filter the panel was on
+      markEdited('element', rec.id);
+      state.tab = 'element';
+      if (!(await revealInLibrary(rec))) await reloadLibrary({ silent: true });
       emit('library:changed');
+      document.querySelector('.lib-body .lib-scroll')?.scrollTo?.(0, 0);
       toast(`Saved as element “${rec.name}” (${ex.box.w}×${ex.box.h}) in the library`, 'ok', 2600);
     } catch (e) { toast(e.message, 'error'); }
   }

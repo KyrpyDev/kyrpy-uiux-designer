@@ -2,7 +2,7 @@ import { parseXml } from './xml-parser.js';
 import { xmlToNodes } from './svg-to-nodes.js';
 import { loadLegacy, iconBodyMarkup } from './legacy-loader.js';
 import { iconElementMapper, legacyItemMapper, liquidScreenMapper, iconCategory, elementCategory, screenCategory, libraryScreenKey, libraryElementKey } from './tokenizer.js';
-import { HTML_ELEMENTS, BUTTON_ELEMENTS } from './elements-catalog.js';
+import { HTML_ELEMENTS, BUTTON_ELEMENTS, PAGE_BUILDER_ELEMENTS } from './elements-catalog.js';
 import { SAMPLE_MENUS } from './sample-menus.js';
 import { WORKFLOWS } from './default-workflows.js';
 import { labelFromKey } from '../../domain/naming.js';
@@ -286,7 +286,7 @@ export class LegacyImporter {
       have.add(it.id); stats.elements++;
     }
 
-    for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS]) {
+    for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS, ...PAGE_BUILDER_ELEMENTS]) {
       if (have.has(def.key)) { stats.skipped++; continue; }
       this.#createPreset(def, iconIds, buttonIds, iconKeysOf);
       have.add(def.key); stats.presets++;
@@ -319,7 +319,7 @@ export class LegacyImporter {
     const keyOf = id => [...iconIds].find(([, v]) => v === id)?.[0];
     const iconKeysOf = ns => [...new Set(ns.filter(n => n.refType === 'icon').map(n => keyOf(n.refId)).filter(Boolean))];
     const added = [];
-    for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS]) {
+    for (const def of [...HTML_ELEMENTS, ...BUTTON_ELEMENTS, ...PAGE_BUILDER_ELEMENTS]) {
       if (!keys.includes(def.key) || have.has(def.key)) continue;
       const refsOk = def.nodes.every(n => n.kind !== 'instance' || (n.refType === 'button' ? buttonIds : iconIds).has(n.refKey));
       if (!refsOk) { this.log(`preset ${def.key}: missing icon/button references, skipped`); continue; }

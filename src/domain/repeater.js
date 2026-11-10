@@ -9,6 +9,7 @@
  *   itemCount  1..50 (default 5)       gap        px between items (default 12)
  *   itemWidth / itemHeight             slot size (0 / empty = the template's own bbox)
  *   speed      ms per item (default 1800)   autoplay  true | false
+ *   (carousel / roll / scroll loop infinitely: clone sets follow the copies so the track wraps without a seam)
  *   perspective px (3d, default 800)       direction vertical | horizontal (scroll and slide axis)
  *
  * `repeaterPlan` and `repeaterMarkup` are self-contained (no outer references except repeaterPlan) so the exported
@@ -156,8 +157,9 @@ export function repeaterPlan(cfg, inner, item) {
   if (layout === 'slide') { if (axis === 'x') x0 = cx; else y0 = cy; }
   var place = function (j) { return axis === 'x' ? { x: r(x0 + j * stepA), y: r(y0) } : { x: r(x0), y: r(y0 + j * stepA) }; };
   for (i = 0; i < n; i++) { var p = place(i); copies.push({ i: i, x: p.x, y: p.y, t: '', o: 1, clone: false }); }
-  if (layout === 'carousel' || layout === 'roll') {
-    // the loop shifts by one set (n·step); the clone sets must still cover the view at the end of the shift, so a short
+  if (layout === 'carousel' || layout === 'roll' || layout === 'scroll') {
+    // infinite loop (scroll too: it wraps around its copies endlessly instead of bouncing back). The loop shifts by
+    // one set (n·step); the clone sets must still cover the view at the end of the shift, so a short
     // set gets more than one clone set (capped at ~400 copies for absurdly small items)
     var L = n * stepA, need = Math.max(2, Math.ceil((view + L + gap) / L)), cap = Math.max(2, Math.ceil(400 / n));
     // past the cap the loop could not stay covered: hold the static first frame instead of showing a blank band
@@ -165,9 +167,6 @@ export function repeaterPlan(cfg, inner, item) {
       for (var m = 1; m < need; m++) for (i = 0; i < n; i++) { var q = place(m * n + i); copies.push({ i: i, x: q.x, y: q.y, t: '', o: 1, clone: true }); }
       track = { kind: 'loop', axis: axis, distance: r(n * stepA), period: cfg.speed * n };
     }
-  } else if (layout === 'scroll') {
-    var overflow = n * stepA - gap - view;
-    if (overflow > 0) track = { kind: 'scroll', axis: axis, distance: r(overflow), period: Math.max(cfg.speed, cfg.speed * n / 2) };
   } else if (layout === 'slide') {
     track = { kind: 'slide', axis: axis, distance: r(stepA), count: n, period: cfg.speed * n };
   }
@@ -213,7 +212,6 @@ export function repeaterMarkup(id, cfg, inner, item, tpl, mode) {
   if (plan.track && anim) {
     var T = plan.track, ax = T.axis === 'x' ? 'translateX' : 'translateY', kf = '';
     if (T.kind === 'loop') { kf = '0%{transform:' + ax + '(0)}100%{transform:' + ax + '(' + (-T.distance) + 'px)}'; css += '@keyframes ' + key + '-track{' + kf + '}.' + key + '-track{animation:' + key + '-track ' + T.period + 'ms linear infinite}'; }
-    else if (T.kind === 'scroll') { kf = '0%,10%{transform:' + ax + '(0)}90%,100%{transform:' + ax + '(' + (-T.distance) + 'px)}'; css += '@keyframes ' + key + '-track{' + kf + '}.' + key + '-track{animation:' + key + '-track ' + T.period + 'ms ease-in-out infinite alternate}'; }
     else if (T.kind === 'slide') {
       for (var j = 0; j < T.count; j++) {
         var a0 = j * 100 / T.count, a1 = a0 + 70 / T.count, off = -j * T.distance;
@@ -254,7 +252,7 @@ export function bindRepeaters(root) {
 
 /**
  * Container box that fits a repeater around its items: outer = current container box, inner = its content box, item = slot
- * size. Lists (vertical / horizontal) hold every copy (count × item + gaps); moving layouts (carousel / roll / slide /
+ * size. Lists (vertical / horizontal) hold every copy (count × item + gaps); moving layouts (infinite loops and slides) (carousel / roll / slide /
  * scroll) keep their viewport length and fit the item across it. The top-left corner stays put; `max` ({w,h}) caps the size.
  */
 export function repeaterFitBox(cfg, outer, inner, item, max = null) {

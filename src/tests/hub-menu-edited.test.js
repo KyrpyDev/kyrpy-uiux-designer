@@ -148,7 +148,7 @@ test('hub menus reach an existing library once and are idempotent (button + elem
   } finally { c.close(); }
 });
 
-test('edited items: the one being edited red and first, the other edited purple, then project (orange), my scope (green), public', () => {
+test('edited items: every edited item red and first (most recent first), then project (orange), my scope (green), public', () => {
   const edited = new Map([['icon:5', 0], ['icon:2', 1]]);   // 5 was edited last
   const list = [
     { id: 1, visibility: 'public' }, { id: 2, visibility: 'public' }, { id: 3, visibility: 'project' },
@@ -158,7 +158,7 @@ test('edited items: the one being edited red and first, the other edited purple,
   assert.deepEqual(scopeFirst(list, 7, used, 'icon', edited).map(d => d.id), [5, 2, 3, 4, 1, 6]);
   assert.deepEqual(scopeFirst(list, 7, used, 'icon').map(d => d.id), [3, 5, 4, 1, 2, 6], 'no edits: project, mine, public (in order)');
   assert.equal(visClass({ id: 5, visibility: 'project' }, used, 'icon', edited), ' vis-edited');
-  assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'icon', edited), ' vis-recent');
+  assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'icon', edited), ' vis-edited', 'every edited item is red, not only the last one');
   assert.equal(visClass({ id: 2, visibility: 'public' }, used, 'button', edited), '', 'type is part of the key');
   assert.match(readFileSync(new URL('../interfaces/web/css/app.css', import.meta.url), 'utf8'), /\.cell\.vis-project[^{]*\{ border-color: #f97316/);
   assert.equal(isEdited({ id: 1 }, new Map(), 'icon'), false);
@@ -520,17 +520,21 @@ test('sync: the server names the design a write touched; live designs patch it a
   assert.match(ta, /if \(livePillsShown\(\)\) this\.mountLiveEditPills\(\);/);
 });
 
-test('menu item "goes to screen" picker: toolbar button, copy into this project with a rename, create in a new tab and link back', () => {
+test('menu item target picker: one modal (screen or popup element) from the toolbar and the edit dialog; copy into this project; new screen in a new tab', () => {
   const rd = f => readFileSync(new URL(f, import.meta.url), 'utf8');
   const ed = rd('../interfaces/web/js/components/menu-editor.js'), main = rd('../interfaces/web/js/main.js');
-  assert.match(ed, /export function pickScreen\(/);
-  assert.match(ed, /menuActions\.linkScreen\(this\.d, levelItem\.id, hit\.buttonId\)/, 'centre toolbar');
-  assert.match(ed, /menuActions\.linkScreen\(this\.d, it\.id, hit\.buttonId\)/, 'item toolbar');
-  assert.match(ed, /Number\(target\.projectId\) !== Number\(projectId\) \|\| isPublicLibraryItem\(target\)/, 'other project / public screens are copied');
+  assert.match(ed, /export function pickTarget\(/);
+  assert.match(ed, /tabBtn\('screen', '🖥 Go to screen'\), tabBtn\('element', '▣ Show element as popup'\)/, 'screen and element tabs');
+  assert.match(ed, /menuActions\.linkTarget\(this\.d, levelItem\.id, hit\.buttonId\)/, 'centre toolbar');
+  assert.match(ed, /menuActions\.linkTarget\(this\.d, it\.id, hit\.buttonId\)/, 'item toolbar');
+  assert.match(ed, /'data-f': 'mi-target'/, 'the edit dialog opens the same picker from a button');
+  assert.doesNotMatch(ed, /mi-target-screen|mi-target-element|'Show element as popup\/modal box'/, 'the two dropdowns are gone');
+  assert.match(ed, /targetScreenId: type === 'screen' \? target\.id : null, targetElementId: type === 'element' \? target\.id : null/, 'screen and popup are exclusive');
+  assert.match(ed, /Number\(target\.projectId\) !== Number\(projectId\) \|\| isPublicLibraryItem\(target\)/, 'other project / public items are copied');
   assert.match(ed, /promptBox\(`Copy “\$\{target\.name\}” into this project`/, 'the copy is renamed');
-  assert.match(ed, /api\.cloneDesign\('screen', target\.id, \{ name: name\.trim\(\), projectId \}\)/);
+  assert.match(ed, /api\.cloneDesign\(type, target\.id, \{ name: name\.trim\(\), projectId \}\)/);
   assert.match(ed, /new: 'screen', link: `\$\{bid\}:\$\{itemId\}`/);
-  assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id \}\)/, 'the new tab links the created screen back');
+  assert.match(main, /api\.updateMenuItem\(Number\(mk\[1\]\), Number\(mk\[2\]\), \{ targetScreenId: rec\.id, targetElementId: null \}\)/, 'the new tab links the created screen back');
 });
 
 test('hub bar size follows the item count: even 0.4 0.6 1 1 0.6 0.4 (max 6), odd 0.4 0.6 1 0.6 0.4 (max 5); sizes come from the settings', () => {
@@ -672,5 +676,10 @@ test('extract as element: the shape, its sub tree and what lies inside it become
     assert.ok(stored.every(n => !nodes.some(o => o.id === n.id)), 'new node ids');
     assert.equal(c.screen.get(scr.id).nodes.length, 5, 'the screen is unchanged');
   } finally { c.close(); }
-  assert.match(readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8'), /'data-act': 'extract-element'/);
+  const designerSrc = readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8');
+  assert.match(designerSrc, /'data-act': 'extract-element'/);
+  // the extracted element shows in the Elements library at once: marked edited (red, first), tab + scope filter follow it
+  const body = designerSrc.slice(designerSrc.indexOf('async extractAsElement('), designerSrc.indexOf('async addInstance('));
+  assert.match(body, /markEdited\('element', rec\.id\)/); assert.match(body, /state\.tab = 'element'/);
+  assert.match(body, /revealInLibrary\(rec\)/); assert.match(body, /emit\('library:changed'\)/);
 });

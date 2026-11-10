@@ -42,6 +42,7 @@ import { OnlineIconService } from './application/online-icon-service.js';
 import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
+import { PAGE_BUILDER_ELEMENTS } from './infrastructure/import/elements-catalog.js';
 import { buildMcpModule } from './mcp/composition.js';
 import { publicUserId } from './domain/system-users.js';
 
@@ -58,7 +59,9 @@ const NEW_PRESETS = [
   // hub menu buttons (3-button scrolling bar, horizontal + vertical) and their element presets
   { id: 'preset-004-hub-menus', run: importer => importer.ensureHubMenus() },
   // vertical tabs (the horizontal html-tabs already exists)
-  { id: 'preset-005-tabs-vertical', keys: ['html-tabs-vertical'] }
+  { id: 'preset-005-tabs-vertical', keys: ['html-tabs-vertical'] },
+  // page-builder blocks (hero, CTA, pricing, testimonial, countdown, gallery, video, map, social ...)
+  { id: 'preset-006-page-builder-blocks', keys: PAGE_BUILDER_ELEMENTS.map(e => e.key) }
 ];
 function seedNewPresets(db, services, importer) {
   try {
@@ -134,6 +137,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     workflows: workflowRepo,
     screens: designs.screen,
     nodes,
+    menus,
     users: userRepo,
     collaboration,
     trash: trashRepo,

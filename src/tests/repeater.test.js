@@ -105,9 +105,15 @@ test('repeater: layouts place copies along their axis and animate per effect', (
   const slide = render(repeaterNodes({ layout: 'slide', itemCount: 3, direction: 'horizontal' }));
   assert.match(slide, /translateX\(-72px\)/); assert.match(slide, /translateX\(-144px\)/);
   const scroll = render(repeaterNodes({ layout: 'scroll', itemCount: 6 }));
-  assert.match(scroll, /ud-rpt-1-track \d+ms ease-in-out infinite alternate/, 'overflowing list scrolls');
+  assert.match(scroll, /ud-rpt-1-track \d+ms linear infinite\}/, 'scroll loops endlessly (no bounce back)');
+  assert.ok(!/infinite alternate/.test(scroll));
+  assert.ok(count(scroll, /data-rpt-clone="/g) >= 6, 'clone sets keep the view filled while it wraps');
   assert.match(scroll, /clip-path="url\(#ud-clip-rpt-1\)"/);
-  assert.ok(!/@keyframes/.test(render(repeaterNodes({ layout: 'scroll', itemCount: 2 }))), 'a list that fits does not scroll');
+  const short = render(repeaterNodes({ layout: 'scroll', itemCount: 2 }));
+  assert.match(short, /@keyframes ud-rpt-1-track/, 'a short list still scrolls infinitely');
+  assert.ok(count(short, /data-rpt-clone="/g) >= 2, 'a short set gets enough clone sets to cover the view');
+  const hscroll = render(repeaterNodes({ layout: 'scroll', direction: 'horizontal', itemCount: 4 }));
+  assert.match(hscroll, /translateX\(-\d+px\)/, 'horizontal scroll loops along x');
   assert.ok(!/@keyframes/.test(render(repeaterNodes({ layout: 'carousel', autoplay: false }))), 'autoplay off = no animation');
 });
 
@@ -217,12 +223,13 @@ test('repeater: 3D ring projection stays finite and positive for extreme sizes, 
   assert.equal(repeaterPlan(repeaterConfig({ attrs: repeaterDefaultAttrs({ layout: 'carousel', dimension: '3d', itemCount: 6 }) }), { x: 0, y: 0, w: 276, h: 176 }, { w: 60, h: 40 }).ring.perspective, 800);
 });
 
-test('repeater: 2D carousel / roll loops cover the whole view at every point of the shift', () => {
-  for (const layout of ['carousel', 'roll']) for (const [n, size, gap, view] of [[1, 40, 12, 600], [2, 30, 0, 900], [4, 60, 12, 276], [3, 10, 5, 2000], [50, 60, 12, 300]]) {
+test('repeater: 2D carousel / roll / scroll loops cover the whole view at every point of the shift', () => {
+  for (const layout of ['carousel', 'roll', 'scroll']) for (const [n, size, gap, view] of [[1, 40, 12, 600], [2, 30, 0, 900], [4, 60, 12, 276], [3, 10, 5, 2000], [50, 60, 12, 300]]) {
     const cfg = repeaterConfig({ attrs: repeaterDefaultAttrs({ layout, dimension: '2d', itemCount: n, gap }) });
     const inner = { x: 0, y: 0, w: view, h: view };
     const plan = repeaterPlan(cfg, inner, { w: size, h: size });
     const ax = layout === 'carousel' ? 'x' : 'y';
+    assert.equal(plan.track.kind, 'loop');
     const L = plan.track.distance;
     const end = Math.max(...plan.copies.map(c => c[ax])) + size;
     assert.ok(end >= L + view - 0.01, `${layout} n=${n} size=${size} view=${view}: content end ${end} covers shift ${L} + view`);

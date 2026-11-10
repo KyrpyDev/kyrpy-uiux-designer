@@ -4,6 +4,7 @@
  */
 import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
+import { rememberName } from '../edited.js';
 import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprint.js';
 import { api } from '../api.js';
 import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js';
@@ -337,6 +338,7 @@ export class WorkflowDesigner {
   async load(id) {
     const [wf, screens] = await Promise.all([api.workflow(id), api.list('screen')]);
     this.wf = wf; this.screens = new Map(screens.map(s => [s.id, s]));
+    rememberName('workflow', wf.id, wf.name);
     this.sel = null; this.baseline = null;
     this.markBaseline();
     await this.loadFulls();
@@ -382,9 +384,7 @@ export class WorkflowDesigner {
       try {
         this.pushUndo();
         const c = this.centerWorld();
-        await api.placeScreen(wf.id, { screenId: s.id, x: Math.round(c.x - (s.width || 390) / 2), y: Math.round(c.y - 300) });
-        await this.refresh();
-        toast(`Added "${s.name}"`, 'ok', 1800);
+        await this.importScreen(s, { x: Math.round(c.x - (s.width || 390) / 2), y: Math.round(c.y - 300) }, { undo: false });
       } catch (e) { toast(e.message, 'error'); }
     };
     const draw = () => {
@@ -412,6 +412,20 @@ export class WorkflowDesigner {
     draw();
     dlg = modal({ title: 'Add a screen to this workflow', wide: true, content: h('div', { class: 'scr-pick' }, h('div', { class: 'row spread' }, search, count), grid) });
     requestAnimationFrame(() => search.focus());
+  }
+
+  /**
+   * Adds a screen at { x, y } together with every screen its routes reach (menu items and click actions that go to
+   * another screen, recursively), all linked. A screen that is already here only gets its missing routes.
+   */
+  async importScreen(s, at, { undo = true } = {}) {
+    if (!this.wf || !s) return;
+    if (undo) this.pushUndo();
+    const r = await api.importScreenRoutes(this.wf.id, { screenId: s.id, x: at.x, y: at.y });
+    await this.refresh();
+    const { screens = 0, links = 0 } = r.imported || {};
+    if (screens > 1) this.fit();
+    toast(screens || links ? `"${s.name}": added ${screens} screen(s) and ${links} route(s)` : `"${s.name}" and its routes are already in this workflow`, screens || links ? 'ok' : 'info', 2600);
   }
 
   /* ---------- layout of the chrome ---------- */
@@ -692,6 +706,20 @@ export class WorkflowDesigner {
     });
     vp.addEventListener('keyup', ev => { if (ev.code === 'Space') this.space = false; });
     vp.addEventListener('dblclick', ev => { const l = ev.target.closest?.('path.link'); if (l) this.editLink(Number(l.dataset.link)); });
+    // a screen dragged from the library: placed where it is dropped, with the screens its routes lead to
+    vp.addEventListener('dragover', ev => { if (this.wf && ev.dataTransfer?.types?.includes('application/x-ud')) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+    vp.addEventListener('drop', async ev => {
+      let d = null;
+      try { d = JSON.parse(ev.dataTransfer.getData('application/x-ud') || 'null'); } catch { /* not ours */ }
+      if (!this.wf || !d) return;
+      ev.preventDefault();
+      if (d.type !== 'screen') return toast('Only screens can be dropped into a workflow', 'info', 2200);
+      const p = this.worldPoint(ev);
+      try {
+        const s = this.screens.get(Number(d.id)) || await api.getDesign('screen', Number(d.id));
+        await this.importScreen(s, { x: Math.round(p.x - (s.width || 390) / 2), y: Math.round(p.y - HEAD / 2) });
+      } catch (e) { toast(e.message, 'error'); }
+    });
     vp.addEventListener('pointerdown', ev => this.down(ev));
     vp.addEventListener('pointermove', ev => this.move(ev));
     vp.addEventListener('pointerup', ev => this.up(ev));

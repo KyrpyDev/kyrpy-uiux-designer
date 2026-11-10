@@ -25,6 +25,11 @@ export function miscRoutes(router, c) {
   router.post('/api/workflows', ({ body, actor, projectId }) =>
     c.workflows.create({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
   );
+  // a screen's routes (click actions + menu items, nested) -> a new workflow / more screens of an open one
+  router.post('/api/workflows/from-screen', ({ body, actor, projectId }) =>
+    c.workflows.generateFromScreen({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
+  );
+  router.post('/api/workflows/:id/import-routes', ({ params, body }) => c.workflows.importRoutes(params.id, body || {}));
   router.get('/api/workflows/:id', ({ params }) => c.workflows.get(params.id));
   router.get('/api/workflows/:id/lineage', ({ params }) => c.workflows.getLineage(params.id));
   router.put('/api/workflows/:id', ({ params, body, actor }) => c.workflows.update(params.id, body, { actor }));

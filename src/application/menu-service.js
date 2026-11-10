@@ -112,6 +112,12 @@ export class MenuService {
       if (!(v >= 0.1 && v <= 2)) throw new ValidationError(`${k} must be a number from 0.1 to 2 (a fraction of the centre item size)`);
       cfg = { ...cfg, [k]: v };
     }
+    if (cfg.hubCount !== undefined) {
+      const v = Number(cfg.hubCount);
+      if (!Number.isInteger(v) || v < 1 || v > 6) throw new ValidationError('hubCount must be a whole number from 1 to 6 (buttons the hub bar shows at once)');
+      cfg = { ...cfg, hubCount: v };
+    }
+    if (cfg.hubSubInside !== undefined) cfg = { ...cfg, hubSubInside: cfg.hubSubInside !== false && cfg.hubSubInside !== 0 && cfg.hubSubInside !== '0' };
     if (cfg.hubCenterItemId != null) {
       const it = this.menus.list(b.id).find(m => m.id === Number(cfg.hubCenterItemId));
       if (!it || it.parentId != null) throw new ValidationError('hubCenterItemId must be a top-level item of this menu');

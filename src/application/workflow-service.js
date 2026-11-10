@@ -2,11 +2,12 @@ import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from '.
 import { normalizeWorkflow, normalizeLink } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { stripOwnership } from '../domain/system-users.js';
+import { collectScreenRoutes, crawlScreenRoutes } from '../domain/screen-routes.js';
 
 /** Workflows: screens placed on an infinite canvas plus named links between them (optionally from a specific element). */
 export class WorkflowService {
-  constructor({ workflows, screens, nodes, users = null, collaboration = null, trash = null, transaction }) {
-    Object.assign(this, { workflows, screens, nodes, users, collaboration, trash, transaction });
+  constructor({ workflows, screens, nodes, menus = null, users = null, collaboration = null, trash = null, transaction }) {
+    Object.assign(this, { workflows, screens, nodes, menus, users, collaboration, trash, transaction });
   }
 
   #enrichUsernames(w) {
@@ -272,6 +273,69 @@ export class WorkflowService {
     const l = this.workflows.link(Number(linkId));
     if (!l) throw new NotFoundError('link', linkId);
     return this.workflows.updateLink(l.id, normalizeLink({ ...patch }, { partial: true }));
+  }
+
+  /** Where a screen leads: the screens its click actions and (nested) button menus route to. See domain/screen-routes.js. */
+  screenRoutes(screenId) {
+    return collectScreenRoutes(Number(screenId), {
+      nodesOf: (type, id) => this.nodes.listByOwner(type, id),
+      menuOf: id => (this.menus ? this.menus.list(id) : [])
+    });
+  }
+
+  /**
+   * Imports a screen and, route after route, every screen it leads to (recursively) into the workflow, with one link
+   * per route. Screens already on the canvas keep their place; new ones are laid out in columns (one per route depth)
+   * to the right of the start screen, which lands on { x, y } when it is new. Links the workflow already has are kept.
+   * @returns the workflow plus `imported: { screens, links, reached }` (what was added, and how many screens the routes reach)
+   */
+  importRoutes(id, { screenId, x = 0, y = 0 } = {}) {
+    const w = this.#require(id);
+    const start = this.screens.get(Number(screenId));
+    if (!start) throw new NotFoundError('screen', screenId);
+    const recs = new Map([[start.id, start]]);
+    const rec = sid => { if (!recs.has(sid)) recs.set(sid, this.screens.get(sid) || null); return recs.get(sid); };
+    const { order, level, routes } = crawlScreenRoutes(start.id, sid => this.screenRoutes(sid), { exists: sid => Boolean(rec(sid)) });
+    return this.transaction(() => {
+      const placed = new Map(this.workflows.nodes(w.id).map(n => [n.screenId, n]));
+      const origin = placed.get(start.id) || { x: Number(x) || 0, y: Number(y) || 0 };
+      const colW = Math.max(...order.map(sid => rec(sid).width || 390)) + 170;
+      const rowH = Math.max(...order.map(sid => rec(sid).height || 844)) + 150;
+      // rows already taken in a column (by the screens of the workflow that sit in it) are skipped
+      const taken = [...placed.values()].map(n => ({ col: Math.round((n.x - origin.x) / colW), y: n.y }));
+      const rows = new Map();
+      let screens = 0, links = 0;
+      for (const sid of order) {
+        if (placed.has(sid)) continue;
+        const col = level.get(sid);
+        let row = rows.get(col) ?? 0, py = origin.y + row * rowH;
+        while (taken.some(t => t.col === col && Math.abs(t.y - py) < rowH - 1)) { row++; py = origin.y + row * rowH; }
+        rows.set(col, row + 1);
+        placed.set(sid, this.workflows.upsertNode({ workflowId: w.id, screenId: sid, x: origin.x + col * colW, y: py, collapsed: false, locked: false }));
+        screens++;
+      }
+      const have = new Set(this.workflows.links(w.id).map(l => `${l.fromScreenId}|${l.toScreenId}|${l.fromNodeId ?? ''}`));
+      for (const r of routes) {
+        if (!placed.has(r.toScreenId)) continue;
+        const k = `${r.fromScreenId}|${r.toScreenId}|${r.fromNodeId ?? ''}`;
+        if (have.has(k)) continue;
+        have.add(k);
+        this.workflows.createLink(w.id, normalizeLink({ fromScreenId: r.fromScreenId, toScreenId: r.toScreenId, fromNodeId: r.fromNodeId, name: r.name || rec(r.toScreenId).name || '', trigger: r.trigger }));
+        links++;
+      }
+      return { ...this.get(w.id), imported: { screens, links, reached: order.length } };
+    });
+  }
+
+  /** New workflow holding the screen and every screen its routes reach (see importRoutes): the app flow from that screen on. */
+  generateFromScreen({ screenId, name, ...rest } = {}, { actor = null, actorId = null } = {}) {
+    const s = this.screens.get(Number(screenId));
+    if (!s) throw new NotFoundError('screen', screenId);
+    if (!this.screenRoutes(s.id).length) throw new ValidationError(`screen "${s.name}" has no menu item or click action that goes to another screen yet`);
+    return this.transaction(() => {
+      const wf = this.create({ ...rest, name: String(name || '').trim() || `${s.name} workflow`, descriptionDev: rest.descriptionDev ?? `Generated from the routes of screen "${s.name}".` }, { actor, actorId });
+      return this.importRoutes(wf.id, { screenId: s.id, x: 0, y: 0 });
+    });
   }
 
   /** Outgoing links of the given screens across all workflows, de-duplicated. */

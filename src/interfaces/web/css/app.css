@@ -915,3 +915,14 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 /* test runner: only the live test toolbar (HUD); no edit toolbar, selection handles or hints */
 .test-runner .dz-toprow, .test-runner .dz-docbar, .test-runner .dz-bar, .test-runner .dz-pathbar, .test-runner .dz-hint, .test-runner .dz-inspector, .test-runner .dz-insp-split { display: none !important; }
 .test-runner svg.dz-overlay, .test-runner .dz-overlay { display: none !important; }
+
+/* full-page lock with a progress bar while a PostgreSQL sync runs (collab-modals.js withSyncProgress) */
+.sync-lock { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; background: rgba(2, 6, 16, .72); backdrop-filter: blur(2px); cursor: progress; outline: none; }
+.sync-lock-card { width: min(460px, calc(100vw - 32px)); padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel, #0d1626); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 60px rgba(0, 0, 0, .55); }
+.sync-lock-title { font-weight: 700; font-size: 14px; }
+.sync-lock-bar { position: relative; height: 10px; border-radius: 999px; background: rgba(148, 163, 184, .18); overflow: hidden; }
+.sync-lock-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .4s ease; }
+.sync-lock-bar.indet .sync-lock-fill { position: absolute; width: 35%; animation: sync-lock-slide 1.2s ease-in-out infinite; }
+.sync-lock-note { font-variant-numeric: tabular-nums; }
+@keyframes sync-lock-slide { 0% { left: -35%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .sync-lock-bar.indet .sync-lock-fill { animation: none; left: 0; width: 100%; opacity: .55; } }
