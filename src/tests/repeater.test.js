@@ -187,7 +187,9 @@ test('repeater: export emits the template once plus the repeat runtime; svg file
     const js = file('js/app.js');
     assert.ok(js.includes('function repeaterPlan(') && js.includes('function repeaterMarkup(') && js.includes('bindRepeaters(document);'));
     assert.ok(file('ts/repeater.ts').includes('export function bindRepeaters('));
-    assert.ok(file('ts/app.ts').includes("import { bindRepeaters } from './repeater';"));
+    assert.ok(file('ts/app.ts').includes("import { bindRepeaters, bindRepeaterScroll } from './repeater';"));
+    assert.ok(js.includes('function bindRepeaterScroll(') && js.includes('bindRepeaterScroll(document);'), 'wheel / drag scrolling ships with the export');
+    assert.ok(file('ts/repeater.ts').includes('export function bindRepeaterScroll('));
     const svgFile = file(files.find(f => /^svg\/screens\/.+\/feed\.svg$/.test(f.path)).path);
     assert.equal(count(svgFile, /data-rpt-index="/g), 8, 'svg export: static first frame with every copy');
     assert.ok(!/@keyframes ud-rpt/.test(svgFile));

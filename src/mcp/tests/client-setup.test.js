@@ -148,3 +148,61 @@ test('claude-code "any shell" recipe: identical in bash, PowerShell and cmd, rem
   // clients without a neutral recipe fall back to bash / zsh syntax
   assert.equal(buildClientSetup({ client: 'codex', url: 'https://d.example/mcp', key, shell: 'any' }).shell, 'posix');
 });
+
+test('Windows scripts: cmd and PowerShell get their own quick test, key file writer, fallback and script file', async () => {
+  const { setupAsFile } = await import('../interfaces/web/client-setup.js');
+  const { installSteps } = await import('../application/bundle-service.js');
+  // raw details: the connection test is written for the chosen shell, not only for bash
+  const ps = buildClientSetup({ client: 'generic', url: URL, key: KEY, keyMode: 'env', shell: 'powershell' });
+  assert.match(ps.steps[1].text, /^\(Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http:\/\/127\.0\.0\.1:5180\/mcp'/);
+  assert.ok(ps.steps[1].text.includes('"Bearer $env:KYRPY_UIUX_API_KEY"'));
+  const cmd = buildClientSetup({ client: 'generic', url: URL, key: KEY, keyMode: 'env', shell: 'cmd' });
+  assert.ok(cmd.steps[1].text.startsWith(`curl -s ${URL} -H "Authorization: Bearer %KYRPY_UIUX_API_KEY%"`));
+  assert.ok(cmd.steps[1].text.includes('-d "{\\"jsonrpc\\":\\"2.0\\"'), 'cmd: JSON body in escaped double quotes');
+  assert.ok(!/'content-type/.test(cmd.steps[1].text), 'cmd has no single-quoted arguments');
+
+  // cmd writes the per-repository key file itself (it used to be a manual step)
+  const gem = setupAsText(buildClientSetup({ client: 'gemini', url: URL, key: KEY, shell: 'cmd' }));
+  assert.match(gem, /^if not exist \.gemini mkdir \.gemini$/m);
+  assert.ok(gem.includes(`(findstr /v /b /c:"KYRPY_UIUX_API_KEY=" /c:"export KYRPY_UIUX_API_KEY=" .gemini\\.env 2>nul & echo KYRPY_UIUX_API_KEY=${KEY})> .gemini\\.env.tmp`));
+  assert.match(gem, /^move \/y \.gemini\\\.env\.tmp \.gemini\\\.env >nul$/m);
+  // the placeholder's < and > must not become redirections
+  assert.ok(setupAsText(buildClientSetup({ client: 'gemini', url: URL, shell: 'cmd' })).includes('echo KYRPY_UIUX_API_KEY=kud_live_^<paste-your-key-here^>)'));
+
+  // "any shell" has no neutral recipe for most clients: Windows falls back to PowerShell, others to bash
+  assert.equal(buildClientSetup({ client: 'codex', url: URL, shell: 'any', fallbackShell: 'powershell' }).shell, 'powershell');
+  assert.equal(buildClientSetup({ client: 'codex', url: URL, shell: 'any' }).shell, 'posix');
+  assert.equal(buildClientSetup({ client: 'claude-code', url: URL, key: KEY, shell: 'any', fallbackShell: 'powershell' }).shell, 'any');
+
+  // script files
+  const f = sh => setupAsFile(buildClientSetup({ client: 'claude-code', url: URL, key: KEY, shell: sh, keyKind: 'account' }));
+  assert.equal(f('posix').filename, 'connect-claude-code.sh');
+  assert.ok(f('posix').text.startsWith('#!/usr/bin/env bash\n') && !f('posix').text.includes('\r'));
+  const bat = f('cmd');
+  assert.equal(bat.filename, 'connect-claude-code.cmd');
+  assert.ok(bat.text.startsWith('@echo off\r\nrem '));
+  assert.ok(!/[^\r]\n/.test(bat.text), 'cmd file: CRLF only');
+  assert.match(bat.text, /where claude >nul 2>nul \|\| \(.* & exit \/b 1\)\r\n/);
+  assert.ok(!setupAsText(buildClientSetup({ client: 'claude-code', url: URL, shell: 'cmd' })).includes('exit /b'), 'pasted cmd lines never exit the terminal');
+  const ps1 = f('powershell');
+  assert.equal(ps1.filename, 'connect-claude-code.ps1');
+  assert.ok(ps1.text.startsWith('﻿# ') && ps1.text.includes('Get-Command claude'));
+  assert.equal(ps1.run, 'powershell -ExecutionPolicy Bypass -File .\\connect-claude-code.ps1');
+  assert.equal(f('fish').filename, 'connect-claude-code.fish');
+  assert.equal(f('any'), null);
+  for (const c of CLIENTS) for (const sh of ['posix', 'powershell', 'cmd', 'fish']) {
+    const file = setupAsFile(buildClientSetup({ client: c.id, url: URL, key: KEY, shell: sh }));
+    assert.ok(file.text.includes('uiux_init') && file.filename.startsWith(`connect-${c.id}.`), `${c.id}/${sh}`);
+  }
+
+  // bundle download steps for every shell
+  const st = installSteps({ url: 'http://h/mcp/bundles/t', filename: 'a.tar.gz', sha256: 'ab12', root: 'uiux', replace: true, copyStyles: ['neo'] });
+  assert.equal(st.install, st.installByShell.posix);
+  assert.ok(st.install.includes('rm -rf uiux/source && mkdir -p uiux/source'));
+  assert.ok(st.installByShell.powershell.some(l => l.includes("(Get-FileHash .uiux/cache/a.tar.gz -Algorithm SHA256).Hash -ne 'ab12'")));
+  assert.ok(st.installByShell.powershell.some(l => l.includes('tar.exe -xzf .uiux/cache/a.tar.gz -C uiux/source')));
+  assert.ok(st.installByShell.cmd.includes('certutil -hashfile .uiux\\cache\\a.tar.gz SHA256 | findstr /i /c:"ab12" >nul'));
+  assert.ok(st.installByShell.cmd.includes('if exist uiux\\source rmdir /s /q uiux\\source'));
+  assert.ok(st.installByShell.cmd.includes('xcopy /e /i /y uiux\\source\\adapters\\web\\neo uiux\\neo >nul'));
+  assert.ok(!st.installByShell.cmd.some(l => /mkdir -p|sha256sum|\//.test(l.replace(/"[^"]*"/g, '').replace(/ \/[a-z]\b/gi, ''))), 'cmd: no POSIX commands or paths');
+});

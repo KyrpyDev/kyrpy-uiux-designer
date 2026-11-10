@@ -18,7 +18,7 @@ import {
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterFitBox, REPEATER_KEY } from '/domain/repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterFitBox, bindRepeaterScroll, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign } from '../actions.js';
@@ -97,6 +97,8 @@ export class Designer {
     this.world = h('div', { class: 'dz-world' });
     this.frame = h('div', { class: 'dz-device-frame' });
     this.stage = h('div', { class: 'dz-stage' });
+    // test mode: a wheel / drag inside a repeater's area scrolls its copies instead of zooming the canvas
+    bindRepeaterScroll(this.stage, () => this.actionsLive);
     this.liveLayer = h('div', { class: 'dz-live-layer', hidden: true });
     this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.overlay.setAttribute('class', 'dz-overlay');

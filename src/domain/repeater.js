@@ -171,7 +171,11 @@ export function repeaterPlan(cfg, inner, item) {
     track = { kind: 'slide', axis: axis, distance: r(stepA), count: n, period: cfg.speed * n };
   }
   if (is3d) tilt = axis === 'y' ? 'rotateX(18deg)' : 'rotateY(-18deg)';
-  return { n: n, iw: iw, ih: ih, copies: copies, track: track, ring: null, tilt: tilt };
+  // what a wheel / drag inside the repeater area may scroll (bindRepeaterScroll): loops wrap around one set, slides
+  // travel item by item, plain lists only as far as their copies overflow the content box
+  var scroll = { axis: axis, step: r(stepA), kind: track ? track.kind : 'list', loop: track && track.kind === 'loop' ? track.distance : 0,
+    max: track && track.kind === 'slide' ? r((n - 1) * stepA) : track ? 0 : r(Math.max(0, n * stepA - gap - view)) };
+  return { n: n, iw: iw, ih: ih, copies: copies, track: track, ring: null, tilt: tilt, scroll: scroll };
 }
 
 /**
@@ -224,7 +228,12 @@ export function repeaterMarkup(id, cfg, inner, item, tpl, mode) {
   }
   if (css) css += '@media (prefers-reduced-motion:reduce){.' + key + '-track,.' + key + '-ring{animation:none!important}}';
   var tiltAttr = plan.tilt ? ' style="transform-box:fill-box;transform-origin:center;transform:perspective(' + P + 'px) ' + plan.tilt + '"' : '';
-  var markup = '<g class="ud-rpt-stage" data-rpt-layout="' + cfg.layout + '" data-rpt-dim="' + cfg.dimension + '"' + tiltAttr + '>' +
+  var S = plan.scroll, scrollAttr = '';
+  if (S && mode !== 'static' && (S.loop || S.max)) {
+    scrollAttr = ' data-rpt-axis="' + S.axis + '" data-rpt-kind="' + S.kind + '" data-rpt-step="' + S.step + '" data-rpt-loop="' + S.loop + '" data-rpt-max="' + S.max +
+      '" data-rpt-box="' + inner.x + ' ' + inner.y + ' ' + inner.w + ' ' + inner.h + '"' + (trackAttr ? ' data-rpt-period="' + plan.track.period + '" data-rpt-count="' + plan.n + '"' : '');
+  }
+  var markup = '<g class="ud-rpt-stage" data-rpt-layout="' + cfg.layout + '" data-rpt-dim="' + cfg.dimension + '"' + scrollAttr + tiltAttr + '>' +
     '<g class="ud-rpt-track' + trackAttr + '">' + body + '</g></g>';
   return { markup: markup, css: css };
 }
@@ -248,6 +257,92 @@ export function bindRepeaters(root) {
     if (style.textContent.indexOf('@keyframes ud-rpt-' + data.id + '-') < 0) style.textContent += out.css;
     g.removeAttribute('data-rpt');
   }
+}
+
+/**
+ * Scrolling inside a repeater's own area (self-contained): a mouse wheel or a drag over the content box of a repeater
+ * moves its copies along the repeater axis and nothing else on the page. Loops (carousel / roll / scroll) wrap around,
+ * slides travel between their items, lists scroll as far as their copies overflow. Autoplay pauses while the user scrolls
+ * and picks up from the same place afterwards. `isOn` (optional) switches it off, e.g. outside the designer's test mode.
+ */
+export function bindRepeaterScroll(root, isOn) {
+  if (!root || root.__udRptScroll || !root.addEventListener) return;
+  root.__udRptScroll = true;
+  var live = function () { return !isOn || isOn(); };
+  // the top-most repeater whose content box holds the pointer (the box is in the user units of the repeater's group)
+  var find = function (ev) {
+    var list = root.querySelectorAll('.ud-rpt-stage[data-rpt-axis]');
+    for (var i = list.length - 1; i >= 0; i--) {
+      var st = list[i], b = String(st.getAttribute('data-rpt-box') || '').split(' ').map(Number);
+      var host = st.parentNode, m = host && host.getScreenCTM ? host.getScreenCTM() : null;
+      if (b.length !== 4 || !m) continue;
+      var det = m.a * m.d - m.b * m.c;
+      if (!det) continue;
+      var dx = ev.clientX - m.e, dy = ev.clientY - m.f;
+      var x = (m.d * dx - m.c * dy) / det, y = (m.a * dy - m.b * dx) / det;
+      if (x >= b[0] && x <= b[0] + b[2] && y >= b[1] && y <= b[1] + b[3]) return { st: st, scale: Math.sqrt(Math.abs(det)) || 1 };
+    }
+    return null;
+  };
+  var num = function (st, k) { return parseFloat(st.getAttribute('data-rpt-' + k)) || 0; };
+  // delta in user units, positive = further into the list. False when there is nothing (left) to scroll.
+  var move = function (st, delta) {
+    var track = st.querySelector('.ud-rpt-track');
+    if (!track) return false;
+    var axis = st.getAttribute('data-rpt-axis'), loop = num(st, 'loop'), max = num(st, 'max');
+    if (!loop && !max) return false;
+    var off = st.__udOff;
+    if (off == null) {          // take over from where the autoplay animation is right now
+      off = 0;
+      try {
+        var v = (root.ownerDocument || root).defaultView.getComputedStyle(track).transform.match(/matrix\(([^)]+)\)/);
+        if (v) { var p = v[1].split(','); off = -(parseFloat(p[axis === 'x' ? 4 : 5]) || 0); }
+      } catch (e) { off = 0; }
+    }
+    var next = off + delta;
+    next = loop ? ((next % loop) + loop) % loop : Math.max(0, Math.min(max, next));
+    if (!loop && next === off && st.__udOff != null) return false;      // at an end: the page may scroll instead
+    st.__udOff = next;
+    track.style.animation = 'none';
+    track.style.transform = (axis === 'x' ? 'translateX(' : 'translateY(') + (-Math.round(next * 100) / 100) + 'px)';
+    clearTimeout(st.__udT);
+    var period = num(st, 'period');
+    if (period) st.__udT = setTimeout(function () {       // autoplay continues from the place the user left it
+      var slide = st.getAttribute('data-rpt-kind') === 'slide', step = num(st, 'step') || 1;
+      var part = slide ? Math.round(next / step) / Math.max(1, num(st, 'count')) : next / loop;
+      track.style.transform = ''; track.style.animation = '';
+      track.style.animationDelay = Math.round(-part * period) + 'ms';
+      st.__udOff = null;
+    }, 1600);
+    return true;
+  };
+  root.addEventListener('wheel', function (ev) {
+    if (!live()) return;
+    var hit = find(ev);
+    if (!hit) return;
+    var d = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
+    if (ev.deltaMode === 1) d *= 16;
+    if (move(hit.st, d / hit.scale)) { ev.preventDefault(); ev.stopPropagation(); }
+  }, { passive: false });
+  var drag = null;
+  root.addEventListener('pointerdown', function (ev) {
+    drag = null;
+    if (!live() || ev.button) return;
+    var hit = find(ev);
+    if (hit) drag = { st: hit.st, scale: hit.scale, x: ev.clientX, y: ev.clientY, on: false };
+  });
+  root.addEventListener('pointermove', function (ev) {
+    if (!drag) return;
+    var x = drag.st.getAttribute('data-rpt-axis') === 'x', d = x ? drag.x - ev.clientX : drag.y - ev.clientY;
+    if (!drag.on && Math.abs(d) < 5) return;
+    drag.on = true; drag.x = ev.clientX; drag.y = ev.clientY;
+    if (move(drag.st, d / drag.scale)) ev.preventDefault();
+  });
+  var end = function () { if (drag && !drag.on) drag = null; else if (drag) setTimeout(function () { drag = null; }, 0); };
+  root.addEventListener('pointerup', end);
+  root.addEventListener('pointercancel', end);
+  // a drag that scrolled is not a click on the item under it
+  root.addEventListener('click', function (ev) { if (drag && drag.on) { ev.stopPropagation(); ev.preventDefault(); } }, true);
 }
 
 /**

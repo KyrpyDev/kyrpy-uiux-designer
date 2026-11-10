@@ -7,12 +7,13 @@
  * variable. Without one (keys are shown once) they use the env variable with a placeholder value.
  */
 import { h, toast } from '/js/dom.js';
-import { CLIENTS, SHELLS, DEFAULT_SERVER_NAME, DEFAULT_ENV_VAR, buildClientSetup, setupAsText } from './client-setup.js';
+import { CLIENTS, SHELLS, DEFAULT_SERVER_NAME, DEFAULT_ENV_VAR, buildClientSetup, setupAsText, setupAsFile } from './client-setup.js';
 
 const PREF = 'aik-connect-prefs';
 const loadPrefs = () => { try { return JSON.parse(localStorage.getItem(PREF) || '{}'); } catch { return {}; } };
 const savePrefs = p => { try { localStorage.setItem(PREF, JSON.stringify(p)); } catch { /* storage off */ } };
-const guessShell = () => (/win/i.test(navigator.userAgentData?.platform || navigator.platform || '') ? 'any' : 'posix');
+const onWindows = () => /win/i.test(navigator.userAgentData?.platform || navigator.platform || '');
+const guessShell = () => (onWindows() ? 'any' : 'posix');
 
 let stylesDone = false;
 function injectStyles() {
@@ -28,6 +29,10 @@ function injectStyles() {
 .aic-client.on { border-color: var(--accent); background: rgba(46,155,255,.16); box-shadow: 0 0 0 1px var(--accent) inset; }
 .aic-opts { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
 .aic-opts .field { min-width: 0; }
+.aic-shells { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.aic-shells button { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 12px; }
+.aic-shells button:hover { border-color: var(--accent); }
+.aic-shells button.on { border-color: var(--accent); background: rgba(46,155,255,.16); box-shadow: 0 0 0 1px var(--accent) inset; }
 .aic-step { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .aic-step-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 8px; background: rgba(255,255,255,.03); font-size: 12px; }
 .aic-step-head .aic-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
@@ -59,7 +64,12 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
   const serverName = h('input', { type: 'text', value: DEFAULT_SERVER_NAME, maxlength: '60', 'aria-label': 'MCP server name' });
   const envVar = h('input', { type: 'text', value: DEFAULT_ENV_VAR, maxlength: '60', 'aria-label': 'Environment variable' });
   const perProject = h('input', { type: 'checkbox' });
-  const shellSel = h('select', { 'aria-label': 'Shell' }, SHELLS.map(([v, l]) => h('option', { value: v, selected: v === shell }, l)));
+  // every script exists for bash / zsh, PowerShell, cmd and fish: one click switches the syntax of all steps
+  const shells = h('div', { class: 'aic-shells', role: 'radiogroup', 'aria-label': 'Terminal the script is for' });
+  const drawShells = () => shells.replaceChildren(h('span', {}, 'Script for:'), ...SHELLS.map(([v, l, short]) => h('button', {
+    type: 'button', class: v === shell ? 'on' : '', role: 'radio', 'aria-checked': String(v === shell), title: l, dataset: { shell: v },
+    onclick: () => { shell = v; remember(); drawShells(); draw(); }
+  }, short)));
   const modeSel = h('select', { 'aria-label': 'Where the key goes', disabled: !key },
     h('option', { value: 'env', selected: keyMode === 'env' }, 'Environment variable (recommended)'),
     h('option', { value: 'inline', selected: keyMode === 'inline' }, 'Inline in the command / user config'));
@@ -74,7 +84,12 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
   }, h('span', { class: 'aic-group' }, c.group), h('b', {}, c.label), h('small', {}, c.description))));
 
   const draw = () => {
-    const setup = buildClientSetup({ client, url, key, keyMode, shell, serverName: serverName.value, envVar: envVar.value, projectKey: proj?.key || '', keyKind });
+    const setup = buildClientSetup({ client, url, key, keyMode, shell, serverName: serverName.value, envVar: envVar.value, projectKey: proj?.key || '', keyKind,
+      fallbackShell: onWindows() ? 'powershell' : 'posix' });
+    const file = setupAsFile(setup);
+    // "any shell" exists for Claude Code only: say which syntax the other clients are shown in
+    const fellBack = shell === 'any' && setup.shell !== 'any'
+      ? `No shell-neutral script for ${setup.label}: shown for ${SHELLS.find(([v]) => v === setup.shell)?.[2] || setup.shell}. Pick your terminal above for another one.` : '';
     const copyBtn = (text, what) => h('button', { type: 'button', class: 'btn sm', onclick: () => copy(text, what) }, 'Copy');
     const pr = setup.prereq;
     out.replaceChildren(
@@ -89,10 +104,13 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
           h('div', {}, h('div', {}, s.title), s.path ? h('div', { class: 'aic-path' }, s.path) : null),
           copyBtn(s.text, s.path ? s.path : 'Command')),
         h('pre', {}, s.text))),
-      setup.notes.length ? h('ul', { class: 'aic-notes' }, setup.notes.map(n => h('li', {}, n))) : '',
+      setup.notes.length || fellBack ? h('ul', { class: 'aic-notes' }, [...(fellBack ? [fellBack] : []), ...setup.notes].map(n => h('li', {}, n))) : '',
       h('div', { class: 'row spread' },
         h('div', { class: 'aic-prompt' }, 'Then tell your agent: ', h('b', {}, `“${setup.prompt}”`)),
-        h('button', { type: 'button', class: 'btn sm primary', onclick: () => copy(setupAsText(setup), `${setup.label} setup`) }, 'Copy all steps'))
+        h('div', { class: 'row', style: { gap: '6px' } },
+          file ? h('button', { type: 'button', class: 'btn sm', title: `Save ${file.filename}, then run in the repository root: ${file.run}`, dataset: { act: 'download-script' },
+            onclick: () => download(file) }, `Download .${file.filename.split('.').pop()}`) : '',
+          h('button', { type: 'button', class: 'btn sm primary', onclick: () => copy(setupAsText(setup), `${setup.label} setup`) }, 'Copy all steps')))
     );
   };
 
@@ -105,23 +123,30 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
     draw();
   };
   perProject.addEventListener('change', syncPerProject);
-  shellSel.addEventListener('change', () => { shell = shellSel.value; remember(); draw(); });
   modeSel.addEventListener('change', () => { keyMode = modeSel.value; remember(); draw(); });
   kindSel.addEventListener('change', () => { keyKind = kindSel.value; remember(); draw(); });
   serverName.addEventListener('input', draw);
   envVar.addEventListener('input', draw);
 
-  drawClients(); draw();
+  drawClients(); drawShells(); draw();
   return h('div', { class: 'aic' },
     grid,
+    shells,
     h('div', { class: 'aic-opts' },
       h('label', { class: 'field' }, h('span', {}, 'Key type'), kindSel),
-      h('label', { class: 'field' }, h('span', {}, 'Shell'), shellSel),
       h('label', { class: 'field' }, h('span', {}, key ? 'Key goes into' : 'Key goes into (key not shown again)'), modeSel),
       h('label', { class: 'field' }, h('span', {}, 'Server name'), serverName),
       h('label', { class: 'field' }, h('span', {}, 'Env variable'), envVar),
       proj ? h('label', { class: 'row', style: { gap: '6px', fontSize: '12px', color: 'var(--muted)' } }, perProject, h('span', {}, `Name per project (${proj.key})`)) : ''),
     out);
+}
+
+/** Saves the script file; the hint says how to run it (it holds the key when one was just created). */
+function download(file) {
+  const a = h('a', { href: URL.createObjectURL(new Blob([file.text], { type: 'text/plain' })), download: file.filename });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`${file.filename} saved. Run it in the repository root: ${file.run}`, 'ok', 6000);
 }
 
 async function copy(text, what) {

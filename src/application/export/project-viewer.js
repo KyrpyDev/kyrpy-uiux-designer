@@ -208,6 +208,7 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     applyFrame(s);
     if (btnSel && btnSel.value) document.querySelectorAll('.ud-overlay').forEach(function (o) { o.setAttribute('data-btn-style', btnSel.value); });
     bindRepeaters(stage);
+    bindRepeaterScroll(stage);   // once per stage: wheel / drag inside a repeater scrolls its copies
     stage.querySelectorAll('.ud-btn').forEach(function (b) { menus.apply(b, menus.get(b)); });
     title.textContent = (s.label || s.name) + (cur.wf ? '  ·  ' + DATA.workflows.filter(function (w) { return w.key === cur.wf; })[0].name : '');
     document.querySelectorAll('.pv-screen').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-screen') === key && (b.getAttribute('data-wf') || '') === (cur.wf || '')); });

@@ -4,7 +4,7 @@ import { suffixIds } from '../../domain/svg.js';
 import { TYPES } from '../../domain/entities.js';
 import { bindMenus } from '../../domain/menu-runtime.js';
 import { isMenuItemShown } from '../../domain/menu.js';
-import { repeaterPlan, repeaterMarkup, bindRepeaters } from '../../domain/repeater.js';
+import { repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll } from '../../domain/repeater.js';
 import * as T from './templates.js';
 import { projectViewerHtml } from './project-viewer.js';
 
@@ -181,7 +181,7 @@ export class ExportService {
     };
     const runtime = bindMenus.toString();
     // repeater containers: the page holds each template once; this runtime repeats it itemCount times with the chosen effect
-    const repeaterRuntime = [repeaterPlan, repeaterMarkup, bindRepeaters].map(f => f.toString()).join('\n');
+    const repeaterRuntime = [repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll].map(f => f.toString()).join('\n');
     add('index.html', T.indexHtml({ screens: manifest.screens, icons: iconInfos, themes, primary, title, thumbs }));
     add('css/themes.css', T.themesCss(themes));
     add('css/app.css', T.APP_CSS);
@@ -239,7 +239,7 @@ export class ExportService {
     const content = projectViewerHtml({
       devices, title, themes: internal.themes, primary: internal.primary, screens,
       workflows: workflows.map(w => ({ ...w, screens: w.ids.map(id => keyById.get(id)).filter(Boolean) })).filter(w => w.screens.length),
-      menuRuntime: bindMenus.toString(), repeaterRuntime: [repeaterPlan, repeaterMarkup, bindRepeaters].map(f => f.toString()).join('\n')
+      menuRuntime: bindMenus.toString(), repeaterRuntime: [repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll].map(f => f.toString()).join('\n')
     });
     return { filename: `${projectKey}-project.html`, content, contentType: 'text/html; charset=utf-8', summary: { workflows: workflows.length, screens: screens.length, bytes: Buffer.byteLength(content) } };
   }

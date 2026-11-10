@@ -618,7 +618,7 @@ export const TOOLS = [
         manifestHash: str('manifestHash from the lockfile; skips the bundle when the design is unchanged.', { maxLength: 64 }),
         includeBundle: { type: 'boolean', description: 'Include a design bundle (default true).' },
         client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client, for mcpSetup (per-repository key storage + config). Default from platform: claude → claude-code, antigravity, cursor, agents-md → codex, generic.' },
-        shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'], description: 'The human\'s shell for mcpSetup commands (default posix).' },
+        shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'], description: 'The human\'s shell for mcpSetup commands (default posix). On Windows pass powershell or cmd, and run bundle.installByShell.<shell> instead of bundle.install.' },
         serverName: str('MCP server name used in the client config (default "kyrpy-uiux"). Use one name per project when a client keeps several projects at user level.', { maxLength: 60 }),
         envVar: str('Environment variable holding the key (default KYRPY_UIUX_API_KEY).', { maxLength: 60 })
       },
@@ -798,7 +798,7 @@ export const TOOLS = [
   {
     name: 'uiux_create_bundle',
     title: 'Create a download bundle',
-    description: 'Packs the project manifest, schema, tokens, item JSON, rendered SVGs and workflows into a .tar.gz and returns a single-use URL (valid 15 minutes) with ready-to-run shell steps (curl, sha256sum, tar) that unpack it into uiux/source/. Do not paste bundle contents into the conversation; download it with the shell.',
+    description: 'Packs the project manifest, schema, tokens, item JSON, rendered SVGs and workflows into a .tar.gz and returns a single-use URL (valid 15 minutes) with ready-to-run shell steps (`install`: curl, sha256sum, tar for bash / zsh; `installByShell.powershell` and `installByShell.cmd` for Windows) that unpack it into uiux/source/. Do not paste bundle contents into the conversation; download it with the shell.',
     inputSchema: {
       type: 'object',
       properties: {

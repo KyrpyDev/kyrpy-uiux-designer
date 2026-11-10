@@ -26,11 +26,11 @@ export const DEFAULT_ENV_VAR = 'KYRPY_UIUX_API_KEY';
 export const KEY_PLACEHOLDER = 'kud_live_<paste-your-key-here>';
 
 export const SHELLS = [
-  ['any', 'Not sure / any shell (works in bash, zsh, PowerShell and cmd)'],
-  ['posix', 'bash / zsh (macOS, Linux, WSL)'],
-  ['powershell', 'PowerShell (Windows)'],
-  ['fish', 'fish'],
-  ['cmd', 'Windows cmd']
+  ['any', 'Not sure / any shell (works in bash, zsh, PowerShell and cmd)', 'Any shell'],
+  ['posix', 'bash / zsh (macOS, Linux, WSL)', 'bash / zsh'],
+  ['powershell', 'PowerShell (Windows)', 'PowerShell'],
+  ['cmd', 'Windows cmd', 'cmd'],
+  ['fish', 'fish', 'fish']
 ];
 
 /** id, label, group, short description. Order = order in the picker. */
@@ -103,12 +103,13 @@ const ANY_SHELL_CLIENTS = new Set(['claude-code']);
 
 export function buildClientSetup({
   client = 'claude-code', url, key = '', keyMode = 'env', shell = 'posix',
-  serverName = DEFAULT_SERVER_NAME, envVar = DEFAULT_ENV_VAR, projectKey = '', keyKind = 'project'
+  serverName = DEFAULT_SERVER_NAME, envVar = DEFAULT_ENV_VAR, projectKey = '', keyKind = 'project', fallbackShell = 'posix'
 } = {}) {
   const perRepo = keyKind !== 'account';
   if (!url) throw new Error('url is required');
   const wantedAny = shell === 'any';
-  if (wantedAny && !ANY_SHELL_CLIENTS.has(client)) shell = 'posix';     // no neutral recipe: fall back to bash / zsh
+  // no neutral recipe: fall back to the caller's platform shell (PowerShell on Windows, else bash / zsh)
+  if (wantedAny && !ANY_SHELL_CLIENTS.has(client)) shell = ['powershell', 'cmd', 'fish'].includes(fallbackShell) ? fallbackShell : 'posix';
   const anyShell = shell === 'any';
   const hasKey = /^kud_(live|test)_[0-9A-Za-z]{32}$/.test(String(key));
   const mode = hasKey && (keyMode === 'inline' || anyShell) ? 'inline' : 'env';   // no portable env-var syntax: the neutral recipe writes the key into the command
@@ -278,8 +279,20 @@ export function buildClientSetup({
     default: {
       steps.push({ title: '1. Connection details', lang: 'text',
         text: `Server name:  ${name}\nMCP endpoint: ${url}\nTransport:    Streamable HTTP (JSON-RPC 2.0; protocol 2025-06-18, 2025-03-26, 2024-11-05)\nHeader:       Authorization: Bearer ${mode === 'inline' ? value : `<value of ${ev}>`}\nProject:      ${projectKey || '(bound to the key)'}` });
-      steps.push({ title: '2. Quick test with curl (bash / zsh)', lang: 'bash',
-        text: `curl -s ${url} -H "Authorization: Bearer ${mode === 'inline' ? value : `$${ev}`}" \\\n  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"uiux_whoami","arguments":{}}}'` });
+      const bearer = mode === 'inline' ? value : shellVar(shell, ev);
+      const body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"uiux_whoami","arguments":{}}}';
+      if (shell === 'powershell') {
+        // Invoke-WebRequest, not curl.exe: Windows PowerShell 5.1 strips the double quotes of a JSON argument to a native program
+        steps.push({ title: '2. Quick test (PowerShell)', lang,
+          text: `(Invoke-WebRequest -UseBasicParsing -Method Post -Uri ${psq(url)} \`\n  -Headers @{ Authorization = "Bearer ${bearer}"; Accept = 'application/json, text/event-stream' } \`\n  -ContentType 'application/json' -Body ${psq(body)}).Content` });
+      } else if (shell === 'cmd') {
+        // curl.exe ships with Windows 10 (1803) and later
+        steps.push({ title: '2. Quick test with curl (cmd)', lang,
+          text: `curl -s ${url} -H "Authorization: Bearer ${bearer}" -H "content-type: application/json" -H "accept: application/json, text/event-stream" -d "${body.replace(/"/g, '\\"')}"` });
+      } else {
+        steps.push({ title: '2. Quick test with curl (bash / zsh / fish)', lang: 'bash',
+          text: `curl -s ${url} -H "Authorization: Bearer ${bearer}" \\\n  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \\\n  -d '${body}'` });
+      }
       break;
     }
   }
@@ -310,7 +323,7 @@ const KEY_FILES = new Set(['.envrc', '.gemini/.env']);
  *  - config-file contents (JSON / TOML), in-app steps and commands the client starts itself are COMMENTED
  *    (pasting a JSON block into a shell runs "mcpServers:" as a command).
  */
-export function setupAsText(setup) {
+export function setupAsText(setup, { file = false } = {}) {
   const shell = setup.shell || 'posix';
   const cm = shell === 'cmd' ? 'rem ' : '# ';
   const comment = t => String(t).split('\n').map(l => `${cm}${l}`.trimEnd()).join('\n');
@@ -318,7 +331,7 @@ export function setupAsText(setup) {
   const blocks = [];
   for (const st of setup.steps) {
     const head = comment(`${st.title}${st.path ? `\nfile: ${st.path}` : ''}`);
-    if (st.path && KEY_FILES.has(st.path) && shell !== 'cmd') {
+    if (st.path && KEY_FILES.has(st.path)) {
       blocks.push(`${head}\n${writeKeyLine(shell, st.path, st.text.split('\n').filter(l => l && !l.startsWith('#')).pop())}`);
     } else if (st.manual || st.path || st.lang !== runLang) {
       blocks.push(`${head}\n${comment(`(manual step — not run by this script${st.path ? `; save or merge into ${st.path}` : ''}):`)}\n${comment(st.text)}`);
@@ -328,7 +341,33 @@ export function setupAsText(setup) {
   }
   const notes = setup.notes.length ? `\n\n${comment(`Notes:\n${setup.notes.map(x => `- ${x}`).join('\n')}`)}` : '';
   const tail = `\n\n${comment(`Then tell your agent: "${setup.prompt}"`)}\n`;
-  return `${wrapPrereq(shell, setup.prereq, blocks.join('\n\n'))}${notes}${tail}`;
+  return `${wrapPrereq(shell, setup.prereq, blocks.join('\n\n'), file)}${notes}${tail}`;
+}
+
+/** Script file per shell: extension, line ending and how to run it from the repository root. */
+const SCRIPT_FILES = {
+  posix: { ext: 'sh', eol: '\n', head: '#!/usr/bin/env bash', run: f => `source ./${f}` },
+  fish: { ext: 'fish', eol: '\n', head: '#!/usr/bin/env fish', run: f => `source ./${f}` },
+  powershell: { ext: 'ps1', eol: '\r\n', head: '', run: f => `powershell -ExecutionPolicy Bypass -File .\\${f}` },
+  cmd: { ext: 'cmd', eol: '\r\n', head: '@echo off', run: f => f }
+};
+
+/**
+ * The same steps as a script FILE for the chosen shell: connect-<client>.sh (bash / zsh), .fish, .ps1 (PowerShell) or
+ * .cmd (Windows cmd, CRLF line ends; it stops when the client's CLI is missing). Returns { filename, text, run } or
+ * null for the shell-neutral recipe (no single file runs in every shell). The file holds the key: never commit it.
+ */
+export function setupAsFile(setup) {
+  const f = SCRIPT_FILES[setup.shell || 'posix'];
+  if (!f) return null;
+  const filename = `connect-${setup.client}.${f.ext}`;
+  const cm = setup.shell === 'cmd' ? 'rem ' : '# ';
+  const intro = [`${setup.label}: connect to the Kyrpy UI/UX MCP server.`,
+    `Run it in the repository root:  ${f.run(filename)}`,
+    'It may hold your API key: delete it afterwards and never commit it.'].map(l => `${cm}${l}`).join('\n');
+  const text = `${f.head ? `${f.head}\n` : ''}${intro}\n\n${setupAsText(setup, { file: true })}`;
+  // Windows PowerShell 5.1 reads a script without a byte-order mark as ANSI: the mark keeps the comments readable
+  return { filename, run: f.run(filename), text: (setup.shell === 'powershell' ? '\uFEFF' : '') + text.replace(/\r?\n/g, f.eol) };
 }
 
 /** Replace (or add) the single key line of a key file, creating its folder. */
@@ -340,6 +379,12 @@ function writeKeyLine(shell, path, line) {
     const ps = `'${line.replace(/'/g, "''")}'`;
     return `${dir ? `New-Item -ItemType Directory -Force -Path '${dir}' | Out-Null\n` : ''}$lines = @(Get-Content '${path}' -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '^(export\\s+)?${name}=' }) + ${ps}\nSet-Content -Path '${path}' -Value $lines`;
   }
+  if (shell === 'cmd') {
+    // findstr keeps every other line; ^ escapes what cmd would read as an operator (the placeholder has < and >)
+    const win = path.replace(/\//g, '\\'), wdir = dir.replace(/\//g, '\\');
+    const esc = line.replace(/([&|<>^()%!"])/g, '^$1');
+    return `${dir ? `if not exist ${wdir} mkdir ${wdir}\n` : ''}(findstr /v /b /c:"${name}=" /c:"export ${name}=" ${win} 2>nul & echo ${esc})> ${win}.tmp\nmove /y ${win}.tmp ${win} >nul`;
+  }
   if (shell === 'fish') {
     return `${dir ? `mkdir -p ${dir}\n` : ''}begin; grep -v '^\\(export \\)\\{0,1\\}${name}=' ${path} 2>/dev/null; printf '%s\\n' ${lit}; end > ${path}.tmp; and mv ${path}.tmp ${path}`;
   }
@@ -347,7 +392,7 @@ function writeKeyLine(shell, path, line) {
 }
 
 /** Runs `body` only when the client CLI exists; otherwise prints how to install it. */
-function wrapPrereq(shell, prereq, body) {
+function wrapPrereq(shell, prereq, body, file = false) {
   if (!prereq) return body;
   // an if-block must hold at least one command (e.g. Claude Desktop: every step is manual)
   const runnable = body.split('\n').some(l => l.trim() && !/^(#|rem )/.test(l.trim()));
@@ -362,7 +407,8 @@ function wrapPrereq(shell, prereq, body) {
   }
   if (shell === 'cmd') {
     // cmd cannot wrap a multi-line block: stop at the first line instead (the rest then fails loudly)
-    return `rem ${title}\nwhere ${prereq.cmd} >nul 2>nul || (${msg.map(l => `echo ${l.replace(/([&|<>^()])/g, '^$1')}`).join(' & ')})\n\n${body}`;
+    // (a .cmd file can stop for real: exit /b leaves the script, not the terminal)
+    return `rem ${title}\nwhere ${prereq.cmd} >nul 2>nul || (${msg.map(l => `echo ${l.replace(/([&|<>^()])/g, '^$1')}`).join(' & ')}${file ? ' & exit /b 1' : ''})\n\n${body}`;
   }
   const say = msg.map(l => `  echo '${l.replace(/'/g, `'\\''`)}'`).join('\n');
   if (shell === 'fish') return `# ${title}\nif not command -q ${prereq.cmd}\n${say}\nelse\n\n${body}\n\nend`;
