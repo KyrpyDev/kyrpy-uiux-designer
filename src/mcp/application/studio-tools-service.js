@@ -128,7 +128,7 @@ export class StudioToolsService {
     if (!u || u.status !== 'active' || isSystemUser(u)) {
       throw new DomainError('the key owner is not an active user', 'UNAUTHORIZED', 401);
     }
-    return { ...u, role: u.role === 'viewer' ? 'viewer' : 'designer' };
+    return { ...u, role: u.role === 'viewer' ? 'viewer' : 'designer', strict: Boolean(principal?.strict) };
   }
 
   #requireBoundProject(principal, { requireEdit = false } = {}) {
@@ -161,12 +161,13 @@ export class StudioToolsService {
     return Boolean(row?.builtin) || (pub != null && Number(row?.creator_id ?? row?.creatorId) === Number(pub) && (row?.visibility || 'public') === 'public');
   }
 
-  /** True if `actor` may read `row` across public library, own private library, or any project visible to `actor`. */
+  /** True if `actor` may read `row` across public library, own private library, or projects visible to `actor` (strict keys: own projects only for non-public items). */
   #canReadRow(c, actor, row) {
     if (!row) return false;
     if (row.visibility === 'public') return true;
     if (row.visibility === 'private' && Number(row.creator_id) === Number(actor.id)) return true;
     const role = c.projects?.userRole?.(Number(row.project_id ?? 1), actor);
+    if (actor.strict) return role === 'owner';
     return role != null;
   }
 
@@ -485,6 +486,7 @@ export class StudioToolsService {
       const sp = /^\d+$/.test(spKey) ? c.projects.get(Number(spKey)) : c.projects.projects.getByKey(spKey);
       if (!sp) throw new NotFoundError('project', spKey);
       const role = c.projects.userRole(sp.id, actor);
+      if (principal.strict && role !== 'owner' && Number(sp.id) !== 1) throw new NotFoundError('project', spKey);
       if (!role && sp.visibility !== 'public') throw new NotFoundError('project', spKey);
       sourceProjectId = Number(sp.id);
     }

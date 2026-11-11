@@ -557,14 +557,19 @@ test('M9: security guardrails — blocked routes, server paths, scopes, cross-te
     assert.equal(updatedProj.description, 'Safe description update');
     assert.deepEqual(updatedProj.settings.ai, { pushRequiresReview: true, mayCreatePublicItems: false }, 'settings.ai is preserved untouched');
 
-    // 6. Strict (design) key isolation: uses focused project, hides public items, blocks publishToPublic & public reads
+    // 6. Strict (design) key isolation: uses focused project, can read/clone public items, still blocks foreign projects & publishToPublic
     await w.ok('uiux_edit_project', { project: w.adaProj.key }, w.designKey);
     const strictIcons = (await w.ok('uiux_api_call', { action: 'list', params: { type: 'icon' } }, w.designKey)).result;
-    assert.ok(strictIcons.every(i => i.projectId === w.adaProj.id), 'design key never receives public library icons');
-    assert.equal((await w.err('uiux_api_call', {
+    assert.ok(strictIcons.some(i => i.projectId === w.adaProj.id), 'design key receives focused project icons');
+    const readPubViaDesign = (await w.ok('uiux_api_call', {
       action: 'get',
       params: { type: 'icon', id: builtinIcon.id }
-    }, w.designKey)).code, 'NOT_FOUND');
+    }, w.designKey)).result;
+    assert.equal(readPubViaDesign.id, builtinIcon.id, 'design key can read public library items');
+    assert.equal((await w.err('uiux_api_call', {
+      action: 'get',
+      params: { type: 'screen', id: bobScreen.id }
+    }, w.designKey)).code, 'NOT_FOUND', 'design key cannot read another user\'s project items');
     assert.equal((await w.err('uiux_api_call', {
       action: 'publishToPublic',
       body: { type: 'icon', id: adaIcon.id }

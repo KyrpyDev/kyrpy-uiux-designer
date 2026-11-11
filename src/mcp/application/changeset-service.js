@@ -63,7 +63,6 @@ export class ChangesetService {
 
   #readable(principal, row) {
     if (row.project_id === principal.project.id) return true;
-    if (principal.strict) return row.visibility === 'private' && row.creator_id === principal.user.id;   // design keys: never public / foreign
     return row.visibility === 'public' || (row.visibility === 'private' && row.creator_id === principal.user.id);
   }
 

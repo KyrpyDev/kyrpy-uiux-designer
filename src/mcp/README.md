@@ -278,9 +278,7 @@ Code: `application/design-session-service.js` (focus, edit session, save, save-a
 `domain/version-naming.js` (`<master>-v001`), tools `DESIGN_TOOLS` in `server/tools.js`. User guide: `readme-mcp.md` §3b.
 
 - **Strict principal**: `ApiKeyService.authenticate` sets `principal.strict` for an account key whose scopes include `design`. Strict mode is enforced in the
-  layers, not in the tools: `AccountService` (own projects only; foreign and public projects answer `NOT_FOUND`; private projects only), `DesignQueryService`
-  (search without the public scope, `getItem`, `listWorkflows`), `ChangesetService` (`#readable`: references to public / foreign items fail validation),
-  `ItemRequestService` (fulfil), and `McpProtocol` (`resolveFocused`: the `project` argument is optional and must equal the focus; the owner check runs on every call).
+  layers, not in the tools: `AccountService` (own projects only; foreign and public projects answer `NOT_FOUND`; private projects only), `DesignQueryService` / `ChangesetService` / `ItemRequestService` / `StudioToolsService` (own focused project + own private library + read/clone-only access to the immutable `public` library; foreign non-public items fail validation or answer `NOT_FOUND`), and `McpProtocol` (`resolveFocused`: the `project` argument is optional and must equal the focus; the owner check runs on every call).
 - **Focus**: one `design_focus` row per key. `uiux_create_project`, `uiux_clone_project`, `uiux_edit_project`, `uiux_save_as`, `uiux_init` (edit / clone) and `uiux_manage_versions { open }` set it.
 - **Edit session** = the key's open changeset on the focused project (24 h). `uiux_stage_item` / `_stage_delete` / `_diff_changeset` / `_discard_changeset` / `_submit_changeset` take no `changeset` argument for design keys.
   `ChangesetService.unstage` removes staged ops. `submit({ autoApprove: true })` is called **only** by `DesignSessionService` (no tool argument can set it), so every other key still waits for review.

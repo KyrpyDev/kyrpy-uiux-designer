@@ -197,16 +197,17 @@ test('clone project: a new name is always required; the clone is focused; source
   } finally { w.close(); }
 });
 
-test('isolation: a design key never reads, references, clones or touches public, shared or foreign data', async () => {
+test('isolation: a design key never reads, references, clones or touches shared or foreign user projects, while public library items are readable', async () => {
   const w = await world();
   try {
     await w.ok('uiux_edit_project', { project: w.mine.key });
-    // search: public / foreign never show up; the public scope is refused
+    // search: foreign project items never show up; scope: 'public' searches the public library cleanly
     const s1 = await w.ok('uiux_search_items', { query: 'bob' });
     assert.equal(s1.total, 0, JSON.stringify(s1.results));
-    assert.equal((await w.err('uiux_search_items', { query: 'dot', scope: 'public' })).code, 'VALIDATION');
+    const pubSearch = await w.ok('uiux_search_items', { query: '', scope: 'public' });
+    assert.ok(Array.isArray(pubSearch.results));
     assert.ok(JSON.stringify(await w.ok('uiux_search_items', { query: 'star' })).includes('ada-star'));
-    // get item: another project's / public item is not readable
+    // get item: another project's non-public item is not readable
     for (const ref of ['bob-dot', 'bob-secret']) {
       const e = await w.err('uiux_get_item', { type: 'icon', ref });
       assert.ok(['FORBIDDEN', 'NOT_FOUND'].includes(e.code), `${ref}: ${e.code}`);
@@ -216,10 +217,10 @@ test('isolation: a design key never reads, references, clones or touches public,
       const e = await w.err('uiux_get_manifest', { project: k });
       assert.ok(['SCOPE_DENIED', 'NOT_FOUND'].includes(e.code), `${k}: ${e.code}`);
     }
-    // referencing a public item from a staged button is refused (it would be cloned into the project)
+    // referencing a foreign project's non-public item from a staged button is refused
     const e = await w.err('uiux_stage_item', { item: { type: 'button', key: 'ada-bad-button', name: 'Bad', label: 'Bad', descriptionDev: 'x', mcpContext: { purpose: 'x' }, width: 48, height: 48, nodes: [{ tag: 'rect', attrs: { width: 48, height: 48 } }, { kind: 'ref', ref: { type: 'icon', key: 'bob-dot' }, name: 'glyph' }] } });
     assert.ok(['VALIDATION_FAILED', 'NOT_FOUND'].includes(e.code), e.code);
-    // public items cannot be created either
+    // public items cannot be created by a design key
     const pub = await w.err('uiux_stage_item', { item: { ...icon('ada-pub'), visibility: 'public' } });
     assert.equal(pub.code, 'VALIDATION_FAILED');
     // init selection lists only own projects; download of a foreign project is NOT_FOUND
@@ -364,25 +365,35 @@ test('design keys: the audit log records every call; focus rows are private and 
   } finally { w.close(); }
 });
 
-test('isolation (control): the same public-library item IS readable and referenceable with a plain account key, never with a design key', async () => {
+test('public library access: both plain and design keys can read, search, copy and reference public-library items into the focused project, without mutating public items', async () => {
   const w = await world();
   try {
     w.c.db.prepare("UPDATE icons SET visibility = 'public' WHERE key = 'bob-dot'").run();
     const button = { type: 'button', key: 'ada-dot-button', name: 'Dot', label: 'Dot', descriptionDev: 'Uses a public icon.', mcpContext: { purpose: 'x' }, width: 48, height: 48,
       nodes: [{ tag: 'rect', attrs: { x: 0, y: 0, width: 48, height: 48, rx: 12 } }, { tag: 'use', kind: 'instance', ref: { type: 'icon', key: 'bob-dot' }, attrs: { x: 12, y: 12, width: 24, height: 24 } }] };
-    // plain account key (control): finds it and can use it
+    // plain account key: finds it and can use it
     assert.ok(JSON.stringify(await w.ok('uiux_search_items', { project: w.mine.key, query: 'bob dot' }, w.plain)).includes('bob-dot'), 'plain key sees public items');
     const cs = await w.ok('uiux_begin_changeset', { project: w.mine.key }, w.plain);
     assert.equal((await w.ok('uiux_stage_item', { project: w.mine.key, changeset: cs.changeset, item: button }, w.plain)).op, 'create');
-    // design key: search, get, list_workflows and staging a reference never reach it
+    await w.ok('uiux_discard_changeset', { project: w.mine.key, changeset: cs.changeset }, w.plain);
+
+    // design key: can also search (including scope: 'public'), read, copy, and stage+save references to public items
     await w.ok('uiux_edit_project', { project: w.mine.key });
-    assert.equal((await w.ok('uiux_search_items', { query: 'bob dot' })).total, 0, 'search hides public items');
-    const g = await w.err('uiux_get_item', { type: 'icon', ref: 'bob-dot' });
-    assert.ok(['FORBIDDEN', 'NOT_FOUND'].includes(g.code), g.code);
-    const st = await w.err('uiux_stage_item', { item: button });
-    assert.equal(st.code, 'VALIDATION_FAILED');
-    assert.match(JSON.stringify(st), /not visible to this project/);
-    assert.equal((await w.ok('uiux_list_edit_ops')).staged, 0, 'nothing staged');
-    assert.equal((await w.ok('uiux_request_item', { type: 'icon', intent: 'bob dot glyph', searchOnly: true })).candidates.length, 0, 'item requests do not leak candidates');
+    assert.ok((await w.ok('uiux_search_items', { query: 'bob dot', scope: 'public' })).total >= 1, 'design key searches public library');
+    const gotPub = await w.ok('uiux_get_item', { type: 'icon', ref: 'bob-dot' });
+    assert.equal(gotPub.key, 'bob-dot');
+    const pubLib = await w.ok('uiux_public_library', { type: 'icon', query: 'bob dot' });
+    assert.ok(pubLib.items.some(i => i.key === 'bob-dot'));
+    const st = await w.ok('uiux_stage_item', { item: button });
+    assert.equal(st.op, 'create');
+    const saved = await w.ok('uiux_save', {});
+    assert.equal(saved.saved, true);
+    // Copy public item explicitly into focused project under a custom key
+    const copied = await w.ok('uiux_copy_item_to_project', { type: 'icon', ref: 'bob-dot', newKey: 'ada-copied-dot', newName: 'Ada Copied Dot' });
+    assert.equal(copied.item.key, 'ada-copied-dot');
+    assert.equal(copied.item.scope, 'project');
+    // Foreign non-public items (`bob-secret`) remain completely invisible
+    const secErr = await w.err('uiux_get_item', { type: 'icon', ref: 'bob-secret' });
+    assert.ok(['FORBIDDEN', 'NOT_FOUND'].includes(secErr.code), secErr.code);
   } finally { w.close(); }
 });

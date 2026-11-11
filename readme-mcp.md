@@ -95,7 +95,7 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 
 ### Public library, public elements & cascade copy-to-project
 
-*(Available to project and standard account keys; strict `design`-scope keys stay isolated to the user's own projects.)*
+*(Available to all keys — project, standard account, and `design`-scope account keys — for reading and copying public items into your owned project.)*
 
 | Tool | Scope | What it does |
 |---|---|---|
@@ -167,7 +167,7 @@ Create an **account key with the `design` scope** (Profile → AI Access Keys �
 
 Versions are ordinary projects linked to their master (`settings.ai.versionOf`), so the designer shows them in the project list too. Number suffixes are never reused while a version with that number exists.
 
-**What a design key can NOT do** (enforced on the server, not by the agent's good manners): see or search the public library, read, clone or reference public / shared / other users' projects or items (they answer `NOT_FOUND`), make anything public, delete any project other than a `-vNNN` copy of the focused master, approve other keys' changesets, call the designer REST API (API keys are rejected there with 401), or run SQL — it only has the tools listed here. Every call is audited; the focus is checked again on every call (the project must still be the user's own).
+**What a design key can NOT do** (enforced on the server, not by the agent's good manners): read, clone or touch shared / other users' projects or non-public items (they answer `NOT_FOUND`; public-library items ARE readable and copyable into your focused project, but never mutable in place), make anything public, delete any project other than a `-vNNN` copy of the focused master, approve other keys' changesets, call the designer REST API (API keys are rejected there with 401), or run SQL — it only has the tools listed here. Every call is audited; the focus is checked again on every call (the project must still be the user's own).
 
 ## 4. Standalone prototype, `init-prompt.md` and automatic updates
 

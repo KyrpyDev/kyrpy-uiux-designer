@@ -183,11 +183,8 @@ export class ApiBridge {
     if (!rec) throw new NotFoundError(type, '');
     const inProject = boundProjectId != null && Number(rec.projectId) === Number(boundProjectId);
     const ownPrivate = rec.visibility === 'private' && Number(rec.creatorId) === Number(actor.id);
-    if (principal.strict) {
-      if (!inProject && !ownPrivate) throw new NotFoundError(type, rec.key || rec.id);
-      return rec;
-    }
     if (inProject || ownPrivate || rec.visibility === 'public') return rec;
+    if (principal.strict) throw new NotFoundError(type, rec.key || rec.id);
     const role = c.projects?.userRole?.(rec.projectId ?? 1, actor);
     if (role != null) return rec;
     throw new NotFoundError(type, rec.key || rec.id);
@@ -451,9 +448,6 @@ export class ApiBridge {
       }
       if (['library', 'list', 'iconSearch', 'catalogSearch', 'workflows', 'changes', 'changeCounts', 'trashList', 'trashEmpty', 'exportProjectHtml', 'translations', 'templateDevices', 'templateButtons'].includes(op.action)) {
         parsedUrl.searchParams.set('projectId', String(boundProjectId));
-      }
-      if (bound.strict) {
-        parsedUrl.searchParams.set('includePublic', '0');
       }
     }
 

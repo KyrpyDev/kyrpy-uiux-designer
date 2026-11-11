@@ -42,9 +42,9 @@ export class DesignQueryService {
 
   #ctx(principal) { return { projectId: principal.project.id, userId: principal.user.id }; }
 
-  /** `principal.strict` (AI-assisted design key): the project's own items and the user's own private library only. */
+  /** Project items, the user's own private library, and the public library (foreign non-public project items are never readable). */
   #directlyReadable(principal, row) {
-    return row.project_id === principal.project.id || (!principal.strict && row.visibility === 'public')
+    return row.project_id === principal.project.id || row.visibility === 'public'
       || (row.visibility === 'private' && row.creator_id === principal.user.id);
   }
 
@@ -195,10 +195,8 @@ export class DesignQueryService {
 
   search(principal, { query = '', types, scope, category, limit = 20 } = {}) {
     const terms = String(query).toLowerCase().split(/\s+/).map(s => s.trim()).filter(Boolean).slice(0, 8);
-    const allowedScopes = principal.strict ? SCOPES.filter(s => s !== 'public') : SCOPES;
     if (scope && !SCOPES.includes(scope)) throw new ValidationError(`scope must be one of ${SCOPES.join(', ')}`);
-    if (scope && !allowedScopes.includes(scope)) throw new ValidationError(`scope "${scope}" is not available to an AI-assisted design key (project and private only)`);
-    const scopes = scope ? [scope] : allowedScopes;
+    const scopes = scope ? [scope] : SCOPES;
     const max = Math.min(Math.max(1, Number(limit) || 20), 100);
     const q = terms.join(' ');
     const rank = r => {
@@ -354,7 +352,7 @@ ${links.length ? `<h2>Navigation</h2><ul>${links.join('')}</ul>` : ''}
   }
 
   listWorkflows(principal) {
-    return this.reads.list('workflow', { ...this.#ctx(principal), scopes: principal.strict ? ['project', 'private'] : ['project', 'private', 'public'] })
+    return this.reads.list('workflow', { ...this.#ctx(principal), scopes: ['project', 'private', 'public'] })
       .map(r => this.itemJson(principal, r));
   }
 }

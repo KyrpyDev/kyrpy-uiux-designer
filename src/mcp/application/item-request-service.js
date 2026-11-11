@@ -108,7 +108,7 @@ export class ItemRequestService {
       this.#set(r.id, { status: 'in-review', itemType: t, itemUid: op.itemUid, itemKey: op.key, changeset: cs.uid });
       return this.#get(r.uid);
     }
-    const row = this.#usable(t, ref, r.projectId, principal.user.id, principal.strict);
+    const row = this.#usable(t, ref, r.projectId, principal.user.id);
     return this.#done(r, t, row.uid, row.key, row.adoptedFrom ? `existing ${t} ${row.adoptedFrom} cloned into the project` : undefined);
   }
 
@@ -116,9 +116,9 @@ export class ItemRequestService {
    * The project row that fulfils a request with an existing item. A readable item of another library
    * (public, or the user's private one — e.g. a search candidate) is cloned into the project first (project scope).
    */
-  #usable(type, ref, projectId, userId, strict = false) {
+  #usable(type, ref, projectId, userId) {
     const row = this.reads.find(type, ref, projectId);
-    const readable = row && (row.project_id === projectId || (!strict && row.visibility === 'public') || (row.visibility === 'private' && row.creator_id === userId));
+    const readable = row && (row.project_id === projectId || row.visibility === 'public' || (row.visibility === 'private' && row.creator_id === userId));
     if (!readable) throw new NotFoundError(`${type} visible to the project`, ref);
     if (row.project_id === projectId) return row;
     if (!this.library) throw new NotFoundError(`project ${type}`, ref);
