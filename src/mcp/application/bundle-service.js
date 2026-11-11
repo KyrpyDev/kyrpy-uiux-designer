@@ -96,6 +96,9 @@ export class BundleService {
       const item = q.getItem(principal, { type: e.type, ref: e.uid });
       if (e.type === 'workflow') { files.push({ path: `workflows/${e.key}.json`, content: JSON.stringify(item, null, 2) }); continue; }
       files.push({ path: `items/${e.type}/${e.key}.json`, content: JSON.stringify(item, null, 2) });
+      if (e.type === 'element' && item.script?.enabled && item.script?.moduleCode) {
+        files.push({ path: `scripts/elements/${e.key}.mjs`, content: `${item.script.moduleCode}\n` });
+      }
       if (includeSvg || (wantIcons && e.type === 'icon')) {
         for (const st of styleKeys) {
           if (e.type === 'icon' && !spriteStyles.includes(st) && !(includeSvg && primary.includes(st))) continue;

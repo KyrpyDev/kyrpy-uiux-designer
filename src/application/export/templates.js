@@ -257,7 +257,14 @@ export interface ScreenInfo {
   file: string; svg: Record<string, string>; links: LinkInfo[]; components: ComponentInfo[]; actions: ActionInfo[];
 }
 export interface IconInfo { key: string; label: string; descriptionDev: string; file: string; }
-export interface Manifest { generatedAt: string; title: string; themes: ThemeInfo[]; screens: ScreenInfo[]; icons: IconInfo[]; buttons: ButtonInfo[]; elements: IconInfo[]; }
+export interface ElementScriptImportInfo { specifier: string; package: string; version: string; subpath: string; cdn: string; url: string; integrity: string | null; }
+export interface ElementScriptInfo {
+  runtime: string; entryExport: string; moduleFile: string; codeHash: string;
+  imports: ElementScriptImportInfo[]; capabilities: Record<string, unknown>;
+  propsSchema: Record<string, unknown>; emits: string[]; reviewStatus: string;
+}
+export interface ElementInfo extends IconInfo { htmlTag?: string; script?: ElementScriptInfo; }
+export interface Manifest { generatedAt: string; title: string; themes: ThemeInfo[]; screens: ScreenInfo[]; icons: IconInfo[]; buttons: ButtonInfo[]; elements: ElementInfo[]; }
 `;
 
 export const TSCONFIG = `{
@@ -404,7 +411,23 @@ export function devNotes({ title, screens, icons, buttons = [], elements = [] })
     if (s.components.length) { out.push('**Components**', ''); for (const c of s.components) out.push(`- \`${c.item}\` as <${c.htmlTag}> at ${Math.round(c.box.x)},${Math.round(c.box.y)} (${Math.round(c.box.w)}×${Math.round(c.box.h)})`); out.push(''); }
     if (s.notes?.length) { out.push('**Element notes**', ''); for (const n of s.notes) out.push(`- \`${n.name}\`: ${n.descriptionDev}`); out.push(''); }
   }
-  if (elements.length) { out.push('## Elements', ''); for (const i of elements) out.push(`### ${i.label} (\`${i.key}\`)`, '', i.descriptionDev || '_no description_', ''); }
+  if (elements.length) {
+    out.push('## Elements', '');
+    for (const i of elements) {
+      out.push(`### ${i.label} (\`${i.key}\`)`, '', i.descriptionDev || '_no description_', '');
+      if (i.script) {
+        out.push(`**Sandboxed Custom JS Module** (\`${i.script.moduleFile}\`, runtime \`${i.script.runtime}\`, entry \`${i.script.entryExport}(ctx)\`, status \`${i.script.reviewStatus}\`)`, '');
+        if (i.script.imports?.length) {
+          out.push(`- Local install (prefer local bundler over runtime CDN in production): \`npm install --save-exact ${i.script.imports.map(im => `${im.package}@${im.version}`).join(' ')}\``);
+          for (const im of i.script.imports) {
+            out.push(`- Import \`${im.specifier}\` → \`${im.url}\`${im.integrity ? ` (SRI: \`${im.integrity}\`)` : ' _(no SRI hash recorded)_'}`);
+          }
+        }
+        if (i.script.emits?.length) out.push(`- Emits events: ${i.script.emits.map(ev => `\`${typeof ev === 'string' ? ev : ev.name}\``).join(', ')}`);
+        out.push('- Security boundary: execute untrusted/preview modules only inside `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` (never `allow-same-origin`) with CSP `default-src \'none\'; connect-src \'none\'`.', '');
+      }
+    }
+  }
   if (buttons.length) {
     out.push('## Buttons', '');
     for (const b of buttons) {

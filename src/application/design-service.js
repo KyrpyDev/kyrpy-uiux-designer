@@ -14,9 +14,9 @@ import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScre
  * position locking, and collaborative change list recording for owner approval/rejection.
  */
 export class DesignService {
-  /** @param {{ownerType:'path'|'icon'|'button'|'element'|'screen', designs, nodes, animations, menus?, users?, collaboration?, trash?, workflows?, transaction:(fn:Function)=>any}} deps */
-  constructor({ ownerType, designs, nodes, animations, menus = null, users = null, collaboration = null, trash = null, workflows = null, transaction }) {
-    Object.assign(this, { ownerType, designs, nodes, animations, menus, users, collaboration, trash, workflows, transaction });
+  /** @param {{ownerType:'path'|'icon'|'button'|'element'|'screen', designs, nodes, animations, menus?, elementScripts?, users?, collaboration?, trash?, workflows?, transaction:(fn:Function)=>any}} deps */
+  constructor({ ownerType, designs, nodes, animations, menus = null, elementScripts = null, users = null, collaboration = null, trash = null, workflows = null, transaction }) {
+    Object.assign(this, { ownerType, designs, nodes, animations, menus, elementScripts, users, collaboration, trash, workflows, transaction });
     // each of these is several writes (rows, touch, trash row, change request): all or nothing (nesting-safe)
     for (const name of ['remove', 'replaceNodes', 'addNode', 'updateNode', 'removeNode']) {
       const fn = this[name].bind(this);
@@ -293,6 +293,10 @@ export class DesignService {
       this.designs.update(d.id, rec);
       this.nodes.replaceAll(this.ownerType, d.id, nodes, { restoreIds: true });
       if (this.ownerType === 'button' && this.menus) this.menus.replaceAll(d.id, snap.menuItems || []);
+      if (this.ownerType === 'element' && this.elementScripts && snap.elementScript !== undefined) {
+        if (snap.elementScript) this.elementScripts.upsert(d.id, snap.elementScript, { actorId: actor?.id ?? d.creatorId });
+        else this.elementScripts.removeByElementId(d.id);
+      }
       this.designs.touch(d.id);
       return this.get(d.id);
     });
@@ -358,6 +362,7 @@ export class DesignService {
         nodes: this.nodes.listByOwner(this.ownerType, d.id),
         animations: this.animations.listByOwner(this.ownerType, d.id),
         menuItems: this.ownerType === 'button' && this.menus ? this.menus.list(d.id) : [],
+        elementScript: this.ownerType === 'element' && this.elementScripts ? this.elementScripts.getByElementId(d.id) : null,
         referringNodes: this.ownerType !== 'screen' ? this.nodes.listByRef(this.ownerType, d.id) : [],
         workflowNodes: this.ownerType === 'screen' && this.workflows ? this.workflows.nodesForScreen(d.id) : [],
         workflowLinks: this.ownerType === 'screen' && this.workflows ? this.workflows.linksInvolvingScreen(d.id) : []
@@ -422,6 +427,7 @@ export class DesignService {
       }
       for (const a of src.animations) this.animations.create(idMap.get(a.nodeId), a);
       if (this.ownerType === 'button' && this.menus) this.menus.copyAll(src.id, copy.id);
+      if (this.ownerType === 'element' && this.elementScripts) this.elementScripts.copy(src.id, copy.id, { actorId: effCreatorId });
       return this.get(copy.id);
     });
   }

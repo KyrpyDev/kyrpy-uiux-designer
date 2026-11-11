@@ -23,7 +23,8 @@ export const MCP_SYNC_TABLES = [
   { name: 'changeset_ops', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['changeset_id', 'item_type', 'item_key'] },
   { name: 'item_requests', pk: ['id'], conflict: 'id', uniqueCols: ['uid'] },
   { name: 'version_items', pk: ['item_uid', 'content_hash'], conflict: 'item_uid, content_hash' },
-  { name: 'code_bindings', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['project_id', 'item_uid', 'repo_id', 'file_path', 'symbol'] }
+  { name: 'code_bindings', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['project_id', 'item_uid', 'repo_id', 'file_path', 'symbol'] },
+  { name: 'element_scripts', pk: ['id'], conflict: 'id', uniqueCols: ['uid', 'element_id'] }
 ];
 
 /**

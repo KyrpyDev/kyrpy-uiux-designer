@@ -7,6 +7,7 @@
  */
 import { canonicalJson } from './content-hash.js';
 import { actionRefs } from './portable-actions.js';
+import { normalizeElementScriptSpec } from '../../domain/element-script.js';
 
 export const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
 export const KEY_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -130,6 +131,18 @@ export function validateItemStatic(item, { op = 'create', svg } = {}) {
   }
   if (item.animations !== undefined && !Array.isArray(item.animations)) errors.push(issue('SCHEMA', 'animations', 'animations must be an array'));
   if (item.menuItems !== undefined && (!Array.isArray(item.menuItems) || item.type !== 'button')) errors.push(issue('SCHEMA', 'menuItems', 'menuItems is an array and only for buttons'));
+  if (item.script !== undefined && item.script !== null) {
+    if (item.type !== 'element') {
+      errors.push(issue('SCHEMA', 'script', 'script is only supported on items of type "element"'));
+    } else {
+      try {
+        const spec = normalizeElementScriptSpec(item.script);
+        for (const w of spec.audit?.warnings || []) warnings.push(issue(w.code || 'SCRIPT_WARN', 'script.moduleCode', w.message));
+      } catch (e) {
+        errors.push(issue('UNSAFE_SCRIPT', 'script', e.message));
+      }
+    }
+  }
   if (item.type === 'workflow') {
     if (item.screens !== undefined && !Array.isArray(item.screens)) errors.push(issue('SCHEMA', 'screens', 'screens must be an array'));
     if (item.links !== undefined && !Array.isArray(item.links)) errors.push(issue('SCHEMA', 'links', 'links must be an array'));

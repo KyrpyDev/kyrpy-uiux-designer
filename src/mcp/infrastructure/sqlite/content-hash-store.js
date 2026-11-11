@@ -43,7 +43,8 @@ export class ContentHashStore {
         ? this.db.prepare(`SELECT * FROM animations WHERE node_id IN (SELECT id FROM nodes WHERE owner_type = ? AND owner_id = ?)`).all(type, id)
         : [];
       const menuItems = type === 'button' ? this.db.prepare('SELECT * FROM menu_items WHERE button_id = ?').all(id) : [];
-      return canonicalDesign({ record, nodes, animations, menuItems }, uidOf);
+      const elementScript = type === 'element' ? this.db.prepare('SELECT * FROM element_scripts WHERE element_id = ?').get(id) ?? null : null;
+      return canonicalDesign({ record, nodes, animations, menuItems, elementScript }, uidOf);
     }
     if (type === 'workflow') {
       const screens = this.db.prepare('SELECT * FROM workflow_screens WHERE workflow_id = ?').all(id);

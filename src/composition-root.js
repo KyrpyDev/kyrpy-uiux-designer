@@ -6,6 +6,7 @@ import { openDatabase, inTransaction } from './infrastructure/sqlite/database.js
 import { DesignRepository } from './infrastructure/sqlite/repositories/design-repository.js';
 import { NodeRepository, AnimationRepository } from './infrastructure/sqlite/repositories/node-repository.js';
 import { MenuRepository } from './infrastructure/sqlite/repositories/menu-repository.js';
+import { ElementScriptRepository } from './infrastructure/sqlite/repositories/element-script-repository.js';
 import { ThemeRepository, WorkflowRepository, SettingsRepository } from './infrastructure/sqlite/repositories/theme-workflow-settings-repositories.js';
 import {
   UserRepository,
@@ -23,6 +24,7 @@ import { ThemeService } from './application/theme-service.js';
 import { WorkflowService } from './application/workflow-service.js';
 import { SettingsService } from './application/settings-service.js';
 import { MenuService } from './application/menu-service.js';
+import { ElementScriptService } from './application/element-script-service.js';
 import { ProfileService } from './application/profile-service.js';
 import { ProfileRepository } from './infrastructure/sqlite/repositories/profile-repository.js';
 import { IconCatalogService } from './application/icon-catalog-service.js';
@@ -97,6 +99,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   const nodes = new NodeRepository(db, pgSync);
   const animations = new AnimationRepository(db, pgSync);
   const menus = new MenuRepository(db);
+  const elementScriptRepo = new ElementScriptRepository(db);
   const designs = Object.fromEntries(OWNER_TYPES.map(t => [t, new DesignRepository(db, t, pgSync)]));
   const themeRepo = new ThemeRepository(db, pgSync);
   const workflowRepo = new WorkflowRepository(db, pgSync);
@@ -128,6 +131,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
         nodes,
         animations,
         menus,
+        elementScripts: t === 'element' ? elementScriptRepo : null,
         users: userRepo,
         collaboration,
         trash: trashRepo,
@@ -157,6 +161,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     nodes,
     animations,
     menus,
+    elementScripts: elementScriptRepo,
     auth,
     transaction
   });
@@ -170,6 +175,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     services,
     workflows,
     menus,
+    elementScripts: elementScriptRepo,
     projects,
     auth,
     render,
@@ -178,7 +184,14 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   });
   projects.bind({ services, libraryTransfer });
   collaboration.bind({ libraryTransfer });
-  const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, templates, writer: new FsBundleWriter() });
+  const exporter = new ExportService({ services, workflows, themes, menus: menuService, elementScripts: elementScriptRepo, render, settings, templates, writer: new FsBundleWriter() });
+  const elementScripts = new ElementScriptService({
+    scripts: elementScriptRepo,
+    elements: services.element,
+    themes,
+    settings,
+    exporter
+  });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
@@ -190,7 +203,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     getContainer: () => container,
     projectService: projects,
     db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
-    services, workflows, exporter, settings, collaboration, parseSvg: svgTextToNodes,
+    services, workflows, exporter, settings, collaboration, elementScripts, parseSvg: svgTextToNodes,
     allowedOrigins: [process.env.MCP_ALLOWED_ORIGINS, process.env.ALLOWED_ORIGINS, process.env.PUBLIC_BASE_URL].flatMap(v => String(v || '').split(',')).map(s => s.trim()).filter(Boolean)
   });
 
@@ -221,6 +234,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     workflows,
     settings,
     menus: menuService,
+    elementScripts,
     render,
     iconCatalog,
     exporter,

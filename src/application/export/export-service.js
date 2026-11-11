@@ -19,8 +19,8 @@ const xml = svg => `<?xml version="1.0" encoding="UTF-8"?>\n${svg}\n`;
  *  - exportToFolder  buildBundle + write to a folder through the writer port
  */
 export class ExportService {
-  constructor({ services, workflows, themes, menus, render, settings, templates, writer }) {
-    Object.assign(this, { services, workflows, themes, menus, render, settings, templates, writer });
+  constructor({ services, workflows, themes, menus, elementScripts = null, render, settings, templates, writer }) {
+    Object.assign(this, { services, workflows, themes, menus, elementScripts, render, settings, templates, writer });
   }
 
   /** Standalone svg of one design. opts: theme, animated (default true), frame (icons), size (icons) */
@@ -164,7 +164,28 @@ export class ExportService {
     const elementInfos = [...used.element].map(id => {
       const e = S.element.get(id), file = `svg/elements/${e.key}.svg`;
       add(file, xml(this.render.boxSvg('element', e.id, primary.key, { emitIds: true, repeaterMode: 'static' })));
-      return { key: e.key, label: e.label, htmlTag: e.meta?.htmlTag || 'div', descriptionDev: e.descriptionDev, file };
+      const sc = this.elementScripts?.getByElementId?.(e.id) || null;
+      let scriptInfo = null;
+      if (sc && sc.enabled && sc.moduleCode) {
+        const modFile = `js/elements/${e.key}.mjs`;
+        const depsBanner = sc.imports?.length
+          ? ` * Public JS dependencies (install locally with exact versions: npm install ${sc.imports.map(im => `${im.package}@${im.version}`).join(' ')}):\n` +
+            sc.imports.map(im => ` *   - ${im.specifier} -> ${im.url}${im.integrity ? ` (${im.integrity})` : ''}`).join('\n') + '\n'
+          : '';
+        add(modFile, `/**\n * Sandboxed element module for "${e.key}" (${sc.runtime}, entry: ${sc.entryExport})\n${depsBanner} */\n${sc.moduleCode}\n`);
+        scriptInfo = {
+          runtime: sc.runtime,
+          entryExport: sc.entryExport,
+          moduleFile: modFile,
+          codeHash: sc.codeHash,
+          imports: sc.imports,
+          capabilities: sc.capabilities,
+          propsSchema: sc.propsSchema,
+          emits: sc.emits,
+          reviewStatus: sc.reviewStatus
+        };
+      }
+      return { key: e.key, label: e.label, htmlTag: e.meta?.htmlTag || 'div', descriptionDev: e.descriptionDev, file, ...(scriptInfo ? { script: scriptInfo } : {}) };
     });
     if (iconIds.length) add('svg/sprite.svg', xml(this.render.sprite(primary.key, iconIds)));
 

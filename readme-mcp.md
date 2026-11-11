@@ -130,11 +130,19 @@ All direct CRUD mutations operate strictly on **owned projects**; public-library
 | **Explode & Component Extraction** | `explode_icon` (expand placed icon instance into editable shapes), `extract_paths_to_library` (save `<path>` nodes as reusable `24×24` `path` items), `extract_as_element` (extract selected Screen nodes into a reusable `element` and replace with an instance) |
 | **Layout, Transform, Grouping & Style** | `align` (`left` / `center` / `right` / `top` / `middle` / `bottom` to `selection` or `canvas`), `distribute` (`horizontal` / `vertical`), `move` (`dx`/`dy` or `x`/`y`), `resize` (`width`/`height` or `scaleX`/`scaleY`), `fit_to_screen` (responsive container clamping), `flip` (`h` / `v`), `rotate` (`degrees`), `group`, `ungroup`, `reorder_layer` (`front` / `back` / `forward` / `backward`), `duplicate_nodes` (`2×2` grid option), `style_nodes` (`fill`, `stroke`, `strokeWidth`, `opacity`, `copyFromNode*`), `delete_nodes` |
 
+### Sandboxed custom JS & verified public JS imports on UI elements (`uiux_element_script`)
+
+When a reverse-engineered or interactive `element` needs custom JavaScript behaviour or public JS packages (charts, confetti, physics, sliders, rich widgets), its visual geometry stays in pure SVG `nodes` (never running JS on the Designer origin) while its runtime module is attached via `uiux_element_script` (or `item.script` on `uiux_create_item`, `uiux_update_item`, and `uiux_stage_item`):
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `uiux_element_script` | `read` (`policy`, `verify`, `get`) · `propose` (`set`, `verify_sri`, `remove`) | Manages custom ES module code (`mount(container, props, bridge)`) and pinned public JS imports (`imports: [{ package, version, specifier?, subpath?, cdn?, url?, integrity? }]`) on `element` items. Enforces allowlisted HTTPS ESM CDNs (`cdn.jsdelivr.net`, `esm.sh`, `unpkg.com`), exact `x.y.z` semver (rejects `latest`, `*`, `^`, `~`), URL-to-`package@version` binding, `sha384` Subresource Integrity (`verifyIntegrity: true` / `verify_sri`), optional target-repo `lockfilePackages` matching, static security audit (blocks `eval`, `Function`, `document.cookie`, `parent.document`, `localStorage`, undeclared imports), `copyIfForeign: true` clone-on-write for public elements, and opaque-origin `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` HTML with per-render nonce CSP (`connect-src 'none'` unless human-approved in the Designer). |
+
 ### Backend API Bridge (all allowed Designer API actions)
 
 | Tool / Resource | Scope | What it does |
 |---|---|---|
-| `uiux_api_docs` | read | Queries the canonical catalog of all 168 Designer backend routes (`api.*` actions & `/api/*` endpoints), returning parameters, scopes, `mcpAllowed`, `callableNow`, and blocked reasons. Filter by `group`, `query`, `method`, `scope`, or `includeBlocked`. |
+| `uiux_api_docs` | read | Queries the canonical catalog of all 174 Designer backend routes (`api.*` actions & `/api/*` endpoints), returning parameters, scopes, `mcpAllowed`, `callableNow`, and blocked reasons. Filter by `group`, `query`, `method`, `scope`, or `includeBlocked`. |
 | `uiux_api_call` | read / propose / request / create (per action) | Invokes any allowed Designer backend API action in-process by `action` (e.g. `saveTemplateDevice`, `applyProjectButtonSettings`, `importSvg`, `importFont`, `onlineSearch`, `onlineImport`, `createDesign`, `addNode`, `patchNode`, `addAnimation`, `menuConfig`, `addMenuItem`, `workflowFromScreen`, `importScreenRoutes`, `saveTranslation`, `copyToProjects`, `adoptProjectDependencies`, `snapshotProjectVersion`, `exportProjectHtml`) or `{ method, path }`. Works identically in embedded `serve` and standalone `mcp` modes while HTTP `/api/*` continues rejecting `kud_…` keys with 401. |
 | `uiux://api/docs` · `uiux://api/docs/{group}` | read | MCP resources exposing the full machine-readable backend API catalog or a single route group (`templates`, `designs`, `nodes`, `menus`, `workflows`, `library`, `import-export`, `translations`, `versions`, `trash`, …). |
 

@@ -65,7 +65,7 @@ export function attachmentHeader(filename) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`;
 }
 
-const ITEM_EDIT = /^\/api\/(paths|icons|buttons|elements|screens)\/\d+(\/(nodes|animations|menu)(\/.*)?)?$/;
+const ITEM_EDIT = /^\/api\/(paths|icons|buttons|elements|screens)\/\d+(\/(nodes|animations|menu|script)(\/.*)?)?$/;
 
 /**
  * What a successful write changed, for the live-sync event: `'item'` = only the design in the path (an edit of the

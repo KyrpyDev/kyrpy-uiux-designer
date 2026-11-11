@@ -19,7 +19,7 @@ test('PG: every MCP table except the local ledger is in the PG DDL and the sync 
     assert.ok(PG_SCHEMA_SQL.includes(`CREATE TABLE IF NOT EXISTS ${t} (`), `${t} DDL`);
     assert.ok(synced.has(t), `${t} synced`);
   }
-  assert.equal(MCP_SYNC_TABLES.length, 9);
+  assert.equal(MCP_SYNC_TABLES.length, 10);
   const ddl = sqliteToPgDdl("id INTEGER PRIMARY KEY AUTOINCREMENT, p INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, t TEXT NOT NULL DEFAULT (strftime('%Y','now')) -- note");
   assert.equal(ddl.trim(), "id INTEGER PRIMARY KEY, p INTEGER NOT NULL, t TEXT NOT NULL DEFAULT ''");
 });

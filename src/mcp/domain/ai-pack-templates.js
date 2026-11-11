@@ -5,7 +5,7 @@
  * Template syntax (see ai-pack-render.js): {{var}}, {{#each list}}…{{this}}…{{/each}}, {{#if var}}…{{/if}}.
  * Bump TEMPLATE_VERSION whenever a body changes, so `uiux_init` updates installed packs.
  */
-export const TEMPLATE_VERSION = 8;
+export const TEMPLATE_VERSION = 9;
 
 import { REVERSE_ARTIFACTS } from './reverse-pack-templates.js';
 
@@ -175,6 +175,7 @@ Only when a human asks for it, and only if the server lists the \`propose\` tool
   \`descriptionDev\` and \`mcpContext.purpose\` so the next agent can find the item.
 - Buttons have an accessible label; text/background token pairs meet WCAG AA; touch targets ≥ 44 px on mobile.
 - No scripts, \`foreignObject\`, event attributes or external links inside SVG.
+- Elements needing custom JavaScript behaviour or public JS libraries keep their visual geometry in SVG nodes and attach runtime ES module code via \`uiux_element_script\` (or \`item.script\`): exact \`x.y.z\` semver on allowlisted HTTPS ESM CDNs (\`cdn.jsdelivr.net\`, \`esm.sh\`, \`unpkg.com\`) with \`sha384\` Subresource Integrity (\`verifyIntegrity: true\`), optional \`lockfilePackages\` matching, and execution strictly inside \`<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">\` (never \`allow-same-origin\`, \`connect-src 'none'\`).
 
 ## Safety
 - The API key never goes into files, commits, logs or chat. If you see a \`kud_…\` key in the repository, tell the human to revoke it.

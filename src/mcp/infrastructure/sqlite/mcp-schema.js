@@ -325,6 +325,33 @@ CREATE TABLE IF NOT EXISTS design_focus (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   mcp_context TEXT NOT NULL DEFAULT '{}'
 );`
+  },
+  {
+    // Sandboxed custom ES module scripts & verified public JS dependencies attached to UI elements.
+    id: 'm14-001-element-scripts',
+    sql: `
+CREATE TABLE IF NOT EXISTS element_scripts (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid               TEXT NOT NULL UNIQUE,
+  element_id        INTEGER NOT NULL UNIQUE REFERENCES elements(id) ON DELETE CASCADE,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  runtime           TEXT NOT NULL DEFAULT 'esm',
+  entry_export      TEXT NOT NULL DEFAULT 'mount',
+  module_code       TEXT NOT NULL DEFAULT '',
+  imports_json      TEXT NOT NULL DEFAULT '[]',
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
+  props_schema_json TEXT NOT NULL DEFAULT '{}',
+  emits_json        TEXT NOT NULL DEFAULT '[]',
+  code_hash         TEXT NOT NULL DEFAULT '',
+  sri_verified      INTEGER NOT NULL DEFAULT 1,
+  review_status     TEXT NOT NULL DEFAULT 'verified',
+  created_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_element_scripts_element ON element_scripts(element_id);`
   }
 ];
 
@@ -435,6 +462,13 @@ function ensureHashInvalidation(db, tables) {
       'CREATE TRIGGER IF NOT EXISTS trg_mcp_menu_items_hash_ins AFTER INSERT ON menu_items BEGIN UPDATE buttons SET content_hash = NULL WHERE id = NEW.button_id; END;',
       'CREATE TRIGGER IF NOT EXISTS trg_mcp_menu_items_hash_upd AFTER UPDATE ON menu_items BEGIN UPDATE buttons SET content_hash = NULL WHERE id IN (OLD.button_id, NEW.button_id); END;',
       'CREATE TRIGGER IF NOT EXISTS trg_mcp_menu_items_hash_del AFTER DELETE ON menu_items BEGIN UPDATE buttons SET content_hash = NULL WHERE id = OLD.button_id; END;'
+    );
+  }
+  if (has('element_scripts', 'elements')) {
+    triggers.push(
+      'CREATE TRIGGER IF NOT EXISTS trg_mcp_element_scripts_hash_ins AFTER INSERT ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id = NEW.element_id; END;',
+      'CREATE TRIGGER IF NOT EXISTS trg_mcp_element_scripts_hash_upd AFTER UPDATE ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id IN (OLD.element_id, NEW.element_id); END;',
+      'CREATE TRIGGER IF NOT EXISTS trg_mcp_element_scripts_hash_del AFTER DELETE ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id = OLD.element_id; END;'
     );
   }
   for (const child of ['workflow_screens', 'workflow_links']) {

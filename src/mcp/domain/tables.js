@@ -20,4 +20,4 @@ export const TYPE_TO_TABLE = {
 export const TABLE_TO_TYPE = Object.fromEntries(Object.entries(TYPE_TO_TABLE).map(([t, tbl]) => [tbl, t]));
 
 /** Tables created by the MCP layer itself. */
-export const MCP_TABLES = ['schema_registry', 'mcp_migrations', 'api_keys', 'mcp_audit_log', 'ai_artifacts', 'project_versions', 'changesets', 'changeset_ops', 'item_requests', 'code_bindings', 'version_items'];
+export const MCP_TABLES = ['schema_registry', 'mcp_migrations', 'api_keys', 'mcp_audit_log', 'ai_artifacts', 'project_versions', 'changesets', 'changeset_ops', 'item_requests', 'code_bindings', 'version_items', 'element_scripts'];

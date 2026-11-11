@@ -98,16 +98,31 @@ function canonicalMenu(menuItems, uidOf) {
   return (kids.get(null) || []).map(emit);
 }
 
+function canonicalElementScript(s) {
+  if (!s) return null;
+  return [
+    bool(s.enabled ?? 1),
+    s.runtime || 'esm',
+    s.entry_export ?? s.entryExport ?? 'mount',
+    s.module_code ?? s.moduleCode ?? '',
+    json(s.imports_json ?? s.imports ?? []),
+    json(s.capabilities_json ?? s.capabilities ?? {}),
+    json(s.props_schema_json ?? s.propsSchema ?? {}),
+    json(s.emits_json ?? s.emits ?? [])
+  ];
+}
+
 /**
  * Canonical text of a path / icon / button / element / screen.
- * @param {{record, nodes, animations, menuItems}} d raw SQLite rows
+ * @param {{record, nodes, animations, menuItems, elementScript?}} d raw SQLite rows
  * @param {(type: string, id: number) => string|null} uidOf resolves a referenced row to its uid
  */
-export function canonicalDesign({ record: r, nodes = [], animations = [], menuItems = [] }, uidOf) {
+export function canonicalDesign({ record: r, nodes = [], animations = [], menuItems = [], elementScript = null }, uidOf) {
   return canonicalJson({
     r: [r.key, r.name, r.label, r.description_dev, r.category, json(r.tags), num(r.width), num(r.height), json(r.meta)],
     n: canonicalNodes(nodes, animations, uidOf).tree,
-    m: canonicalMenu(menuItems, uidOf)
+    m: canonicalMenu(menuItems, uidOf),
+    ...(elementScript ? { s: canonicalElementScript(elementScript) } : {})
   });
 }
 

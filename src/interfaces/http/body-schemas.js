@@ -29,10 +29,11 @@ export const COMMON_FIELDS = {
   projectId: f('int'), userId: f('int'), iconId: f('int'), screenId: f('int'), targetId: f('int'),
   fromScreenId: f('int'), toScreenId: f('int'),
   width: f('num'), height: f('num'), x: f('num'), y: f('num'), zoom: f('num'), position: f('num'), buttonIconSizePct: f('num'),
-  force: f('bool'), locked: f('bool'), collapsed: f('bool'), requireApproval: f('bool'), signOutOthers: f('bool'),
+  force: f('bool'), locked: f('bool'), collapsed: f('bool'), requireApproval: f('bool'), signOutOthers: f('bool'), enabled: f('bool'),
   nodes: f('arr', 20000), animations: f('arr', 5000), items: f('arr', 20000), links: f('arr', 20000), waypoints: f('arr', 2000),
+  imports: f('arr', 32), emits: f('arr', 64), moduleCode: f('str', 65536),
   tags: f('list', 200), ids: f('ints', 20000), projectIds: f('list', 2000),
-  meta: f('obj'), settings: f('obj'), attrs: f('obj'), tokens: f('obj'), surfaces: f('obj')
+  meta: f('obj'), settings: f('obj'), attrs: f('obj'), tokens: f('obj'), surfaces: f('obj'), capabilities: f('obj'), propsSchema: f('obj')
 };
 
 /** Fields a route cannot work without (`METHOD pattern` as registered). */

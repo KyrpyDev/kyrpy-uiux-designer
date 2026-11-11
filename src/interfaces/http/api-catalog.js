@@ -251,6 +251,58 @@ export const API_OPERATIONS = [
     params: { id: ID_OR_KEY, iid: 'Numeric menu item id' }
   },
 
+  // ---- Sandboxed Element Scripts & Public JS Dependencies ----
+  {
+    action: 'elementScriptPolicy', group: 'scripts', method: 'GET', pattern: '/api/elements/script-policy',
+    scope: 'read', mcpAllowed: true, needsProject: false,
+    summary: 'Returns the sandboxed element JS security policy, allowlisted public CDN origins, semver/SRI rules, and ES module template.'
+  },
+  {
+    action: 'elementScript', aliases: ['getElementScript'], group: 'scripts', method: 'GET', pattern: '/api/elements/:id/script',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Reads the sandboxed custom JS module and verified public JS imports attached to an element.',
+    params: { id: ID_OR_KEY }
+  },
+  {
+    action: 'setElementScript', group: 'scripts', method: 'PUT', pattern: '/api/elements/:id/script',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Validates and attaches/updates sandboxed ES module JS and pinned public JS imports (exact semver + CDN allowlist + optional SRI verification) on an owned project element.',
+    params: { id: ID_OR_KEY },
+    body: {
+      enabled: 'boolean (default true)',
+      runtime: 'esm | declarative',
+      entryExport: 'Exported function name (default "mount")',
+      moduleCode: 'ES module source exporting mount(container, props, bridge) (max 64 KB)',
+      imports: 'Array of { package, version (exact x.y.z), specifier?, subpath?, url?, integrity? (sha384-...) }',
+      capabilities: '{ allowNetwork?: boolean, allowedConnectOrigins?: string[], allowCanvas?: boolean, allowWebGL?: boolean }',
+      propsSchema: 'Object of typed prop descriptors',
+      emits: 'Array of event names or { name, action?, description? }',
+      verifyIntegrity: 'If true, fetches each pinned CDN URL over HTTPS and computes/verifies its sha384 SRI hash',
+      requireIntegrity: 'If true, requires every import to carry a cryptographic SRI hash',
+      lockfilePackages: 'Optional { [pkg]: "x.y.z" } allowlist from the target repository lockfile'
+    }
+  },
+  {
+    action: 'deleteElementScript', group: 'scripts', method: 'DELETE', pattern: '/api/elements/:id/script',
+    scope: 'propose', mcpAllowed: true, destructive: true,
+    summary: 'Removes the custom JS script from an owned project element.',
+    params: { id: ID_OR_KEY }
+  },
+  {
+    action: 'verifyElementScriptSri', group: 'scripts', method: 'POST', pattern: '/api/elements/:id/script/verify-sri',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Fetches pinned public CDN imports for an element script over HTTPS, computes/verifies sha384 Subresource Integrity hashes, and saves them.',
+    params: { id: ID_OR_KEY },
+    body: { lockfilePackages: 'Optional { [pkg]: "x.y.z" } lockfile allowlist' }
+  },
+  {
+    action: 'elementScriptSandbox', aliases: ['getElementScriptSandbox'], group: 'scripts', method: 'GET', pattern: '/api/elements/:id/script/sandbox',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Builds the isolated opaque-origin iframe srcdoc HTML, nonce CSP, and importmap with SRI hashes for a scripted element.',
+    params: { id: ID_OR_KEY },
+    query: { theme: 'Optional style key (e.g. liquid)', animated: '1 | 0' }
+  },
+
   // ---- Library & Online / SVG Import ----
   {
     action: 'library', group: 'library', method: 'GET', pattern: '/api/library',

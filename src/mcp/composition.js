@@ -45,7 +45,7 @@ const safeEqual = (a, b) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, parseSvg, pollMs, getContainer = null, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
+export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, elementScripts = null, parseSvg, pollMs, getContainer = null, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
   const { pepper, source: pepperSource } = loadKeyPepper(dbFile);
   const hashKey = plaintext => createHmac('sha256', pepper).update(plaintext).digest('hex');
 
@@ -71,7 +71,7 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
 
   // M2: read model + MCP server (needs the core design services; absent in minimal test containers)
   if (services && workflows && exporter && settings) {
-    const query = new DesignQueryService({ agentUserId, publicUserId, reads: new DesignReadRepository(db), hashes: contentHashes, registry: schemaRegistry, services, workflows, exporter, projects, settings });
+    const query = new DesignQueryService({ agentUserId, publicUserId, reads: new DesignReadRepository(db), hashes: contentHashes, registry: schemaRegistry, services, workflows, exporter, projects, settings, elementScripts });
     const bundles = new BundleService({ query, exporter });
     const limiter = new RateLimiter(limits);
     const aiPack = new AiPackService({ artifacts: new AiArtifactRepository(db), query, bundles, projects, auth, clientSetup: buildClientSetup });
@@ -84,7 +84,7 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
     const versions = new VersionService({ repo: versionRepo, query, projects, auth, transaction, library });
     const changesets = collaboration ? new ChangesetService({
       repo: versionRepo, versions, query, reads, hashes: contentHashes, services, workflows, exporter, collaboration,
-      projects, auth, db, transaction, parseSvg, library, agentUserId, newUid: () => uuidv7(randomBytes), ...(now ? { now } : {})
+      projects, auth, db, transaction, parseSvg, library, elementScripts, agentUserId, newUid: () => uuidv7(randomBytes), ...(now ? { now } : {})
     }) : null;
     const newUid = () => uuidv7(randomBytes);
     const requests = new ItemRequestService({ db, query, reads, versionRepo, projects, auth, newUid, library, transaction, ...(now ? { now } : {}) });
@@ -102,10 +102,10 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
       ? new DesignSessionService({ focus: new FocusRepository(db), accounts, projectService, projects, users, versions, changesets, query, versionRepo, services, workflows, db, transaction, ...(now ? { now } : {}) })
       : null;
     const resolveContainer = getContainer || (() => ({
-      db, users, auth, projects: projectService || projects, services, ...services, workflows, exporter, settings, collaboration, mcp: out, publicUserId
+      db, users, auth, projects: projectService || projects, services, ...services, workflows, exporter, settings, collaboration, elementScripts, mcp: out, publicUserId
     }));
     const apiBridge = new ApiBridge({ getContainer: resolveContainer, apiKeys, accounts, design, versions });
-    const studioTools = new StudioToolsService({ getContainer: resolveContainer, db, query, reads, hashes: contentHashes, library, versions, parseSvg, transaction, publicUserId });
+    const studioTools = new StudioToolsService({ getContainer: resolveContainer, db, query, reads, hashes: contentHashes, library, versions, parseSvg, transaction, publicUserId, apiKeys, accounts, design });
     const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design, apiBridge, studioTools });
     const http = createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins, versions, ...(pollMs ? { pollMs } : {}) });
     // live updates for subscribed sessions (resources/subscribe + GET /mcp event stream)

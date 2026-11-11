@@ -45,6 +45,9 @@ export function designRoutes(router, c) {
   };
   router.get('/api/icons/sprite', ({ query }) => iconSprite(query.get('theme'), query.get('ids')));
   router.post('/api/icons/sprite', ({ body }) => iconSprite(body?.theme, body?.ids));
+  if (c.elementScripts) {
+    router.get('/api/elements/script-policy', () => c.elementScripts.policy());
+  }
 
   router.get(`/api/${T}`, ({ params, query, actor }) =>
     svc(params).list({
@@ -70,6 +73,9 @@ export function designRoutes(router, c) {
     const rec = svc(params).assertCanRead(svc(params).get(params.id), actor);
     if (PLURAL_TO_TYPE[params.types] === 'screen' && rec?.id) {
       return { ...rec, links: c.workflows.linksFromScreens([rec.id]) };
+    }
+    if (PLURAL_TO_TYPE[params.types] === 'element' && rec?.id && c.elementScripts) {
+      return { ...rec, script: c.elementScripts.get(rec.id) };
     }
     return rec;
   });
@@ -123,6 +129,35 @@ export function designRoutes(router, c) {
   router.put('/api/buttons/:id/menu/items/:iid', ({ params, body, actor }) => c.menus.updateItem(params.iid, body, { buttonId: btn(params, actor) }));
   router.post('/api/buttons/:id/menu/items/:iid/move', ({ params, body, actor }) => c.menus.moveItem(btn(params, actor), params.iid, body || {}));
   router.delete('/api/buttons/:id/menu/items/:iid', ({ params, actor }) => c.menus.removeItem(params.iid, { buttonId: btn(params, actor) }));
+
+  // element sandboxed scripts & verified public JS dependencies
+  if (c.elementScripts) {
+    router.get('/api/elements/:id/script', ({ params, actor }) => {
+      const rec = c.services.element.assertCanRead(c.services.element.get(params.id), actor);
+      return { elementId: rec.id, key: rec.key, script: c.elementScripts.get(rec.id), policy: c.elementScripts.policy() };
+    });
+    router.put('/api/elements/:id/script', async ({ params, body, actor }) => ({
+      script: await c.elementScripts.set(params.id, body || {}, {
+        actor,
+        verifyIntegrity: Boolean(body?.verifyIntegrity),
+        requireIntegrity: Boolean(body?.requireIntegrity),
+        lockfilePackages: body?.lockfilePackages || null,
+        humanApproved: Boolean(body?.humanApproved && actor && !actor.viaMcp && !actor.strict)
+      })
+    }));
+    router.delete('/api/elements/:id/script', ({ params, actor }) => c.elementScripts.remove(params.id, { actor }));
+    router.post('/api/elements/:id/script/verify-sri', async ({ params, body, actor }) => ({
+      script: await c.elementScripts.verifyStoredSri(params.id, { actor, lockfilePackages: body?.lockfilePackages || null })
+    }));
+    router.get('/api/elements/:id/script/sandbox', ({ params, query, actor }) =>
+      c.elementScripts.buildSandbox(params.id, {
+        actor,
+        checkAccess: true,
+        style: query.get('theme') || query.get('style') || undefined,
+        animated: query.get('animated') !== '0'
+      })
+    );
+  }
 
   router.get('/api/library', ({ query, actor }) => {
     const filter = {

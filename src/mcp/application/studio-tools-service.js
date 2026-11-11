@@ -128,7 +128,7 @@ export class StudioToolsService {
     if (!u || u.status !== 'active' || isSystemUser(u)) {
       throw new DomainError('the key owner is not an active user', 'UNAUTHORIZED', 401);
     }
-    return { ...u, role: u.role === 'viewer' ? 'viewer' : 'designer', strict: Boolean(principal?.strict) };
+    return { ...u, role: u.role === 'viewer' ? 'viewer' : 'designer', strict: Boolean(principal?.strict), viaMcp: true };
   }
 
   #requireBoundProject(principal, { requireEdit = false } = {}) {
@@ -1075,6 +1075,17 @@ export class StudioToolsService {
         this.#replaceButtonMenuItems(c, actor, projectId, created.id, args.menuItems);
       }
 
+      if (args.script !== undefined && args.script !== null) {
+        if (itemType !== 'element') throw new ValidationError('`script` is only supported on items of type "element"');
+        if (!c.elementScripts) throw new DomainError('Element script service is unavailable', 'INTERNAL', 500);
+        c.elementScripts.setSync(created.id, args.script, {
+          actor,
+          actorId: actor.id,
+          requireIntegrity: Boolean(args.script.requireIntegrity),
+          lockfilePackages: args.script.lockfilePackages || null
+        });
+      }
+
       if (args.mcpContext !== undefined) this.#writeMcpContext(itemType, created.id, args.mcpContext);
       this.#notify(projectId);
       return {
@@ -1278,6 +1289,21 @@ export class StudioToolsService {
 
       if (itemType === 'button' && Array.isArray(args.menuItems) && c.menus) {
         this.#replaceButtonMenuItems(c, actor, projectId, row.id, args.menuItems);
+      }
+
+      if (args.script !== undefined) {
+        if (itemType !== 'element') throw new ValidationError('`script` is only supported on items of type "element"');
+        if (!c.elementScripts) throw new DomainError('Element script service is unavailable', 'INTERNAL', 500);
+        if (args.script === null) {
+          c.elementScripts.remove(row.id, { actor, checkEditable: false });
+        } else {
+          c.elementScripts.setSync(row.id, args.script, {
+            actor,
+            actorId: actor.id,
+            requireIntegrity: Boolean(args.script.requireIntegrity),
+            lockfilePackages: args.script.lockfilePackages || null
+          });
+        }
       }
 
       if (args.mcpContext !== undefined) this.#writeMcpContext(itemType, row.id, args.mcpContext, { merge: true });
@@ -2322,5 +2348,148 @@ export class StudioToolsService {
       }
       return result;
     });
+  }
+
+  /* ============================================================================
+   * 6. SANDBOXED ELEMENT SCRIPTS & VERIFIED PUBLIC JS (`uiux_element_script`)
+   * ============================================================================ */
+
+  #bindAccountPrincipal(principal, projectRef, neededScope) {
+    if (principal?.kind !== 'account') return principal;
+    if (!this.accounts) throw new DomainError('account keys are not enabled on this server', 'NOT_FOUND', 404);
+    if (principal.strict) {
+      if (neededScope === 'read' && !projectRef) {
+        const cur = this.design?.current?.(principal);
+        if (!cur) return principal;
+      }
+      const resolved = this.design.resolveFocused(principal, projectRef, neededScope);
+      return this.accounts.bind(principal, resolved);
+    }
+    if (neededScope === 'read' && !projectRef) return principal;
+    const resolved = this.accounts.resolve(principal, projectRef, neededScope);
+    return this.accounts.bind(principal, resolved);
+  }
+
+  async elementScript(principal, args = {}) {
+    const c = this.#container();
+    if (!c.elementScripts) throw new DomainError('Element script service is unavailable', 'INTERNAL', 500);
+    const action = String(args.action || 'get').trim().toLowerCase();
+    if (!['policy', 'verify', 'get', 'set', 'verify_sri', 'remove'].includes(action)) {
+      throw new ValidationError('action must be one of "policy", "verify", "get", "set", "verify_sri", or "remove"');
+    }
+
+    if (action === 'policy') {
+      return { action: 'policy', policy: c.elementScripts.policy() };
+    }
+
+    const buildSpecFromArgs = () => {
+      if (args.script && typeof args.script === 'object' && !Array.isArray(args.script)) return args.script;
+      return {
+        ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
+        ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+        ...(args.entryExport !== undefined ? { entryExport: args.entryExport } : {}),
+        ...(args.moduleCode !== undefined ? { moduleCode: args.moduleCode } : {}),
+        ...(args.imports !== undefined ? { imports: args.imports } : {}),
+        ...(args.capabilities !== undefined ? { capabilities: args.capabilities } : {}),
+        ...(args.propsSchema !== undefined ? { propsSchema: args.propsSchema } : {}),
+        ...(args.emits !== undefined ? { emits: args.emits } : {})
+      };
+    };
+
+    if (action === 'verify') {
+      const verified = await c.elementScripts.verify(buildSpecFromArgs(), {
+        lockfilePackages: args.lockfilePackages || null,
+        verifyIntegrity: Boolean(args.verifyIntegrity),
+        requireIntegrity: Boolean(args.requireIntegrity)
+      });
+      return { action: 'verify', ...verified };
+    }
+
+    if (action === 'get') {
+      const bound = this.#bindAccountPrincipal(principal, args.project, 'read');
+      const actor = this.#actor(bound);
+      const cleanRef = String(args.ref || '').trim();
+      if (!cleanRef) throw new ValidationError('`ref` (element key, uid, or id) is required for action "get"');
+      const row = this.reads.find('element', cleanRef, bound.project?.id ?? null);
+      if (!row || !this.#canReadRow(c, actor, row)) {
+        throw new NotFoundError('element', cleanRef);
+      }
+      const script = c.elementScripts.get(row.id);
+      const sandbox = script && args.includeSandbox
+        ? c.elementScripts.buildSandbox(row.id, { style: args.style, props: args.props || {} })
+        : null;
+      return {
+        action: 'get',
+        element: { uid: row.uid, key: row.key, name: row.name, visibility: row.visibility, width: row.width, height: row.height },
+        attached: Boolean(script),
+        script,
+        ...(sandbox ? { sandbox: { html: sandbox.html, csp: sandbox.csp, iframeAttributes: sandbox.iframeAttributes, style: sandbox.style } } : {})
+      };
+    }
+
+    // Mutating actions: set, verify_sri, remove -> require `propose` scope and an owned bound project
+    this.apiKeys?.assertScope?.(principal, 'propose');
+    const bound = this.#bindAccountPrincipal(principal, args.project, 'propose');
+    const { actor, proj, projectId } = this.#requireBoundProject(bound, { requireEdit: true });
+    const cleanRef = String(args.ref || '').trim();
+    if (!cleanRef) throw new ValidationError(`\`ref\` (element key, uid, or id) is required for action "${action}"`);
+
+    const { row, copiedFromForeign } = this.transaction(() =>
+      this.#resolveEditableTarget(bound, c, actor, projectId, 'element', cleanRef, {
+        copyIfForeign: Boolean(args.copyIfForeign)
+      })
+    );
+
+    if (action === 'remove') {
+      const res = c.elementScripts.remove(row.id, { actor, checkEditable: false });
+      this.#notify(projectId);
+      return {
+        action: 'remove',
+        project: { id: proj.id, key: proj.key, name: proj.name },
+        element: { uid: row.uid, key: row.key, name: row.name },
+        removed: res.removed
+      };
+    }
+
+    if (action === 'verify_sri') {
+      const script = await c.elementScripts.verifyStoredSri(row.id, {
+        actor,
+        checkEditable: false,
+        lockfilePackages: args.lockfilePackages || null
+      });
+      this.#notify(projectId);
+      return {
+        action: 'verify_sri',
+        project: { id: proj.id, key: proj.key, name: proj.name },
+        copiedFromForeign,
+        element: { uid: row.uid, key: row.key, name: row.name },
+        script
+      };
+    }
+
+    // action === 'set'
+    const script = await c.elementScripts.set(row.id, buildSpecFromArgs(), {
+      actor,
+      actorId: actor.id,
+      checkEditable: false,
+      verifyIntegrity: Boolean(args.verifyIntegrity),
+      requireIntegrity: Boolean(args.requireIntegrity),
+      lockfilePackages: args.lockfilePackages || null,
+      humanApproved: false
+    });
+    this.#notify(projectId);
+    const updatedRow = this.reads.find('element', row.id, projectId);
+    const sandbox = args.includeSandbox
+      ? c.elementScripts.buildSandbox(row.id, { style: args.style, props: args.props || {} })
+      : null;
+
+    return {
+      action: 'set',
+      project: { id: proj.id, key: proj.key, name: proj.name },
+      copiedFromForeign,
+      script,
+      item: this.#itemJsonFor(bound, updatedRow, projectId),
+      ...(sandbox ? { sandbox: { html: sandbox.html, csp: sandbox.csp, iframeAttributes: sandbox.iframeAttributes, style: sandbox.style } } : {})
+    };
   }
 }

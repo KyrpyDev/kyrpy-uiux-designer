@@ -298,6 +298,14 @@ export const api = {
   moveMenuItem: (id, iid, to) => api.post(`/api/buttons/${id}/menu/items/${iid}/move`, to).then(r => { markEdited('button', id); return r; }),
   deleteMenuItem: (id, iid) => api.del(`/api/buttons/${id}/menu/items/${iid}`).then(r => { markEdited('button', id); return r; }),
 
+  // element sandboxed custom JS & verified public JS dependencies
+  elementScriptPolicy: () => api.get('/api/elements/script-policy'),
+  elementScript: id => api.get(`/api/elements/${id}/script`),
+  setElementScript: (id, body) => api.put(`/api/elements/${id}/script`, body).then(r => { markEdited('element', id); return r; }),
+  deleteElementScript: id => api.del(`/api/elements/${id}/script`).then(r => { markEdited('element', id); return r; }),
+  verifyElementScriptSri: (id, body = {}) => api.post(`/api/elements/${id}/script/verify-sri`, body).then(r => { markEdited('element', id); return r; }),
+  elementScriptSandbox: (id, params = {}) => api.get(`/api/elements/${id}/script/sandbox?${new URLSearchParams(params)}`),
+
   themes: () => api.get('/api/themes'),
   saveTheme: (id, body) => api.put(`/api/themes/${id}`, body),
   createTheme: body => api.post('/api/themes', body),

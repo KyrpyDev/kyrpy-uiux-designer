@@ -347,7 +347,7 @@ const takeBundle = (limiter, principal) => {
 const csProp = str('changeset uid from uiux_begin_changeset.', { minLength: 36, maxLength: 36 });
 const itemProp = {
   type: 'object',
-  description: 'The item in the uiux_get_item JSON format: type, key, name, label, descriptionDev, mcpContext {purpose …}, category, tags, width, height, meta, nodes [{index, parentIndex, kind, tag, name, role, ref {type, uid | key}, text, attrs, …}], animations [{nodeIndex, …}], menuItems (buttons), screens / links (workflows). Omitted fields keep their current value on updates. References point to existing items or to items staged in the same changeset.'
+  description: 'The item in the uiux_get_item JSON format: type, key, name, label, descriptionDev, mcpContext {purpose …}, category, tags, width, height, meta, nodes [{index, parentIndex, kind, tag, name, role, ref {type, uid | key}, text, attrs, …}], animations [{nodeIndex, …}], menuItems (buttons), script (elements: sandboxed ES module JS & pinned public JS imports), screens / links (workflows). Omitted fields keep their current value on updates. References point to existing items or to items staged in the same changeset.'
 };
 const hash = d => str(d, { maxLength: 64 });
 const bindingProp = {
@@ -1243,6 +1243,7 @@ export const TOOLS = [
         screens: { type: 'array', items: { type: 'object' }, maxItems: 200, description: 'For `workflow`: placed screens (`[{ screen, x, y, collapsed }]`).' },
         links: { type: 'array', items: { type: 'object' }, maxItems: 500, description: 'For `workflow`: routing links (`[{ from, to, fromNodeName, name, trigger, style, descriptionDev }]`).' },
         meta: { type: 'object', description: 'Optional metadata object.' },
+        script: { type: 'object', description: 'For `element`: optional sandboxed ES module JS & pinned public JS imports (`{ enabled?, entryExport?, moduleCode, imports?: [{ package, version, specifier?, subpath?, url?, integrity? }], capabilities?, propsSchema?, emits?, requireIntegrity?, lockfilePackages? }`).' },
         descriptionDev: str('Detailed developer specification (PURPOSE, LAYOUT, INTERACTIONS, STATES).', { maxLength: 16000 }),
         mcpContext: { type: 'object', description: 'Structured AI context (`{ purpose, usage, notes, constraints }`).' }
       },
@@ -1277,6 +1278,7 @@ export const TOOLS = [
         scaleContent: { type: 'boolean', description: 'Scale child nodes proportionally when resizing `width`/`height`.' },
         locked: { type: 'boolean' },
         meta: { type: 'object' },
+        script: { oneOf: [{ type: 'object' }, { type: 'null' }], description: 'For `element`: upsert sandboxed ES module JS & pinned public JS imports (`{ enabled?, entryExport?, moduleCode, imports?, capabilities?, propsSchema?, emits? }`), or pass `null` to remove an attached script.' },
         menuConfig: { type: 'object', description: 'For `button`: merge into `meta.menu`.' },
         menuItems: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'For `button`: replace menu items.' },
         svg: str('Replace design nodes by parsing SVG markup.', { maxLength: 262144 }),
@@ -1420,6 +1422,72 @@ export const TOOLS = [
       const opsSummary = data.steps.map(s => s.operation).join(' → ');
       return {
         summary: `Applied ${data.steps.length} graphical operation(s) (${opsSummary}) on ${data.item.type} "${data.item.key}" (${data.item.nodes?.length ?? 0} node(s)).`,
+        data
+      };
+    }
+  },
+  {
+    name: 'uiux_element_script',
+    title: 'Sandboxed custom JS & verified public JS imports for UI elements',
+    description: 'Manages custom ES module JavaScript (`moduleCode`) and pinned public JS dependencies (`imports`) on `element` items without ever executing untrusted JS on the Designer origin. Enforces allowlisted HTTPS ESM CDNs (`cdn.jsdelivr.net`, `esm.sh`, `unpkg.com`), exact semver (`x.y.z`, rejecting `latest`/`^`/`~`/`*`), URL-to-`package@version` binding, `sha384` Subresource Integrity (`verifyIntegrity` / `verify_sri`), optional `lockfilePackages` matching for reverse engineering, static AST/pattern audit (`eval`/`Function`/`document.cookie`/`parent.document`/`localStorage` blocked), and opaque-origin `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` rendering with per-render nonce CSP (`connect-src \'none\'` unless human-approved). Actions: `policy` (security rules), `verify` (dry-run audit + optional CDN SRI fetch), `get` (read element script + optional sandbox HTML), `set` (attach/update script; supports `copyIfForeign: true`), `verify_sri` (re-verify stored CDN imports), `remove` (detach script).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['policy', 'verify', 'get', 'set', 'verify_sri', 'remove'], description: 'Operation to perform (default "get").' },
+        ref: str('Target `element` key, uid, or id (required for `get`, `set`, `verify_sri`, `remove`).', { maxLength: 120 }),
+        copyIfForeign: { type: 'boolean', description: 'For `set` / `verify_sri` / `remove`: if `ref` points to a public/foreign element, clone it into your project first and attach the script to the project copy.' },
+        script: { type: 'object', description: 'Full script specification object (`{ enabled, runtime, entryExport, moduleCode, imports, capabilities, propsSchema, emits }`), or pass fields directly at top level.' },
+        enabled: { type: 'boolean', description: 'Whether the element script is active in sandboxed previews & exports (default true).' },
+        runtime: { type: 'string', enum: ['esm', 'declarative'], description: 'Sandbox runtime contract (default "esm").' },
+        entryExport: str('Exported mount function name in `moduleCode`, e.g. `mount(container, props, bridge)` (default "mount").', { maxLength: 64 }),
+        moduleCode: str('ES module source code exporting `mount(container, props, bridge)` (max 64 KB).', { maxLength: 65536 }),
+        imports: {
+          type: 'array',
+          maxItems: 16,
+          description: 'Pinned public JS ESM imports (`[{ package, version, specifier?, subpath?, cdn?, url?, integrity? }]`). Exact `x.y.z` semver required; allowlisted CDNs only.',
+          items: { type: 'object' }
+        },
+        capabilities: {
+          type: 'object',
+          description: 'Requested sandbox capabilities (`{ allowNetwork?: boolean, allowedConnectOrigins?: string[], allowTimers?: boolean, allowCanvas?: boolean }`). Note: `allowNetwork` stays `needs-human-review` (`connect-src \'none\'`) when set via MCP until a human approves it in the Designer.'
+        },
+        propsSchema: { type: 'object', description: 'Optional JSON Schema / defaults for `props`.' },
+        emits: { type: 'array', maxItems: 30, items: str('Event name', { maxLength: 64 }), description: 'Custom event names emitted via `bridge.emit(name, detail)`.' },
+        verifyIntegrity: { type: 'boolean', description: 'For `verify` / `set`: fetch each public CDN import URL over HTTPS (with hop-by-hop origin validation & 2 MB cap) to compute or verify its `sha384-...` Subresource Integrity hash.' },
+        requireIntegrity: { type: 'boolean', description: 'Reject imports that lack a `sha384-...` / `sha512-...` SRI hash.' },
+        lockfilePackages: { type: 'object', description: 'Optional `{ "<package>": "<exact-version>" }` map from the target app\'s `package-lock.json` / `pnpm-lock.yaml` — rejects any import not present at that exact version.' },
+        includeSandbox: { type: 'boolean', description: 'For `get` / `set`: include the ready-to-render opaque-origin sandbox HTML, CSP string, and `iframeAttributes`.' },
+        style: styleProp,
+        props: { type: 'object', description: 'Initial `props` passed to `mount(container, props, bridge)` when `includeSandbox: true`.' }
+      },
+      additionalProperties: false
+    },
+    accountProperties: {
+      project: str('Account keys: project key (from `uiux_list_projects`) for `get`, `set`, `verify_sri`, or `remove`. Optional for design keys (uses the focused project) and not needed for `policy` or `verify`.', { maxLength: 80 })
+    },
+    scope: 'read',
+    account: 'select',
+    readOnly: false,
+    run: async ({ principal, studioTools }, args) => {
+      const data = await studioTools.elementScript(principal, args);
+      if (data.action === 'policy') {
+        return { summary: `Element script policy (sandbox="${data.policy.sandbox.iframeSandbox}"): allowed CDNs ${data.policy.publicJsRules.allowedOrigins.join(', ')}.`, data };
+      }
+      if (data.action === 'verify') {
+        const warnCount = data.audit?.warnings?.length || 0;
+        return { summary: `Verified element script (${data.script.imports.length} import(s), reviewStatus: ${data.script.reviewStatus}${warnCount ? `, ${warnCount} warning(s)` : ''}).`, data };
+      }
+      if (data.action === 'get') {
+        return { summary: data.attached ? `Element "${data.element.key}" has sandboxed script (${data.script.imports.length} import(s), ${data.script.reviewStatus}).` : `Element "${data.element.key}" has no custom script attached.`, data };
+      }
+      if (data.action === 'remove') {
+        return { summary: data.removed ? `Removed custom script from element "${data.element.key}" in project "${data.project.key}".` : `Element "${data.element.key}" had no script to remove.`, data };
+      }
+      if (data.action === 'verify_sri') {
+        return { summary: `Verified CDN SRI hashes for ${data.script.imports.length} import(s) on element "${data.element.key}".`, data };
+      }
+      return {
+        summary: `Saved sandboxed script on element "${data.item.key}" in project "${data.project.key}" (${data.script.imports.length} import(s), reviewStatus: ${data.script.reviewStatus})${data.copiedFromForeign ? ' (cloned into project first)' : ''}.`,
         data
       };
     }

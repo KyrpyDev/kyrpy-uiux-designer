@@ -16,10 +16,11 @@ import { canonicalJson } from '../domain/content-hash.js';
 import { SEED_VERSION } from '../domain/schema-registry-seed.js';
 import { ITEM_TYPES } from '../infrastructure/sqlite/design-read-repository.js';
 import { toPortableAction } from '../domain/portable-actions.js';
+import { ELEMENT_SCRIPT_POLICY } from '../../domain/element-script.js';
 
 export const SCHEMA_VERSION = `1.${SEED_VERSION}`;
 const KEY_PATTERN = '^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$';
-const SCHEMA_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'nodes', 'animations', 'menu_items',
+const SCHEMA_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'nodes', 'animations', 'menu_items', 'element_scripts',
   'workflows', 'workflow_screens', 'workflow_links', 'themes', 'template_buttons', 'template_devices', 'translations', 'projects'];
 const SCOPES = ['project', 'private', 'public'];
 const json = v => { try { return typeof v === 'string' ? JSON.parse(v) : v; } catch { return v; } };
@@ -129,6 +130,7 @@ export class DesignQueryService {
       nodes: { tags: NODE_TAGS, kinds: NODE_KINDS, colorTokens: 'attrs colors may be {{token}} placeholders resolved per style' },
       interaction: { eventTriggers: EVENT_TRIGGERS, actions: CLICK_ACTIONS, drawerSides: DRAWER_SIDES, toolbarPositions: TOOLBAR_POSITIONS, menuKinds: MENU_KINDS, menuLayouts: MENU_LAYOUTS },
       buttons: { styles: BUTTON_STYLES.map(s => ({ key: s.key, label: s.label })), defaults: DEFAULT_PROJECT_BUTTON_SETTINGS, iconSizePct: [50, 90] },
+      elementScripts: ELEMENT_SCRIPT_POLICY,
       visibility: { levels: VISIBILITY_LEVELS, rules: 'public = everyone; private = the creator\'s global library; project = members of the item\'s project. Builtin items are copy-only.' },
       styles: this.#styles(),
       defaultStyle: this.#defaultStyle(),
@@ -275,6 +277,7 @@ export class DesignQueryService {
     const d = this.services[row.type].get(row.id);
     const nodeIds = new Map(d.nodes.map((n, i) => [n.id, i]));
     const act = a => toPortableAction(a, (t, id) => ({ uid: this.reads.uidOf(t, id), key: this.reads.keyOf(t, id) }), id => nodeIds.get(id) ?? null);
+    const elScript = row.type === 'element' && this.elementScripts ? this.elementScripts.get(row.id) : null;
     return {
       ...base,
       category: d.category, tags: d.tags, width: d.width, height: d.height, meta: d.meta,
@@ -291,7 +294,8 @@ export class DesignQueryService {
         parent: m.parentId ? d.menuItems.find(x => x.id === m.parentId)?.name ?? null : null,
         icon: ref('icon', m.iconId), targetScreen: ref('screen', m.targetScreenId), targetElement: ref('element', m.targetElementId),
         ...(m.refButtonId ? { button: ref('button', m.refButtonId) } : {}),
-        visible: m.visible !== false && m.visible !== 0, descriptionDev: m.descriptionDev })) } : {})
+        visible: m.visible !== false && m.visible !== 0, descriptionDev: m.descriptionDev })) } : {}),
+      ...(elScript ? { script: elScript } : {})
     };
   }
 
@@ -312,16 +316,21 @@ export class DesignQueryService {
     const rows = (item.nodes || []).filter(n => n.onClick || n.events?.length || n.descriptionDev || n.ref).map(n => `<tr><td>${n.index}</td><td>${esc(n.name || n.tag)}</td><td>${n.ref ? `uses ${esc(n.ref.type)} "${esc(n.ref.key)}"` : ''}</td><td>${[n.onClick && act({ trigger: 'click', ...n.onClick }), ...(n.events || []).map(act)].filter(Boolean).join('<br>')}</td><td>${esc(n.descriptionDev)}</td></tr>`);
     const menu = (item.menuItems || []).map(m => `<li>${esc(m.parent ? `${m.parent} / ` : '')}${esc(m.label || m.name)} → ${esc(m.action)}${m.targetScreen ? ` screen "${esc(m.targetScreen.key)}"` : ''}${m.targetElement ? ` element "${esc(m.targetElement.key)}"` : ''}</li>`);
     const links = (item.links || []).map(l => `<li>${esc(l.from?.key)}${l.fromNodeName ? ` [${esc(l.fromNodeName)}]` : ''} → ${esc(l.to?.key)} (${esc(l.trigger || 'click')})${l.descriptionDev ? ` — ${esc(l.descriptionDev)}` : ''}</li>`);
+    const sandbox = row.type === 'element' && item.script && this.elementScripts
+      ? this.elementScripts.buildSandbox(row.id, { style: styleKey, animated })
+      : null;
+    const scriptDeps = (item.script?.imports || []).map(imp => `<li><code>${esc(imp.specifier)}</code> → <code>${esc(`${imp.package}@${imp.version}`)}</code> (${esc(imp.url)})${imp.integrity ? ` · SRI <code>${esc(imp.integrity)}</code>` : ' · <em>SRI unverified</em>'}</li>`);
     const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(item.name || item.key)} — ${esc(item.type)}</title>
 <meta name="generator" content="kyrpy-uiux-mcp"><meta name="uiux-uid" content="${esc(item.uid)}"><meta name="uiux-content-hash" content="${esc(item.contentHash)}">
-<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:1100px}figure{margin:0 0 16px}figure svg{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}</style>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:24px;max-width:1100px}figure{margin:0 0 16px}figure svg{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}.uiux-sandbox{border:1px solid #ccc;border-radius:10px;display:block;margin:8px 0 16px;background:#0d1117}</style>
 </head><body>
 <h1>${esc(item.label || item.name || item.key)}</h1>
 <p><code>${esc(item.type)}</code> · key <code>${esc(item.key)}</code> · style <code>${esc(styleKey)}</code></p>
 ${item.descriptionDev ? `<p>${esc(item.descriptionDev)}</p>` : ''}${item.mcpContext?.purpose ? `<p><b>Purpose:</b> ${esc(item.mcpContext.purpose)}</p>` : ''}
 ${svg ? `<figure>${svg}</figure>` : ''}
+${sandbox ? `<h2>Sandboxed Custom JS Preview</h2><p><small>Opaque-origin <code>&lt;iframe sandbox="allow-scripts" referrerpolicy="no-referrer"&gt;</code> · reviewStatus: <code>${esc(sandbox.reviewStatus)}</code></small></p><iframe class="uiux-sandbox" width="${Number(item.width) || 320}" height="${Number(item.height) || 180}" sandbox="allow-scripts" referrerpolicy="no-referrer" srcdoc="${esc(sandbox.html)}"></iframe>${scriptDeps.length ? `<h3>Pinned Public JS Imports</h3><ul>${scriptDeps.join('')}</ul>` : ''}` : ''}
 ${rows.length ? `<h2>Nodes with behaviour</h2><table><tr><th>#</th><th>Node</th><th>Contains</th><th>Interactions</th><th>Developer notes</th></tr>${rows.join('')}</table>` : ''}
 ${menu.length ? `<h2>Menu</h2><ul>${menu.join('')}</ul>` : ''}
 ${links.length ? `<h2>Navigation</h2><ul>${links.join('')}</ul>` : ''}

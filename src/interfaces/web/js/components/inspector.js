@@ -113,8 +113,10 @@ export class Inspector {
     this.root = root; this.d = designer;
     this.pendingClick = new Map();      // node id -> { type } while the user is still choosing the target
     this.screens = []; this.screensAt = 0;
+    this.scriptCache = new Map();       // element id -> { loaded: boolean, script: object | null }
+    this.scriptLoading = new Set();
     designer.on('selection', () => this.render());
-    designer.on('loaded', () => this.render());
+    designer.on('loaded', () => { this.scriptCache.clear(); this.render(); });
     designer.on('record', () => this.render());
   }
 
@@ -182,6 +184,7 @@ export class Inspector {
     else if (sel.length > 1) root.append(this.multiSection(sel));
     if (d.type === 'button') root.append(this.menuSection(d.doc.id));
     root.append(this.designSection());
+    if (d.type === 'element') root.append(this.elementScriptSection());
     root.append(this.nodesList());
     if (this.lowSections.length) root.append(...this.lowSections);
     root.scrollTop = scroll;
@@ -1010,5 +1013,170 @@ export class Inspector {
         this.field('Trigger', this.select(`a${a.id}-trg`, a.trigger, TRIGGERS, v => up({ trigger: v }))),
         this.field(infinite ? 'Repeat' : 'Repeat (times)', infinite ? this.select(`a${a.id}-it`, 'infinite', ['infinite', 'once'], v => up({ iterations: v === 'once' ? 1 : 'infinite' }))
           : this.num(`a${a.id}-it`, a.iterations, v => up({ iterations: Math.max(1, Math.round(v)) }), { min: 1 }))));
+  }
+
+  /** Sandboxed custom ES module JS & pinned public JS imports for `element` designs (zero execution on Designer origin). */
+  elementScriptSection() {
+    const doc = this.d.doc;
+    if (!doc || this.d.type !== 'element') return h('div');
+    const id = doc.id;
+    if (!this.scriptCache.has(id) && !this.scriptLoading.has(id)) {
+      this.scriptLoading.add(id);
+      api.elementScript(id)
+        .then(res => { this.scriptCache.set(id, { loaded: true, script: res?.script || null }); })
+        .catch(() => { this.scriptCache.set(id, { loaded: true, script: null }); })
+        .finally(() => { this.scriptLoading.delete(id); if (this.d.doc?.id === id) this.render(); });
+    }
+    const cached = this.scriptCache.get(id);
+    const sc = cached?.script || null;
+    const defaultCode = `export function mount(container, props, bridge) {\n  // Runs strictly inside an opaque-origin <iframe sandbox="allow-scripts">\n  const btn = document.createElement('button');\n  btn.textContent = props.label || 'Interact';\n  btn.addEventListener('click', () => bridge.emit('select', { ts: Date.now() }));\n  container.replaceChildren(btn);\n}`;
+    const enabledChk = h('input', { type: 'checkbox', checked: sc ? sc.enabled !== false : true });
+    const verifyOnSaveChk = h('input', { type: 'checkbox', checked: Boolean(sc?.imports?.length) });
+    const entryInput = h('input', { type: 'text', value: sc?.entryExport || 'mount', placeholder: 'mount', 'data-f': 'el-sc-entry', style: { fontFamily: 'Consolas, monospace' } });
+    entryInput.value = sc?.entryExport || 'mount';
+    const codeArea = h('textarea', { rows: 7, 'data-f': 'el-sc-code', style: { fontFamily: 'Consolas, monospace', fontSize: '11.5px' }, placeholder: defaultCode });
+    codeArea.value = sc?.moduleCode || '';
+    const importsArea = h('textarea', {
+      rows: 4,
+      'data-f': 'el-sc-imports',
+      style: { fontFamily: 'Consolas, monospace', fontSize: '11.5px' },
+      placeholder: '[\n  { "package": "canvas-confetti", "version": "1.9.3", "specifier": "canvas-confetti" }\n]'
+    });
+    importsArea.value = sc?.imports?.length ? JSON.stringify(sc.imports, null, 2) : '';
+
+    const parsePayload = (humanApproved = false) => {
+      let imports = [];
+      const rawImp = importsArea.value.trim();
+      if (rawImp) {
+        try {
+          imports = JSON.parse(rawImp);
+          if (!Array.isArray(imports)) throw new Error('imports must be a JSON array');
+        } catch (err) {
+          toast(`Invalid imports JSON: ${err.message}`, 'error');
+          return null;
+        }
+      }
+      const moduleCode = codeArea.value.trim() || defaultCode;
+      return {
+        enabled: enabledChk.checked,
+        runtime: 'esm',
+        entryExport: entryInput.value.trim() || 'mount',
+        moduleCode,
+        imports,
+        capabilities: sc?.capabilities || { allowNetwork: false, allowedConnectOrigins: [], allowTimers: true, allowCanvas: true },
+        propsSchema: sc?.propsSchema || {},
+        emits: sc?.emits || [],
+        verifyIntegrity: verifyOnSaveChk.checked && imports.length > 0,
+        ...(humanApproved ? { humanApproved: true } : {})
+      };
+    };
+
+    const onSave = async (humanApproved = false) => {
+      const payload = parsePayload(humanApproved);
+      if (!payload) return;
+      try {
+        const res = await api.setElementScript(id, payload);
+        this.scriptCache.set(id, { loaded: true, script: res.script });
+        toast(humanApproved ? 'Element script saved & network capability approved' : 'Sandboxed element script saved', 'ok', 1800);
+        this.render();
+      } catch (err) {
+        toast(err.message || 'Failed to save element script', 'error', 3600);
+      }
+    };
+
+    const onVerifySri = async () => {
+      try {
+        const res = await api.verifyElementScriptSri(id, {});
+        this.scriptCache.set(id, { loaded: true, script: res.script });
+        toast(`Verified sha384 SRI for ${res.script?.imports?.length || 0} CDN import(s)`, 'ok', 2000);
+        this.render();
+      } catch (err) {
+        toast(err.message || 'SRI verification failed', 'error', 3600);
+      }
+    };
+
+    const onRemove = async () => {
+      if (!(await confirmBox(`Remove custom JS module from element "${doc.key}"?`))) return;
+      try {
+        await api.deleteElementScript(id);
+        this.scriptCache.set(id, { loaded: true, script: null });
+        toast('Removed custom element script', 'ok', 1600);
+        this.render();
+      } catch (err) {
+        toast(err.message || 'Failed to remove script', 'error', 3000);
+      }
+    };
+
+    const statusBadge = !cached?.loaded
+      ? h('span', { class: 'badge' }, 'Loading…')
+      : sc
+        ? h('span', { class: `badge ${sc.reviewStatus === 'needs-human-review' ? '' : 'accent'}`, style: sc.reviewStatus === 'needs-human-review' ? { color: 'var(--warn)' } : null },
+            `${sc.enabled ? '● Active' : '○ Disabled'} · ${sc.reviewStatus}${sc.imports?.length ? ` · ${sc.imports.length} pkg` : ''}`)
+        : h('span', { class: 'badge' }, 'None');
+
+    const reviewBanner = sc?.reviewStatus === 'needs-human-review'
+      ? h('div', { style: { padding: '8px', borderRadius: '6px', border: '1px solid var(--warn, #f59e0b)', fontSize: '11px', marginBottom: '6px' } },
+          h('div', { style: { marginBottom: '6px' } }, '⚠ This script requested network capability via AI/MCP. CSP keeps connect-src \'none\' until a signed-in human approves it.'),
+          h('button', { class: 'btn small primary', onclick: () => onSave(true) }, '✓ Approve Network Capability'))
+      : null;
+
+    return this.section(
+      `Custom JS & Public Libs${sc ? ' · Sandboxed' : ''}`,
+      h('div', { class: 'row wrap', style: { gap: '6px', alignItems: 'center' } },
+        statusBadge,
+        sc?.sriVerified && sc?.imports?.length ? h('span', { class: 'muted', style: { fontSize: '10.5px' } }, '✓ sha384 SRI verified') : null
+      ),
+      reviewBanner,
+      h('div', { class: 'grid2' },
+        h('label', { class: 'row', style: { paddingTop: '14px' } }, enabledChk, h('span', {}, 'Enabled')),
+        this.field('Entry export', entryInput)
+      ),
+      this.field('ES Module (mount(container, props, bridge))', codeArea, 'full'),
+      this.field('Pinned Public JS Imports (exact x.y.z · jsdelivr / esm.sh / unpkg)', importsArea, 'full'),
+      h('label', { class: 'row', style: { fontSize: '11.5px' } }, verifyOnSaveChk, h('span', { class: 'muted' }, 'Fetch & pin sha384 Subresource Integrity (SRI) on save')),
+      h('div', { class: 'row wrap', style: { gap: '6px', marginTop: '4px' } },
+        h('button', { class: 'btn small primary', onclick: () => onSave(false) }, sc ? 'Save Script' : 'Attach Script'),
+        sc?.imports?.length ? h('button', { class: 'btn small', onclick: onVerifySri }, 'Verify SRI') : null,
+        sc ? h('button', { class: 'btn small', onclick: () => this.openElementSandboxModal(id) }, '▶ Sandbox Preview') : null,
+        sc ? h('button', { class: 'btn small danger', onclick: onRemove }, 'Remove') : null
+      ),
+      h('div', { class: 'muted', style: { fontSize: '10.5px' } }, 'Never runs on the Designer origin: executes strictly inside <iframe sandbox="allow-scripts" referrerpolicy="no-referrer"> with nonce CSP.')
+    );
+  }
+
+  async openElementSandboxModal(elementId) {
+    try {
+      const sb = await api.elementScriptSandbox(elementId, { style: state.themeKey });
+      const logBox = h('pre', { style: { margin: 0, padding: '8px', maxHeight: '140px', overflowY: 'auto', fontSize: '11px', background: 'rgba(0,0,0,0.28)', borderRadius: '6px' } }, 'Waiting for opaque-origin sandbox events…\n');
+      const frame = h('iframe', {
+        sandbox: 'allow-scripts',
+        referrerpolicy: 'no-referrer',
+        srcdoc: sb.html,
+        title: `Sandboxed preview · ${sb.element?.key || elementId}`,
+        style: { width: '100%', height: `${Math.min(540, Math.max(220, (sb.element?.height || 240) + 48))}px`, border: '1px solid var(--line)', borderRadius: '8px', background: 'transparent' }
+      });
+      const onMsg = ev => {
+        if (ev.source !== frame.contentWindow) return;
+        const d = ev.data;
+        if (!d || d.__uiuxSandbox !== 1) return;
+        logBox.textContent += `[${new Date().toISOString().slice(11, 19)}] ${d.event}: ${JSON.stringify(d.detail ?? {})}\n`;
+        logBox.scrollTop = logBox.scrollHeight;
+      };
+      window.addEventListener('message', onMsg);
+      const m = modal({
+        title: `Sandboxed Element Preview · ${sb.element?.key || elementId}`,
+        wide: true,
+        content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+          h('div', { class: 'muted', style: { fontSize: '11px', wordBreak: 'break-all' } }, `Isolation: sandbox="allow-scripts" (opaque null origin) · CSP: ${sb.csp}`),
+          frame,
+          h('div', { style: { fontSize: '11px', fontWeight: '600' } }, 'postMessage Bridge Log'),
+          logBox
+        )
+      });
+      const origClose = m.close?.bind(m);
+      if (origClose) m.close = () => { window.removeEventListener('message', onMsg); origClose(); };
+    } catch (err) {
+      toast(err.message || 'Could not open sandbox preview', 'error', 3200);
+    }
   }
 }

@@ -149,7 +149,8 @@ export class ApiBridge {
     }
     return {
       ...u,
-      role: u.role === 'viewer' ? 'viewer' : 'designer'
+      role: u.role === 'viewer' ? 'viewer' : 'designer',
+      viaMcp: true
     };
   }
 
@@ -492,6 +493,11 @@ export class ApiBridge {
       const rec = this.#findItem(c, 'button', hit.params.id, boundProjectId);
       if (!isMutation) this.#assertItemReadable(c, rec, 'button', bound, actor, boundProjectId);
       else this.#assertItemEditableInProject(c, rec, 'button', boundProjectId);
+      hit.params.id = String(rec.id);
+    } else if (hit.pattern.startsWith('/api/elements/:id/script')) {
+      const rec = this.#findItem(c, 'element', hit.params.id, boundProjectId);
+      if (!isMutation) this.#assertItemReadable(c, rec, 'element', bound, actor, boundProjectId);
+      else this.#assertItemEditableInProject(c, rec, 'element', boundProjectId);
       hit.params.id = String(rec.id);
     } else if (hit.pattern.startsWith('/api/workflows/:id')) {
       const rec = this.#findItem(c, 'workflow', hit.params.id, boundProjectId);

@@ -11,8 +11,8 @@ import { noteSkipped, parentsFirst, ForbiddenError } from './service-shared.js';
  * - Only `admin` or `superadmin` can purge `public` or built-in items; public-library (public user) items: superadmin only.
  */
 export class TrashService {
-  constructor({ trash, services, workflows, designs, nodes, animations, menus, auth, transaction }) {
-    Object.assign(this, { trash, services, workflows, designs, nodes, animations, menus, auth, transaction });
+  constructor({ trash, services, workflows, designs, nodes, animations, menus, elementScripts = null, auth, transaction }) {
+    Object.assign(this, { trash, services, workflows, designs, nodes, animations, menus, elementScripts, auth, transaction });
   }
 
   /** Every user has a trash of their own: with an actor, only the items that actor deleted are visible or actionable. */
@@ -118,6 +118,10 @@ export class TrashService {
             idMap.set(mi.id, made.id);
           } catch (e) { skipped.push(noteSkipped('trash restore', e)); }
         }
+      }
+      if (item.itemType === 'element' && this.elementScripts && snap.elementScript) {
+        try { this.elementScripts.upsert(created.id, snap.elementScript, { actorId: created.creatorId }); }
+        catch (e) { skipped.push(noteSkipped('trash restore', e)); }
       }
       if (freeId) {
         for (const rn of snap.referringNodes || []) {

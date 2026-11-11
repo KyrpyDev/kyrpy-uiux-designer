@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 10;
+export const SEED_VERSION = 11;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -547,6 +547,36 @@ export const SCHEMA_REGISTRY_SEED = {
       api_key_id: 'The account API key (`api_keys.id`).',
       project_id: 'The focused project (`projects.id`).',
       updated_at: 'ISO time the focus was set.',
+      mcp_context: C.mcp_context
+    }
+  },
+  element_scripts: {
+    purpose: 'Sandboxed custom ES module JavaScript and verified public JS library dependencies attached to UI elements.',
+    usage: 'Read and written through uiux_element_script (or uiux_get_item / uiux_create_item / uiux_update_item / uiux_stage_item on elements); executed strictly inside <iframe sandbox="allow-scripts" referrerpolicy="no-referrer"> with nonce CSP and connect-src "none".',
+    constraints: [
+      'One script row per element (`element_id` is unique).',
+      'Custom JS never runs on the Designer origin; previews use an opaque-origin iframe without allow-same-origin.',
+      'Public JS imports must use allowlisted HTTPS CDNs (cdn.jsdelivr.net, esm.sh, unpkg.com) with exact semver and sha384/sha512 SRI.'
+    ],
+    columns: {
+      id: C.id,
+      uid: C.uid,
+      element_id: 'Element this script belongs to (`elements.id`, unique).',
+      enabled: '1 = execute inside sandboxed previews and HTML exports; 0 = render SVG fallback only.',
+      runtime: 'Execution model: `esm` (ES module exporting entry_export) or `declarative`.',
+      entry_export: 'Exported function name invoked as `fn(container, props, bridge)` (default `mount`).',
+      module_code: 'Validated ES module source (up to 64 KB; eval, new Function, cookie/storage/parent DOM access forbidden).',
+      imports_json: 'JSON array of pinned public JS dependencies (`{ specifier, package, version, subpath?, url, origin, integrity }`).',
+      capabilities_json: 'JSON capability manifest (`{ domOnly, allowNetwork, allowCanvas, allowWebGL, allowTimers, allowedConnectOrigins }`).',
+      props_schema_json: 'JSON object describing typed runtime props passed to `mount(container, props, bridge)`.',
+      emits_json: 'JSON array of declared events emitted via `bridge.emit(event, detail)` over postMessage.',
+      code_hash: 'sha256 hex digest of `module_code`.',
+      sri_verified: '1 when every entry in `imports_json` carries a verified cryptographic Subresource Integrity hash.',
+      review_status: 'Security review state: `verified`, `needs-sri`, `needs-human-review`, or `approved`.',
+      created_by: 'User who created the script (`users.id`).',
+      updated_by: 'User who last updated the script (`users.id`).',
+      created_at: 'ISO creation time.',
+      updated_at: 'ISO time of the last change.',
       mcp_context: C.mcp_context
     }
   },

@@ -290,6 +290,13 @@ export class ChangesetService {
     }
     if (conv && !payload.svg) this.#fixNodeTargets(type, id);
     if (type === 'button' && Array.isArray(item.menuItems) && item.menuItems.length) this.#insertMenu(principal, id, item.menuItems);
+    if (type === 'element' && this.elementScripts && item.script !== undefined) {
+      if (item.script === null) {
+        this.elementScripts.remove(id, { checkEditable: false });
+      } else {
+        this.elementScripts.setSync(id, item.script, { actorId: this.agentUserId?.() ?? principal.user.id });
+      }
+    }
     this.#setColumns(type, id, { uid: op === 'create' ? itemUid : null, mcpContext: item.mcpContext });
     return id;
   }
@@ -612,7 +619,7 @@ export class ChangesetService {
       if (live && live.project_id === P && this.hashes.get(e.type, live.id) === e.contentHash) continue;
       const item = this.versions.storedItem(e.uid, e.contentHash);
       if (!item) { skipped.push({ type: e.type, key: e.key, reason: 'content of this version was not stored' }); continue; }
-      try { this.stage(principal, { changeset: cs.changeset, item: { ...item, uid: e.uid }, allowDuplicate: true, restore: true }); } catch (err) {
+      try { this.stage(principal, { changeset: cs.changeset, item: { ...item, uid: e.uid, ...(e.type === 'element' && item.script === undefined ? { script: null } : {}) }, allowDuplicate: true, restore: true }); } catch (err) {
         if (!(err instanceof DomainError)) throw err;
         skipped.push({ type: e.type, key: e.key, reason: err.message });
       }

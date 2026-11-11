@@ -18,8 +18,8 @@ import { noteSkipped, parentsFirst, ForbiddenError } from './service-shared.js';
  *    to Trash while rejecting attempts to empty immutable default/public libraries.
  */
 export class LibraryTransferService {
-  constructor({ services, workflows, menus, projects, auth, transaction, render = null, parseSvg = null }) {
-    Object.assign(this, { services, workflows, menus, projects, auth, transaction, render, parseSvg });
+  constructor({ services, workflows, menus, elementScripts = null, projects, auth, transaction, render = null, parseSvg = null }) {
+    Object.assign(this, { services, workflows, menus, elementScripts, projects, auth, transaction, render, parseSvg });
   }
 
   #normalizeTargetProjects(projectIds, { allowEmpty = false } = {}) {
@@ -256,6 +256,10 @@ export class LibraryTransferService {
           menuIdMap.set(mi.id, createdMi.id);
         } catch (e) { noteSkipped('library copy', e); }
       }
+    }
+    if (type === 'element' && this.elementScripts) {
+      try { this.elementScripts.copy(src.id, copyRec.id, { actorId: effCreatorId }); }
+      catch (e) { noteSkipped('library copy', e); }
     }
 
     const fullCopy = svc.get(copyRec.id);
