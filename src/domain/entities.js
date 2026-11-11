@@ -114,7 +114,8 @@ export const CLICK_ACTIONS = [
   'drawer-menu',
   'slider-vertical',
   'slider-horizontal',
-  'carousel-menu'
+  'carousel-menu',
+  'scroll-repeater'
 ];
 export const EVENT_ACTIONS = CLICK_ACTIONS;
 export const DRAWER_SIDES = ['left', 'right', 'top', 'bottom'];
@@ -126,7 +127,8 @@ export const CLICK_TARGET_TYPE = {
   drawer: 'element',
   element: 'element',
   'show-element': 'element',
-  toolbar: 'element'
+  toolbar: 'element',
+  'scroll-repeater': 'element'
 };
 
 /** Cleans a click/event action: null for "nothing happens", else a validated object. Throws ValidationError on a malformed one. */
@@ -138,6 +140,12 @@ export function normalizeClickAction(input) {
   if (type === 'back') return { type };
   if (type === 'animate') return { type, animationType: str(input.animationType, 'pulse'), ...(input.targetNodeId ? { targetNodeId: Number(input.targetNodeId) } : {}) };
   if (type === 'toggle') return { type, ...(input.targetNodeId ? { targetNodeId: Number(input.targetNodeId) } : {}) };
+  if (type === 'scroll-repeater') {
+    const targetId = input.targetId != null && input.targetId !== '' ? Number(input.targetId) : null;
+    const out = { type };
+    if (targetId && Number.isInteger(targetId) && targetId > 0) out.targetId = targetId;
+    return out;
+  }
   if (['radial-menu', 'drawer-menu', 'slider-vertical', 'slider-horizontal', 'carousel-menu'].includes(type)) {
     const targetId = input.targetId != null && input.targetId !== '' ? Number(input.targetId) : null;
     const out = { type };
@@ -451,6 +459,8 @@ export const DEFAULT_MENU = {
   hubCenterSize: 1,     // hub bar sizes as a fraction of the centre item size: centre (even bars have two centres) ...
   hubSideSize: 0.6,     // ... the buttons next to the centre ...
   hubEdgeSize: 0.4,     // ... and the outer ones: even 0.4 0.6 1 1 0.6 0.4, odd 0.4 0.6 1 0.6 0.4
+  hubCenterScrollRepeater: true,// hub: pressing down & sliding up/down on the centered button scrolls repeater container
+  hubRepeaterTargetId: null,    // hub: specific repeater element ID to scroll (null = auto-bind to repeater on screen)
   rotateOnOpen: 45      // degrees the centre icon turns while the menu is open (0 = off)
 };
 

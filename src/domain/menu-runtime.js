@@ -391,6 +391,156 @@ export function bindMenus(root, opts) {
     return opts.keepOpen ? st : { open: true, path: [], c: prev, prev: prev };
   }
   var doc = root.ownerDocument || (typeof document !== 'undefined' ? document : null);
+  function findRepeaterStage(btn, itemEl) {
+    var targetId = (itemEl && (itemEl.getAttribute('data-target-repeater') || itemEl.getAttribute('data-popup-element-id') || itemEl.getAttribute('data-popup-element') || (itemEl.getAttribute('data-action') === 'scroll-repeater' ? itemEl.getAttribute('data-target') : null))) ||
+                   (btn && (btn.getAttribute('data-target-repeater') || btn.getAttribute('data-hub-repeater-target')));
+    var d = doc;
+    var screen = (btn && btn.closest && (btn.closest('.ud-screen') || btn.closest('svg'))) || root;
+    if (targetId) {
+      var sel = '[data-repeater-for="' + targetId + '"], [data-container-for="' + targetId + '"], [data-el="' + targetId + '"], #' + targetId;
+      var found = (screen && screen.querySelector && screen.querySelector(sel)) || (root && root.querySelector && root.querySelector(sel)) || (d && d.querySelector && d.querySelector(sel));
+      if (found) {
+        var st = (found.getAttribute && found.getAttribute('data-rpt-axis')) ? found : (found.querySelector ? found.querySelector('.ud-rpt-stage') : null);
+        if (st) return st;
+      }
+    }
+    var stage = (screen && screen.querySelector) ? screen.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage') : null;
+    if (!stage && root && root.querySelector) stage = root.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage');
+    return stage;
+  }
+  function moveRepeater(st, delta) {
+    if (!st) return false;
+    var track = st.querySelector ? st.querySelector('.ud-rpt-track') : null;
+    if (!track) return false;
+    var axis = st.getAttribute('data-rpt-axis') || 'y';
+    var loop = parseFloat(st.getAttribute('data-rpt-loop')) || 0;
+    var max = parseFloat(st.getAttribute('data-rpt-max')) || 0;
+    if (!loop && !max) return false;
+    var off = st.__udOff;
+    if (off == null) {
+      off = 0;
+      try {
+        var d = doc;
+        var view = (d && d.defaultView) || (typeof window !== 'undefined' ? window : null);
+        if (view && view.getComputedStyle) {
+          var cs = view.getComputedStyle(track);
+          var tf = cs ? (cs.transform || cs.webkitTransform || '') : '';
+          var m = tf ? tf.match(/matrix\(([^)]+)\)/) : null;
+          if (m) {
+            var p = m[1].split(',');
+            off = -(parseFloat(p[axis === 'x' ? 4 : 5]) || 0);
+          }
+        }
+      } catch (e) { off = 0; }
+    }
+    var next = off + delta;
+    next = loop ? ((next % loop) + loop) % loop : Math.max(0, Math.min(max, next));
+    if (!loop && next === off && st.__udOff != null) return false;
+    st.__udOff = next;
+    if (track.style) {
+      track.style.animation = 'none';
+      track.style.transform = (axis === 'x' ? 'translateX(' : 'translateY(') + (-Math.round(next * 100) / 100) + 'px)';
+    }
+    if (st.__udT) clearTimeout(st.__udT);
+    var period = parseFloat(st.getAttribute('data-rpt-period')) || 0;
+    if (period) {
+      st.__udT = setTimeout(function () {
+        var slide = st.getAttribute('data-rpt-kind') === 'slide';
+        var step = parseFloat(st.getAttribute('data-rpt-step')) || 1;
+        var count = parseFloat(st.getAttribute('data-rpt-count')) || 1;
+        var part = slide ? Math.round(next / step) / Math.max(1, count) : (loop ? next / loop : 0);
+        if (track.style) {
+          track.style.transform = '';
+          track.style.animation = '';
+          track.style.animationDelay = Math.round(-part * period) + 'ms';
+        }
+        st.__udOff = null;
+      }, 1600);
+    }
+    return true;
+  }
+  var rptDrag = null;
+  var suppressClickUntil = 0;
+  function onPointerDown(ev) {
+    if (ev.button) return;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-rm="center"], .rm-hub-item, .rm-item') : null;
+    if (!t) return;
+    var btn = t.closest ? t.closest('.ud-btn') : null;
+    if (!btn) return;
+    var isCenter = t.getAttribute('data-rm') === 'center' || t.getAttribute('data-hub-pos') === 'center';
+    var isRptAction = t.getAttribute('data-action') === 'scroll-repeater' || !!t.getAttribute('data-target-repeater');
+    var m = btn.querySelector ? btn.querySelector('.ud-menu') : null;
+    var centerScrollAllowed = isHub(btn) ? (t.getAttribute('data-hub-center-scroll') !== '0' && (!m || m.getAttribute('data-hub-center-scroll') !== '0')) : isRptAction;
+    if (!isRptAction && (!isCenter || !centerScrollAllowed)) return;
+
+    var stage = findRepeaterStage(btn, t);
+    if (!stage) return;
+
+    var scale = 1;
+    var svg = (stage.ownerSVGElement) || (root && root.ownerSVGElement) || (root && root.matches && root.matches('svg') ? root : null);
+    if (svg && svg.getScreenCTM) {
+      try {
+        var ctm = svg.getScreenCTM();
+        if (ctm) {
+          var det = ctm.a * ctm.d - ctm.b * ctm.c;
+          if (det) scale = Math.sqrt(Math.abs(det)) || 1;
+        }
+      } catch (e) {}
+    }
+    rptDrag = {
+      btn: btn,
+      target: t,
+      stage: stage,
+      scale: scale,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
+      moved: false
+    };
+  }
+  function onPointerMove(ev) {
+    if (!rptDrag) return;
+    var dx = rptDrag.lastX - ev.clientX;
+    var dy = rptDrag.lastY - ev.clientY;
+    var totalX = Math.abs(ev.clientX - rptDrag.startX);
+    var totalY = Math.abs(ev.clientY - rptDrag.startY);
+    if (!rptDrag.moved && (totalY >= 4 || totalX >= 4)) {
+      rptDrag.moved = true;
+    }
+    if (!rptDrag.moved) return;
+
+    var axis = rptDrag.stage.getAttribute('data-rpt-axis') || 'y';
+    var d = axis === 'x' ? (Math.abs(dx) >= Math.abs(dy) ? dx : dy) : (Math.abs(dy) >= Math.abs(dx) ? dy : dx);
+    rptDrag.lastX = ev.clientX;
+    rptDrag.lastY = ev.clientY;
+    if (moveRepeater(rptDrag.stage, d / (rptDrag.scale || 1))) {
+      if (ev.preventDefault) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+    }
+  }
+  function onPointerEnd(ev) {
+    if (rptDrag) {
+      if (rptDrag.moved) {
+        suppressClickUntil = Date.now() + 250;
+      }
+      rptDrag = null;
+    }
+  }
+  if (root.addEventListener) {
+    root.addEventListener('pointerdown', onPointerDown);
+    root.addEventListener('pointermove', onPointerMove);
+    root.addEventListener('pointerup', onPointerEnd);
+    root.addEventListener('pointercancel', onPointerEnd);
+    root.addEventListener('mousedown', function (ev) { if (!ev.pointerType) onPointerDown(ev); });
+    root.addEventListener('mousemove', function (ev) { if (!ev.pointerType) onPointerMove(ev); });
+    root.addEventListener('mouseup', function (ev) { if (!ev.pointerType) onPointerEnd(ev); });
+  }
+  if (doc && doc.addEventListener) {
+    doc.addEventListener('pointermove', onPointerMove);
+    doc.addEventListener('pointerup', onPointerEnd);
+    doc.addEventListener('pointercancel', onPointerEnd);
+  }
   function hubBack(ev) {
     if (!root.querySelectorAll) return;
     Array.prototype.forEach.call(root.querySelectorAll('.ud-btn'), function (btn) {
@@ -411,6 +561,11 @@ export function bindMenus(root, opts) {
     set(btn, { open: true, path: [], c: c, prev: c });
   }, { passive: false });
   root.addEventListener('click', function (ev) {
+    if (suppressClickUntil && Date.now() < suppressClickUntil) {
+      if (ev.stopPropagation) ev.stopPropagation();
+      if (ev.preventDefault) ev.preventDefault();
+      return;
+    }
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-rm="center"], .rm-item') : null;
     if (!t) return;
     var btn = t.closest('.ud-btn');
@@ -454,5 +609,5 @@ export function bindMenus(root, opts) {
     set(btn, next);
   });
   if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll('.ud-btn'), function (btn) { if (isHub(btn)) apply(btn, get(btn)); });
-  return { get: get, set: set, apply: apply };
+  return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater };
 }

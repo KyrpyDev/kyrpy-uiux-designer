@@ -328,7 +328,13 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
         // one pre-rendered button per ring item; the runtime places it (left / centre / right / hidden) with --x --y --k --o
         const r = hub.big / 2;
         const lbl = renderLabel(it, r, { isHubRoot: true, dx: 0, dy: 0 });
-        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
+        const popupAttr = (it.targetElementKey || it.targetElementId)
+          ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
+          : '';
+        const rptAttr = (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
+          ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"`
+          : '';
+        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
           + `<title>${esc(it.label || it.name)}</title>${ctx.editor ? `<g class="rm-item-body">${itemBody(it, r, hubIcon)}</g>` : itemBody(it, r, hubIcon)}${lbl.svg}</g>`;
       }
       const p = pos[i], r = p.s / 2;
@@ -336,7 +342,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
       const popupAttr = (it.targetElementKey || it.targetElementId)
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
         : '';
-      return `<g class="rm-item" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
+      const rptAttr = (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
+        ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"`
+        : '';
+      return `<g class="rm-item" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
         + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, iconSize)}${lbl.svg}</g>`;
     });
     const innerItems = isCarousel
@@ -361,7 +370,9 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   };
   walk(tree, '', null);
   const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
-  const hit = `<circle class="rm-hit" data-rm="center" cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
+  const hubScrollOn = cfg.hubCenterScrollRepeater === false ? '0' : '1';
+  const hubScrollTarget = cfg.hubRepeaterTargetId ? ` data-target-repeater="${esc(cfg.hubRepeaterTargetId)}"` : '';
+  const hit = `<circle class="rm-hit" data-rm="center" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget} cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
   // hub menus: a small "up one level" button at the lower right of the centre, shown only inside sub items (the runtime sets data-hubdepth)
   let back = '';
   if (isHub) {
@@ -369,7 +380,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
-  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}" data-hub-count="${hubCount(cfg)}" data-sub-inside="${cfg.hubSubInside === false ? 0 : 1}"` : '';
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}" data-hub-count="${hubCount(cfg)}" data-sub-inside="${cfg.hubSubInside === false ? 0 : 1}" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget ? ` data-hub-repeater-target="${esc(cfg.hubRepeaterTargetId)}"` : ''}` : '';
   const labelAttrs = labelsOn ? ` data-show-labels="1" data-label-pos="${esc(cfg.labelPosition || 'auto')}"` : '';
   return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-orientation="${esc(menuOrientation(cfg))}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-hub-spin="${Number(cfg.hubSpin) || 0}" data-hub-fit="${cfg.hubFit ? 1 : 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${labelAttrs}${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }

@@ -100,10 +100,10 @@ export function pickButton(currentId = null, excludeId = null) {
  * Two tabs (Screen · Element), each listing this project's items, my other projects' and the public ones, with previews.
  * Resolves to { screen } | { element } (records), { create: true } (new screen in a new tab), { none: true } or null (cancelled).
  */
-export function pickTarget({ currentScreenId = null, currentElementId = null, projectId = null, allowCreate = true } = {}) {
+export function pickTarget({ currentScreenId = null, currentElementId = null, currentAction = '', projectId = null, allowCreate = true } = {}) {
   return new Promise(resolve => {
-    let done = false, m, tab = currentElementId && !currentScreenId ? 'element' : 'screen';
-    const all = { screen: null, element: null };
+    let done = false, m, tab = currentAction === 'scroll-repeater' ? 'repeater' : (currentElementId && !currentScreenId ? 'element' : 'screen');
+    const all = { screen: null, element: null, repeater: null };
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const q = h('input', { type: 'search', 'data-f': 'pick-target-q' });
     const list = h('div', { 'data-f': 'pick-target-list', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '10px', maxHeight: '440px', overflow: 'auto' } });
@@ -112,7 +112,7 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, pr
       const cur = type === 'screen' ? currentScreenId : currentElementId;
       return h('button', { class: `cell${s.id === cur ? ' sel' : ''}`, type: 'button', [`data-${type}-id`]: String(s.id), title: `${s.label || s.name} (${s.key})`,
         style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px', cursor: 'pointer' }, onclick: () => { fin({ [type]: s }); m.close(); } },
-        h('img', { loading: 'lazy', alt: s.name, style: type === 'screen' ? { width: '96px', height: '160px', objectFit: 'contain' } : { width: '104px', height: '104px', objectFit: 'contain' }, src: api.svgUrl(type, s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
+        h('img', { loading: 'lazy', alt: s.name, style: type === 'screen' ? { width: '96px', height: '160px', objectFit: 'contain' } : { width: '104px', height: '104px', objectFit: 'contain' }, src: api.svgUrl(type === 'repeater' ? 'element' : type, s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
         h('div', { style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.name),
         group(s) !== 'here' ? h('span', { class: 'badge', title: `Selecting it copies the ${type} into this project (you name the copy)` }, '⧉ copied') : null);
     };
@@ -120,6 +120,16 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, pr
     const tabs = h('div', { class: 'row', role: 'tablist' });
     const fill = () => {
       clear(list);
+      if (tab === 'repeater') {
+        const autoBtn = h('button', {
+          class: 'btn primary',
+          type: 'button',
+          'data-f': 'pick-repeater-auto',
+          style: { gridColumn: '1/-1', textAlign: 'center', padding: '10px', fontSize: '12px', fontWeight: 600 },
+          onclick: () => { fin({ repeaterAuto: true }); m.close(); }
+        }, '⟳ Auto-bind: Tie to Repeater Container on screen (Slide to scroll)');
+        list.append(autoBtn);
+      }
       const rows = all[tab];
       if (!rows) return list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Loading ${tab}s…`));
       const t = q.value.trim().toLowerCase();
@@ -129,37 +139,54 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, pr
         const part = hit.filter(s => group(s) === g);
         if (part.length) list.append(head(`${title} · ${part.length}`), ...part.slice(0, 120).map(s => card(tab, s)));
       }
-      if (!hit.length) list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, rows.length ? `No ${tab}s match.` : `No ${tab}s yet.`));
+      if (!hit.length && tab !== 'repeater') list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, rows.length ? `No ${tab}s match.` : `No ${tab}s yet.`));
     };
     const newBtn = allowCreate ? h('button', { class: 'btn primary', 'data-f': 'pick-screen-new', onclick: () => { fin({ create: true }); m.close(); } }, '＋ New screen (new tab)') : null;
     const paint = () => {
-      clear(tabs); tabs.append(tabBtn('screen', '🖥 Go to screen'), tabBtn('element', '▣ Show element as popup'));
-      q.placeholder = tab === 'screen' ? 'Search screens of this project, my projects and the public library…' : 'Search elements of this project, my projects and the public library…';
+      clear(tabs); tabs.append(tabBtn('screen', '🖥 Go to screen'), tabBtn('element', '▣ Show element as popup'), tabBtn('repeater', '⟳ Scroll repeater'));
+      q.placeholder = tab === 'screen' ? 'Search screens of this project, my projects and the public library…' : tab === 'repeater' ? 'Search repeater elements or pick auto-bind…' : 'Search elements of this project, my projects and the public library…';
       if (newBtn) newBtn.hidden = tab !== 'screen';
       fill();
     };
     q.addEventListener('input', fill);
-    m = modal({ title: 'When clicked: go to a screen or show an element', wide: true, onClose: () => fin(null),
+    m = modal({ title: 'When clicked: go to a screen, show element or scroll repeater', wide: true, onClose: () => fin(null),
       content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item either routes to a screen or opens an element as a popup / modal box: choosing one clears the other.'), q, list),
+        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater container when slid.'), q, list),
       actions: close => [newBtn,
         h('button', { class: 'btn', 'data-f': 'pick-target-none', onclick: () => { fin({ none: true }); close(); } }, 'Nothing (no screen, no popup)'),
         h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')].filter(Boolean) });
     paint();
-    for (const type of ['screen', 'element']) api.list(type, '', { includePublic: true }).then(rows => { all[type] = rows; if (tab === type) fill(); })
-      .catch(e => { all[type] = []; if (tab === type) { clear(list); list.append(h('div', { class: 'muted' }, `Could not load ${type}s: ${e.message}`)); } });
+    for (const type of ['screen', 'element']) api.list(type, '', { includePublic: true }).then(rows => {
+      all[type] = rows;
+      if (type === 'element') {
+        all.repeater = rows.filter(e => e.key === 'html-repeater' || e.meta?.containerType === 'repeater' || e.role === 'repeater-container' || (e.attrs && e.attrs['data-container'] === 'repeater'));
+        if (!all.repeater.length) all.repeater = rows;
+      }
+      if (tab === type || (tab === 'repeater' && type === 'element')) fill();
+    }).catch(e => { all[type] = []; if (tab === type) { clear(list); list.append(h('div', { class: 'muted' }, `Could not load ${type}s: ${e.message}`)); } });
     setTimeout(() => q.focus(), 30);
   });
 }
 
 /**
- * Turns a pickTarget result into the menu item fields { targetScreenId, targetElementId } (exactly one set, or both null).
+ * Turns a pickTarget result into the menu item fields { targetScreenId, targetElementId, action } (exactly one set, or both null).
  * A screen / element of another project or of the public library is copied into `projectId` first (the user names the copy).
  * Returns null when cancelled; `create` results are handled by the caller.
  */
 export async function targetPatch(r, projectId) {
   if (!r || r.create) return null;
-  if (r.none) return { targetScreenId: null, targetElementId: null };
+  if (r.none) return { targetScreenId: null, targetElementId: null, action: '' };
+  if (r.repeaterAuto) return { targetScreenId: null, targetElementId: null, action: 'scroll-repeater', type: 'repeater' };
+  if (r.repeater) {
+    let target = r.repeater;
+    if (Number(target.projectId) !== Number(projectId) || isPublicLibraryItem(target)) {
+      const name = await promptBox(`Copy “${target.name}” into this project`, { label: 'Name of the copy', value: `${target.name} copy`, okLabel: 'Copy and link' });
+      if (!name?.trim()) return null;
+      try { target = await api.cloneDesign('element', target.id, { name: name.trim(), projectId }); } catch (e) { toast(e.message, 'error'); return null; }
+      toast(`Copied as “${target.name}”`, 'ok', 1800);
+    }
+    return { targetScreenId: null, targetElementId: target.id, action: 'scroll-repeater', target, type: 'element' };
+  }
   const type = r.screen ? 'screen' : 'element';
   let target = r[type];
   if (Number(target.projectId) !== Number(projectId) || isPublicLibraryItem(target)) {
@@ -171,11 +198,15 @@ export async function targetPatch(r, projectId) {
   return { targetScreenId: type === 'screen' ? target.id : null, targetElementId: type === 'element' ? target.id : null, target, type };
 }
 
-/** One-line summary of what a menu item does when clicked. */
-export function targetSummary(screenId, elementId, recs = {}) {
+/** One-line summary of what a menu item does when clicked or slid. */
+export function targetSummary(screenId, elementId, recs = {}, action = '') {
+  if (action === 'scroll-repeater') {
+    if (elementId) { const e = recs.element || findDesign('element', elementId); return `⟳ Scrolls repeater “${e?.name ?? `#${elementId}`}”`; }
+    return '⟳ Scrolls repeater container on screen (auto-bind)';
+  }
   if (screenId) { const s = recs.screen || findDesign('screen', screenId); return `🖥 Goes to screen “${s?.name ?? `#${screenId}`}”`; }
   if (elementId) { const e = recs.element || findDesign('element', elementId); return `▣ Shows element “${e?.name ?? `#${elementId}`}” as popup`; }
-  return 'Choose screen or element…';
+  return 'Choose screen, popup element or repeater…';
 }
 
 export async function menuItemDialog({ buttonId, item = null, parentId = null }) {
@@ -189,14 +220,30 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const label = h('input', { type: 'text', value: item?.label ?? '', placeholder: 'Shown to users' });
     const name = h('input', { type: 'text', value: item?.name ?? '', placeholder: 'variable-name (dashed words)', style: { fontFamily: 'Consolas, monospace' } });
-    const action = h('input', { type: 'text', value: item?.action ?? '', placeholder: 'event name for leaf items, e.g. delete-folder' });
+    const action = h('input', { type: 'text', value: item?.action ?? '', placeholder: 'event name for leaf items, or scroll-repeater' });
+    const actionPreset = h('select', { class: 'btn small', style: { minWidth: '120px' }, onchange: () => {
+      if (actionPreset.value) action.value = actionPreset.value;
+      paintTarget();
+    } }, [
+      ['', 'Action preset…'],
+      ['scroll-repeater', '⟳ Scroll Repeater']
+    ].map(([v, l]) => h('option', { value: v, selected: (item?.action === v) }, l)));
     const targetBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-target', style: { width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
-    const paintTarget = () => { targetBtn.textContent = targetSummary(targetScreenId, targetElementId, targetRecs); targetBtn.title = `${targetBtn.textContent}: click to choose a screen to go to or an element to show as a popup`; };
+    const paintTarget = () => { targetBtn.textContent = targetSummary(targetScreenId, targetElementId, targetRecs, action.value.trim()); targetBtn.title = `${targetBtn.textContent}: click to choose a screen to go to, an element popup, or repeater container to scroll`; };
     targetBtn.addEventListener('click', async () => {
-      const r = await pickTarget({ currentScreenId: targetScreenId, currentElementId: targetElementId, projectId, allowCreate: false });
+      const r = await pickTarget({ currentScreenId: targetScreenId, currentElementId: targetElementId, currentAction: action.value.trim(), projectId, allowCreate: false });
       const p = await targetPatch(r, projectId);
       if (!p) return;
-      targetScreenId = p.targetScreenId; targetElementId = p.targetElementId; targetRecs = p.target ? { [p.type]: p.target } : {};
+      targetScreenId = p.targetScreenId; targetElementId = p.targetElementId;
+      if (p.action !== undefined) {
+        action.value = p.action;
+        actionPreset.value = p.action === 'scroll-repeater' ? 'scroll-repeater' : '';
+      }
+      targetRecs = p.target ? { [p.type]: p.target } : {};
+      paintTarget();
+    });
+    action.addEventListener('input', () => {
+      actionPreset.value = action.value.trim() === 'scroll-repeater' ? 'scroll-repeater' : '';
       paintTarget();
     });
     paintTarget();
@@ -263,8 +310,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
         h('div', { class: 'row wrap', title: 'The item is drawn with this library button (its shape and style). The icon above replaces the button\'s own icon.' }, btnBtn, btnLabel),
         item ? h('div', { class: 'field' }, h('span', {}, 'Parent item (click one in the tree to move this item under it)'), treeBox) : null,
         h('div', { class: 'row wrap' },
-          h('label', { class: 'field grow' }, h('span', {}, 'Action (event name)'), action),
-          h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked (screen or popup element)'), targetBtn)
+          h('label', { class: 'field grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, 'Action (event name)'), actionPreset), action),
+          h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked or slid (screen, popup or repeater)'), targetBtn)
         ),
         h('label', { class: 'field' }, h('span', {}, 'description-dev'), dev)),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')] });
@@ -467,6 +514,9 @@ export class MenuEditor {
         if (!this.d.actionsLive && !this.d.menuLive) return;
         const btnEl = designer.stage.querySelector(`.ud-btn[data-menu="${a.menu}"]`) || designer.stage.querySelector('.ud-btn');
         if (btnEl) this.ctl.set(btnEl, { open: false, path: [] });
+        if (a.action === 'scroll-repeater') {
+          return toast(`⟳ Menu item “${a.item}” bound to repeater scroll (press down & slide to scroll)`, 'info', 2200);
+        }
         if (a.targetElementId || a.targetElement) {
           const el = state.library.elements.find(e => String(e.id) === String(a.targetElementId) || e.key === a.targetElement || String(e.id) === String(a.targetElement));
           if (el) {
