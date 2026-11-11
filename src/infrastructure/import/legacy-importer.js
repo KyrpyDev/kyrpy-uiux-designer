@@ -8,6 +8,8 @@ import { WORKFLOWS } from './default-workflows.js';
 import { labelFromKey } from '../../domain/naming.js';
 import { DEFAULT_MENU as menuDefaults, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, DEFAULT_BUTTON_TEMPLATES, buttonStyleFrameKey, buttonStyleFrameNodes, buttonStyleFrameSize, isButtonStyleFrame, isDesignButtonTemplate, designButtonTemplateNodes } from '../../domain/entities.js';
 import { pathDevDescription, iconDevDescription, buttonDevDescription, menuItemDevDescription, elementDevDescription, screenDevDescription, workflowDevDescription } from '../../domain/dev-description.js';
+import { seedAstryxThemes } from '../../domain/astryx-theme-catalog.js';
+import { ASTRYX_BUTTONS, ASTRYX_ELEMENTS, ASTRYX_SCREENS, ASTRYX_WORKFLOWS } from './astryx-catalog.js';
 
 const SHARED_MIN_USES = 2;
 
@@ -431,6 +433,89 @@ export class LegacyImporter {
       added.push(def.key);
     }
     return added;
+  }
+
+  /**
+   * Seeds all Meta Astryx design assets: 16 themes (8 styles in dark/light), buttons,
+   * UI elements, screens, and application workflows into the public library (idempotent).
+   */
+  ensureAstryxLibrary() {
+    const S = this.services, own = this.#own();
+    const inLib = x => Number(x.projectId ?? 1) === 1;
+    const stats = { themes: 0, buttons: 0, elements: 0, screens: 0, workflows: 0 };
+
+    // 1. Astryx themes (seeded via seedAstryxThemes)
+    stats.themes = seedAstryxThemes(this.themes);
+
+    // 2. Astryx buttons
+    const haveBtns = new Set(S.button.list().filter(inLib).map(b => b.key));
+    for (const b of ASTRYX_BUTTONS) {
+      if (haveBtns.has(b.key)) continue;
+      const draft = { key: b.key, name: b.name, label: b.label, width: b.width, height: b.height };
+      S.button.create({
+        ...draft, ...own, category: b.category, builtin: true,
+        meta: { htmlTag: b.htmlTag, source: 'astryx' },
+        descriptionDev: b.dev || buttonDevDescription(draft, b.nodes, [])
+      }, { nodes: b.nodes });
+      haveBtns.add(b.key);
+      stats.buttons++;
+    }
+
+    // 3. Astryx elements
+    const haveEls = new Set(S.element.list().filter(inLib).map(e => e.key));
+    for (const e of ASTRYX_ELEMENTS) {
+      if (haveEls.has(e.key)) continue;
+      const draft = { key: e.key, name: e.name, label: e.label, width: e.width, height: e.height, category: e.category };
+      S.element.create({
+        ...draft, ...own, builtin: true,
+        meta: { htmlTag: e.htmlTag, source: 'astryx', ...(e.meta || {}) },
+        descriptionDev: e.dev || elementDevDescription(draft, e.nodes, [])
+      }, { nodes: e.nodes });
+      haveEls.add(e.key);
+      stats.elements++;
+    }
+
+    // 4. Astryx screens
+    const haveScreens = new Set(S.screen.list().filter(inLib).map(s => s.key));
+    const screenIds = new Map(S.screen.list().filter(inLib).map(s => [s.key, s.id]));
+    for (const s of ASTRYX_SCREENS) {
+      if (haveScreens.has(s.key)) continue;
+      const draft = { key: s.key, name: s.name, label: s.label, width: s.width, height: s.height, category: s.category };
+      const created = S.screen.create({
+        ...draft, ...own, builtin: true, visibility: 'public', projectId: 1,
+        meta: s.meta || { device: 'desktop-1280', source: 'astryx' },
+        descriptionDev: s.descriptionDev || screenDevDescription(draft, s.nodes, [])
+      }, { nodes: s.nodes });
+      haveScreens.add(s.key);
+      screenIds.set(s.key, created.id);
+      stats.screens++;
+    }
+
+    // 5. Astryx workflows
+    const existingWorkflows = new Map(this.workflows.list().map(w => [w.key, w]));
+    for (const def of ASTRYX_WORKFLOWS) {
+      let wf = existingWorkflows.get(def.key);
+      if (!wf) {
+        wf = this.workflows.create({ ...own, key: def.key, name: def.name, label: def.label, descriptionDev: def.description || '' });
+        stats.workflows++;
+      }
+      const fullWf = this.workflows.get(wf.id);
+      const haveScreenIds = new Set((fullWf.nodes || []).map(n => n.screenId));
+      def.layout.forEach((col, ci) => col.forEach((skey, ri) => {
+        const id = screenIds.get(skey);
+        if (!id || haveScreenIds.has(id)) return;
+        this.workflows.placeScreen(wf.id, { screenId: id, x: ci * 1320, y: ri * 860 });
+        haveScreenIds.add(id);
+      }));
+      const haveLinkSigs = new Set((fullWf.links || []).map(l => `${l.fromScreenId}:${l.toScreenId}:${l.name}`));
+      for (const [from, to, name, dev] of def.links) {
+        const f = screenIds.get(from), t = screenIds.get(to);
+        if (!f || !t || haveLinkSigs.has(`${f}:${t}:${name}`)) continue;
+        this.workflows.addLink(wf.id, { fromScreenId: f, toScreenId: t, fromNodeId: null, name, descriptionDev: dev, style: 'curved', trigger: 'click' });
+      }
+    }
+
+    return stats;
   }
 
   /* ---------- screens, workflows ---------- */
