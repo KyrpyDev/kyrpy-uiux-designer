@@ -81,8 +81,8 @@ function setupPanel(k, onClose) {
       h('h4', {}, `Setup script for "${k.name}" — ${k.kind === 'account' ? 'all your projects (account key)' : k.projectName || k.projectKey || 'project'}`),
       h('button', { class: 'btn sm', onclick: onClose }, 'Close')),
     h('div', { class: 'aik-warn' }, key
-      ? 'This key was issued in this session, so the scripts below hold it. After a page reload it is no longer available here.'
-      : `Keys are stored hashed, so the designer cannot show "${k.prefix}…" again. Paste your key below to get a complete script, or leave it empty: the script then uses a placeholder you replace by hand. Lost the key too? Use Rotate to get a new one with a ready script.`),
+      ? 'This key was issued in this session, so the scripts below hold it. Run your terminal or downloaded script as Administrator (sudo / "Run as Administrator"): it copies the API key into a system environment variable and permanently removes itself once all steps finish.'
+      : `Keys are stored hashed, so the designer cannot show "${k.prefix}…" again. Paste your key below to get a complete self-deleting admin setup script, or leave it empty to use a placeholder. Lost the key too? Use Rotate to get a new one with a ready script.`),
     connectPanel({ key, projects: k.kind === 'account' ? [] : [{ id: k.projectId, key: k.projectKey, name: k.projectName }], projectId: k.projectId ?? null, keyKind: k.kind === 'account' ? 'account' : 'project' }));
 }
 
@@ -93,7 +93,7 @@ function revealPanel(result, project) {
   return h('div', { class: 'aik-card aik-reveal', role: 'status', 'aria-live': 'polite' },
     h('h4', {}, `Key "${result.apiKey.name}" for ${result.apiKey.kind === 'account' ? 'all your projects (account key)' : result.apiKey.projectName || project?.name || 'project'}`),
     h('div', { class: 'row' }, secret, h('button', { class: 'btn sm primary', onclick: () => copy(result.key, 'Key') }, 'Copy key')),
-    h('div', { class: 'aik-warn' }, '⚠ Copy it now — this key is shown only once. Store it in your AI client or an environment variable, never in the repository. The setup scripts stay available: "Setup script" next to the key in the list below.'),
+    h('div', { class: 'aik-warn' }, '⚠ Copy it now — this key is shown only once. Run your terminal or setup script as Administrator (sudo / "Run as Administrator") so the key is copied into a system environment variable, never stored in the repository; downloaded setup scripts permanently delete themselves once finished.'),
     h('h4', { style: { marginTop: '10px' } }, 'Connect your AI coder with this key'),
     connectPanel({ key: result.key, projects: project ? [project] : [], projectId: project?.id ?? null, keyKind: result.apiKey.kind === 'account' ? 'account' : 'project' })
   );

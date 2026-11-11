@@ -262,11 +262,13 @@ The designer ships an **MCP server** (Streamable HTTP, protocol 2025-06-18) so c
    `npm install -g …` needs [Node.js 18+](https://nodejs.org). Check with `claude --version` (or `codex --version`, …), and open a new terminal after installing.
 2. **An API key** from the designer: **Profile ▸ *AI Access Keys (MCP)…*** creates a **project key** (one project, stored per repository) or an **account key** (all your projects, stored once per user). The key is shown only once.
 
-The *AI Access Keys* window then shows a **Connect an AI coder** panel: pick your client and shell and press **Copy all steps**. The copied text is a script you can paste straight into that shell. It:
+The *AI Access Keys* window then shows a **Connect an AI coder** panel: pick your client and shell and press **Download `.sh` / `.ps1` / `.cmd` / `.fish`** (or **Copy all steps**). Run your terminal or downloaded script **as Administrator** (`sudo bash ./connect-claude-code.sh` on Linux / macOS / WSL, or **Run as Administrator** in Windows PowerShell / Command Prompt). The script:
 
-- **checks first that your agent's CLI is installed.** If it is missing, it changes nothing and prints the install commands above.
+- **verifies Administrator / root privileges** first and **checks that your agent's CLI is installed** (if either is missing, it stops cleanly without deleting itself).
+- **copies the API key into a system environment variable** (`KYRPY_UIUX_API_KEY`, stored in `/etc/environment` & `/etc/profile.d/kyrpy-uiux.sh` on Linux/WSL, `launchctl` on macOS, or Windows `Machine` / `setx /M` system variables).
 - removes an older `kyrpy-uiux` entry that would shadow the new key (Claude Code: `local` beats `project` beats `user` scope), then adds the server and checks the connection.
 - keeps config-file contents (`.mcp.json`, `settings.json`, `config.toml`) and in-app steps such as `/mcp` as **comments**. Save or merge those by hand if you want them.
+- **permanently removes itself from disk** (`shred -u -z` / `rm -f`, `Remove-Item -Force`, `del /f /q`) after all steps run and finish properly so no plaintext API key file remains in the repository.
 
 What it runs for Claude Code with an account key (bash / zsh):
 

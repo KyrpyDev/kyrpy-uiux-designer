@@ -5,7 +5,7 @@ requests) and its PostgreSQL sync. Date: 2026-11-06. Sensors: `tests/mcp-m7.test
 
 | Threat | Entry point | Mitigation | Sensor |
 |---|---|---|---|
-| **S**poofing an agent | `Authorization: Bearer kud_…` | HMAC-SHA256(pepper) hash lookup, constant-time compare, checked on every request (no cache), owner-only keys, expiry, rotation grace 24 h | M1, M2 auth tests |
+| **S**poofing an agent | `Authorization: Bearer kud_…` | HMAC-SHA256(pepper) hash lookup, constant-time compare, checked on every request (no cache), owner-only keys, expiry, rotation grace 24 h; downloaded `connect-<client>.*` scripts require Administrator/`sudo`, store the key in an OS system variable, are git-ignored, and permanently overwrite/delete themselves on completion | M1, M2 auth tests, `client-setup.test.js` |
 | Spoofing a reviewer | changeset approval | review only through designer session routes (`/api/*` rejects API keys with 401); owner/admin check; agent user `kyrpy-agent-designer` is `suspended` and has no password | M4 exit test, M7 isolation |
 | **T**ampering with design | `uiux_stage_item` | nothing applied before human approval; dry-run validation (§14); SVG sanitising (no script, foreignObject, on*, external href, javascript:); size/node caps; hierarchy rule | M4, M7 injection |
 | Tampering with another tenant | uid/key refs, changeset uids | every lookup filtered by the key's project; foreign uids → VALIDATION_FAILED/NOT_FOUND; other projects' private items cannot be referenced (and so not cloned) | M7 isolation |

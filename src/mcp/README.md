@@ -199,9 +199,13 @@ Claude Code, Codex CLI, Gemini CLI, Antigravity (agy), Cursor, VS Code · GitHub
 opencode, Zed, Claude Desktop, any stdio client (`mcp-remote` bridge) and raw details/curl, for bash/zsh, PowerShell,
 fish and cmd. `interfaces/web/connect-panel.js` renders them twice: in the one-time key reveal (the key can go into an
 environment variable or inline into a user-level config) and in the always-available **Connect an AI coder** card
-(environment variable + placeholder, since keys are shown only once). Files that are usually committed (`.mcp.json`,
-`.vscode/mcp.json`, `.cursor/mcp.json`, `opencode.json`) never contain the key. Claude Code, Codex and Gemini CLI
-recipes were run against a live server (`claude mcp get` → ✔ Connected, `codex mcp list` → enabled, bearer token).
+(environment variable + placeholder, since keys are shown only once). Downloaded setup scripts (`connect-<client>.sh`,
+`.ps1`, `.cmd`, `.fish`) instruct the user to run the terminal/script as Administrator (`sudo` / "Run as Administrator"),
+verify elevation, copy the API key into a system-wide environment variable (`/etc/environment` + `/etc/profile.d` on
+Linux/WSL, `launchctl` on macOS, `Machine` / `setx /M` on Windows), and permanently delete themselves from disk once all
+steps complete without error. Files that are usually committed (`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`,
+`opencode.json`) never contain the key. Claude Code, Codex and Gemini CLI recipes were run against a live server
+(`claude mcp get` → ✔ Connected, `codex mcp list` → enabled, bearer token).
 
 ### Several projects on one laptop: per-repository keys
 

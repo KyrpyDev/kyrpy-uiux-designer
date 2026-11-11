@@ -7,7 +7,7 @@ Source: `src/mcp/` (details per milestone in [`src/mcp/README.md`](src/mcp/READM
 ## 1. Connect
 
 - Endpoint: `<server>/mcp` (Streamable HTTP, JSON-RPC; `GET /mcp` is an event stream for change notifications). Bundles: `GET /mcp/bundles/<token>` (single use, 15 min, no auth header, so `curl -fsSL -o …` works).
-- Keys are created in the designer: **Profile → AI Access Keys**. The key is shown once and stored only as an HMAC; it never goes into the repository (MCP client config or `KYRPY_UIUX_API_KEY`).
+- Keys are created in the designer: **Profile → AI Access Keys**. The key is shown once and stored only as an HMAC; it never goes into the repository. Run the generated setup script as Administrator (`sudo` on Linux/macOS/WSL, or "Run as Administrator" on Windows): it copies the key into the system environment variable (`KYRPY_UIUX_API_KEY`) and permanently deletes itself once all steps finish properly.
 - **Project key**: bound to one project. **Account key** (user scope): one key for all of the user's projects; every tool then takes `project`.
 - Scopes: `read`, `propose` (changesets), `request` (item requests), `create` (new projects), `design` (**AI-assisted design**, account keys only, see §3b). Per-key rate limits; every call is audited.
 - Standalone MCP-only server: `src/mcp/server/standalone.js`. Per-client setup snippets (Claude Code, Cursor, Antigravity, Codex, generic; posix / powershell / fish / cmd) are generated in the AI Access Keys modal and by `uiux_init` (`mcpSetup`).

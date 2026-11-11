@@ -94,14 +94,18 @@ test('server name / env var are sanitised; per-project names flow into every rec
   assert.ok(text.includes('MY_KEY___x_'));
 });
 
-test('shell helpers', () => {
+test('shell helpers: system environment variable lines across shells', () => {
   assert.equal(shellVar('posix', 'K'), '$K');
   assert.equal(shellVar('powershell', 'K'), '$env:K');
   assert.equal(shellVar('cmd', 'K'), '%K%');
   assert.match(envLines('posix', 'K', "a'b"), /export K='a'\\''b'/);
+  assert.match(envLines('posix', 'K', "a'b"), /\/environment"/);
+  assert.match(envLines('posix', 'K', "a'b"), /\/profile\.d\/kyrpy-uiux\.sh"/);
   assert.match(envLines('powershell', 'K', "a'b"), /\$env:K = 'a''b'/);
+  assert.match(envLines('powershell', 'K', "a'b"), /SetEnvironmentVariable\('K', 'a''b', 'Machine'\)/);
   assert.match(envLines('fish', 'K', 'v'), /set -Ux K 'v'/);
-  assert.match(envLines('cmd', 'K', 'v'), /setx K "v"/);
+  assert.match(envLines('fish', 'K', 'v'), /\/environment"/);
+  assert.match(envLines('cmd', 'K', 'v'), /setx K "v" \/M/);
 });
 
 test('plain HTTP to a non-local host gets a warning', () => {
@@ -205,4 +209,135 @@ test('Windows scripts: cmd and PowerShell get their own quick test, key file wri
   assert.ok(st.installByShell.cmd.includes('if exist uiux\\source rmdir /s /q uiux\\source'));
   assert.ok(st.installByShell.cmd.includes('xcopy /e /i /y uiux\\source\\adapters\\web\\neo uiux\\neo >nul'));
   assert.ok(!st.installByShell.cmd.some(l => /mkdir -p|sha256sum|\//.test(l.replace(/"[^"]*"/g, '').replace(/ \/[a-z]\b/gi, ''))), 'cmd: no POSIX commands or paths');
+});
+
+test('admin + system variable + permanent self-deletion: verified across all script files and real bash runs', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { setupAsFile, adminHintFor } = await import('../interfaces/web/client-setup.js');
+  const { GITIGNORE_LINES } = await import('../application/ai-pack-service.js');
+
+  for (const pat of ['connect-*.sh', 'connect-*.ps1', 'connect-*.cmd', 'connect-*.fish']) {
+    assert.ok(GITIGNORE_LINES.includes(pat), `gitignore includes ${pat}`);
+  }
+  assert.match(adminHintFor('powershell'), /Run as Administrator/);
+  assert.match(adminHintFor('cmd'), /Run as administrator/);
+  assert.match(adminHintFor('posix'), /sudo/);
+
+  // Every client x shell script file checks admin, stores key in system variable, and removes itself on completion
+  for (const c of CLIENTS) for (const sh of ['posix', 'powershell', 'cmd', 'fish']) {
+    const setup = buildClientSetup({ client: c.id, url: URL, key: KEY, shell: sh, keyKind: 'account' });
+    assert.ok(setup.notes.some(n => /system environment variable/i.test(n) && /permanently remove/i.test(n)), `${c.id}/${sh}: admin + self-remove note`);
+    const file = setupAsFile(setup);
+    assert.ok(file, `${c.id}/${sh}: has file`);
+    assert.match(file.text, /Administrator/i, `${c.id}/${sh}: informs user to run as Administrator`);
+    if (sh === 'posix') {
+      assert.equal(file.run, `sudo bash ./connect-${c.id}.sh`);
+      assert.match(file.text, /\/environment"/, `${c.id}/posix: writes system environment`);
+      assert.match(file.text, /shred -u -z "\$_uiux_script_abs"/, `${c.id}/posix: permanently shreds/deletes itself`);
+      const syn = spawnSync('bash', ['-n'], { input: file.text, encoding: 'utf8' });
+      assert.equal(syn.status, 0, `${c.id}/posix bash -n:\n${syn.stderr}`);
+    } else if (sh === 'powershell') {
+      assert.match(file.text, /WindowsBuiltInRole\]::Administrator/);
+      assert.match(file.text, /SetEnvironmentVariable\('KYRPY_UIUX_API_KEY', '[^']+', 'Machine'\)/);
+      assert.match(file.text, /Remove-Item -LiteralPath \$PSCommandPath -Force/);
+    } else if (sh === 'cmd') {
+      assert.match(file.text, /net session >nul 2>nul/);
+      assert.match(file.text, /setx KYRPY_UIUX_API_KEY "[^"]+" \/M/);
+      assert.match(file.text, /del \/f \/q "%~f0"/);
+    } else if (sh === 'fish') {
+      assert.equal(file.run, `sudo fish ./connect-${c.id}.fish`);
+      assert.match(file.text, /\/environment"/);
+      assert.match(file.text, /rm -f "\$_uiux_script"/);
+    }
+  }
+
+  // Real execution sensor: run connect-claude-code.sh in an isolated temp workspace
+  const dir = mkdtempSync(join(tmpdir(), 'uiux-selfdel-'));
+  try {
+    const binDir = join(dir, 'bin');
+    const etcDir = join(dir, 'etc');
+    const repoDir = join(dir, 'repo');
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(etcDir, 'profile.d'), { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+
+    const scriptObj = setupAsFile(buildClientSetup({ client: 'claude-code', url: URL, key: KEY, shell: 'posix', keyKind: 'account' }));
+    const scriptPath = join(repoDir, scriptObj.filename);
+
+    // 1. Non-admin run -> exits 1, informs user to run as admin, keeps script file, does not write system variable
+    writeFileSync(scriptPath, scriptObj.text, { mode: 0o700 });
+    if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+      const nonAdmin = spawnSync('bash', [scriptPath], {
+        cwd: repoDir,
+        env: { ...process.env, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '0' },
+        encoding: 'utf8'
+      });
+      assert.notEqual(nonAdmin.status, 0, 'non-admin run must fail');
+      assert.match(nonAdmin.stderr, /Administrator \(root \/ sudo\) privileges are required/);
+      assert.match(nonAdmin.stderr, /sudo bash \.\/connect-claude-code\.sh/);
+      assert.equal(existsSync(scriptPath), true, 'script is kept when not run as admin');
+      assert.equal(existsSync(join(etcDir, 'environment')), false, 'system variable not touched without admin');
+    }
+
+    // 1b. Unreplaced placeholder key -> exits 1, refuses to write placeholder to /etc/environment, keeps script file
+    const placeholderObj = setupAsFile(buildClientSetup({ client: 'claude-code', url: URL, key: '', shell: 'posix', keyKind: 'account' }));
+    const placeholderPath = join(repoDir, 'connect-placeholder.sh');
+    writeFileSync(placeholderPath, placeholderObj.text, { mode: 0o700 });
+    const phRun = spawnSync('bash', [placeholderPath], {
+      cwd: repoDir,
+      env: { PATH: '/usr/bin:/bin', HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.equal(phRun.status, 1, 'placeholder key must be rejected before touching system variables');
+    assert.match(phRun.stderr, /Replace the kud_live_ placeholder/);
+    assert.equal(existsSync(placeholderPath), true, 'placeholder script is kept for editing');
+    rmSync(placeholderPath, { force: true });
+
+    // 2. Admin run with missing `claude` CLI -> exits 1, prints install hint, keeps script file
+    const missingCli = spawnSync('bash', [scriptPath], {
+      cwd: repoDir,
+      env: { PATH: '/usr/bin:/bin', HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.equal(missingCli.status, 1, 'missing CLI must exit 1');
+    assert.match(missingCli.stdout, /Claude Code CLI \("claude"\) is not installed/);
+    assert.equal(existsSync(scriptPath), true, 'script is kept when prerequisite CLI is missing');
+
+    // 3. Admin run where `claude mcp add` fails -> exits non-zero, keeps script file
+    const claudeBin = join(binDir, 'claude');
+    const logPath = join(dir, 'claude-calls.log');
+    writeFileSync(claudeBin, `#!/usr/bin/env bash\necho "$@" >> "${logPath}"\nif [ "$2" = "add" ]; then exit 2; fi\nexit 0\n`, { mode: 0o755 });
+    chmodSync(claudeBin, 0o755);
+    const failedStep = spawnSync('bash', [scriptPath], {
+      cwd: repoDir,
+      env: { PATH: `${binDir}:/usr/bin:/bin`, HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.notEqual(failedStep.status, 0, 'failing step must exit non-zero');
+    assert.equal(existsSync(scriptPath), true, 'script is kept when a setup command fails');
+
+    // 4. Admin run where all steps succeed -> writes system variable, runs all steps, and permanently removes script file
+    writeFileSync(logPath, '');
+    writeFileSync(claudeBin, `#!/usr/bin/env bash\necho "$@ | env=$KYRPY_UIUX_API_KEY" >> "${logPath}"\nexit 0\n`, { mode: 0o755 });
+    chmodSync(claudeBin, 0o755);
+    const okRun = spawnSync('bash', [scriptPath], {
+      cwd: repoDir,
+      env: { PATH: `${binDir}:/usr/bin:/bin`, HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.equal(okRun.status, 0, `expected exit 0:\nstdout=${okRun.stdout}\nstderr=${okRun.stderr}`);
+    assert.equal(existsSync(scriptPath), false, 'connect-claude-code.sh permanently deleted itself after finishing');
+    assert.match(readFileSync(join(etcDir, 'environment'), 'utf8'), new RegExp(`^KYRPY_UIUX_API_KEY="${KEY}"$`, 'm'));
+    assert.match(readFileSync(join(etcDir, 'profile.d', 'kyrpy-uiux.sh'), 'utf8'), new RegExp(`^export KYRPY_UIUX_API_KEY='${KEY}'$`, 'm'));
+    const calls = readFileSync(logPath, 'utf8');
+    assert.match(calls, new RegExp(`mcp add --transport http --scope user kyrpy-uiux .* \\| env=${KEY}`));
+    assert.match(calls, /mcp get kyrpy-uiux/);
+    const leakScan = spawnSync('bash', ['-c', 'grep -rn "kud_live_" . || true'], { cwd: repoDir, encoding: 'utf8' });
+    assert.equal(leakScan.stdout.trim(), '', 'zero plaintext API keys remain anywhere in the repository directory');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

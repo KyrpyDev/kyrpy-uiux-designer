@@ -27,7 +27,7 @@ const sha = s => createHash('sha256').update(s).digest('hex');
 export const LOCKFILE_PATH = '.uiux/uiux.lock.json';
 export const CONFIG_PATH = '.uiux/config.json';
 export const INIT_PROMPT_PATH = 'init-prompt.md';
-export const GITIGNORE_LINES = ['.uiux/cache/', '*.uiux-new'];
+export const GITIGNORE_LINES = ['.uiux/cache/', '*.uiux-new', 'connect-*.sh', 'connect-*.ps1', 'connect-*.cmd', 'connect-*.fish'];
 /** Default MCP client recipe for a pack platform (see interfaces/web/client-setup.js CLIENTS). */
 export const PLATFORM_CLIENT = { claude: 'claude-code', antigravity: 'antigravity', cursor: 'cursor', 'agents-md': 'codex', generic: 'generic' };
 

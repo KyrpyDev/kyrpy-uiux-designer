@@ -37,6 +37,7 @@ function injectStyles() {
 .aic-step-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 8px; background: rgba(255,255,255,.03); font-size: 12px; }
 .aic-step-head .aic-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .aic-step pre { margin: 0; padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre; overflow-x: auto; background: #060a13; color: var(--text); }
+.aic-admin { padding: 8px 10px; border-radius: 9px; border: 1px solid rgba(245,181,68,.45); background: rgba(245,181,68,.09); font-size: 12px; color: #f5d08a; line-height: 1.45; }
 .aic-notes { margin: 0; padding-left: 18px; font-size: 12px; color: #f5d08a; }
 .aic-prompt { font-size: 12px; color: var(--muted); }
 .aic-prompt b { color: var(--text); }
@@ -102,6 +103,12 @@ export function connectPanel({ key: givenKey = '', projects = [], projectId = nu
     const copyBtn = (text, what) => h('button', { type: 'button', class: 'btn sm', onclick: () => copy(text, what) }, 'Copy');
     const pr = setup.prereq;
     out.replaceChildren(
+      h('div', { class: 'aic-admin', role: 'note' },
+        h('strong', {}, '⚠ Run as Administrator: '),
+        `${setup.adminHint || 'Run your terminal or setup script as Administrator (sudo on Linux/macOS/WSL, or "Run as Administrator" on Windows)'}. `,
+        `The script copies your API key into the system environment variable (`,
+        h('code', {}, setup.envVar || DEFAULT_ENV_VAR),
+        `) and permanently removes itself from disk once all steps finish properly.`),
       pr ? h('div', { class: 'aic-step aic-prereq' },
         h('div', { class: 'aic-step-head' },
           h('div', {}, h('div', {}, `Needs ${pr.name} — check with: `, h('code', {}, `${pr.cmd} --version`)),
@@ -118,7 +125,7 @@ export function connectPanel({ key: givenKey = '', projects = [], projectId = nu
         h('div', { class: 'aic-prompt' }, 'Then tell your agent: ', h('b', {}, `“${setup.prompt}”`)),
         h('div', { class: 'row', style: { gap: '6px' } },
           files.length > 1 ? h('span', { class: 'aic-prompt' }, 'Download script:') : '',
-          ...files.map(file => h('button', { type: 'button', class: 'btn sm', title: `Save ${file.filename}, then run in the repository root: ${file.run}`, dataset: { act: 'download-script' },
+          ...files.map(file => h('button', { type: 'button', class: 'btn sm', title: `${file.adminHint} — save ${file.filename}, then run in the repository root: ${file.run} (saves key to system variable ${file.envVar} and deletes itself when finished)`, dataset: { act: 'download-script' },
             onclick: () => download(file) }, files.length > 1 ? `.${file.filename.split('.').pop()}` : `Download .${file.filename.split('.').pop()}`)),
           h('button', { type: 'button', class: 'btn sm primary', onclick: () => copy(setupAsText(setup), `${setup.label} setup`) }, 'Copy all steps')))
     );
@@ -157,7 +164,7 @@ function download(file) {
   const a = h('a', { href: URL.createObjectURL(new Blob([file.text], { type: 'text/plain' })), download: file.filename });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  toast(`${file.filename} saved. Run it in the repository root: ${file.run}`, 'ok', 6000);
+  toast(`${file.filename} saved. ${file.adminHint || 'Run as Administrator'} in the repository root: ${file.run} — copies the API key to system variable ${file.envVar || DEFAULT_ENV_VAR} and permanently deletes itself when finished.`, 'ok', 8000);
 }
 
 async function copy(text, what) {
