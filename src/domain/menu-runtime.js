@@ -87,6 +87,22 @@ export function bindMenus(root, opts) {
     var cap = Math.max(1, Math.floor((R * sweep * Math.PI / 180) / (r * 2.16 * 0.8)) + 1);
     return { start: start, sweep: sweep, cap: cap, len: R * sweep * Math.PI / 180, r: r };
   }
+  function syncFanLabel(menu, el, dx, dy) {
+    if (!menu || menu.getAttribute('data-show-labels') !== '1') return;
+    var mode = menu.getAttribute('data-label-pos') || 'auto';
+    var lbl = el && el.querySelector ? el.querySelector('.rm-label') : null;
+    if (!lbl) return;
+    var pos = mode === 'beside' || mode === 'over' ? mode : (Math.abs(dx) > Math.abs(dy) * 1.05 ? 'beside' : 'over');
+    var side = pos === 'beside' ? (dx < -0.5 ? 'left' : 'right') : (dy > 2 ? 'bottom' : 'top');
+    var r = +el.getAttribute('data-r') || 0, lw = +lbl.getAttribute('data-lw') || 0, lh = +lbl.getAttribute('data-lh') || 0, lg = +lbl.getAttribute('data-lgap') || 4;
+    var lx = pos === 'beside' ? (side === 'left' ? -(r + lg + lw / 2) : (r + lg + lw / 2)) : 0;
+    var ly = pos === 'over' ? (side === 'bottom' ? (r + lg + lh / 2) : -(r + lg + lh / 2)) : 0;
+    var rd = function (v) { return Math.round(v * 100) / 100; };
+    lbl.setAttribute('data-label-pos', pos);
+    lbl.setAttribute('data-label-side', side);
+    lbl.setAttribute('transform', 'translate(' + rd(lx) + ' ' + rd(ly) + ')');
+    el.setAttribute('data-lbox', [rd(lx - lw / 2), rd(ly - lh / 2), rd(lx + lw / 2), rd(ly + lh / 2)].join(','));
+  }
   function layoutFan(btn, st) {
     var key = st.path.join('/'), handled = false;
     Array.prototype.forEach.call(btn.querySelectorAll('.rm-level[data-fan-r]'), function (level) {
@@ -112,6 +128,7 @@ export function bindMenus(root, opts) {
           var ax = acx + aR * Math.cos(ang), ay = acy + aR * Math.sin(ang);
           el._ox = ax; el._oy = ay;
           el.style.setProperty('--x', ax + 'px'); el.style.setProperty('--y', ay + 'px');
+          syncFanLabel(mm, el, ax - acx, ay - acy);
         });
         return;
       }
@@ -127,6 +144,7 @@ export function bindMenus(root, opts) {
         var a = (a0 + sw * Math.min(t, cap - 1) / (cap - 1)) * Math.PI / 180, x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
         el._ox = x; el._oy = y;
         el.style.setProperty('--x', x + 'px'); el.style.setProperty('--y', y + 'px');
+        syncFanLabel(m, el, x - cx, y - cy);
       });
     });
     return handled;
@@ -224,10 +242,13 @@ export function bindMenus(root, opts) {
       if (hi > lo && (n === 1 || R * (hi - lo) >= (n - 1) * r * 2.2)) break;
       R *= 1.12;
     }
+    var menuEl = btn.querySelector('.ud-menu');
     items.forEach(function (el, i) {
       var t = n === 1 ? (lo + hi) / 2 : lo + (hi - lo) * i / (n - 1);
-      el.style.setProperty('--x', (ox + sx * R * Math.cos(t)) + 'px');
-      el.style.setProperty('--y', (oy + sy * R * Math.sin(t)) + 'px');
+      var dx = sx * R * Math.cos(t), dy = sy * R * Math.sin(t);
+      el.style.setProperty('--x', (ox + dx) + 'px');
+      el.style.setProperty('--y', (oy + dy) + 'px');
+      syncFanLabel(menuEl, el, dx, dy);
     });
     return true;
   }
@@ -252,6 +273,12 @@ export function bindMenus(root, opts) {
       if (k === 0) return;
       var r = (+el.getAttribute('data-r') || 0) * k, x = px(el.style.getPropertyValue('--x')), y = px(el.style.getPropertyValue('--y'));
       x0 = Math.min(x0, x - r); x1 = Math.max(x1, x + r); y0 = Math.min(y0, y - r); y1 = Math.max(y1, y + r);
+      var lb = el.getAttribute && el.getAttribute('data-lbox');
+      if (lb) {
+        var lp = lb.split(',');
+        x0 = Math.min(x0, x + (+lp[0] || 0) * k); y0 = Math.min(y0, y + (+lp[1] || 0) * k);
+        x1 = Math.max(x1, x + (+lp[2] || 0) * k); y1 = Math.max(y1, y + (+lp[3] || 0) * k);
+      }
     });
     if (x0 === Infinity) return;
     var L = Math.min(a.x, b.x) + pad, R = Math.max(a.x, b.x) - pad, T = Math.min(a.y, b.y) + pad, B = Math.max(a.y, b.y) - pad;

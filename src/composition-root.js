@@ -63,7 +63,9 @@ const NEW_PRESETS = [
   // vertical tabs (the horizontal html-tabs already exists)
   { id: 'preset-005-tabs-vertical', keys: ['html-tabs-vertical'] },
   // page-builder blocks (hero, CTA, pricing, testimonial, countdown, gallery, video, map, social ...)
-  { id: 'preset-006-page-builder-blocks', keys: PAGE_BUILDER_ELEMENTS.map(e => e.key) }
+  { id: 'preset-006-page-builder-blocks', keys: PAGE_BUILDER_ELEMENTS.map(e => e.key) },
+  // merge legacy split horizontal + vertical hub menus into unified `hub-menu` + `html-hub-menu`
+  { id: 'preset-007-unified-hub-menu', run: importer => importer.ensureHubMenus() }
 ];
 function seedNewPresets(db, services, importer) {
   try {
@@ -195,7 +197,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
-  const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
+  const importer = new LegacyImporter({ db, themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
   if (seed) seedNewPresets(db, services, importer);
   // MCP layer (src/mcp): API keys, schema registry, content hashes, and in-process backend API bridge
   let container = null;

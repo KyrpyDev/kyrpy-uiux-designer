@@ -7,26 +7,28 @@ import { buildContainer } from '../composition-root.js';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
 import { BUTTON_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 import { MENU_KINDS, DEFAULT_MENU, scopeFirst, visClass, isEdited } from '../domain/entities.js';
-import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, HUB_FAN, menuConfig, dropTarget, isMenuItemShown } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, menuExtent, hubGeometry, layoutItems, MENU_CSS, hubDirectionPatch, menuOrientationPatch, HUB_FAN, menuConfig, dropTarget, isMenuItemShown } from '../domain/menu.js';
 import { readFileSync } from 'node:fs';
 import { createContext, indexLibrary, renderTree } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
 import { bindMenus } from '../domain/menu-runtime.js';
 
 const rowsOf = items => { const out = []; let id = 0; const walk = (list, parentId) => list.forEach((it, i) => { const row = { id: ++id, parentId, ord: i + 1, name: it.name, label: it.label, iconId: null }; out.push(row); if (it.children) walk(it.children, row.id); }); walk(items, null); return out; };
-const HUB = SAMPLE_MENUS.find(m => m.key === 'hub-menu-horizontal');
-const HUB_V = SAMPLE_MENUS.find(m => m.key === 'hub-menu-vertical');
+const HUB = SAMPLE_MENUS.find(m => m.key === 'hub-menu');
+const HUB_V = { ...HUB, config: { ...HUB.config, ...menuOrientationPatch(HUB.config, 'vertical') } };
 
-test('hub menu: kind exists, samples have 3+ root items, big centre = 2x side button', () => {
+test('hub menu: unified public item, 3+ root items, orientation horizontal/vertical, big centre = 4x side button', () => {
   assert.ok(MENU_KINDS.includes('hub'));
+  assert.deepEqual(SAMPLE_MENUS.filter(m => m.config.kind === 'hub').map(m => m.key), ['hub-menu']);
   for (const def of [HUB, HUB_V]) { assert.equal(def.config.kind, 'hub'); assert.ok(def.items.length >= 3); }
-  assert.equal(HUB.config.direction, 'horizontal'); assert.equal(HUB_V.config.direction, 'vertical');
+  assert.equal(HUB.config.orientation, 'horizontal'); assert.equal(HUB.config.direction, 'horizontal');
+  assert.equal(HUB_V.config.orientation, 'vertical'); assert.equal(HUB_V.config.direction, 'vertical');
   const g = hubGeometry(HUB.config, 56);
   assert.equal(g.big, g.small * 4, 'side buttons are half their former size: a quarter of the centre'); assert.equal(g.vertical, false);
   assert.equal(hubGeometry(HUB.config, 56).big, hubGeometry(HUB_V.config, 56).big, 'both bar directions share the sizes');
   assert.equal(hubGeometry(HUB_V.config, 56).vertical, true);
   const sizeOk = BUTTON_ELEMENTS.filter(e => /hub-menu/.test(e.key));
-  assert.deepEqual(sizeOk.map(e => e.key), ['html-hub-menu', 'html-hub-menu-vertical']);
+  assert.deepEqual(sizeOk.map(e => e.key), ['html-hub-menu']);
   assert.ok(HUB.items.some(i => i.children?.some(c => c.children?.length)), 'a sub item has sub items (2-level fan)');
 });
 
@@ -128,16 +130,16 @@ test('hub runtime: centre click on a leaf fires its action; wheel scrolls the ri
   assert.equal(w.ctl.get(w.btn).c, 4, 'infinite: scrolling back past the first wraps to the last');
 });
 
-test('hub menus reach an existing library once and are idempotent (button + element presets)', () => {
+test('hub menus reach an existing library once and are idempotent (unified button + element preset)', () => {
   const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
   try {
     const pub = c.publicUserId();
-    const keys = new Set(); const walk = l => l.forEach(i => { keys.add(i.icon); if (i.children) walk(i.children); }); walk(HUB.items); walk(HUB_V.items); keys.add(HUB.icon);
+    const keys = new Set(); const walk = l => l.forEach(i => { keys.add(i.icon); if (i.children) walk(i.children); }); walk(HUB.items); keys.add(HUB.icon);
     for (const k of keys) c.icon.create({ name: k, key: k, projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub, builtin: true }, { nodes: [{ tag: 'circle', attrs: { cx: 12, cy: 12, r: 4 } }] });
     const first = c.importer.ensureHubMenus();
-    assert.deepEqual(first.sort(), ['hub-menu-horizontal', 'hub-menu-vertical', 'html-hub-menu', 'html-hub-menu-vertical'].sort());
+    assert.deepEqual(first.sort(), ['hub-menu', 'html-hub-menu'].sort());
     assert.deepEqual(c.importer.ensureHubMenus(), [], 'idempotent');
-    const b = c.button.list().find(x => x.key === 'hub-menu-horizontal');
+    const b = c.button.list().find(x => x.key === 'hub-menu');
     const full = c.button.get(b.id);
     assert.equal(full.meta.menu.kind, 'hub'); assert.equal(full.menuItems.length, 16, '5 ring items + 11 sub items');
     assert.ok(full.menuItems.filter(m => m.parentId == null).length >= 3);

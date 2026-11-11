@@ -2,7 +2,7 @@
  * Sample buttons with nested menus, taken from the v1 radial / ring menus (item detail screens, page-check slide).
  * Icons are v1 icon keys. `children` nests without limit (the service allows 6 levels).
  */
-/** Items of the hub menu samples: shared by the horizontal and the vertical bar so an edit reaches both. */
+/** Items of the unified hub menu sample (switchable between horizontal and vertical orientation in menu settings). */
 const HUB_ITEMS = [
   { name: 'logo', label: 'Logo', icon: 'sample-logo-basic', children: [
     { name: 'profile', label: 'Profile', icon: 'profile' },
@@ -73,18 +73,13 @@ export const SAMPLE_MENUS = [
       { name: 'logout', label: 'Log out', icon: 'logout' }
     ]
   },
-  // Hub menus: an infinitely scrolling bar of 3 visible buttons (small left, DOUBLE-size centre, small right) over a ring of
-  // 3+ root items. Click a side button: it swaps size and place with the centre button and, when it has sub items, they fan out
-  // around the centre; sub items with sub items repeat that. A second click on the centre or a click outside goes back.
+  // Hub menu: an infinitely scrolling bar of 3 visible buttons (small side, DOUBLE-size centre, small side) over a ring of
+  // 3+ root items (switchable between horizontal and vertical orientation in menu settings). Click a side button: it swaps
+  // size and place with the centre button and, when it has sub items, they fan out around the centre; sub items with sub items
+  // repeat that. A second click on the centre or a click outside goes back.
   {
-    key: 'hub-menu-horizontal', name: 'Hub menu (horizontal)', icon: 'sample-logo-basic',
-    config: { kind: 'hub', layout: 'fan', direction: 'horizontal', hubScale: 0.4, centerScale: 1.6, radius: 1.15, startAngle: -160, sweep: 140, itemScale: 0.4, gap: 0.2, rotateOnOpen: 0 },
-    items: HUB_ITEMS
-  },
-  // the vertical sample is the horizontal one turned upright: same items (one list, so both always stay in sync)
-  {
-    key: 'hub-menu-vertical', name: 'Hub menu (vertical)', icon: 'sample-logo-basic',
-    config: { kind: 'hub', layout: 'fan', direction: 'vertical', hubScale: 0.4, centerScale: 1.6, radius: 1.15, startAngle: -70, sweep: 140, itemScale: 0.4, gap: 0.2, rotateOnOpen: 0 },
+    key: 'hub-menu', name: 'Hub menu', icon: 'sample-logo-basic',
+    config: { kind: 'hub', layout: 'fan', orientation: 'horizontal', direction: 'horizontal', hubScale: 0.4, centerScale: 1.6, radius: 1.15, startAngle: -160, sweep: 140, itemScale: 0.4, gap: 0.2, rotateOnOpen: 0 },
     items: HUB_ITEMS
   }
 ];

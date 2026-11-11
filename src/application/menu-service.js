@@ -1,7 +1,7 @@
 import { NotFoundError, ValidationError } from '../domain/errors.js';
-import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS, MENU_FAN_CORNERS } from '../domain/entities.js';
+import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS, MENU_FAN_CORNERS, MENU_ORIENTATIONS, MENU_LABEL_POSITIONS } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
-import { buildMenuTree, menuConfig } from '../domain/menu.js';
+import { buildMenuTree, menuConfig, menuOrientation, menuOrientationPatch } from '../domain/menu.js';
 
 const MAX_DEPTH = 6;
 
@@ -100,12 +100,26 @@ export class MenuService {
     return { deleted: true, id: it.id };
   }
 
-  /** Menu settings of a button: kind (popup | rotating), layout (fan | list), radius, angles, scales ... */
+  /** Menu settings of a button: kind (popup | rotating | hub ...), layout (fan | list ...), orientation, labels, radius, angles, scales ... */
   setConfig(buttonIdOrKey, cfg) {
     const b = this.#button(buttonIdOrKey);
     if (cfg.kind !== undefined && !MENU_KINDS.includes(cfg.kind)) throw new ValidationError(`kind must be one of ${MENU_KINDS.join(', ')}`);
     if (cfg.layout !== undefined && !MENU_LAYOUTS.includes(cfg.layout)) throw new ValidationError(`layout must be one of ${MENU_LAYOUTS.join(', ')}`);
     if (cfg.fanCorner !== undefined && !MENU_FAN_CORNERS.includes(cfg.fanCorner || '')) throw new ValidationError(`fanCorner must be one of ${MENU_FAN_CORNERS.filter(Boolean).join(', ')} (or empty)`);
+    if (cfg.orientation !== undefined && cfg.orientation !== null && cfg.orientation !== '' && !MENU_ORIENTATIONS.includes(cfg.orientation)) {
+      throw new ValidationError(`orientation must be one of ${MENU_ORIENTATIONS.join(', ')}`);
+    }
+    if (cfg.showLabels !== undefined) {
+      if (typeof cfg.showLabels === 'string' && MENU_LABEL_POSITIONS.includes(cfg.showLabels)) {
+        cfg = { ...cfg, showLabels: true, labelPosition: cfg.labelPosition ?? cfg.showLabels };
+      } else {
+        const off = cfg.showLabels === false || cfg.showLabels === 0 || cfg.showLabels === '0' || cfg.showLabels === 'false' || cfg.showLabels === 'off' || cfg.showLabels === 'none';
+        cfg = { ...cfg, showLabels: !off && Boolean(cfg.showLabels) };
+      }
+    }
+    if (cfg.labelPosition !== undefined) {
+      if (!MENU_LABEL_POSITIONS.includes(cfg.labelPosition)) throw new ValidationError(`labelPosition must be one of ${MENU_LABEL_POSITIONS.join(', ')}`);
+    }
     for (const k of ['hubCenterSize', 'hubSideSize', 'hubEdgeSize']) {
       if (cfg[k] === undefined) continue;
       const v = Number(cfg[k]);
@@ -129,7 +143,17 @@ export class MenuService {
       cfg = { ...cfg, hubCenterItemId: it.id };
     }
     if (cfg.itemButtonId != null && !this.buttons.get(Number(cfg.itemButtonId))) throw new ValidationError(`button ${cfg.itemButtonId} does not exist`);
-    const merged = { ...(b.meta.menu || {}), ...cfg };
+    const prev = b.meta?.menu || {};
+    let merged;
+    if (cfg.orientation === 'horizontal' || cfg.orientation === 'vertical') {
+      const base = { ...prev, ...(cfg.kind !== undefined ? { kind: cfg.kind } : {}), ...(cfg.layout !== undefined ? { layout: cfg.layout } : {}) };
+      merged = { ...base, ...menuOrientationPatch(base, cfg.orientation), ...cfg };
+    } else {
+      merged = { ...prev, ...cfg };
+      if (cfg.direction !== undefined || cfg.side !== undefined || cfg.layout !== undefined || cfg.kind !== undefined || cfg.startAngle !== undefined) {
+        merged.orientation = menuOrientation(merged, { ignoreOrientation: true });
+      }
+    }
     this.buttons.update(b.id, { meta: { ...b.meta, menu: merged } });
     return menuConfig({ menu: merged });
   }

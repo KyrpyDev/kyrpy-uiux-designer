@@ -364,10 +364,8 @@ export const BUTTON_ELEMENTS = [
     ...['share', 'edit', 'delete-scan'].map((k, i) => B(`${k}-button`, 20 + i * 64, 84, 52, { name: `${k}-button` }))], { dev: 'Card whose actions are icon buttons.' }),
   item('html-radial-actions', 'Radial action button', 'navigation', 'nav', 96, 96, [B('item-radial-menu', 16, 16, 64, { name: 'radial-menu' })],
     { dev: 'Rotating menu button: click opens the actions on an arc, click an item with sub items to go deeper, click the centre to go back.' }),
-  item('html-hub-menu', 'Hub menu bar (horizontal)', 'navigation', 'nav', 260, 130, [B('hub-menu-horizontal', 102, 37, 56, { name: 'hub-menu' })],
-    { dev: 'Scrolling hub menu: small left button, centre button four times as big, small right button over a ring of 3+ items. Click a side button to swap it with the centre; items with sub items fan out around the centre; click the centre again or outside to go back. Mouse wheel scrolls the ring.' }),
-  item('html-hub-menu-vertical', 'Hub menu bar (vertical)', 'navigation', 'nav', 130, 260, [B('hub-menu-vertical', 37, 102, 56, { name: 'hub-menu' })],
-    { dev: 'Vertical variant of the hub menu: buttons stack top to bottom (small, 4x centre, small); the fan opens to the right of the centre.' }),
+  item('html-hub-menu', 'Hub menu bar', 'navigation', 'nav', 260, 130, [B('hub-menu', 102, 37, 56, { name: 'hub-menu' })],
+    { dev: 'Scrolling hub menu: small side buttons and a centre button four times as big over a ring of 3+ items (switchable between horizontal and vertical orientation in menu settings). Click a side button to swap it with the centre; items with sub items fan out around the centre; click the centre again or outside to go back. Mouse wheel scrolls the ring.' }),
   item('html-popup-actions', 'Popup menu button', 'navigation', 'nav', 96, 96, [B('more-popup-button', 16, 16, 64, { name: 'popup-menu' })],
     { dev: 'Popup menu button: opens a list above the button; nested items expand in place.' })
 ];

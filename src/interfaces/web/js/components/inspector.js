@@ -5,7 +5,7 @@ import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
-import { buildMenuTree, hubDirectionPatch, hubCount } from '/domain/menu.js';
+import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, ANCHORS,
@@ -289,10 +289,13 @@ export class Inspector {
     const bid = buttonId || (d.type === 'button' ? d.doc.id : null);
     const btnDoc = (d.type === 'button' && d.doc.id === bid) ? d.doc : findDesign('button', bid);
     if (!btnDoc) return h('div');
-    const cfg = { ...DEFAULT_MENU, ...(btnDoc.meta?.menu || {}) }, rows = btnDoc.menuItems || [];
+    const cfg = menuConfig(btnDoc.meta), rows = btnDoc.menuItems || [];
     const set = patch => menuActions.config(d, patch, bid);
     const num = (k, label, step = 0.05) => this.field(label, this.num(`mc-${bid}-${k}`, cfg[k], v => set({ [k]: v }), { step }));
     const els = [...(state.library.elements || [])].sort((a, b) => a.name.localeCompare(b.name));
+    const curOrient = menuOrientation(cfg);
+    const autoLabelPos = resolveMenuLabelPlacement(cfg, { isHubRoot: cfg.kind === 'hub' }).pos;
+    const labelsOn = showLabelsEnabled(cfg);
     const settings = [
       h('div', { class: 'grid2' },
         this.field('Button Action / Menu Mode', this.select(`mc-${bid}-kind`, cfg.kind, [
@@ -323,6 +326,20 @@ export class Inspector {
           ['carousel', 'Carousel Animated Roll']
         ], v => set({ layout: v })))
       ),
+      cfg.kind !== 'show-element'
+        ? h('div', { class: 'grid2' },
+            this.field('Orientation', this.select(`mc-${bid}-orientation`, curOrient, [
+              ['horizontal', cfg.kind === 'hub' ? 'Horizontal (left / centre / right)' : 'Horizontal'],
+              ['vertical', cfg.kind === 'hub' ? 'Vertical (top / centre / bottom)' : 'Vertical']
+            ], v => set(menuOrientationPatch(cfg, v)))),
+            this.field('Item Labels', this.select(`mc-${bid}-labels`, labelsOn ? (cfg.labelPosition || 'auto') : 'off', [
+              ['off', 'Hidden (icons only)'],
+              ['auto', `Auto (${autoLabelPos === 'beside' ? 'Beside' : 'Over'} · by menu mechanism)`],
+              ['beside', 'Beside button'],
+              ['over', 'Over button']
+            ], v => set(v === 'off' ? { showLabels: false } : { showLabels: true, labelPosition: v })))
+          )
+        : null,
       cfg.kind === 'show-element'
         ? this.field('Element to Show', this.select(`mc-${bid}-target-el`, cfg.targetElementId ?? '', [
             ['', '(choose an element…)'],
@@ -331,7 +348,6 @@ export class Inspector {
         : null,
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
-            this.field('Bar direction', this.select(`mc-${bid}-hubdir`, cfg.direction === 'vertical' ? 'vertical' : 'horizontal', [['horizontal', 'Horizontal (left / centre / right)'], ['vertical', 'Vertical (top / centre / bottom)']], v => set(hubDirectionPatch(cfg, v)))),
             this.field('Buttons shown at once (the rest: turn the ring)', this.select(`mc-${bid}-hubcount`, hubCount(cfg), [1, 2, 3, 4, 5, 6].map(n => [n, String(n)]), v => set({ hubCount: Number(v) }))),
             this.field('Icon size inside the buttons (0 = auto … 1 = fills the button)', this.num(`mc-${bid}-hubiconsize`, cfg.hubIconSize ?? 0, v => set({ hubIconSize: Math.max(0, Math.min(1, Number(v) || 0)) }), { step: 0.05, min: 0, max: 1 })),
             num('centerScale', 'Centre item size × button (0 = 2 × base small)'), num('hubCenterSize', 'Bar: centre size × centre (even bars: both middle ones)'), num('hubSideSize', 'Bar: side size × centre'), num('hubEdgeSize', 'Bar: edge size × centre'), num('hubScale', 'Base small size × button (gaps, back button)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),

@@ -415,6 +415,8 @@ export function buttonStyleFrameNodes(styleKey, { width = 64, height = 64 } = {}
 }
 
 export const MENU_LAYOUTS = ['fan', 'radial', 'list', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel'];
+export const MENU_ORIENTATIONS = ['horizontal', 'vertical'];
+export const MENU_LABEL_POSITIONS = ['auto', 'beside', 'over'];
 /** Screen corner a menu's fan levels open at ('' = around the button); e.g. a burger item fanning out from the lower right corner. */
 export const MENU_FAN_CORNERS = ['', 'bottom-left', 'bottom-right', 'top-left', 'top-right'];
 export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vertical', 'slider-horizontal', 'carousel', 'show-element', 'hub'];
@@ -422,9 +424,12 @@ export const MENU_KINDS = ['popup', 'rotating', 'radial', 'drawer', 'slider-vert
 export const DEFAULT_MENU = {
   kind: 'popup',        // popup | rotating | radial | drawer | slider-vertical | slider-horizontal | carousel | show-element | hub
   layout: 'list',       // fan | radial | list | drawer | slider-vertical | slider-horizontal | carousel
-  direction: 'up',      // list/slider: up | down | left | right; carousel: horizontal | vertical
+  orientation: null,    // horizontal | vertical (null = derived from layout / direction / fan angles)
+  direction: 'up',      // list/slider: up | down | left | right; carousel/hub: horizontal | vertical
   dimension: '3d',      // carousel: 2d | 3d
   side: 'right',        // drawer: left | right | top | bottom
+  showLabels: false,    // show item labels next to ("beside") or above/below ("over") each menu button
+  labelPosition: 'auto',// auto (beside vs over picked from menu mechanism) | beside | over
   targetElementId: null,// show-element: element ID to open when triggered
   radius: 1.7,          // fan/radial radius / button size
   startAngle: -160,     // fan/radial: angle of the first item, degrees (0 = right, -90 = up)

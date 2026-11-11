@@ -17,7 +17,7 @@ const SHARED_MIN_USES = 2;
  * Idempotent: existing keys are skipped, `reset` first removes everything built-in and re-imports.
  */
 export class LegacyImporter {
-  constructor({ themes, services, menus, workflows, log = () => {}, publicOwnerId = null }) { Object.assign(this, { themes, services, menus, workflows, log, publicOwnerId }); }
+  constructor({ db = null, themes, services, menus, workflows, log = () => {}, publicOwnerId = null }) { Object.assign(this, { db, themes, services, menus, workflows, log, publicOwnerId }); }
 
   /** Built-ins are public-library items, owned by the immutable `public` system user when it exists. */
   #own() {
@@ -147,13 +147,117 @@ export class LegacyImporter {
     return ids;
   }
 
+  #repointDesignRefs(ownerType, fromId, toId) {
+    if (!this.db || !fromId || !toId || Number(fromId) === Number(toId)) return;
+    const table = ownerType === 'button' ? 'buttons' : 'elements';
+    this.db.prepare('UPDATE nodes SET ref_id = ? WHERE ref_type = ? AND ref_id = ?').run(toId, ownerType, fromId);
+    if (ownerType === 'button') {
+      this.db.prepare('UPDATE menu_items SET ref_button_id = ? WHERE ref_button_id = ?').run(toId, fromId);
+    } else if (ownerType === 'element') {
+      this.db.prepare('UPDATE menu_items SET target_element_id = ? WHERE target_element_id = ?').run(toId, fromId);
+    }
+    this.db.prepare(`UPDATE ${table} SET cloned_from_id = ? WHERE cloned_from_id = ?`).run(toId, fromId);
+    this.db.prepare(`UPDATE ${table} SET root_item_id = ? WHERE root_item_id = ?`).run(toId, fromId);
+  }
+
   /**
-   * Adds the hub sample menus (button + element preset) to an existing library when missing (idempotent, public library
+   * Merges legacy split `hub-menu-horizontal` + `hub-menu-vertical` public buttons into a single `hub-menu` button,
+   * and merges `html-hub-menu` + `html-hub-menu-vertical` public elements into a single `html-hub-menu` element,
+   * re-pointing all node/menu/lineage references before removing the duplicate public rows. Idempotent.
+   */
+  unifyHubMenus() {
+    const S = this.services;
+    const inPubLib = x => Number(x.projectId ?? 1) === 1 && (x.visibility || 'public') === 'public';
+    const pubButtons = S.button.list().filter(inPubLib);
+    let hubBtn = pubButtons.find(b => b.key === 'hub-menu') || null;
+    let horizBtn = pubButtons.find(b => b.key === 'hub-menu-horizontal') || null;
+    let vertBtn = pubButtons.find(b => b.key === 'hub-menu-vertical') || null;
+    const changed = [];
+
+    if (!hubBtn && (horizBtn || vertBtn)) {
+      const src = horizBtn || vertBtn;
+      const full = S.button.get(src.id);
+      if (full.locked) S.button.update(full.id, { locked: false });
+      const prevMenu = full.meta?.menu || {};
+      const nextMenu = horizBtn
+        ? { ...prevMenu, orientation: prevMenu.direction === 'vertical' ? 'vertical' : 'horizontal', direction: prevMenu.direction === 'vertical' ? 'vertical' : 'horizontal' }
+        : { ...prevMenu, orientation: 'horizontal', direction: 'horizontal', startAngle: -160, sweep: 140 };
+      const depth = (parent = null) => { const kids = (full.menuItems || []).filter(m => (m.parentId ?? null) === parent); return kids.length ? 1 + Math.max(...kids.map(k => depth(k.id))) : 0; };
+      const draft = { ...full, key: 'hub-menu', name: 'Hub menu', label: 'Hub menu' };
+      S.button.update(full.id, {
+        key: 'hub-menu',
+        name: 'Hub menu',
+        label: 'Hub menu',
+        meta: { ...(full.meta || {}), menu: nextMenu },
+        descriptionDev: buttonDevDescription(draft, full.nodes, full.meta?.icon ? [full.meta.icon] : [], { config: { ...menuDefaults, ...nextMenu }, items: full.menuItems || [], depth: depth() })
+      });
+      hubBtn = S.button.get(full.id);
+      if (src === horizBtn) horizBtn = null; else vertBtn = null;
+      changed.push('hub-menu');
+    }
+
+    if (hubBtn) {
+      for (const dup of [horizBtn, vertBtn].filter(Boolean)) {
+        if (dup.locked) S.button.update(dup.id, { locked: false });
+        this.#repointDesignRefs('button', dup.id, hubBtn.id);
+        S.button.remove(dup.id, { permanent: true });
+        changed.push(`-${dup.key}`);
+      }
+    }
+
+    const pubElements = S.element.list().filter(inPubLib);
+    let hubEl = pubElements.find(e => e.key === 'html-hub-menu') || null;
+    let vertEl = pubElements.find(e => e.key === 'html-hub-menu-vertical') || null;
+    const presetDef = BUTTON_ELEMENTS.find(e => e.key === 'html-hub-menu');
+
+    if (!hubEl && vertEl) {
+      const fullEl = S.element.get(vertEl.id);
+      if (fullEl.locked) S.element.update(fullEl.id, { locked: false });
+      S.element.update(fullEl.id, {
+        key: 'html-hub-menu',
+        name: presetDef?.name || 'Hub menu bar',
+        label: presetDef?.label || 'Hub menu bar',
+        width: presetDef?.width || 260,
+        height: presetDef?.height || 130
+      });
+      if (hubBtn) {
+        S.element.replaceNodes(fullEl.id, [{ id: 1, parentId: null, tag: 'use', kind: 'instance', refType: 'button', refId: hubBtn.id, name: 'hub-menu', attrs: { x: '102', y: '37', width: '56', height: '56' } }]);
+      }
+      hubEl = S.element.get(fullEl.id);
+      vertEl = null;
+      changed.push('html-hub-menu');
+    } else if (hubEl && presetDef && (hubEl.name !== presetDef.name || hubEl.label !== presetDef.label)) {
+      const fullEl = S.element.get(hubEl.id);
+      if (fullEl.locked) S.element.update(fullEl.id, { locked: false });
+      const draft = { ...fullEl, name: presetDef.name, label: presetDef.label };
+      S.element.update(fullEl.id, {
+        name: presetDef.name,
+        label: presetDef.label,
+        descriptionDev: [elementDevDescription(draft, fullEl.nodes, []), presetDef.dev].filter(Boolean).join('\n')
+      });
+      hubEl = S.element.get(fullEl.id);
+      changed.push('html-hub-menu');
+    }
+
+    if (hubEl && vertEl) {
+      if (vertEl.locked) S.element.update(vertEl.id, { locked: false });
+      this.#repointDesignRefs('element', vertEl.id, hubEl.id);
+      S.element.remove(vertEl.id, { permanent: true });
+      changed.push(`-${vertEl.key}`);
+    }
+
+    return changed;
+  }
+
+  /**
+   * Adds the unified hub sample menu (`hub-menu` button + `html-hub-menu` element preset) to an existing library when
+   * missing, and merges any legacy `hub-menu-horizontal` / `hub-menu-vertical` duplicates (idempotent, public library
    * project 1). Returns the keys added.
    */
   ensureHubMenus() {
     const S = this.services, own = this.#own();
     const inLib = x => Number(x.projectId ?? 1) === 1;
+    this.unifyHubMenus();
     const iconIds = new Map(S.icon.list().filter(inLib).map(i => [i.key, i.id]));
     const have = new Set(S.button.list().filter(inLib).map(b => b.key));
     const added = [];
@@ -176,7 +280,7 @@ export class LegacyImporter {
       walk(def.items, null, '');
       added.push(def.key);
     }
-    return [...added, ...this.ensurePresets(['html-hub-menu', 'html-hub-menu-vertical'])];
+    return [...added, ...this.ensurePresets(['html-hub-menu'])];
   }
 
   /**

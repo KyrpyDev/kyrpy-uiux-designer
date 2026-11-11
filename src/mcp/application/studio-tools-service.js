@@ -1074,6 +1074,9 @@ export class StudioToolsService {
       if (itemType === 'button' && Array.isArray(args.menuItems) && c.menus) {
         this.#replaceButtonMenuItems(c, actor, projectId, created.id, args.menuItems);
       }
+      if (itemType === 'button' && args.menuConfig && c.menus) {
+        c.menus.setConfig(created.id, args.menuConfig);
+      }
 
       if (args.script !== undefined && args.script !== null) {
         if (itemType !== 'element') throw new ValidationError('`script` is only supported on items of type "element"');
@@ -1289,6 +1292,9 @@ export class StudioToolsService {
 
       if (itemType === 'button' && Array.isArray(args.menuItems) && c.menus) {
         this.#replaceButtonMenuItems(c, actor, projectId, row.id, args.menuItems);
+      }
+      if (itemType === 'button' && args.menuConfig && c.menus) {
+        c.menus.setConfig(row.id, args.menuConfig);
       }
 
       if (args.script !== undefined) {

@@ -3,20 +3,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SAMPLE_MENUS } from '../infrastructure/import/sample-menus.js';
-import { renderMenu, buildMenuTree, hubGeometry, hubBackSpot, menuExtent, HUB_FAN } from '../domain/menu.js';
+import { renderMenu, buildMenuTree, hubGeometry, hubBackSpot, menuExtent, HUB_FAN, menuOrientationPatch } from '../domain/menu.js';
 import { createContext } from '../domain/svg.js';
 import { BUILTIN_THEMES } from '../domain/theme.js';
 
-const HUB = SAMPLE_MENUS.find(m => m.key === 'hub-menu-horizontal');
-const HUB_V = SAMPLE_MENUS.find(m => m.key === 'hub-menu-vertical');
+const HUB = SAMPLE_MENUS.find(m => m.key === 'hub-menu');
+const HUB_V = { ...HUB, config: { ...HUB.config, ...menuOrientationPatch(HUB.config, 'vertical') } };
 
-test('hub samples: the vertical bar has exactly the horizontal bar\'s items and settings (only direction and fan differ)', () => {
-  assert.deepEqual(HUB_V.items, HUB.items, 'same item tree');
-  assert.equal(HUB_V.icon, HUB.icon);
-  const { direction: dh, startAngle: ah, sweep: sh, ...restH } = HUB.config;
-  const { direction: dv, startAngle: av, sweep: sv, ...restV } = HUB_V.config;
+test('hub sample: unified single hub-menu item switches cleanly between horizontal and vertical orientation', () => {
+  assert.ok(HUB);
+  assert.equal(SAMPLE_MENUS.find(m => m.key === 'hub-menu-horizontal'), undefined);
+  assert.equal(SAMPLE_MENUS.find(m => m.key === 'hub-menu-vertical'), undefined);
+  const { orientation: oh, direction: dh, startAngle: ah, sweep: sh, ...restH } = HUB.config;
+  const { orientation: ov, direction: dv, startAngle: av, sweep: sv, ...restV } = HUB_V.config;
   assert.deepEqual(restV, restH, 'every other setting matches');
-  assert.equal(dh, 'horizontal'); assert.equal(dv, 'vertical');
+  assert.equal(oh, 'horizontal'); assert.equal(dh, 'horizontal');
+  assert.equal(ov, 'vertical'); assert.equal(dv, 'vertical');
   assert.deepEqual({ startAngle: ah, sweep: sh }, HUB_FAN.horizontal);
   assert.deepEqual({ startAngle: av, sweep: sv }, HUB_FAN.vertical);
 });
