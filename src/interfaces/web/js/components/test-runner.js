@@ -52,6 +52,8 @@ export async function openTestRunner(app, target) {
   d.on('loaded', rec => {
     if (isWf) { rec.links = (wf.links || []).filter(l => l.fromScreenId === rec.id); d.renderStage(); }   // this workflow's routes out of the screen
     d.root.dataset.testScreen = rec.name;
+    // the device chosen in the test window stays while the test walks from screen to screen
+    if (d._testDevice && d.type === 'screen' && (rec.width !== d._testDevice.width || rec.height !== d._testDevice.height)) d.previewDevice(d._testDevice);
   });
   async function go(id, type) {
     d._keepActionsLive = true;

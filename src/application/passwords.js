@@ -6,7 +6,7 @@
  * are accepted ONLY while an account still has a salt without that marker, i.e. its password was never
  * changed. After the first real password change the fallback stops working for that account.
  */
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto';
 import { ValidationError } from '../domain/errors.js';
 
 export const USER_SALT_PREFIX = 'u1:';
@@ -35,9 +35,20 @@ export function hashUserPassword(password) {
   return hashPassword(password, `${USER_SALT_PREFIX}${randomBytes(16).toString('hex')}`);
 }
 
+/** `hashUserPassword` without blocking the event loop (scrypt runs on the thread pool). */
+export function hashUserPasswordAsync(password) {
+  const salt = `${USER_SALT_PREFIX}${randomBytes(16).toString('hex')}`;
+  return new Promise((resolve, reject) => {
+    scrypt(String(password), salt, 64, (err, key) => err ? reject(err) : resolve({ salt, passwordHash: key.toString('hex') }));
+  });
+}
+
+/** A value worth hashing ahead of the policy check: a non-empty string within the length limit. */
+export const hashablePassword = p => typeof p === 'string' && p.length > 0 && p.length <= PASSWORD_MAX;
+
+/** `default_kyrpy_admin` (the marker migration 1 wrote instead of a hash) matches nothing: AuthService replaces it at start. */
 export function verifyPassword(password, storedHash, salt) {
   if (!password) return false;
-  if (storedHash === 'default_kyrpy_admin') return LEGACY_DEFAULTS.superadmin.includes(String(password));
   if (!storedHash || !salt) return false;
   try {
     const computed = scryptSync(String(password), salt, 64);
@@ -56,6 +67,28 @@ export const hasUserPassword = user => String(user?.salt || '').startsWith(USER_
 export function passwordMatches(user, password) {
   if (!user || !password) return false;
   if (verifyPassword(password, user.passwordHash, user.salt)) return true;
+  if (hasUserPassword(user)) return false;
+  return (LEGACY_DEFAULTS[user.username] || []).includes(String(password));
+}
+
+/** `verifyPassword` without blocking the event loop (scrypt runs on the thread pool). */
+export function verifyPasswordAsync(password, storedHash, salt) {
+  if (!password || !storedHash || !salt) return Promise.resolve(false);
+  return new Promise(resolve => {
+    scrypt(String(password), salt, 64, (err, computed) => {
+      if (err) return resolve(false);
+      try {
+        const expected = Buffer.from(storedHash, 'hex');
+        resolve(computed.length === expected.length && timingSafeEqual(computed, expected));
+      } catch { resolve(false); }
+    });
+  });
+}
+
+/** `passwordMatches` without blocking the event loop. */
+export async function passwordMatchesAsync(user, password) {
+  if (!user || !password) return false;
+  if (await verifyPasswordAsync(password, user.passwordHash, user.salt)) return true;
   if (hasUserPassword(user)) return false;
   return (LEGACY_DEFAULTS[user.username] || []).includes(String(password));
 }

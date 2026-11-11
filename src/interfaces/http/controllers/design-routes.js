@@ -14,6 +14,8 @@ import {
 } from '../../../domain/entities.js';
 import { compactIconSummary } from '../../../domain/icon-summary.js';
 import { createHash } from 'node:crypto';
+import { NotFoundError } from '../../../domain/errors.js';
+import { intId } from '../input.js';
 
 const T = ':types(paths|icons|buttons|elements|screens)';
 
@@ -64,39 +66,47 @@ export function designRoutes(router, c) {
       { nodes: body?.nodes || [], actor }
     )
   );
-  router.get(`/api/${T}/:id`, ({ params }) => {
-    const rec = svc(params).get(params.id);
+  router.get(`/api/${T}/:id`, ({ params, actor }) => {
+    const rec = svc(params).assertCanRead(svc(params).get(params.id), actor);
     if (PLURAL_TO_TYPE[params.types] === 'screen' && rec?.id) {
       return { ...rec, links: c.workflows.linksFromScreens([rec.id]) };
     }
     return rec;
   });
-  router.get(`/api/${T}/:id/lineage`, ({ params }) => svc(params).getLineage(params.id));
+  router.get(`/api/${T}/:id/lineage`, ({ params, actor }) => { svc(params).assertCanRead(svc(params).get(params.id), actor); return svc(params).getLineage(params.id); });
   router.put(`/api/${T}/:id`, ({ params, body, actor }) => svc(params).update(params.id, body, { actor }));
   // display order: { mode: front | back | forward | backward }
   router.post(`/api/${T}/:id/order`, ({ params, body, actor }) => svc(params).reorder(params.id, body?.mode, { actor }));
   router.delete(`/api/${T}/:id`, ({ params, actor, query }) =>
-    svc(params).remove(params.id, { actor, permanent: query.get('permanent') === '1' })
+    svc(params).remove(params.id, { actor, permanent: query.get('permanent') === '1', confirmUsage: true, force: query.get('force') === '1' })
   );
   router.post(`/api/${T}/:id/restore`, ({ params, body, actor }) => svc(params).restore(params.id, body, { actor }));
   router.post(`/api/${T}/:id/clone`, ({ params, body, actor, projectId }) =>
-    svc(params).clone(params.id, { ...(body || {}), projectId: body?.projectId ?? projectId }, { actor })
+    svc(params).assertCanRead(svc(params).get(params.id), actor) && svc(params).clone(params.id, { ...(body || {}), projectId: body?.projectId ?? projectId }, { actor })
   );
 
   // nodes (the shapes / texts / groups / instances inside a design)
+  // :eid must be a node of design :id (the service only checks the type)
+  const ownNode = params => {
+    const d = svc(params).designs, id = /^\d+$/.test(String(params.id)) ? d.get(intId(params.id, 'id')) : d.getByKey(String(params.id));
+    const n = c.nodes.get(intId(params.eid, 'eid'));
+    if (!id || !n || n.ownerType !== PLURAL_TO_TYPE[params.types] || Number(n.ownerId) !== Number(id.id)) throw new NotFoundError('node', params.eid);
+    return params.eid;
+  };
   router.put(`/api/${T}/:id/nodes`, ({ params, body, actor }) => svc(params).replaceNodes(params.id, body.nodes || [], { actor }));
   router.post(`/api/${T}/:id/nodes`, ({ params, body, actor }) => svc(params).addNode(params.id, body, { actor }));
-  router.patch(`/api/${T}/:id/nodes/:eid`, ({ params, body, actor }) => svc(params).updateNode(params.eid, body, { actor }));
-  router.delete(`/api/${T}/:id/nodes/:eid`, ({ params, actor }) => svc(params).removeNode(params.eid, { actor }));
-  router.post(`/api/${T}/:id/nodes/:eid/duplicate`, ({ params, body, actor }) => svc(params).duplicateNode(params.eid, body || {}, { actor }));
+  router.patch(`/api/${T}/:id/nodes/:eid`, ({ params, body, actor }) => svc(params).updateNode(ownNode(params), body, { actor }));
+  router.delete(`/api/${T}/:id/nodes/:eid`, ({ params, actor }) => svc(params).removeNode(ownNode(params), { actor }));
+  router.post(`/api/${T}/:id/nodes/:eid/duplicate`, ({ params, body, actor }) => svc(params).duplicateNode(ownNode(params), body || {}, { actor }));
 
   // animations
-  router.post(`/api/${T}/:id/nodes/:eid/animations`, ({ params, body }) => svc(params).addAnimation(params.eid, body));
-  router.put(`/api/${T}/:id/animations/:aid`, ({ params, body }) => svc(params).updateAnimation(params.aid, body));
-  router.delete(`/api/${T}/:id/animations/:aid`, ({ params }) => svc(params).removeAnimation(params.aid));
+  router.post(`/api/${T}/:id/nodes/:eid/animations`, ({ params, body, actor }) => svc(params).addAnimation(ownNode(params), body, { actor }));
+  router.put(`/api/${T}/:id/animations/:aid`, ({ params, body, actor }) => svc(params).updateAnimation(params.aid, body, { actor, ownerId: svc(params).get(params.id).id }));
+  router.delete(`/api/${T}/:id/animations/:aid`, ({ params, actor }) => svc(params).removeAnimation(params.aid, { actor, ownerId: svc(params).get(params.id).id }));
 
   // standalone svg (animations included); ?download=1 sets Content-Disposition
-  router.get(`/api/${T}/:id/svg`, ({ params, query }) => {
+  router.get(`/api/${T}/:id/svg`, ({ params, query, actor }) => {
+    svc(params).assertCanRead(svc(params).get(params.id), actor);
     const f = c.exporter.svgFile(PLURAL_TO_TYPE[params.types], params.id, {
       theme: query.get('theme') || undefined, animated: query.get('animated') !== '0', frame: query.get('frame') === '1',
       size: Number(query.get('size')) || 192
@@ -105,12 +115,14 @@ export function designRoutes(router, c) {
   });
 
   // button menus: nested items (popup / rotating)
-  router.get('/api/buttons/:id/menu', ({ params }) => c.menus.get(params.id));
-  router.put('/api/buttons/:id/menu/config', ({ params, body }) => c.menus.setConfig(params.id, body));
-  router.post('/api/buttons/:id/menu/items', ({ params, body }) => c.menus.addItem(params.id, body));
-  router.put('/api/buttons/:id/menu/items/:iid', ({ params, body }) => c.menus.updateItem(params.iid, body));
-  router.post('/api/buttons/:id/menu/items/:iid/move', ({ params, body }) => c.menus.moveItem(params.id, params.iid, body || {}));
-  router.delete('/api/buttons/:id/menu/items/:iid', ({ params }) => c.menus.removeItem(params.iid));
+  // the button is checked for edit rights first; :iid must be an item of button :id
+  const btn = (params, actor) => c.services.button.requireEditable(params.id, actor).id;
+  router.get('/api/buttons/:id/menu', ({ params, actor }) => { c.services.button.assertCanRead(c.services.button.get(params.id), actor); return c.menus.get(params.id); });
+  router.put('/api/buttons/:id/menu/config', ({ params, body, actor }) => c.menus.setConfig(btn(params, actor), body));
+  router.post('/api/buttons/:id/menu/items', ({ params, body, actor }) => c.menus.addItem(btn(params, actor), body));
+  router.put('/api/buttons/:id/menu/items/:iid', ({ params, body, actor }) => c.menus.updateItem(params.iid, body, { buttonId: btn(params, actor) }));
+  router.post('/api/buttons/:id/menu/items/:iid/move', ({ params, body, actor }) => c.menus.moveItem(btn(params, actor), params.iid, body || {}));
+  router.delete('/api/buttons/:id/menu/items/:iid', ({ params, actor }) => c.menus.removeItem(params.iid, { buttonId: btn(params, actor) }));
 
   router.get('/api/library', ({ query, actor }) => {
     const filter = {
@@ -163,26 +175,40 @@ export function designRoutes(router, c) {
   router.post('/api/import/svg', ({ body, actor, projectId }) =>
     c.svgImport.import({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
   );
+  // uploaded files are open to every writer; a path on the server's disk is for admins only
+  const serverPath = (body, actor) => { if (body?.folderPath || body?.fontPath) c.auth.assertAdmin(actor); };
   router.post('/api/import/folder', ({ body, actor, projectId }) =>
-    c.svgImport.importFolder({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
+    serverPath(body, actor) ?? c.svgImport.importFolder({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
   );
   router.post('/api/import/font', ({ body, actor, projectId }) =>
-    c.svgImport.importFont({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
+    serverPath(body, actor) ?? c.svgImport.importFont({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
   );
 
-  router.get('/api/catalog/search', ({ query }) => {
+  router.get('/api/catalog/search', ({ query, actor }) => {
     const q = query.get('q') || '';
     const projectId = query.get('projectId') ? Number(query.get('projectId')) : null;
-    return Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].list({ q, projectId })]));
+    return Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].list({ q, projectId, actorId: actor?.id ?? null })]));
   });
 
   router.get('/api/bootstrap', ({ actor, token, projectId }) => {
     const activeProjId = projectId || 1;
     const customDevices = c.templates ? c.templates.listDevices({ projectId: activeProjId }) : DEVICES;
     const buttonTemplates = c.templates ? c.templates.listButtonTemplates({ projectId: activeProjId }) : [];
-    const projects = c.projects ? c.projects.list({ userId: actor?.id }) : [];
+    const projects = c.projects ? c.projects.list({ user: actor }) : [];
     const pendingChangesCount = c.collaboration ? c.collaboration.pendingCount(null) : 0;
+    const trashCount = c.trash ? c.trash.count({}, { actor }) : 0;
     const authConfig = c.auth ? c.auth.getAuthConfig() : { appMode: 'dev', bypassLogin: true, requireAuth: false };
+    // before sign-in (release mode) the page gets what the sign-in gate needs to render, and no library or user data
+    if (authConfig.requireAuth && !actor) {
+      return {
+        settings: c.settings.get(), themes: c.themes.list(), devices: DEVICES, templateDevices: [], templateButtons: [], types: TYPES,
+        menu: { defaults: DEFAULT_MENU, layouts: MENU_LAYOUTS, kinds: MENU_KINDS },
+        user: null, currentUser: null, publicUserId: null, authenticated: false, authConfig, projects: [], activeProjectId: 1,
+        pendingChangesCount: 0, syncStatus: { enabled: false }, userRoles: USER_ROLES, projectRoles: PROJECT_ROLES,
+        visibilityLevels: VISIBILITY_LEVELS, eventTriggers: EVENT_TRIGGERS, eventActions: CLICK_ACTIONS, toolbarPositions: TOOLBAR_POSITIONS,
+        counts: { paths: 0, icons: 0, buttons: 0, elements: 0, screens: 0, workflows: 0, projects: 0, users: 0, pendingChanges: 0, trash: 0 }, trashCount: 0
+      };
+    }
     return {
       settings: c.settings.get(),
       themes: c.themes.list(),
@@ -208,14 +234,14 @@ export function designRoutes(router, c) {
       eventActions: CLICK_ACTIONS,
       toolbarPositions: TOOLBAR_POSITIONS,
       counts: {
-        ...Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].list().length])),
+        ...Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].designs.count()])),
         workflows: c.workflows.list().length,
         projects: projects.length,
         users: c.auth ? c.auth.listUsers({ includeSystem: false }).length : 1,
         pendingChanges: pendingChangesCount,
-        trash: c.trash ? c.trash.count({}, { actor }) : 0
+        trash: trashCount
       },
-      trashCount: c.trash ? c.trash.count({}, { actor }) : 0
+      trashCount
     };
   });
 }

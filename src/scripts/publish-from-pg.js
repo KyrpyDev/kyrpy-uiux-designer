@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, copyFileSync, statSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from '../infrastructure/sqlite/database.js';
+import { dropOutboxTriggers } from '../infrastructure/sqlite/outbox-triggers.js';
 import { PostgresSyncService, PG_SCHEMA_SQL } from '../infrastructure/postgres/pg-sync-service.js';
 import { buildContainer } from '../composition-root.js';
 import { PUBLIC_USERNAME, DESIGN_TABLES } from '../domain/system-users.js';
@@ -51,6 +52,7 @@ export function purgeToPublic(db) {
   const pub = db.prepare('SELECT id FROM users WHERE username = ?').get(PUBLIC_USERNAME);
   if (!pub) throw new Error(`the "${PUBLIC_USERNAME}" system user is missing in the PostgreSQL clone`);
   const PUB = Number(pub.id);
+  dropOutboxTriggers(db);   // the purge is not a change to sync
   db.exec('PRAGMA foreign_keys = OFF;');
   db.exec('BEGIN;');
   try {
@@ -182,7 +184,7 @@ function main() {
     if (!existsSync(liveDbFile)) fail(`--push-first: live DB not found: ${liveDbFile}`);
     console.log(`${TAG} --push-first: pushing live SQLite ${liveDbFile} -> PostgreSQL (full push; marks outbox rows synced)`);
     const live = openDatabase(liveDbFile);
-    const pushed = new PostgresSyncService({ db: live }).pushToPostgres();
+    const pushed = new PostgresSyncService({ db: live }).pushToPostgres({ force: process.argv.includes('--force-push') });
     live.close();
     if (!pushed.ok) fail(`push failed: ${String(pushed.error).split('\n')[0]}`);
   } else {

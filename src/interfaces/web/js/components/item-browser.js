@@ -1022,7 +1022,8 @@ export async function openTrashModal() {
                   const res = await api.trashRestore(it.id);
                   await refreshGlobalLibraryAndCounts();
                   await loadTrash();
-                  toast(`Restored ${res.itemType} "${res.item?.name || it.itemKey}"`, 'ok');
+                  if (res.partial) toast(`Restored ${res.itemType} "${res.item?.name || it.itemKey}", but ${res.skipped.length} part(s) could not be put back: ${res.skipped[0]}`, 'err');
+                  else toast(`Restored ${res.itemType} "${res.item?.name || it.itemKey}"`, 'ok');
                 } catch (err) {
                   toast(err.message, 'err');
                 }

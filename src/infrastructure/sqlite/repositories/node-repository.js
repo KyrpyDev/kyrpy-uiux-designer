@@ -17,11 +17,40 @@ export const toAnimation = r => r && ({
 const COLS = { parentId: 'parent_id', ord: 'ord', kind: 'kind', tag: 'tag', name: 'name', role: 'role', refType: 'ref_type',
   refId: 'ref_id', rotation: 'rotation', text: 'text', descriptionDev: 'description_dev' };
 
+const sameScalar = (a, b) => (a == null && b == null) || a === b || (typeof b === 'number' && a != null && a !== '' && Number(a) === b);
+const json = v => JSON.stringify(v);
+
+/** True when `update(id, patch)` would leave the stored node `cur` as it is. */
+export function nodeUnchanged(cur, patch) {
+  for (const k of Object.keys(COLS)) if (patch[k] !== undefined && !sameScalar(patch[k], cur[k])) return false;
+  if (patch.visible !== undefined && !!patch.visible !== cur.visible) return false;
+  if (patch.locked !== undefined && !!patch.locked !== cur.locked) return false;
+  if (patch.attrs !== undefined && json(patch.attrs) !== json(cur.attrs)) return false;
+  if (patch.onClick !== undefined && json(patch.onClick || null) !== json(cur.onClick || null)) return false;
+  if (patch.events !== undefined && json(Array.isArray(patch.events) ? patch.events : []) !== json(cur.events || [])) return false;
+  return true;
+}
+
+/** The stored form of an animation (the defaults AnimationRepository.create applies), for comparison. */
+const animKey = a => json([a.name ?? a.type, a.type, a.params ?? {}, a.durationMs ?? 1000, a.delayMs ?? 0, a.easing ?? 'ease-in-out',
+  String(a.iterations ?? 'infinite'), a.direction ?? 'alternate', a.fillMode ?? 'both', a.trigger ?? 'load', a.enabled === false ? 0 : 1]);
+const sameAnimations = (now, next) => now.length === next.length && now.every((a, i) => animKey(a) === animKey(next[i]));
+
 export class NodeRepository {
   constructor(db, sync = null) { this.db = db; this.sync = sync; }
 
   listByOwner(ownerType, ownerId) {
     return this.db.prepare('SELECT * FROM nodes WHERE owner_type = ? AND owner_id = ? ORDER BY ord, id').all(ownerType, ownerId).map(toElement);
+  }
+  /** Nodes of the given owners in one query per 500 owners (ordered like listAllByType). */
+  listByOwners(ownerType, ownerIds) {
+    const out = [];
+    const ids = [...new Set(ownerIds.map(Number))];
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      out.push(...this.db.prepare(`SELECT * FROM nodes WHERE owner_type = ? AND owner_id IN (${chunk.map(() => '?').join(',')}) ORDER BY owner_id, ord, id`).all(ownerType, ...chunk).map(toElement));
+    }
+    return out;
   }
   listAllByType(ownerType) { return this.db.prepare('SELECT * FROM nodes WHERE owner_type = ? ORDER BY owner_id, ord, id').all(ownerType).map(toElement); }
   listByRef(refType, refId) { return this.db.prepare('SELECT * FROM nodes WHERE ref_type = ? AND ref_id = ? ORDER BY id').all(refType, Number(refId)).map(toElement); }
@@ -82,28 +111,34 @@ export class NodeRepository {
    */
   replaceAll(ownerType, ownerId, list, { restoreIds = false } = {}) {
     return inTransaction(this.db, () => {
-      const existing = new Set(this.listByOwner(ownerType, ownerId).map(e => e.id));
+      const existing = new Map(this.listByOwner(ownerType, ownerId).map(e => [e.id, e]));
+      // current animations per node, read once: an unchanged list is left alone (its rows keep their ids)
+      const animsNow = new Map();
+      for (const a of new AnimationRepository(this.db, this.sync).listByOwner(ownerType, ownerId)) { if (!animsNow.has(a.nodeId)) animsNow.set(a.nodeId, []); animsNow.get(a.nodeId).push(a); }
       const keep = new Set(list.filter(e => e.id && existing.has(e.id)).map(e => e.id));
       const idMap = new Map();
       // parents first so child inserts can resolve parent ids
       const byId = new Map(list.filter(e => e.id).map(e => [e.id, e]));
-      const depth = e => { let d = 0, p = e; while (p && p.parentId != null && d < 20) { p = byId.get(p.parentId); d++; } return d; };
-      const ordered = [...list].sort((a, b) => depth(a) - depth(b));
+      const depth = e => { let d = 0, p = e; while (p && p.parentId != null && d < 200) { p = byId.get(p.parentId); d++; } return d; };   // 200 only guards a parent cycle
+      const index = new Map(list.map((e, i) => [e, i]));   // list position without an indexOf scan per node
+      const depths = new Map(list.map(e => [e, depth(e)]));
+      const ordered = [...list].sort((a, b) => depths.get(a) - depths.get(b));
       for (const e of ordered) {
         const parentId = e.parentId == null ? null : (idMap.get(e.parentId) ?? e.parentId);
-        const idx = list.indexOf(e);
+        const idx = index.get(e);
         const data = { ...e, parentId, ord: idx };
         let saved;
-        if (e.id && existing.has(e.id)) { saved = this.update(e.id, data); }
+        // an unchanged node costs nothing: no UPDATE, no re-read, no outbox entry
+        if (e.id && existing.has(e.id)) { const cur = existing.get(e.id); saved = nodeUnchanged(cur, data) ? cur : this.update(e.id, data); }
         else {
           const free = restoreIds && e.id > 0 && !this.get(e.id);
           saved = this.create(ownerType, ownerId, data, { id: free ? e.id : undefined });
         }
         idMap.set(e.id ?? saved.id, saved.id);
-        if (Array.isArray(e.animations)) this.#replaceAnimations(saved.id, e.animations);
+        if (Array.isArray(e.animations) && !sameAnimations(animsNow.get(saved.id) || [], e.animations)) this.#replaceAnimations(saved.id, e.animations);
       }
       // removed nodes go last: kept children were already re-parented, so deleting e.g. a dissolved group cannot cascade onto them
-      for (const id of existing) if (!keep.has(id)) this.delete(id);
+      for (const id of existing.keys()) if (!keep.has(id)) this.delete(id);
       return this.listByOwner(ownerType, ownerId);
     });
   }

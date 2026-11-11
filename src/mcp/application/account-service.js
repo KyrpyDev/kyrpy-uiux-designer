@@ -95,11 +95,11 @@ export class AccountService {
     let created, source = null, copied = 0;
     if (fromProject !== undefined && fromProject !== null && fromProject !== '') {
       source = this.resolve(principal, fromProject, 'read');
-      const res = this.projectService.clone(source.id, input, user);
+      const res = this.projectService.clone(source.id, input, { actor: user });
       created = res.project || res;
       copied = res.copiedCount || 0;
     } else {
-      created = this.projectService.create(input, user);
+      created = this.projectService.create(input, { actor: user });
     }
     const p = this.projects.get(created.id);
     return {

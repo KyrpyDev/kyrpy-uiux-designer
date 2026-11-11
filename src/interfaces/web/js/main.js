@@ -928,6 +928,15 @@ async function boot() {
   if (!state.themes.find(t => t.key === state.themeKey)) state.themeKey = state.themes[0].key;
   applyThemeChrome();
   await ensureAuthGate({ authConfig: state.authConfig, authenticated: Boolean(b.authenticated) });
+  window.addEventListener('ud-outbox-overflow', e => toast(`The offline queue is full: ${e.detail?.lost ?? 'some'} of the oldest unsent change(s) were dropped.`, 'error', 7000));
+  // a session that ends while the page is open: show the sign-in page once, then reload with the new session
+  let expiredShown = false;
+  window.addEventListener('ud-session-expired', () => {
+    if (expiredShown || !state.authConfig?.requireAuth) return;
+    expiredShown = true;
+    toast('Your session ended. Sign in again.', 'error', 5000);
+    ensureAuthGate({ authConfig: state.authConfig, authenticated: false, forceGate: true }).then(() => location.reload());
+  });
   // published default accounts (superadmin/superadmin, admin/admin, user/user): demand a new password right after the first start
   api.profile().then(p => { if (p && p.passwordSetByUser === false && !p.user?.system) { toast('This account still uses the published default password. Choose your own now.', 'error', 6000); openProfile({ tab: 'password' }); } }).catch(() => { /* no profile for system / signed-out sessions */ });
   $('#left').style.width = `${state.settings.leftPanelWidth || 360}px`;
@@ -1062,13 +1071,32 @@ function connectSync() {
       for (const d of live) if (!(d.type === msg.designType && d.doc.id === rec.id)) d.renderStage();
     } catch { /* the full resync follows anyway */ }
   };
+  // the stream is authenticated by the HttpOnly session cookie (set at sign-in); the token never goes into a URL
   const es = new EventSource('/api/events');
   let seen = null;
+  // an edit of one design (`scope: 'item'`): fetch that design, patch it into the list and redraw; no library reload.
+  // Anything else, an item this list does not hold, or a failed fetch falls back to the full resync.
+  const refreshOne = async msg => {
+    try {
+      const list = state.library?.[PLURAL[msg.designType]];
+      const i = Array.isArray(list) ? list.findIndex(x => x.id === msg.designId) : -1;
+      if (i < 0) return resync();
+      const rec = await api.getDesign(msg.designType, msg.designId);
+      list[i] = { ...list[i], ...rec };
+      const live = [app.designer, ...app.modals].filter(d => d?.actionsLive && d.doc);
+      for (const d of live) {
+        if (d.type === msg.designType && d.doc.id === rec.id) { if (!d.dirty) { await d.reload(false); d.markBaseline(); } }
+        else d.renderStage();
+      }
+      emit('library:changed');
+    } catch { resync(); }
+  };
   es.onmessage = ev => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type !== 'library-changed') return;
     if (seen !== null && msg.version === seen) return;
     seen = msg.version;
+    if (msg.scope === 'item' && msg.designType && msg.designId != null) { refreshOne(msg); return; }
     fastPatch(msg);
     resync();
   };

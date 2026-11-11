@@ -3,6 +3,8 @@ import { normalizeDesign, normalizeNode, canContain, TYPES } from '../domain/ent
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { validateAnimation } from '../domain/animation.js';
 import { stripOwnership } from '../domain/system-users.js';
+import { assertItemAccess } from './access-policy.js';
+import { fallbackOwnerId } from './default-owner.js';
 import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScreenBox, resizeAttrs, nodeBBox } from '../domain/geometry.js';
 
 /**
@@ -15,36 +17,52 @@ export class DesignService {
   /** @param {{ownerType:'path'|'icon'|'button'|'element'|'screen', designs, nodes, animations, menus?, users?, collaboration?, trash?, workflows?, transaction:(fn:Function)=>any}} deps */
   constructor({ ownerType, designs, nodes, animations, menus = null, users = null, collaboration = null, trash = null, workflows = null, transaction }) {
     Object.assign(this, { ownerType, designs, nodes, animations, menus, users, collaboration, trash, workflows, transaction });
+    // each of these is several writes (rows, touch, trash row, change request): all or nothing (nesting-safe)
+    for (const name of ['remove', 'replaceNodes', 'addNode', 'updateNode', 'removeNode']) {
+      const fn = this[name].bind(this);
+      this[name] = (...args) => this.transaction(() => fn(...args));
+    }
   }
 
-  #enrichUsernames(d) {
+  /** `names`: a Map shared by one list call, so each user is read once instead of twice per row. */
+  #enrichUsernames(d, names = null) {
     if (!d) return d;
-    const creator = this.users ? this.users.get(d.creatorId || 1) : null;
-    const rootOwner = this.users ? this.users.get(d.rootOwnerId || d.creatorId || 1) : null;
+    const nameOf = id => {
+      if (!this.users) return null;
+      if (!names) return this.users.get(id)?.username;
+      if (!names.has(id)) names.set(id, this.users.get(id)?.username ?? null);
+      return names.get(id);
+    };
     return {
       ...d,
-      creatorUsername: creator?.username || 'superadmin',
-      rootOwnerUsername: rootOwner?.username || 'superadmin'
+      creatorUsername: nameOf(d.creatorId || fallbackOwnerId(this)) || 'superadmin',
+      rootOwnerUsername: nameOf(d.rootOwnerId || d.creatorId || fallbackOwnerId(this)) || 'superadmin'
     };
   }
 
   list(query = {}) {
+    const names = new Map();
+    const usage = this.ownerType !== 'screen' ? this.designs.usageCounts() : null;   // one grouped query, not one per row
     return this.designs.list(query).map(d => this.#enrichUsernames({
       ...d,
-      ...(this.ownerType !== 'screen' ? { usage: this.designs.usageCount(d.id) } : {})
-    }));
+      ...(usage ? { usage: usage.get(d.id) || 0 } : {})
+    }, names));
   }
 
   /** Every design of this type with its nodes (one query per table): the designer UI renders thumbnails from this. */
   listFull(query = {}) {
-    const byOwner = new Map();
-    for (const e of this.nodes.listAllByType(this.ownerType)) { if (!byOwner.has(e.ownerId)) byOwner.set(e.ownerId, []); byOwner.get(e.ownerId).push(e); }
-    const items = this.ownerType === 'button' && this.menus ? this.menus.listAll() : null;
-    return this.designs.list(query).map(d => this.#enrichUsernames({
+    const rows = this.designs.list(query);
+    // a filtered list reads the nodes of its own rows only; the whole type is read when most of it is wanted
+    const narrow = rows.length <= 2000 && rows.length * 2 < this.designs.count();
+    const group = (list, key) => { const m = new Map(); for (const x of list) { if (!m.has(x[key])) m.set(x[key], []); m.get(x[key]).push(x); } return m; };
+    const byOwner = group(narrow ? this.nodes.listByOwners(this.ownerType, rows.map(r => r.id)) : this.nodes.listAllByType(this.ownerType), 'ownerId');
+    const items = this.ownerType === 'button' && this.menus ? group(this.menus.listAll(), 'buttonId') : null;
+    const names = new Map();
+    return rows.map(d => this.#enrichUsernames({
       ...d,
       nodes: byOwner.get(d.id) || [],
-      ...(items ? { menuItems: items.filter(m => m.buttonId === d.id) } : {})
-    }));
+      ...(items ? { menuItems: items.get(d.id) || [] } : {})
+    }, names));
   }
 
   categories() { return this.designs.categories(); }
@@ -54,6 +72,12 @@ export class DesignService {
     if (!d) throw new NotFoundError(this.ownerType, idOrKey);
     return d;
   }
+
+  /** Throws ForbiddenError unless `actor` may edit / read the design (no actor = internal caller). */
+  assertCanEdit(d, actor) { assertItemAccess(d, actor, this.collaboration?.projects, 'edit', this.ownerType); return d; }
+  assertCanRead(d, actor) { assertItemAccess(d, actor, this.collaboration?.projects, 'read', this.ownerType); return d; }
+  /** The design a route addresses, after the edit check (used by nested routes: menus, animations). */
+  requireEditable(idOrKey, actor) { return this.assertCanEdit(this.#require(idOrKey), actor); }
 
   /** Full record: design + nodes + animations (+ menu items of a button). */
   get(idOrKey) {
@@ -72,24 +96,24 @@ export class DesignService {
     const item = this.get(idOrKey);
     const rootItem = item.rootItemId && item.rootItemId !== item.id ? this.designs.get(item.rootItemId) : item;
     const clonedFrom = item.clonedFromId ? this.designs.get(item.clonedFromId) : null;
-    const creator = this.users ? this.users.get(item.creatorId || 1) : { id: 1, username: 'superadmin' };
-    const rootOwner = this.users ? this.users.get(item.rootOwnerId || 1) : { id: 1, username: 'superadmin' };
-    const clones = this.designs.list().filter(x => x.id !== item.id && (x.clonedFromId === item.id || x.rootItemId === item.id));
+    const creator = this.users ? this.users.get(item.creatorId || fallbackOwnerId(this)) : { id: 1, username: 'superadmin' };
+    const rootOwner = this.users ? this.users.get(item.rootOwnerId || fallbackOwnerId(this)) : { id: 1, username: 'superadmin' };
+    const clones = this.designs.clonesOf(item.id);   // one indexed-size query instead of loading the whole table
     const chain = [];
     const seen = new Set();
     let cur = item;
     while (cur && !seen.has(cur.id)) {
       seen.add(cur.id);
-      const u = this.users ? this.users.get(cur.creatorId || 1) : null;
+      const u = this.users ? this.users.get(cur.creatorId || fallbackOwnerId(this)) : null;
       chain.push({
         id: cur.id,
         key: cur.key,
         name: cur.name,
-        creatorId: cur.creatorId || 1,
+        creatorId: cur.creatorId || fallbackOwnerId(this),
         creatorUsername: u?.username || 'superadmin',
         clonedFromId: cur.clonedFromId || null,
         rootItemId: cur.rootItemId || cur.id,
-        rootOwnerId: cur.rootOwnerId || 1
+        rootOwnerId: cur.rootOwnerId || fallbackOwnerId(this)
       });
       cur = cur.clonedFromId ? this.designs.get(cur.clonedFromId) : null;
     }
@@ -146,7 +170,7 @@ export class DesignService {
 
   #maybeRecordCollabChange(beforeDoc, afterDoc, { actorId = null, action = 'update', summary = '', forceRecord = false } = {}) {
     if (!this.collaboration || !beforeDoc || !afterDoc) return null;
-    let ownerId = beforeDoc.creatorId || beforeDoc.rootOwnerId || 1;
+    let ownerId = beforeDoc.creatorId || beforeDoc.rootOwnerId || fallbackOwnerId(this);
     if (this.collaboration.changeReviewer) {
       const r = this.collaboration.changeReviewer(beforeDoc, actorId, { force: forceRecord });
       if (!r) return null;
@@ -161,7 +185,7 @@ export class DesignService {
       targetId: afterDoc.id,
       targetKey: afterDoc.key,
       targetName: afterDoc.name,
-      authorId: actorId ?? 1,
+      authorId: actorId ?? fallbackOwnerId(this),
       ownerId,
       action,
       summary,
@@ -186,14 +210,14 @@ export class DesignService {
   }
 
   create(input, { nodes = [], actor = null, actorId = null } = {}) {
-    const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
+    const creatorId = actorId ?? actor?.id ?? input.creatorId ?? fallbackOwnerId(this);
     const data = normalizeDesign(this.ownerType, { ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
     const pubOwner = this.#publicOwnership(data, actorId ?? actor?.id ?? null, actor);
     if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     // keys are unique per project (src/mcp: per-project keys)
     if (input.key && this.designs.keyExists(data.key, data.projectId)) throw new ConflictError(`${this.ownerType} key "${data.key}" already exists in this project`);
     if (!input.key) data.key = uniqueKey(data.name, k => this.designs.keyExists(k, data.projectId));
-    if (input.builtin) data.builtin = true;
+    if (input.builtin && (!actor || ['admin', 'superadmin'].includes(actor.role))) data.builtin = true;   // not for ordinary users
     const clean = nodes.map(e => ({ ...normalizeNode(e), id: e.id, animations: e.animations }));
     this.#assertInstances(clean);
     return this.transaction(() => {
@@ -209,7 +233,7 @@ export class DesignService {
    */
   update(id, patch, { actor = null, actorId = null, recordChange = false, changeSummary = '' } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const d = this.#require(id);
+    const d = this.assertCanEdit(this.#require(id), actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(d.id) : null;
     const { scaleContent, ...rest } = stripOwnership(patch);   // ownership and lineage are never changed by an edit
     this.#assertStaysPublic(d, rest.visibility, rest.projectId);
@@ -226,7 +250,7 @@ export class DesignService {
     const resized = (data.width !== undefined && data.width !== d.width) || (data.height !== undefined && data.height !== d.height);
     const updated = this.transaction(() => {
       if (resized && (scaleContent ?? ['button', 'element'].includes(this.ownerType))) {
-        const sx = (data.width ?? d.width) / d.width, sy = (data.height ?? d.height) / d.height;
+        const sx = d.width > 0 ? (data.width ?? d.width) / d.width : 1, sy = d.height > 0 ? (data.height ?? d.height) / d.height : 1;   // a zero-size design has nothing to scale
         for (const p of scaleNodeSet(this.nodes.listByOwner(this.ownerType, d.id), sx, sy)) this.nodes.update(p.id, { attrs: p.attrs });
       } else if (resized && this.ownerType === 'screen') {
         const nw = data.width ?? d.width;
@@ -257,8 +281,8 @@ export class DesignService {
    * Puts a design back to a saved version: { record, nodes (each with its animations), menuItems }.
    * Used by Reset and by Save as (which leaves the original as it was last saved). Atomic.
    */
-  restore(id, snap) {
-    const d = this.#require(id);
+  restore(id, snap, { actor = null } = {}) {
+    const d = this.assertCanEdit(this.#require(id), actor);
     if (!snap || !Array.isArray(snap.nodes)) throw new ValidationError('restore needs a saved version: { record, nodes, menuItems }');
     const rec = normalizeDesign(this.ownerType, stripOwnership(snap.record || {}), { partial: true });
     this.#assertStaysPublic(d, rec.visibility, rec.projectId);
@@ -285,19 +309,41 @@ export class DesignService {
     const d = this.#require(id);
     if (actor && actor.role !== 'superadmin' && Number(d.creatorId) !== Number(actor.id)) throw new ForbiddenError('Only the owner (or the superadmin for public-library items) can change the display order');
     return this.transaction(() => {
-      const rows = this.designs.list({}).map(r => ({ id: r.id, position: r.position }));
-      const from = rows.findIndex(r => r.id === d.id);
-      const to = mode === 'front' ? 0 : mode === 'back' ? rows.length - 1 : Math.min(rows.length - 1, Math.max(0, from + (mode === 'forward' ? -1 : 1)));
-      if (to !== from) { const [it] = rows.splice(from, 1); rows.splice(to, 0, it); }
+      // one or two rows are written, not the whole table: `front` / `back` take a position outside the current
+      // range, a single step swaps positions with the neighbour of the same project
+      const all = this.designs.positions();
       let touched = 0;
-      rows.forEach((r, i) => { if (r.position !== i + 1) { this.designs.setPosition(r.id, i + 1); touched++; } });
+      const set = (row, position) => { if (row.position !== position) { this.designs.setPosition(row.id, position); row.position = position; touched++; } };
+      if (new Set(all.map(r => r.position)).size !== all.length) all.forEach((r, i) => set(r, i + 1));   // old data with equal positions: number once
+      const scope = all.filter(r => Number(r.projectId ?? 1) === Number(d.projectId ?? 1));
+      const from = scope.findIndex(r => r.id === d.id);
+      const to = mode === 'front' ? 0 : mode === 'back' ? scope.length - 1 : Math.min(scope.length - 1, Math.max(0, from + (mode === 'forward' ? -1 : 1)));
+      if (to !== from) {
+        const mine = scope[from];
+        if (mode === 'front') set(mine, all[0].position - 1);
+        else if (mode === 'back') set(mine, all[all.length - 1].position + 1);
+        else { const other = scope[to], p = mine.position; set(mine, other.position); set(other, p); }
+      }
       return { id: d.id, mode, position: to + 1, moved: to !== from, touched };
     });
   }
 
-  remove(id, { actor = null, permanent = false } = {}) {
-    const d = this.#require(id);
+  /**
+   * Deletes an item (to the trash unless `permanent`). Instances of it inside other designs are removed with it:
+   * with `confirmUsage` (the HTTP route) that needs `force`, otherwise the call answers 409 `IN_USE` with the count.
+   */
+  remove(id, { actor = null, permanent = false, confirmUsage = false, force = false } = {}) {
+    const d = this.assertCanEdit(this.#require(id), actor);
     if (d.locked) throw new ConflictError(`${this.ownerType} "${d.name || d.key}" is locked; unlock it before deleting`);
+    if (confirmUsage && !force) {
+      const usage = this.designs.usageCount(d.id);
+      if (usage > 0) {
+        const e = new ConflictError(`${this.ownerType} "${d.name || d.key}" is used ${usage} time(s) in other designs; deleting it removes those instances`);
+        e.code = 'IN_USE';
+        e.details = { usage };
+        throw e;
+      }
+    }
     const isPublic = (d.visibility || 'public') === 'public' || Boolean(d.builtin);
     const pub = this.#publicUserId();
     const inLibrary = pub != null && Number(d.creatorId) === Number(pub) && (d.visibility || 'public') === 'public';
@@ -307,7 +353,7 @@ export class DesignService {
     let trashRec = null;
     if (!permanent && this.trash) {
       const snapshot = {
-        uid: this.designs.db?.prepare(`SELECT uid FROM ${this.designs.table} WHERE id = ?`).get(d.id)?.uid ?? null,   // keeps the MCP identity on restore
+        uid: this.designs.uidOf?.(d.id) ?? null,   // keeps the MCP identity on restore
         record: d,
         nodes: this.nodes.listByOwner(this.ownerType, d.id),
         animations: this.animations.listByOwner(this.ownerType, d.id),
@@ -326,9 +372,9 @@ export class DesignService {
         projectId: d.projectId ?? 1,
         visibility: d.visibility || 'public',
         builtin: Boolean(d.builtin),
-        creatorId: d.creatorId ?? 1,
-        rootOwnerId: d.rootOwnerId ?? 1,
-        deletedBy: actor?.id ?? 1,
+        creatorId: d.creatorId ?? fallbackOwnerId(this),
+        rootOwnerId: d.rootOwnerId ?? fallbackOwnerId(this),
+        deletedBy: actor?.id ?? fallbackOwnerId(this),
         snapshot
       });
     }
@@ -344,8 +390,8 @@ export class DesignService {
     const src = this.get(id);
     const newName = name || `${src.name} copy`;
     const rootItemId = src.rootItemId || src.id;
-    const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
-    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    const rootOwnerId = src.rootOwnerId || src.creatorId || fallbackOwnerId(this);
+    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? fallbackOwnerId(this);
     let effRootOwnerId = rootOwnerId;
     const pubOwner = creatorId == null
       ? this.#publicOwnership({ visibility: visibility ?? src.visibility ?? 'public', projectId: projectId ?? src.projectId ?? 1 }, actorId ?? actor?.id ?? null, actor)
@@ -355,7 +401,7 @@ export class DesignService {
       const copy = this.designs.create({
         ...src,
         name: newName,
-        label: name || `${src.label} copy`,
+        label: name || (src.label ? `${src.label} copy` : ''),
         key: uniqueKey(slugify(name || ((projectId ?? src.projectId) !== src.projectId ? src.key : `${src.key}-copy`)), k => this.designs.keyExists(k, projectId ?? src.projectId ?? 1)),
         builtin: false,
         position: undefined,
@@ -367,7 +413,9 @@ export class DesignService {
         rootOwnerId: effRootOwnerId
       });
       const idMap = new Map();
-      const byDepth = [...src.nodes].sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));
+      const srcById = new Map(src.nodes.map(n => [n.id, n]));
+      const depthOf = n => { let d = 0; for (let p = srcById.get(n.parentId); p && d < 64; p = srcById.get(p.parentId)) d++; return d; };
+      const byDepth = [...src.nodes].sort((a, b) => depthOf(a) - depthOf(b));   // parents before children at every level
       for (const e of byDepth) {
         const made = this.nodes.create(this.ownerType, copy.id, { ...e, parentId: e.parentId == null ? null : idMap.get(e.parentId) ?? null });
         idMap.set(e.id, made.id);
@@ -381,7 +429,7 @@ export class DesignService {
   /* ---------- nodes ---------- */
   replaceNodes(id, list, { actor = null, actorId = null, recordChange = false, changeSummary = '' } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const d = this.#require(id);
+    const d = this.assertCanEdit(this.#require(id), actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(d.id) : null;
     const clean = list.map(e => ({ ...normalizeNode(e), id: e.id, animations: e.animations }));
     this.#assertInstances(clean, d.id);
@@ -394,7 +442,7 @@ export class DesignService {
 
   addNode(id, input, { actor = null, actorId = null, recordChange = false } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const d = this.#require(id);
+    const d = this.assertCanEdit(this.#require(id), actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(d.id) : null;
     const data = normalizeNode(input);
     if (input.ord === undefined) delete data.ord;
@@ -412,15 +460,16 @@ export class DesignService {
     return e;
   }
 
-  #node(nodeId) {
+  #node(nodeId, actor = null) {
     const e = this.nodes.get(Number(nodeId));
     if (!e || e.ownerType !== this.ownerType) throw new NotFoundError('node', nodeId);
+    if (actor) { const d = this.designs.get(e.ownerId); if (d) this.assertCanEdit(d, actor); }
     return e;
   }
 
   updateNode(nodeId, patch, { actor = null, actorId = null, recordChange = false } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const e = this.#node(nodeId);
+    const e = this.#node(nodeId, actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(e.ownerId) : null;
     const data = normalizeNode({ ...patch }, { partial: true });
     const allNodes = this.nodes.listByOwner(this.ownerType, e.ownerId);
@@ -447,7 +496,7 @@ export class DesignService {
 
   removeNode(nodeId, { actor = null, actorId = null, recordChange = false } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const e = this.#node(nodeId);
+    const e = this.#node(nodeId, actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(e.ownerId) : null;
     this.nodes.delete(e.id);
     this.designs.touch(e.ownerId);
@@ -455,8 +504,8 @@ export class DesignService {
     return { deleted: true, id: e.id };
   }
 
-  duplicateNode(nodeId, { dx = 12, dy = 12 } = {}) {
-    const e = this.#node(nodeId);
+  duplicateNode(nodeId, { dx = 12, dy = 12 } = {}, { actor = null } = {}) {
+    const e = this.#node(nodeId, actor);
     const all = this.nodes.listByOwner(this.ownerType, e.ownerId);
     const copyTree = (src, parentId) => {
       const attrs = { ...src.attrs };
@@ -472,8 +521,8 @@ export class DesignService {
   /* ---------- animations ---------- */
   listAnimations(id) { const d = this.#require(id); return this.animations.listByOwner(this.ownerType, d.id); }
 
-  addAnimation(nodeId, input) {
-    const e = this.#node(nodeId);
+  addAnimation(nodeId, input, { actor = null } = {}) {
+    const e = this.#node(nodeId, actor);
     const errors = validateAnimation(input);
     if (errors.length) throw new ValidationError(errors.join('; '), errors);
     const a = this.animations.create(e.id, input);
@@ -481,33 +530,44 @@ export class DesignService {
     return a;
   }
 
-  updateAnimation(animationId, patch) {
+  updateAnimation(animationId, patch, { actor = null, ownerId = null } = {}) {
     const a = this.animations.get(Number(animationId));
     if (!a) throw new NotFoundError('animation', animationId);
-    this.#node(a.nodeId);
+    const e = this.#node(a.nodeId, actor);
+    if (ownerId != null && Number(e.ownerId) !== Number(ownerId)) throw new NotFoundError('animation', animationId);
     const errors = validateAnimation({ type: a.type, ...patch });
     if (errors.length) throw new ValidationError(errors.join('; '), errors);
     return this.animations.update(a.id, patch);
   }
 
-  removeAnimation(animationId) {
+  removeAnimation(animationId, { actor = null, ownerId = null } = {}) {
     const a = this.animations.get(Number(animationId));
     if (!a) throw new NotFoundError('animation', animationId);
-    this.#node(a.nodeId);
+    const e = this.#node(a.nodeId, actor);
+    if (ownerId != null && Number(e.ownerId) !== Number(ownerId)) throw new NotFoundError('animation', animationId);
     this.animations.delete(a.id);
     return { deleted: true, id: a.id };
   }
 }
 
-function shiftAttrs(el, attrs, dx, dy) {
+const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?';
+const TRANSLATE = new RegExp(`translate\\(\\s*(${NUM})(?:[\\s,]+(${NUM}))?\\s*\\)`);
+
+/** Moves a copied node by (dx, dy). `translate(5)`, `translate(1e2, 3)` and `translate(5 6)` are all read (ty defaults to 0). */
+export function shiftAttrs(el, attrs, dx, dy) {
   for (const [kx, ky] of [['x', 'y'], ['cx', 'cy'], ['x1', 'y1'], ['x2', 'y2']]) {
     if (attrs[kx] !== undefined) attrs[kx] = Number(attrs[kx]) + dx;
     if (attrs[ky] !== undefined) attrs[ky] = Number(attrs[ky]) + dy;
   }
   if (el.tag === 'path' || el.tag === 'g') {
-    const m = /translate\(\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*\)/.exec(attrs.transform || '');
-    const tx = (m ? +m[1] : 0) + dx, ty = (m ? +m[2] : 0) + dy;
-    attrs.transform = `translate(${tx} ${ty}) ${(attrs.transform || '').replace(/translate\([^)]*\)\s*/, '')}`.trim();
+    const cur = String(attrs.transform || '');
+    const m = TRANSLATE.exec(cur);
+    if (m) {
+      // the first translate is replaced in place, so the order of the other transforms is kept
+      attrs.transform = cur.replace(TRANSLATE, `translate(${Number(m[1]) + dx} ${Number(m[2] ?? 0) + dy})`);
+    } else {
+      attrs.transform = `translate(${dx} ${dy}) ${cur}`.trim();
+    }
   }
 }
 

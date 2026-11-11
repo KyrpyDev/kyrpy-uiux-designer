@@ -31,6 +31,18 @@ export function publicUserId(db) {
 }
 
 /**
+ * Owner of a record written without an actor: the superadmin, found by role (ids differ between databases and can
+ * change after a PostgreSQL pull). Id 1 is only the last resort.
+ */
+export function defaultOwnerId(db) {
+  try {
+    const row = db.prepare("SELECT id FROM users WHERE role = 'superadmin' AND username NOT IN (?, ?) ORDER BY id LIMIT 1")
+      .get(PUBLIC_USERNAME, AGENT_USERNAME);
+    return row?.id ?? 1;
+  } catch { return 1; }
+}
+
+/**
  * Create the public user if missing (idempotent) and return its id. Throws when the username is held by
  * a real (password-bearing or active) account, which must never become the library owner.
  */

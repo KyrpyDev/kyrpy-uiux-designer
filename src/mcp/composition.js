@@ -34,7 +34,8 @@ import { publicUserId as publicUserIdOf } from '../domain/system-users.js';
 export const DEFAULT_LIMITS = {
   calls: { limit: 120, windowMs: 60_000 },
   bundles: { limit: 10, windowMs: 3_600_000 },
-  projects: { limit: 10, windowMs: 3_600_000 }
+  projects: { limit: 10, windowMs: 3_600_000 },
+  authfail: { limit: 20, windowMs: 300_000 }   // rejected API keys per client address
 };
 
 const safeEqual = (a, b) => {

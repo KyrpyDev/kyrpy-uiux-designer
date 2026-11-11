@@ -2,6 +2,8 @@ import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from '.
 import { normalizeWorkflow, normalizeLink } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
 import { stripOwnership } from '../domain/system-users.js';
+import { assertItemAccess } from './access-policy.js';
+import { fallbackOwnerId } from './default-owner.js';
 import { collectScreenRoutes, crawlScreenRoutes } from '../domain/screen-routes.js';
 
 /** Workflows: screens placed on an infinite canvas plus named links between them (optionally from a specific element). */
@@ -12,8 +14,8 @@ export class WorkflowService {
 
   #enrichUsernames(w) {
     if (!w) return w;
-    const creator = this.users ? this.users.get(w.creatorId || 1) : null;
-    const rootOwner = this.users ? this.users.get(w.rootOwnerId || w.creatorId || 1) : null;
+    const creator = this.users ? this.users.get(w.creatorId || fallbackOwnerId(this)) : null;
+    const rootOwner = this.users ? this.users.get(w.rootOwnerId || w.creatorId || fallbackOwnerId(this)) : null;
     return { ...w, creatorUsername: creator?.username || 'superadmin', rootOwnerUsername: rootOwner?.username || 'superadmin' };
   }
 
@@ -56,6 +58,10 @@ export class WorkflowService {
     return w;
   }
 
+  /** Throws ForbiddenError unless `actor` may edit / read the workflow (no actor = internal caller). */
+  assertCanEdit(w, actor) { assertItemAccess(w, actor, this.collaboration?.projects, 'edit', 'workflow'); return w; }
+  assertCanRead(w, actor) { assertItemAccess(w, actor, this.collaboration?.projects, 'read', 'workflow'); return w; }
+
   get(idOrKey) {
     const w = this.#require(idOrKey);
     return this.#enrichUsernames({ ...w, nodes: this.workflows.nodes(w.id), links: this.workflows.links(w.id) });
@@ -65,23 +71,23 @@ export class WorkflowService {
     const w = this.get(idOrKey);
     const rootItem = w.rootItemId && w.rootItemId !== w.id ? this.workflows.get(w.rootItemId) : w;
     const clonedFrom = w.clonedFromId ? this.workflows.get(w.clonedFromId) : null;
-    const creator = this.users ? this.users.get(w.creatorId || 1) : { id: 1, username: 'superadmin' };
-    const rootOwner = this.users ? this.users.get(w.rootOwnerId || 1) : { id: 1, username: 'superadmin' };
+    const creator = this.users ? this.users.get(w.creatorId || fallbackOwnerId(this)) : { id: 1, username: 'superadmin' };
+    const rootOwner = this.users ? this.users.get(w.rootOwnerId || fallbackOwnerId(this)) : { id: 1, username: 'superadmin' };
     const chain = [];
     const seen = new Set();
     let cur = w;
     while (cur && !seen.has(cur.id)) {
       seen.add(cur.id);
-      const u = this.users ? this.users.get(cur.creatorId || 1) : null;
+      const u = this.users ? this.users.get(cur.creatorId || fallbackOwnerId(this)) : null;
       chain.push({
         id: cur.id,
         key: cur.key,
         name: cur.name,
-        creatorId: cur.creatorId || 1,
+        creatorId: cur.creatorId || fallbackOwnerId(this),
         creatorUsername: u?.username || 'superadmin',
         clonedFromId: cur.clonedFromId || null,
         rootItemId: cur.rootItemId || cur.id,
-        rootOwnerId: cur.rootOwnerId || 1
+        rootOwnerId: cur.rootOwnerId || fallbackOwnerId(this)
       });
       cur = cur.clonedFromId ? this.workflows.get(cur.clonedFromId) : null;
     }
@@ -104,7 +110,7 @@ export class WorkflowService {
   }
 
   create(input, { actor = null, actorId = null } = {}) {
-    const creatorId = actorId ?? actor?.id ?? input.creatorId ?? 1;
+    const creatorId = actorId ?? actor?.id ?? input.creatorId ?? fallbackOwnerId(this);
     const data = normalizeWorkflow({ ...input, creatorId, rootOwnerId: input.rootOwnerId ?? creatorId });
     const pubOwner = this.#publicOwnership(data, actorId ?? actor?.id ?? null, actor);
     if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
@@ -115,7 +121,7 @@ export class WorkflowService {
 
   update(id, patch, { actor = null, actorId = null, recordChange = false } = {}) {
     const effActorId = actorId ?? actor?.id ?? null;
-    const w = this.#require(id);
+    const w = this.assertCanEdit(this.#require(id), actor);
     const beforeDoc = (effActorId || recordChange) ? this.get(w.id) : null;
     const clean = stripOwnership(patch);   // ownership and lineage are never changed by an edit
     this.#assertStaysPublic(w, clean.visibility, clean.projectId);
@@ -135,7 +141,7 @@ export class WorkflowService {
     if (beforeDoc && this.collaboration) {
       review = this.collaboration.changeReviewer
         ? this.collaboration.changeReviewer(beforeDoc, effActorId, { force: recordChange })
-        : ((recordChange || (effActorId && Number(effActorId) !== Number(w.creatorId || 1))) ? { ownerId: w.creatorId || 1 } : null);
+        : ((recordChange || (effActorId && Number(effActorId) !== Number(w.creatorId || fallbackOwnerId(this)))) ? { ownerId: w.creatorId || fallbackOwnerId(this) } : null);
     }
     if (review) {
       this.collaboration.recordEdit({
@@ -144,7 +150,7 @@ export class WorkflowService {
         targetId: afterDoc.id,
         targetKey: afterDoc.key,
         targetName: afterDoc.name,
-        authorId: effActorId ?? 1,
+        authorId: effActorId ?? fallbackOwnerId(this),
         ownerId: review.ownerId,
         action: 'update',
         beforeDoc,
@@ -155,7 +161,7 @@ export class WorkflowService {
   }
 
   remove(id, { actor = null, permanent = false } = {}) {
-    const w = this.#require(id);
+    const w = this.assertCanEdit(this.#require(id), actor);
     if (w.locked) throw new ConflictError(`workflow "${w.name || w.key}" is locked; unlock it before deleting`);
     const isPublic = (w.visibility || 'public') === 'public';
     const pub = this.#publicUserId();
@@ -166,7 +172,7 @@ export class WorkflowService {
     let trashRec = null;
     if (!permanent && this.trash) {
       const snapshot = {
-        uid: this.workflows.db?.prepare('SELECT uid FROM workflows WHERE id = ?').get(w.id)?.uid ?? null,   // keeps the MCP identity on restore
+        uid: this.workflows.uidOf?.(w.id) ?? null,   // keeps the MCP identity on restore
         record: w,
         nodes: this.workflows.nodes(w.id),
         links: this.workflows.links(w.id)
@@ -181,9 +187,9 @@ export class WorkflowService {
         projectId: w.projectId ?? 1,
         visibility: w.visibility || 'public',
         builtin: false,
-        creatorId: w.creatorId ?? 1,
-        rootOwnerId: w.rootOwnerId ?? 1,
-        deletedBy: actor?.id ?? 1,
+        creatorId: w.creatorId ?? fallbackOwnerId(this),
+        rootOwnerId: w.rootOwnerId ?? fallbackOwnerId(this),
+        deletedBy: actor?.id ?? fallbackOwnerId(this),
         snapshot
       });
     }
@@ -194,10 +200,10 @@ export class WorkflowService {
   clone(id, opts = {}, { actor = null, actorId = null } = {}) {
     const name = typeof opts === 'string' ? opts : opts?.name;
     const { projectId, visibility, creatorId } = typeof opts === 'object' && opts ? opts : {};
-    const src = this.get(id);
+    const src = this.assertCanRead(this.get(id), actor);
     const rootItemId = src.rootItemId || src.id;
-    const rootOwnerId = src.rootOwnerId || src.creatorId || 1;
-    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? 1;
+    const rootOwnerId = src.rootOwnerId || src.creatorId || fallbackOwnerId(this);
+    let effCreatorId = creatorId ?? actorId ?? actor?.id ?? src.creatorId ?? fallbackOwnerId(this);
     let effRootOwnerId = rootOwnerId;
     const pubOwner = creatorId == null
       ? this.#publicOwnership({ visibility: visibility ?? src.visibility ?? 'public', projectId: projectId ?? src.projectId ?? 1 }, actorId ?? actor?.id ?? null, actor)
@@ -223,8 +229,8 @@ export class WorkflowService {
   }
 
   /** Puts a workflow back to a saved version: { record, nodes: [{screenId,x,y,collapsed,locked}], links }. Atomic. */
-  restore(id, snap) {
-    const w = this.#require(id);
+  restore(id, snap, { actor = null } = {}) {
+    const w = this.assertCanEdit(this.#require(id), actor);
     if (!snap || !Array.isArray(snap.nodes) || !Array.isArray(snap.links)) throw new ValidationError('restore needs a saved version: { record, nodes, links }');
     const rec = normalizeWorkflow(stripOwnership(snap.record || {}), { partial: true });
     this.#assertStaysPublic(w, rec.visibility, rec.projectId);
@@ -246,16 +252,16 @@ export class WorkflowService {
   }
 
   /** Adds a screen to the workflow canvas (or moves/collapses/locks it). */
-  placeScreen(id, { screenId, x = 0, y = 0, collapsed = false, locked = false }) {
-    const w = this.#require(id);
+  placeScreen(id, { screenId, x = 0, y = 0, collapsed = false, locked = false }, { actor = null } = {}) {
+    const w = this.assertCanEdit(this.#require(id), actor);
     if (!this.screens.get(Number(screenId))) throw new NotFoundError('screen', screenId);
     return this.workflows.upsertNode({ workflowId: w.id, screenId: Number(screenId), x, y, collapsed, locked: !!locked });
   }
 
-  removeScreen(id, screenId) { const w = this.#require(id); this.workflows.removeNode(w.id, Number(screenId)); return { deleted: true }; }
+  removeScreen(id, screenId, { actor = null } = {}) { const w = this.assertCanEdit(this.#require(id), actor); this.workflows.removeNode(w.id, Number(screenId)); return { deleted: true }; }
 
-  addLink(id, input) {
-    const w = this.#require(id);
+  addLink(id, input, { actor = null } = {}) {
+    const w = this.assertCanEdit(this.#require(id), actor);
     const data = normalizeLink(input);
     const nodes = new Set(this.workflows.nodes(w.id).map(n => n.screenId));
     for (const sid of [data.fromScreenId, data.toScreenId]) {
@@ -269,9 +275,20 @@ export class WorkflowService {
     return this.workflows.createLink(w.id, data);
   }
 
-  updateLink(linkId, patch) {
+  /** A link of workflow `workflowId` (when given), after the edit check. */
+  #link(linkId, { actor = null, workflowId = null } = {}) {
     const l = this.workflows.link(Number(linkId));
     if (!l) throw new NotFoundError('link', linkId);
+    if (workflowId != null || actor) {
+      const w = workflowId != null ? this.#require(workflowId) : this.workflows.get(l.workflowId);
+      if (workflowId != null && Number(l.workflowId) !== Number(w.id)) throw new NotFoundError('link', linkId);
+      if (w) this.assertCanEdit(w, actor);
+    }
+    return l;
+  }
+
+  updateLink(linkId, patch, opts = {}) {
+    const l = this.#link(linkId, opts);
     return this.workflows.updateLink(l.id, normalizeLink({ ...patch }, { partial: true }));
   }
 
@@ -289,8 +306,8 @@ export class WorkflowService {
    * to the right of the start screen, which lands on { x, y } when it is new. Links the workflow already has are kept.
    * @returns the workflow plus `imported: { screens, links, reached }` (what was added, and how many screens the routes reach)
    */
-  importRoutes(id, { screenId, x = 0, y = 0 } = {}) {
-    const w = this.#require(id);
+  importRoutes(id, { screenId, x = 0, y = 0 } = {}, { actor = null } = {}) {
+    const w = this.assertCanEdit(this.#require(id), actor);
     const start = this.screens.get(Number(screenId));
     if (!start) throw new NotFoundError('screen', screenId);
     const recs = new Map([[start.id, start]]);
@@ -348,7 +365,8 @@ export class WorkflowService {
     return out;
   }
 
-  removeLink(linkId) {
+  removeLink(linkId, opts = {}) {
+    this.#link(linkId, opts);
     if (!this.workflows.deleteLink(Number(linkId))) throw new NotFoundError('link', linkId);
     return { deleted: true, id: Number(linkId) };
   }

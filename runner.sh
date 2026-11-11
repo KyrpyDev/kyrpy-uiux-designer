@@ -27,8 +27,8 @@ fi
 
 PORT="${PORT:-5180}"
 HOST="${HOST:-127.0.0.1}"
-APP_MODE="${APP_MODE:-dev}"
-BYPASS_AUTH="${BYPASS_AUTH:-true}"
+APP_MODE="${APP_MODE:-release}"
+BYPASS_AUTH="${BYPASS_AUTH:-false}"
 PID_FILE="$ROOT_DIR/.designer-runner.pid"
 LOG_FILE="$ROOT_DIR/designer-runner.log"
 

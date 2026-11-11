@@ -58,11 +58,7 @@ test('auth & ACL system: register, login with username or email, session token, 
   assert.equal(emailLogin.user.id, reg.user.id);
 
   // Admin updates user ACL role
-  const promoted = c.auth.updateUser({
-    actorId: 1,
-    userId: reg.user.id,
-    patch: { role: 'reviewer', acl: { canApproveChanges: true } }
-  });
+  const promoted = c.auth.updateUser(reg.user.id, { role: 'reviewer', acl: { canApproveChanges: true } }, c.auth.superadminUser());
   assert.equal(promoted.role, 'reviewer');
   assert.equal(promoted.acl.canApproveChanges, true);
   c.close();
@@ -73,8 +69,8 @@ test('project-based UI designs, public vs project-only visibility, and collabora
   const alice = c.auth.register({ username: 'alice', email: 'alice@kyrpy.com', password: 'password123' }).user;
   const bob = c.auth.register({ username: 'bob', email: 'bob@kyrpy.com', password: 'password123' }).user;
 
-  const projA = c.projects.create({ name: 'Sample App Mobile v2', visibility: 'private' }, { actorId: 1 });
-  const projB = c.projects.create({ name: 'Internal Admin', visibility: 'private' }, { actorId: alice.id });
+  const projA = c.projects.create({ name: 'Sample App Mobile v2', visibility: 'private' }, { actor: c.auth.users.get(1) });
+  const projB = c.projects.create({ name: 'Internal Admin', visibility: 'private' }, { actor: c.auth.users.get(alice.id) });
 
   // Invite Alice as contributor to ProjA
   const members = c.projects.addCollaborator({
@@ -112,7 +108,7 @@ test('multi-hop clone lineage tracking traces clonedFromId, rootItemId, and root
   // Root item created by admin kyrpy (id = 1) as a public item of project 1: it joins the public library,
   // owned by the immutable `public` system user
   const pub = c.publicUserId();
-  const rootBtn = c.button.create({ name: 'Kyrpy Master Button', visibility: 'public' }, { actorId: 1 });
+  const rootBtn = c.button.create({ name: 'Kyrpy Master Button', visibility: 'public' }, { actor: c.auth.users.get(1) });
   assert.equal(rootBtn.creatorId, pub);
   assert.equal(rootBtn.rootOwnerId, pub);
 
@@ -143,7 +139,7 @@ test('multi-hop clone lineage tracking traces clonedFromId, rootItemId, and root
 test('collaborative design change list: collaborator edits record change_requests; owner approves or rejects (rolls back)', () => {
   const c = fresh();
   const collab = c.auth.register({ username: 'collab_dev', email: 'collab@kyrpy.com', password: 'password123' }).user;
-  const proj = c.projects.create({ name: 'Collab App' }, { actorId: 1 });
+  const proj = c.projects.create({ name: 'Collab App' }, { actor: c.auth.users.get(1) });
   c.projects.addCollaborator({ projectId: proj.id, actorId: 1, usernameOrEmail: 'collab_dev', role: 'contributor' });
 
   // Owner kyrpy creates a screen
@@ -154,7 +150,7 @@ test('collaborative design change list: collaborator edits record change_request
 
   // Collaborator updates the screen -> creates a pending change request in change_requests
   c.screen.update(scr.id, { label: 'Collaborator Proposed Title' }, { actorId: collab.id, projectId: proj.id });
-  const pending = c.collab.listChanges({ projectId: proj.id, status: 'pending' });
+  const pending = c.collaboration.list({ projectId: proj.id, status: 'pending' });
   assert.equal(pending.length, 1);
   assert.equal(pending[0].authorUsername, 'collab_dev');
   assert.equal(pending[0].targetType, 'screen');
@@ -163,15 +159,15 @@ test('collaborative design change list: collaborator edits record change_request
   assert.equal(pending[0].afterSnapshot.label, 'Collaborator Proposed Title');
 
   // Owner rejects the change -> rolls back the screen to beforeSnapshot
-  const rejected = c.collab.rejectChange({ id: pending[0].id, reviewerId: 1, reviewNote: 'Keep original title' });
+  const rejected = c.collaboration.reject(pending[0].id, { reviewerId: 1, reviewNote: 'Keep original title' });
   assert.equal(rejected.status, 'rejected');
   assert.equal(c.screen.get(scr.id).label, 'Original Title', 'rejecting rolls back to beforeSnapshot');
 
   // Collaborator proposes another change, and owner approves it
   c.screen.update(scr.id, { label: 'Approved V2 Title' }, { actorId: collab.id, projectId: proj.id });
-  const pending2 = c.collab.listChanges({ projectId: proj.id, status: 'pending' });
+  const pending2 = c.collaboration.list({ projectId: proj.id, status: 'pending' });
   assert.equal(pending2.length, 1);
-  const approved = c.collab.approveChange({ id: pending2[0].id, reviewerId: 1, reviewNote: 'LGTM' });
+  const approved = c.collaboration.approve(pending2[0].id, { reviewerId: 1, reviewNote: 'LGTM' });
   assert.equal(approved.status, 'approved');
   assert.equal(c.screen.get(scr.id).label, 'Approved V2 Title');
   c.close();
@@ -236,18 +232,12 @@ test('editable template buttons, template devices, workflow screen lock, and tra
     width: 768,
     height: 1076,
     radius: 28
-  }, { actorId: 1 });
+  }, { actor: c.auth.users.get(1) });
   assert.equal(customDev.width, 768);
 
   const btns = c.templates.listButtons();
   assert.ok(btns.length >= 6);
-  const createdBtn = c.templates.instantiateButtonTemplate({
-    templateKey: btns[0].key,
-    name: 'Checkout CTA Button',
-    projectId: 1,
-    actorId: 1,
-    designServices: { button: c.button }
-  });
+  const createdBtn = c.templates.instantiateButton(btns[0].key, { name: 'Checkout CTA Button', projectId: 1, creatorId: 1 });
   assert.equal(createdBtn.name, 'Checkout CTA Button');
   assert.ok(createdBtn.nodes.length >= 2);
 

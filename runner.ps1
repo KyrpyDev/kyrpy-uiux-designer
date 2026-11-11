@@ -29,8 +29,8 @@ if (Test-Path $EnvFile) {
 
 $Port = if ($env:PORT) { $env:PORT } else { "5180" }
 $HostAddr = if ($env:HOST) { $env:HOST } else { "127.0.0.1" }
-$AppMode = if ($env:APP_MODE) { $env:APP_MODE } else { "dev" }
-$BypassAuth = if ($env:BYPASS_AUTH) { $env:BYPASS_AUTH } else { "true" }
+$AppMode = if ($env:APP_MODE) { $env:APP_MODE } else { "release" }
+$BypassAuth = if ($env:BYPASS_AUTH) { $env:BYPASS_AUTH } else { "false" }
 $PidFile = Join-Path $RootDir ".designer-runner.pid"
 
 function Stop-Designer {

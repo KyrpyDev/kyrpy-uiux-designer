@@ -7,7 +7,7 @@
  */
 import { ForbiddenError, UnauthorizedError } from './user-project-collab-service.js';
 import { ValidationError, ConflictError, NotFoundError } from '../domain/errors.js';
-import { passwordMatches, hashUserPassword, assertNewPassword, hasUserPassword, PASSWORD_MIN } from './passwords.js';
+import { passwordMatches, passwordMatchesAsync, hashUserPassword, hashUserPasswordAsync, hashablePassword, assertNewPassword, hasUserPassword, PASSWORD_MIN } from './passwords.js';
 import { sessionId } from '../infrastructure/sqlite/repositories/profile-repository.js';
 import { isSystemUser, isReservedEmail } from '../domain/system-users.js';
 
@@ -44,7 +44,7 @@ export class ProfileService {
     };
   }
 
-  update(token, patch = {}) {
+  update(token, patch = {}, pre = null) {
     const me = this.#self(token);
     const clean = {};
     if (patch.displayName !== undefined) {
@@ -59,7 +59,7 @@ export class ProfileService {
       if (this.profiles.emailTaken(v, me.id)) throw new ConflictError(`Email "${v}" is already used by another account`);
       if (v !== me.email) {
         // changing the sign-in email is sensitive: confirm with the password
-        if (!passwordMatches(this.users.getWithAuth(me.id), patch.currentPassword)) throw new ValidationError('Enter your current password to change the email');
+        if (!(pre ? pre.currentOk : passwordMatches(this.users.getWithAuth(me.id), patch.currentPassword))) throw new ValidationError('Enter your current password to change the email');
       }
       clean.email = v;
     }
@@ -77,18 +77,35 @@ export class ProfileService {
   }
 
   /** Changes the password. Other sessions are signed out; the current one stays. */
-  changePassword(token, { currentPassword, newPassword, signOutOthers = true } = {}) {
+  changePassword(token, { currentPassword, newPassword, signOutOthers = true } = {}, pre = null) {
     const me = this.#self(token);
     const row = this.users.getWithAuth(me.id);
-    if (!passwordMatches(row, currentPassword)) throw new ValidationError('Current password is incorrect');
+    if (!(pre ? pre.currentOk : passwordMatches(row, currentPassword))) throw new ValidationError('Current password is incorrect');
     const next = assertNewPassword(newPassword, { username: me.username, email: me.email });
-    if (passwordMatches(row, next)) throw new ValidationError('The new password must differ from the current one');
+    if (pre ? pre.same : passwordMatches(row, next)) throw new ValidationError('The new password must differ from the current one');
     return this.transaction(() => {
-      const { salt, passwordHash } = hashUserPassword(next);
+      const { salt, passwordHash } = pre?.hashed || hashUserPassword(next);
       this.users.update(me.id, { salt, passwordHash });
       const signedOut = signOutOthers === false ? 0 : this.profiles.deleteSessionsExcept(me.id, token);
       return { changed: true, signedOutSessions: signedOut };
     });
+  }
+
+  /** `changePassword` for the server: the three hashes run off the event loop. */
+  async changePasswordAsync(token, input = {}) {
+    const row = this.users.getWithAuth(this.#self(token).id);
+    const currentOk = await passwordMatchesAsync(row, input?.currentPassword);
+    if (!currentOk || !hashablePassword(input?.newPassword)) return this.changePassword(token, input, { currentOk, same: false, hashed: null });
+    const same = await passwordMatchesAsync(row, input.newPassword);
+    const hashed = same ? null : await hashUserPasswordAsync(input.newPassword);
+    return this.changePassword(token, input, { currentOk, same, hashed });
+  }
+
+  /** `update` for the server: the password that confirms an email change is checked off the event loop. */
+  async updateAsync(token, patch = {}) {
+    if (patch?.email === undefined || !patch?.currentPassword) return this.update(token, patch);
+    const currentOk = await passwordMatchesAsync(this.users.getWithAuth(this.#self(token).id), patch.currentPassword);
+    return this.update(token, patch, { currentOk });
   }
 
   sessions(token) {

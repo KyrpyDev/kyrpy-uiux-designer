@@ -17,11 +17,20 @@ const ENV_NAME = 'KYRPY_UIUX_KEY_PEPPER';
 export const PEPPER_FILE_NAME = 'mcp-key-pepper';
 const MIN_LENGTH = 32;
 
+/** A quoted value runs to its closing quote; an unquoted one to the first ` #` comment. */
+function envValue(raw) {
+  const s = String(raw ?? '').trim();
+  const q = s[0];
+  if (q === '"' || q === "'") { const end = s.indexOf(q, 1); return end > 0 ? s.slice(1, end) : s.slice(1); }
+  return s.replace(/\s+#.*$/, '').trim();
+}
+
 function fromEnvFiles() {
   for (const f of ['.env', 'credentials.env', 'config.env'].map(n => join(repoRoot, n))) {
     if (!existsSync(f)) continue;
-    const m = new RegExp(`^\\s*(?:export\\s+)?${ENV_NAME}\\s*=\\s*["']?([^"'\\r\\n#]+)`, 'm').exec(readFileSync(f, 'utf8'));
-    if (m && m[1].trim()) return m[1].trim();
+    const m = new RegExp(`^\\s*(?:export\\s+)?${ENV_NAME}\\s*=\\s*(.+)$`, 'm').exec(readFileSync(f, 'utf8'));
+    const v = m ? envValue(m[1]) : '';
+    if (v) return v;
   }
   return null;
 }

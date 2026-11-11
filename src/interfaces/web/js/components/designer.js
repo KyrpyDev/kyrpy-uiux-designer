@@ -14,7 +14,7 @@ import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet,
   isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox,
-  clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox
+  clampBoxToContainer, clampNodeToContainer, fitContainerToScreenBox, fitNodesToScreen
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
@@ -294,20 +294,13 @@ export class Designer {
   }
 
   /**
-   * Switches a screen to another device: the frame takes the device size, and every item (and sub item) is scaled
-   * uniformly to fit that extent and centred in it. One undo step.
+   * Switches a screen to another device: the frame takes the device size and the contents are laid out responsively
+   * for it (full-width / full-height items keep spanning the screen, the others keep their shape and relative place;
+   * see fitNodesToScreen). One undo step.
    */
   async applyDevice(dv) {
     if (!this.doc) return;
-    const oldW = this.doc.width || 1, oldH = this.doc.height || 1;
-    const s = Math.min(dv.width / oldW, dv.height / oldH);
-    const ox = (dv.width - oldW * s) / 2, oy = (dv.height - oldH * s) / 2;
-    const nodes = this.nodes;
-    const patches = nodes.map(n => {
-      const from = nodeBBox(n, nodes);
-      const to = { x: ox + from.x * s, y: oy + from.y * s, w: from.w * s, h: from.h * s };
-      return { id: n.id, attrs: resizeAttrs(n, from, to) };
-    });
+    const patches = fitNodesToScreen(this.nodes, { w: this.doc.width || 1, h: this.doc.height || 1 }, { w: dv.width, h: dv.height });
     await this.mutate(async () => {
       const saved = await api.updateDesign(this.type, this.doc.id, {
         meta: { ...(this.doc.meta || {}), device: dv.key }, width: dv.width, height: dv.height, scaleContent: false
@@ -503,15 +496,17 @@ export class Designer {
    * item of that type that was edited last (a dialog designer keeps the plain label).
    */
   typeSwitch() {
-    const label = h('span', { class: 'badge' }, NAMES[this.type]);
-    if (!this.opts.openPage) { label.style.marginLeft = '6px'; return label; }
+    // a text menu: the name of the designer that is open (at most 20 characters)
+    const full = NAMES[this.type] || '', short = full.length > 20 ? `${full.slice(0, 19)}…` : full;
+    const label = h('span', { class: 'text-menu-label' }, short);
+    if (!this.opts.openPage) { label.className = 'badge'; label.style.marginLeft = '6px'; return label; }
     const btn = this.toolMenu(TAB_GLYPH[this.type] || 'dot', 'Switch designer: opens the item of that type you edited last', () =>
       ['path', 'icon', 'button', 'element', 'screen', 'workflow'].map(t => {
         const id = lastEdited(t), name = id != null ? (findDesign(t, id)?.name || editedName(t, id)) : '';
         const title = t === 'workflow' ? 'Workflow designer' : NAMES[t];
         return [TAB_GLYPH[t] || 'dot', `${title}${t === this.type ? '  ·  current' : name ? `  ·  ${name}` : ''}`, () => { if (t !== this.type) this.opts.openPage(t); }, name ? `Open the ${t} edited last: "${name}"` : `Open the ${t} designer`];
       }));
-    btn.classList.add('type-switch'); btn.dataset.act = 'type-switch'; btn.style.marginLeft = '6px';
+    btn.classList.add('type-switch', 'text-menu'); btn.dataset.act = 'type-switch'; btn.style.marginLeft = '6px';
     btn.firstChild.replaceWith(label);
     return btn;
   }

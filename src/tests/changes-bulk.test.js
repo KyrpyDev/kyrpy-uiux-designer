@@ -12,7 +12,7 @@ function setup(n = 4) {
   const c = buildContainer({ dbFile: ':memory:' });
   const collab = c.auth.register({ username: 'collab_dev', email: 'collab@kyrpy.com', password: 'password123' }).user;
   const outsider = c.auth.register({ username: 'outsider', email: 'outsider@kyrpy.com', password: 'password123' }).user;
-  const proj = c.projects.create({ name: 'Bulk App' }, { actorId: 1 });
+  const proj = c.projects.create({ name: 'Bulk App' }, { actor: c.auth.users.get(1) });
   c.projects.addCollaborator({ projectId: proj.id, actorId: 1, usernameOrEmail: 'collab_dev', role: 'contributor' });
   const screens = [];
   for (let i = 0; i < n; i++) {
@@ -147,7 +147,7 @@ test('approve only records the decision when the edit is live: newer edits of th
   const { c, screens, pending } = setup(1);
   const actor = ownerOf(c);
   const s = screens[0];
-  c.screen.update(s.id, { label: 'Edited again later' }, { actorId: 1 });       // the owner edited the item after the collaborator
+  c.screen.update(s.id, { label: 'Edited again later' }, { actor: c.auth.users.get(1) });       // the owner edited the item after the collaborator
   c.collaboration.approve(pending[0].id, { actor });
   assert.equal(c.collaboration.get(pending[0].id).status, 'approved');
   assert.equal(c.screen.get(s.id).label, 'Edited again later', 'the old "after" snapshot was not restored over the newer edit');

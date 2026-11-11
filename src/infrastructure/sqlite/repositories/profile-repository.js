@@ -1,10 +1,11 @@
 /**
  * SQLite reads/writes behind the user profile page: the signed-in user's sessions and activity counts.
- * Session tokens never leave this layer in clear: callers get `sid` = first 16 hex chars of sha256(token).
+ * Session tokens are stored hashed (see session-token.js): callers get `sid` = first 16 hex chars of sha256(token);
+ * the `token` field of a listed session is the stored (hashed) value, only good for deleting that row.
  */
-import { createHash } from 'node:crypto';
+import { sessionId, sessionKey, sessionIdOfStored } from '../session-token.js';
 
-export const sessionId = token => createHash('sha256').update(String(token)).digest('hex').slice(0, 16);
+export { sessionId };
 
 const DESIGN_TABLES = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens', workflow: 'workflows' };
 
@@ -26,7 +27,7 @@ export class ProfileRepository {
     const live = [];
     for (const r of rows) {
       if (r.expires_at && r.expires_at < nowIso) { this.db.prepare('DELETE FROM sessions WHERE token = ?').run(r.token); continue; }
-      live.push({ sid: sessionId(r.token), token: r.token, createdAt: r.created_at, expiresAt: r.expires_at });
+      live.push({ sid: sessionIdOfStored(r.token), token: r.token, createdAt: r.created_at, expiresAt: r.expires_at });
     }
     return live;
   }
@@ -36,7 +37,7 @@ export class ProfileRepository {
   /** Deletes every session of the user except `keepToken` (null = all). Returns the number removed. */
   deleteSessionsExcept(userId, keepToken = null) {
     return keepToken
-      ? this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(Number(userId), String(keepToken)).changes
+      ? this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token NOT IN (?, ?)').run(Number(userId), sessionKey(keepToken), String(keepToken)).changes
       : this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(Number(userId)).changes;
   }
 

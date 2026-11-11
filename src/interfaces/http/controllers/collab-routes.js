@@ -4,13 +4,16 @@
  * Translations, and Offline-First PostgreSQL Synchronization.
  */
 import { USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS, EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, BUTTON_STYLES } from '../../../domain/entities.js';
+import { ForbiddenError } from '../../../domain/errors.js';
+import { intId } from '../input.js';
 
 export function collabRoutes(router, c) {
   // ---- Auth & Session ----
   router.get('/api/auth/config', () => c.auth.getAuthConfig());
   router.post('/api/auth/dev-bypass', () => c.auth.devBypassLogin());
-  router.post('/api/auth/login', ({ body }) => c.auth.login(body));
-  router.post('/api/auth/register', ({ body }) => c.auth.register(body));
+  router.post('/api/auth/login', ({ body, ip }) => c.auth.loginAsync({ ...(body || {}), ip }));
+  // self-registration: `designer` (or the read-only `viewer`); higher roles are given by an admin (POST /api/users)
+  router.post('/api/auth/register', ({ body }) => c.auth.registerAsync({ ...(body || {}), role: body?.role === 'viewer' ? 'viewer' : 'designer' }));
   router.post('/api/auth/logout', ({ token, body }) => c.auth.logout(token || body?.token));
   router.get('/api/auth/me', ({ actor, token }) => ({
     user: actor,
@@ -22,11 +25,14 @@ export function collabRoutes(router, c) {
   }));
 
   // ---- Admin & User Management ----
-  router.get('/api/users', () => c.auth.listUsers());
-  router.post('/api/users', ({ body, actor }) => c.auth.createUser(body, actor));
-  router.put('/api/users/:id', ({ params, body, actor }) => c.auth.updateUser(Number(params.id), body, actor));
-  router.delete('/api/users/:id', ({ params, actor }) => c.auth.removeUser(Number(params.id), actor));
-  router.post('/api/users/:id/transfer-superadmin', ({ params, body, actor }) => c.auth.transferSuperadmin(actor, Number(params.id), body || {}));
+  // admins get the full records; everyone else only what the member pickers need (no email, role detail or permissions)
+  router.get('/api/users', ({ actor }) => c.auth.isAdmin(actor)
+    ? c.auth.listUsers()
+    : c.auth.listUsers().map(u => ({ id: u.id, username: u.username, displayName: u.displayName, role: u.role })));
+  router.post('/api/users', ({ body, actor }) => c.auth.createUserByAdminAsync(actor, body || {}));
+  router.put('/api/users/:id', ({ params, body, actor, token }) => c.auth.updateUserAsync(intId(params.id, 'id'), body || {}, actor, { token }));
+  router.delete('/api/users/:id', ({ params, actor }) => c.auth.deleteUser(actor, intId(params.id, 'id')));
+  router.post('/api/users/:id/transfer-superadmin', ({ params, body, actor }) => c.auth.transferSuperadminAsync(actor, intId(params.id, 'id'), body || {}));
   router.get('/api/acl/matrix', () => ({
     systemRoles: USER_ROLES,
     projectRoles: PROJECT_ROLES,
@@ -38,19 +44,21 @@ export function collabRoutes(router, c) {
 
   // ---- Projects & Collaborator Sharing ----
   router.get('/api/projects', ({ query, actor }) =>
-    c.projects.list({
-      userId: query.get('userId') ? Number(query.get('userId')) : actor?.id,
-      includePublic: query.get('includePublic') !== '0',
-      q: query.get('q') || ''
-    })
+    c.projects.list({ user: actor, includePublic: query.get('includePublic') !== '0', q: query.get('q') || '' })
   );
-  router.post('/api/projects', ({ body, actor }) => c.projects.create(body, actor));
-  router.get('/api/projects/:id', ({ params }) => c.projects.get(params.id));
-  router.put('/api/projects/:id', ({ params, body, actor }) => c.projects.update(params.id, body, actor));
-  router.post('/api/projects/:id/save', ({ params, body, actor }) => c.projects.saveProject(params.id, body || {}, actor));
-  router.post('/api/projects/:id/clone', ({ params, body, actor }) => c.projects.clone(params.id, body || {}, actor));
-  router.get('/api/projects/:id/button-settings', ({ params }) => {
-    const p = c.projects.get(params.id);
+  router.post('/api/projects', ({ body, actor }) => c.projects.create(body, { actor }));
+  // a private project is visible to its owner, accepted members and admins only
+  const readableProject = (id, actor) => {
+    const p = c.projects.get(id);
+    if (actor && c.projects.userRole(p.id, actor) == null) throw new ForbiddenError('This project is private');
+    return p;
+  };
+  router.get('/api/projects/:id', ({ params, actor }) => readableProject(params.id, actor));
+  router.put('/api/projects/:id', ({ params, body, actor }) => c.projects.update(params.id, body, { actor }));
+  router.post('/api/projects/:id/save', ({ params, body, actor }) => c.projects.saveProject(params.id, body || {}, { actor }));
+  router.post('/api/projects/:id/clone', ({ params, body, actor }) => c.projects.clone(params.id, body || {}, { actor }));
+  router.get('/api/projects/:id/button-settings', ({ params, actor }) => {
+    const p = readableProject(params.id, actor);
     return {
       projectId: p.id,
       buttonStyle: p.settings?.buttonStyle || 'circle',
@@ -59,20 +67,20 @@ export function collabRoutes(router, c) {
     };
   });
   router.post('/api/projects/:id/button-settings', ({ params, body, actor }) =>
-    c.projects.applyButtonSettings(params.id, body || {}, actor)
+    c.projects.applyButtonSettings(params.id, body || {}, { actor })
   );
-  router.delete('/api/projects/:id', ({ params, actor }) => c.projects.remove(params.id, actor));
+  router.delete('/api/projects/:id', ({ params, actor }) => c.projects.remove(params.id, { actor }));
   router.post('/api/projects/:id/visibility', ({ params, body, actor }) =>
-    c.projects.setAllItemsVisibility(params.id, body?.visibility || 'public', actor)
+    c.projects.setAllItemsVisibility(params.id, body?.visibility || 'public', { actor })
   );
   router.post('/api/projects/:id/members', ({ params, body, actor }) =>
-    c.projects.inviteMember(params.id, body, actor)
+    c.projects.inviteMember(params.id, body, { actor })
   );
   router.put('/api/projects/:id/members/:uid', ({ params, body, actor }) =>
-    c.projects.updateMemberRole(params.id, Number(params.uid), body?.role, actor)
+    c.projects.updateMemberRole(params.id, intId(params.uid, 'uid'), body?.role, actor)
   );
   router.delete('/api/projects/:id/members/:uid', ({ params, actor }) =>
-    c.projects.removeMember(params.id, Number(params.uid), actor)
+    c.projects.removeMember(params.id, intId(params.uid, 'uid'), { actor })
   );
 
   // ---- Collaborative Change List (Owner Approve / Reject) ----
@@ -84,10 +92,12 @@ export function collabRoutes(router, c) {
     authorId: query.get('authorId') ? Number(query.get('authorId')) : null,
     q: query.get('q') || ''
   });
-  router.get('/api/changes', ({ query }) => {
+  // a change request is visible to its author, its reviewer (owner) and admins
+  const ownChange = (ch, actor) => !actor || c.auth.isAdmin(actor) || Number(ch.authorId) === Number(actor.id) || Number(ch.ownerId) === Number(actor.id);
+  router.get('/api/changes', ({ query, actor }) => {
     // lite=1: list view without the before/after snapshots (they can be ~100 KB each; open one change for them)
-    const rows = c.collaboration.list(changeFilter(query));
-    return query.get('lite') === '1' ? rows.map(({ beforeSnapshot, afterSnapshot, ...r }) => r) : rows;
+    const lite = query.get('lite') === '1';
+    return (lite ? c.collaboration.listLite(changeFilter(query)) : c.collaboration.list(changeFilter(query))).filter(ch => ownChange(ch, actor));
   });
   // { pending, approved, rejected, all } for the status tab badges (honours the other filters)
   router.get('/api/changes/counts', ({ query }) => c.collaboration.counts(changeFilter(query)));
@@ -95,13 +105,17 @@ export function collabRoutes(router, c) {
   router.post('/api/changes/bulk', ({ body, actor }) =>
     c.collaboration.bulkReview(body?.ids, body?.action, { actor, comment: body?.comment || '', filter: body?.filter || null })
   );
-  router.get('/api/changes/:id', ({ params }) => c.collaboration.get(Number(params.id)));
+  router.get('/api/changes/:id', ({ params, actor }) => {
+    const ch = c.collaboration.get(intId(params.id, 'id'));
+    if (!ownChange(ch, actor)) throw new ForbiddenError('This change request belongs to other users');
+    return ch;
+  });
   router.post('/api/changes', ({ body, actor }) => c.collaboration.recordChange({ ...body, actor }));
   router.post('/api/changes/:id/approve', ({ params, body, actor }) =>
-    c.collaboration.approve(Number(params.id), { reviewer: actor, comment: body?.comment || '' })
+    c.collaboration.approve(intId(params.id, 'id'), { reviewer: actor, comment: body?.comment || '' })
   );
   router.post('/api/changes/:id/reject', ({ params, body, actor }) =>
-    c.collaboration.reject(Number(params.id), { reviewer: actor, comment: body?.comment || '' })
+    c.collaboration.reject(intId(params.id, 'id'), { reviewer: actor, comment: body?.comment || '', force: body?.force === true })
   );
 
   // ---- Editable Template Devices & Button Types ----
@@ -112,9 +126,9 @@ export function collabRoutes(router, c) {
   );
   router.post('/api/templates/devices', ({ body, actor }) => c.templates.saveDevice(body, actor));
   router.put('/api/templates/devices/:id', ({ params, body, actor }) =>
-    c.templates.saveDevice({ ...body, id: Number(params.id) }, actor)
+    c.templates.saveDevice({ ...body, id: intId(params.id, 'id') }, actor)
   );
-  router.delete('/api/templates/devices/:id', ({ params }) => c.templates.removeDevice(Number(params.id)));
+  router.delete('/api/templates/devices/:id', ({ params, actor }) => { c.auth.assertAdmin(actor); return c.templates.deleteDevice(intId(params.id, 'id')); });
 
   router.get('/api/templates/buttons', ({ query, projectId }) =>
     c.templates.listButtonTemplates({
@@ -123,11 +137,11 @@ export function collabRoutes(router, c) {
   );
   router.post('/api/templates/buttons', ({ body, actor }) => c.templates.saveButtonTemplate(body, actor));
   router.put('/api/templates/buttons/:id', ({ params, body, actor }) =>
-    c.templates.saveButtonTemplate({ ...body, id: Number(params.id) }, actor)
+    c.templates.saveButtonTemplate({ ...body, id: intId(params.id, 'id') }, actor)
   );
-  router.delete('/api/templates/buttons/:id', ({ params }) => c.templates.removeButtonTemplate(Number(params.id)));
+  router.delete('/api/templates/buttons/:id', ({ params, actor }) => { c.auth.assertAdmin(actor); return c.templates.removeButtonTemplate(intId(params.id, 'id')); });
   router.post('/api/templates/buttons/:id/instantiate', ({ params, body, actor }) =>
-    c.templates.instantiateButtonFromTemplate(params.id, body || {}, actor)
+    c.templates.instantiateButton(params.id, { ...(body || {}), creatorId: actor?.id })
   );
 
   // ---- Translations ----
@@ -141,14 +155,21 @@ export function collabRoutes(router, c) {
   );
   router.post('/api/translations', ({ body }) => c.translations.upsert(body));
   router.put('/api/translations', ({ body }) => c.translations.upsert(body));
-  router.delete('/api/translations/:id', ({ params }) => c.translations.remove(Number(params.id)));
+  router.delete('/api/translations/:id', ({ params }) => c.translations.remove(intId(params.id, 'id')));
   router.get('/api/translations/languages', () => c.translations.languages());
 
   // ---- Offline-First PostgreSQL Sync (kyrpy-uiux-designer-db) ----
-  router.get('/api/sync/status', () => c.pgSync.status());
-  router.post('/api/sync/now', ({ body }) => c.pgSync.syncNow({ pull: body?.pull !== false, forceFullPush: Boolean(body?.forceFullPush) }));
-  router.post('/api/sync/push', ({ body }) => c.pgSync.pushAll({ forceFull: Boolean(body?.forceFull) }));
-  router.post('/api/sync/pull', () => c.pgSync.pullFromPostgres());
+  // connection details (host, database, last error text) are for admins; everyone else gets the state only
+  router.get('/api/sync/status', ({ actor }) => {
+    const st = c.pgSync.status();
+    if (c.auth.isAdmin(actor)) return st;
+    const { host, port, database, postgresHost, postgresDatabase, lastError, ...rest } = st;
+    return { ...rest, lastError: lastError ? 'sync error (ask an administrator)' : null };
+  });
+  // push / pull replace a whole database: admins only
+  router.post('/api/sync/now', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.syncNowAsync({ force: body?.force === true }); });
+  router.post('/api/sync/push', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.pushAllAsync({ force: body?.force === true }); });
+  router.post('/api/sync/pull', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.pullFromPostgresAsync({ force: body?.force === true }); });
 
   // ---- Trash Management (Restore, Purge, Empty) ----
   router.get('/api/trash', ({ query, actor }) =>
@@ -182,7 +203,7 @@ export function collabRoutes(router, c) {
   );
   router.post('/api/projects/:id/empty-library', ({ params, body, actor }) =>
     c.libraryTransfer.emptyProjectLibrary({
-      projectId: Number(params.id),
+      projectId: intId(params.id, 'id'),
       itemType: body?.itemType || body?.type || 'all',
       scope: body?.scope || 'project',
       includePublic: Boolean(body?.includePublic),

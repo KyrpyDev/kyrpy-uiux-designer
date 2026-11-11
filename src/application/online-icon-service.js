@@ -151,7 +151,7 @@ export class OnlineIconService {
   /** One icon as an svg text for previews (cached, recolourable). */
   async svg({ prefix, name, color = '' }) {
     if (!PREFIX_RE.test(prefix || '') || !NAME_RE.test(name || '')) throw new ValidationError('invalid icon id');
-    const col = /^#?[0-9a-fA-F]{3,8}$/.test(color) ? `%23${color.replace('#', '')}` : '';
+    const col = /^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? `%23${color.replace('#', '')}` : '';
     const key = `${prefix}:${name}:${col}`;
     if (this.svgCache.has(key)) return this.svgCache.get(key);
     const res = await this.fetchImpl(`${ICONIFY_API}/${prefix}/${name}.svg${col ? `?color=${col}` : ''}`, { signal: AbortSignal.timeout(20000) });
@@ -210,6 +210,8 @@ export class OnlineIconService {
           } catch (e) { res.failed++; if (res.errors.length < 10) res.errors.push(`${name}: ${e.message}`); }
         }
       });
+      // a large set is imported in many chunks: let other requests run between them
+      await new Promise(resolve => setImmediate(resolve));
     }
     return res;
   }

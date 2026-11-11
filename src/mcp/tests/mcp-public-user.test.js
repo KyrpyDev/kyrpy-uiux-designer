@@ -39,7 +39,7 @@ test('the public user cannot sign in, be impersonated, changed, deleted, re-regi
   const c = fresh();
   const pub = c.publicUserId();
   const admin = c.users.findByUsernameOrEmail('admin');
-  assert.throws(() => c.auth.login({ usernameOrEmail: 'public', password: 'anything' }), e => e.status === 403);
+  assert.throws(() => c.auth.login({ usernameOrEmail: 'public', password: 'anything' }), e => e.status === 401);   // no password ever matches; the answer does not say the account exists
   assert.throws(() => c.auth.updateUser(pub, { status: 'active', password: 'secret123' }, admin), e => e.status === 403);
   assert.throws(() => c.auth.updateUser(pub, { displayName: 'x' }, admin), e => e.status === 403);
   assert.throws(() => c.auth.deleteUser(admin, pub), e => e.status === 403);
@@ -49,7 +49,7 @@ test('the public user cannot sign in, be impersonated, changed, deleted, re-regi
   assert.throws(() => c.auth.register({ username: 'kyrpy-agent-designer', email: 'a@example.com', password: 'secret123' }), /reserved/);
   // even when someone flips its status in the DB, the account stays locked
   c.db.prepare("UPDATE users SET status = 'active' WHERE id = ?").run(pub);
-  assert.throws(() => c.auth.login({ usernameOrEmail: 'public', password: 'anything' }), e => e.status === 403);
+  assert.throws(() => c.auth.login({ usernameOrEmail: 'public', password: 'anything' }), e => e.status === 401);   // no password ever matches; the answer does not say the account exists
   assert.notEqual(c.auth.resolveActor({ userId: pub }).id, pub, 'x-user-id cannot impersonate the public user');
   assert.throws(() => c.mcp.apiKeys.create({ name: 'k', projectId: 1 }, c.users.get(pub)), e => e.status === 403);
   assert.throws(() => c.projects.inviteMember(1, { userId: pub }, { actor: admin }), /System account/);
@@ -74,7 +74,7 @@ test('migration m9-001 re-owns public rows of an old-state DB but leaves project
   try {
     const file = join(dir, 'old.db');
     let c = buildContainer({ dbFile: file, syncEnabled: false });
-    const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret' }).user;
+    const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret1' }).user;
     const pubIcon = c.icon.create({ name: 'Old Public Icon', visibility: 'public', creatorId: 1, rootOwnerId: 1 });
     const bobPublic = c.button.create({ name: 'Bob Old Public', visibility: 'public' }, { actorId: bob.id });
     const priv = c.element.create({ name: 'Kyrpy Private', visibility: 'private' }, { actorId: 1 });

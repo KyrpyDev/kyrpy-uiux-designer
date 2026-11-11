@@ -103,7 +103,7 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 
 **Who sees what:** a key reads its project's items, its owner's private library and public items, plus anything its project items depend on. Other projects' `project` items and other users' `private` items are never returned.
 
-**Security:** the API key is checked on every request (revocation is immediate). The Origin header must be loopback, the server's own host, or listed in `MCP_ALLOWED_ORIGINS`. Bodies are capped at 1 MB. Limits are 120 calls/min and 10 bundles/hour per key. Every tool call is audited with an argument digest, never the raw arguments.
+**Security:** the API key is checked on every request (revocation is immediate). The Origin header (browsers only; command-line clients send none) must be loopback or listed in `MCP_ALLOWED_ORIGINS`, `ALLOWED_ORIGINS` or `PUBLIC_BASE_URL`; the request's own `Host` header is not trusted. Bodies are capped at 1 MB. Limits are 120 calls/min and 10 bundles/hour per key, 20 rejected keys per 5 minutes per client address, and 32 sessions per key. `DELETE /mcp` needs the key that opened the session. Every tool call is audited with an argument digest, never the raw arguments.
 
 **Not in M2:** server-to-client SSE streams and resource subscriptions.
 

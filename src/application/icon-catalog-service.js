@@ -27,31 +27,26 @@ export class IconCatalogService {
    */
   search({ q = '', category = '', pack = '', offset = 0, limit = 200, ...filter } = {}) {
     const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
-    const p = String(pack || '').toLowerCase();
-    const rows = this.designs.list({ ...filter, category }).filter(d => {
-      const dp = iconPack(d);
-      if (p && (p === 'builtin' ? dp : dp !== p)) return false;
-      if (!terms.length) return true;
-      const hay = `${d.key} ${d.name} ${d.label} ${(d.tags || []).join(' ')}`.toLowerCase();
-      return terms.every(t => hay.includes(t));
-    });
     const off = Math.max(0, Number(offset) || 0), lim = Math.min(1000, Math.max(1, Number(limit) || 200));
-    return { total: rows.length, offset: off, limit: lim, version: this.version(), items: rows.slice(off, off + lim).map(iconSummary) };
+    // terms, pack and the page are applied in SQL: a page request reads one page, not the whole library
+    const where = { ...filter, category, terms, pack: String(pack || '').toLowerCase() };
+    const items = this.designs.list({ ...where, limit: lim, offset: off }).map(iconSummary);
+    return { total: this.designs.countMatching(where), offset: off, limit: lim, version: this.version(), items };
   }
 
   /** Full icon records ({...summary, nodes}) for the given ids (max 400 unless `max`); unknown ids are skipped. */
   full(ids, { max = MAX_IDS } = {}) {
-    const out = [];
-    for (const id of parseIds(ids, max)) {
-      const d = this.designs.get(id);
-      if (d) out.push({ ...iconSummary(d), nodes: this.nodes.listByOwner('icon', id) });
-    }
-    return out;
+    const rows = new Map(this.designs.getMany(parseIds(ids, max)).map(d => [d.id, d]));
+    const nodes = new Map();
+    for (const n of this.nodes.listByOwners('icon', [...rows.keys()])) { if (!nodes.has(n.ownerId)) nodes.set(n.ownerId, []); nodes.get(n.ownerId).push(n); }
+    // answer in the order asked for
+    return parseIds(ids, max).filter(id => rows.has(id)).map(id => ({ ...iconSummary(rows.get(id)), nodes: nodes.get(id) || [] }));
   }
 
   /** `<svg>` sprite holding only the symbols of the given icon ids (max 400), with a content ETag. */
   sprite(themeKey, ids) {
-    const list = parseIds(ids).filter(id => this.designs.get(id));
+    const known = new Set(this.designs.getMany(parseIds(ids)).map(d => d.id));
+    const list = parseIds(ids).filter(id => known.has(id));
     const svg = this.render.sprite(themeKey, list);
     const etag = `"${createHash('sha1').update(svg).digest('base64url')}"`;
     return { svg, etag, ids: list };

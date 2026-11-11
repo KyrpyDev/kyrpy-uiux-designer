@@ -11,7 +11,8 @@
 import { h, clear, toast } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign } from '../state.js';
-import { nodeBBox, isCarouselContainerNode, getContainerConfig } from '/domain/geometry.js';
+import { nodeBBox, isCarouselContainerNode, getContainerConfig, fitNodesToScreen } from '/domain/geometry.js';
+import { DEVICES } from '/domain/entities.js';
 
 const FORM_ELEMENT_KEYS = new Set([
   'html-input',
@@ -302,6 +303,19 @@ export function installTestActions(Designer) {
     }
 
     const tr = this.opts.testRunner;
+    // device menu of the test window: lays the screen out for another device for this test only (nothing is saved)
+    if (tr && this.type === 'screen') {
+      const devices = state.templateDevices?.length
+        ? state.templateDevices.map(dv => ({ key: dv.key, name: dv.name, width: dv.width, height: dv.height }))
+        : Object.entries(DEVICES).map(([k, v]) => ({ key: k, name: v.name, width: v.width, height: v.height }));
+      const curKey = this._testDevice?.key || d.meta?.device;
+      const cur = devices.find(x => x.key === curKey);
+      const menu = this.toolMenu('monitor', 'Device: test this screen on another device (not saved)', () =>
+        devices.map(dv => ['monitor', `${dv.key === curKey ? '✓ ' : ''}${dv.name} (${dv.width}×${dv.height})`, () => this.previewDevice(dv), 'Lay the screen out for this device in the test only']));
+      menu.classList.add('text-menu', 'test-device-menu'); menu.dataset.act = 'test-device';
+      menu.firstChild.replaceWith(h('span', { class: 'text-menu-label' }, cur ? cur.name : `${d.width}×${d.height}`));
+      hudItems.push(menu);
+    }
     if (tr) hudItems.push(
       h('span', { class: 'badge', title: tr.mode === 'navigate' ? 'Routes are followed: a full browsable app' : 'Routes only say where they would go' }, tr.mode === 'navigate' ? '🧭 Workflow: routes navigate' : '🔔 Design test: routes are announced'),
       h('button', { class: 'btn small', title: 'Start the test again from the beginning', onclick: () => tr.restart() }, '⟲ Restart'));
@@ -330,6 +344,20 @@ export function installTestActions(Designer) {
     // 5. Edit pills: every placed item / menu (and menu items on hover) open their designer in a new tab
     if (livePillsShown()) this.mountLiveEditPills();
     this.installLiveItemPill();
+  };
+
+  /**
+   * Test window: shows the open screen on another device. The frame takes the device size and the contents are laid
+   * out responsively (fitNodesToScreen), in memory only — the saved screen keeps its own device.
+   */
+  proto.previewDevice = function (dv) {
+    if (!this.doc || !dv) return;
+    const attrs = new Map(fitNodesToScreen(this.nodes, { w: this.doc.width || 1, h: this.doc.height || 1 }, { w: dv.width, h: dv.height }).map(p => [p.id, p.attrs]));
+    const nodes = this.nodes.map(n => (attrs.has(n.id) ? { ...n, attrs: attrs.get(n.id) } : n));
+    this.doc = { ...this.doc, nodes, width: dv.width, height: dv.height };
+    this._testDevice = dv;
+    this.renderStage();
+    this.fitted = false; this.fit();
   };
 
   /** Mounts real HTML <input>, <textarea>, and <select> controls over form fields in `this.liveLayer`. */

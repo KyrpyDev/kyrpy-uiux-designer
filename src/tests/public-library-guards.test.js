@@ -15,7 +15,7 @@ function setup() {
   const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
   const pub = c.publicUserId();
   const kyrpy = c.users.findByUsernameOrEmail('superadmin');
-  const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret' }).user;
+  const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret1' }).user;
   const bobProj = c.projects.create({ name: 'Bob Project', visibility: 'private' }, { actor: bob });
   return { c, pub, kyrpy, bob, bobProj };
 }
@@ -77,7 +77,7 @@ test('an admin publishing an existing default-project item re-owns it to the pub
 test('updateUser validates the email like register / profile', () => {
   const { c, kyrpy, bob } = setup();
   try {
-    const carol = c.auth.register({ username: 'carol', email: 'carol@example.com', password: 'carolsecret' }).user;
+    const carol = c.auth.register({ username: 'carol', email: 'carol@example.com', password: 'carolsecret1' }).user;
     assert.throws(() => c.auth.updateUser(carol.id, { email: 'not-an-email' }, kyrpy), ValidationError);
     assert.throws(() => c.auth.updateUser(carol.id, { email: PUBLIC_EMAIL }, kyrpy), ConflictError);
     assert.throws(() => c.auth.updateUser(carol.id, { email: 'BOB@example.com' }, kyrpy), ConflictError);

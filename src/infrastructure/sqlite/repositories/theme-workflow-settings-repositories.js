@@ -1,4 +1,5 @@
 import { inTransaction } from '../database.js';
+import { defaultOwnerId } from '../../../domain/system-users.js';
 
 const toTheme = r => r && ({ id: r.id, key: r.key, name: r.name, kind: r.kind, tokens: JSON.parse(r.tokens), surfaces: JSON.parse(r.surfaces), builtin: !!r.builtin, position: r.position });
 
@@ -44,6 +45,29 @@ const toLink = r => r && ({ id: r.id, workflowId: r.workflow_id, fromScreenId: r
 
 export class WorkflowRepository {
   constructor(db, sync = null) { this.db = db; this.sync = sync; }
+
+  /** Stable uid (MCP identity) of a row, or null when the table has no such column. */
+  uidOf(id) {
+    try { return this.db.prepare(`SELECT uid FROM workflows WHERE id = ?`).get(Number(id))?.uid ?? null; } catch { return null; }
+  }
+  /** Gives a restored row its former uid back, when it is still free. */
+  restoreUid(id, uid) {
+    if (!uid) return false;
+    try { return this.db.prepare(`UPDATE workflows SET uid = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM workflows WHERE uid = ?)`).run(uid, Number(id), uid).changes > 0; }
+    catch { return false; }   // table without a uid column
+  }
+  /** Ids of a project's rows; `projectOnly` leaves out the ones published to everyone. */
+  idsOfProject(projectId, { projectOnly = false } = {}) {
+    return this.db.prepare(`SELECT id FROM workflows WHERE project_id = ?${projectOnly ? " AND visibility = 'project'" : ''}`).all(Number(projectId)).map(r => r.id);
+  }
+  /** How many public rows of a project belong to `creatorId`. */
+  countPublicOf(projectId, creatorId) {
+    return this.db.prepare(`SELECT COUNT(*) AS n FROM workflows WHERE project_id = ? AND creator_id = ? AND visibility = 'public'`).get(Number(projectId), Number(creatorId)).n;
+  }
+  /** Sets the visibility of every row of a project. Returns the number of rows. */
+  setProjectVisibility(projectId, visibility) {
+    return Number(this.db.prepare(`UPDATE workflows SET visibility = ?, updated_at = datetime('now') WHERE project_id = ?`).run(visibility, Number(projectId)).changes || 0);
+  }
   list({ q = '', projectId = null, projectIds = null, visibility = '', creatorId = null, actorId = null, includePublic = true, includePrivate = true } = {}) {
     const where = [], args = [];
     const pIds = Array.isArray(projectIds) && projectIds.length
@@ -56,7 +80,7 @@ export class WorkflowRepository {
     const effUserId = creatorId != null && creatorId !== ''
       ? Number(creatorId)
       : (actorId != null && actorId !== '' ? Number(actorId) : null);
-    if (q) { where.push('(w.key LIKE ? OR w.name LIKE ? OR w.label LIKE ? OR w.description_dev LIKE ?)'); const l = `%${q}%`; args.push(l, l, l, l); }
+    if (q) { where.push(`(w.key LIKE ? ESCAPE '\\' OR w.name LIKE ? ESCAPE '\\' OR w.label LIKE ? ESCAPE '\\' OR w.description_dev LIKE ? ESCAPE '\\')`); const l = `%${String(q).replace(/[\\%_]/g, '\\$&')}%`; args.push(l, l, l, l); }
     const vis = visibility === 'all' ? '' : visibility;
     if (vis) {
       where.push('w.visibility = ?'); args.push(vis);
@@ -103,7 +127,7 @@ export class WorkflowRepository {
       : !!this.db.prepare('SELECT 1 FROM workflows WHERE key = ? AND project_id = ?').get(key, Number(projectId));
   }
   create(w, { id: explicitId } = {}) {
-    const creatorId = w.creatorId ?? 1;
+    const creatorId = w.creatorId ?? defaultOwnerId(this.db);
     const rootOwnerId = w.rootOwnerId ?? creatorId;
     const useId = explicitId && !this.get(explicitId) ? Number(explicitId) : null;
     const cols = ['key','name','label','description_dev','project_id','visibility','creator_id','cloned_from_id','root_item_id','root_owner_id','locked'];

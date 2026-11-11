@@ -5,6 +5,7 @@
  *   node main.js mcp    [--port 5181] [--db data/designer.db]      standalone MCP service only
  *   node main.js import [--legacy ../v1] [--reset] [--db ...]     seed/refresh from the v1 prototype + html catalog
  *   node main.js guide  [--out usage-and-guide.html]                 write the standalone usage guide
+ *   node main.js sync   [--force]                                    push this database to PostgreSQL
  *   node main.js export --out <folder> [--themes liquid,glow] [--screens all|key1,key2] [--icons used|all|none]
  */
 import { fileURLToPath } from 'node:url';
@@ -60,7 +61,7 @@ async function main() {
       console.log('import finished', stats);
       c.close();
     } else if (cmd === 'sync') {
-      const res = await c.pgSync.syncNow({ forceFullPush: !!args.force });
+      const res = await c.pgSync.syncNow({ force: !!args.force });
       console.log('postgresql sync finished', res);
       c.close();
     } else if (cmd === 'export') {
@@ -70,6 +71,10 @@ async function main() {
       console.log('exported', result);
       c.close();
     } else if (cmd === 'serve') {
+      // the server asks for a sign-in unless the login bypass is switched on explicitly (APP_MODE=dev or BYPASS_AUTH=true)
+      if (process.env.BYPASS_AUTH === undefined && !process.env.APP_MODE && !process.env.AUTH_MODE) process.env.BYPASS_AUTH = 'false';
+      const authCfg = c.auth.getAuthConfig();
+      console.log(authCfg.requireAuth ? 'sign-in required (release mode)' : 'WARNING: login bypass is ON (dev mode): every visitor acts as the superadmin');
       if (c.screen.list().length === 0 && c.icon.list().length === 0) {
         console.log('empty database: importing the v1 prototype and the HTML element catalog ...');
         const stats = c.importer.run({ legacyRoot: existsSync(defaultLegacy) ? defaultLegacy : null });
@@ -78,15 +83,15 @@ async function main() {
       const port = Number(args.port || process.env.PORT || 5180);
       const server = createHttpServer(c, { webRoot: join(here, 'interfaces', 'web'), domainRoot: join(here, 'domain') });
       server.listen(port, '127.0.0.1', () => console.log(`UI/UX designer running at http://127.0.0.1:${port}  (db: ${dbFile})`));
-      process.on('SIGINT', () => { server.close(); c.close(); process.exit(0); });
+      for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.close(); server.closeAllConnections?.(); c.close(); process.exit(0); });
     } else if (cmd === 'mcp') {
       // standalone MCP service (same database, own port): node main.js mcp [--port 5181]
       const port = Number(args.port || process.env.MCP_PORT || 5181);
       const server = createMcpOnlyServer(c);
       server.listen(port, '127.0.0.1', () => console.log(`kyrpy-uiux-mcp running at http://127.0.0.1:${port}/mcp  (db: ${dbFile})`));
-      process.on('SIGINT', () => { server.close(); c.close(); process.exit(0); });
+      for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { server.close(); server.closeAllConnections?.(); c.close(); process.exit(0); });
     } else {
-      console.error(`unknown command "${cmd}". Use serve, mcp, import or export.`);
+      console.error(`unknown command "${cmd}". Use serve, mcp, import, export, sync or guide.`);
       process.exitCode = 2;
     }
   } catch (e) {

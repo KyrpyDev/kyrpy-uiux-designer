@@ -7,8 +7,11 @@
  * - Reads connection settings from `.env`, `credentials.env`, or environment variables (zero external npm dependencies).
  * - When no PostgreSQL host/credentials are configured (`PG_SYNC_ENABLED=false` or empty `PGHOST`), runs in local-only SQLite mode.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { installOutboxTriggers } from '../sqlite/outbox-triggers.js';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, mkdtempSync, openSync, writeSync, closeSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { healForeignKeys } from '../sqlite/database.js';
@@ -22,6 +25,20 @@ const userIdByName = (db, name) => { try { return db.prepare('SELECT id FROM use
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
 
+/**
+ * Value of one `KEY=value` line of a .env file: a quoted value runs to its closing quote (so `#`, `'` and `"` inside
+ * a password survive), an unquoted one to the first ` #` comment.
+ */
+export function envValue(raw) {
+  const s = String(raw ?? '').trim();
+  const q = s[0];
+  if (q === '"' || q === "'") {
+    const end = s.indexOf(q, 1);
+    return end > 0 ? s.slice(1, end) : s.slice(1);
+  }
+  return s.replace(/\s+#.*$/, '').trim();
+}
+
 function loadCredentialsEnv() {
   const envFiles = [join(repoRoot, '.env'), join(repoRoot, 'credentials.env'), join(repoRoot, 'config.env')];
   const out = {};
@@ -30,15 +47,18 @@ function loadCredentialsEnv() {
     try {
       const txt = readFileSync(f, 'utf8');
       for (const line of txt.split(/\r?\n/)) {
-        const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*["']?([^"'\r\n#]*)["']?/.exec(line);
+        const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
         if (m) {
-          let val = m[2].trim();
+          let val = envValue(m[2]);
           const bashDef = /^\$\{[A-Z0-9_]+:-(.*)\}$/.exec(val);
           if (bashDef) val = bashDef[1].trim();
           if (out[m[1]] === undefined || out[m[1]] === '') out[m[1]] = val;
         }
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      // no .env file is normal; an unreadable one is worth a line
+      if (e?.code !== 'ENOENT') console.warn(`[sync] .env not read: ${e.message}`);
+    }
   }
   return out;
 }
@@ -412,7 +432,11 @@ CREATE TABLE IF NOT EXISTS trash_items (
 `;
 
 /** Core DDL + the MCP layer's additions (mcp_context, uid, content_hash, schema_registry). */
-export const PG_SCHEMA_SQL = CORE_PG_SCHEMA_SQL + MCP_PG_SCHEMA_SQL;
+// one row (`revision`) that changes on every push: lets a machine see that another one pushed since its last pull
+const SYNC_META_SQL = `
+CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+`;
+export const PG_SCHEMA_SQL = CORE_PG_SCHEMA_SQL + SYNC_META_SQL + MCP_PG_SCHEMA_SQL;
 
 export const SYNC_TABLES = [
   { name: 'users', pk: ['id'], conflict: 'id', uniqueCols: ['username', 'email'] },
@@ -439,6 +463,43 @@ export const SYNC_TABLES = [
   { name: 'schema_registry', pk: ['id'], conflict: 'id', uniqueTuple: ['table_name', 'column_name'] },
   ...MCP_SYNC_TABLES
 ];
+
+const USER_REFS = [
+  ...['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'trash_items'].flatMap(t => [[t, 'creator_id'], [t, 'root_owner_id']]),
+  ['trash_items', 'deleted_by'], ['projects', 'owner_id'], ['project_members', 'user_id'], ['project_members', 'invited_by'],
+  ['change_requests', 'author_id'], ['change_requests', 'owner_id'], ['change_requests', 'reviewer_id'],
+  ['template_devices', 'created_by'], ['template_buttons', 'created_by'], ['sessions', 'user_id'],
+  ['api_keys', 'user_id'], ['api_keys', 'revoked_by'], ['changesets', 'user_id'], ['changesets', 'reviewed_by'],
+  ['mcp_audit_log', 'user_id'], ['ai_artifacts', 'updated_by'], ['project_versions', 'approved_by']
+];
+const PROJECT_REF_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'project_members', 'change_requests',
+  'trash_items', 'mcp_audit_log', 'ai_artifacts', 'project_versions', 'changesets', 'item_requests', 'code_bindings',
+  'version_items', 'api_keys', 'design_focus'];
+const ITEM_REFS = {
+  icons: [['menu_items', 'icon_id']],
+  buttons: [['menu_items', 'button_id'], ['menu_items', 'ref_button_id']],
+  elements: [['menu_items', 'target_element_id']],
+  screens: [['menu_items', 'target_screen_id'], ['workflow_screens', 'screen_id'], ['workflow_links', 'from_screen_id'], ['workflow_links', 'to_screen_id']],
+  workflows: [['workflow_screens', 'workflow_id'], ['workflow_links', 'workflow_id']]
+};
+/** Columns that hold an id of `target`: `[table, column, typeColumn?, typeValue?]` (declared and undeclared references). */
+function referencesTo(target) {
+  if (target === 'users') return USER_REFS;
+  if (target === 'projects') return PROJECT_REF_TABLES.map(t => [t, 'project_id']);
+  const type = { paths: 'path', icons: 'icon', buttons: 'button', elements: 'element', screens: 'screen', workflows: 'workflow' }[target];
+  if (!type) return [];
+  return [
+    [target, 'cloned_from_id'], [target, 'root_item_id'],
+    ...(ITEM_REFS[target] || []),
+    ...(type === 'workflow' ? [] : [['nodes', 'ref_id', 'ref_type', type]]),
+    ['change_requests', 'target_id', 'target_type', type]
+  ];
+}
+
+const DESIGN_TABLE_TYPES = { paths: 'path', icons: 'icon', buttons: 'button', elements: 'element', screens: 'screen' };
+
+/** A value as a quoted text literal (for comparisons done as text). */
+const pgText = v => `'${String(v).replace(/'/g, "''")}'`;
 
 function pgLiteral(v) {
   if (v === null || v === undefined) return 'NULL';
@@ -472,19 +533,29 @@ export class PostgresSyncService {
     this.lastSyncAt = null;
     this.lastError = null;
     this.online = false;
+    this.busy = null;   // 'push' | 'pull' while a non-blocking sync runs
+    // every write to a synced table is recorded by a trigger (see outbox-triggers.js)
+    try { this.tracked = installOutboxTriggers(db, SYNC_TABLES); } catch { this.tracked = 0; }
   }
 
-  /** Logs an offline-first mutation into the local SQLite outbox. */
-  enqueue(tableName, recordId, operation, payload = {}) {
+  /**
+   * Records that a row changed (table, id, operation; no row copy). The triggers already do this for every write,
+   * so repositories calling it only repeat what is recorded: a record that is already waiting is not added twice.
+   */
+  enqueue(tableName, recordId, operation) {
+    const op = operation === 'delete' ? 'delete' : 'upsert';
     try {
-      this.db.prepare('INSERT INTO sync_outbox (table_name, record_id, operation, payload, synced) VALUES (?, ?, ?, ?, 0)')
-        .run(String(tableName), String(recordId), String(operation), JSON.stringify(payload ?? {}));
-    } catch { /* ignore outbox write errors on closed db */ }
+      this.db.prepare(`INSERT INTO sync_outbox (table_name, record_id, operation, payload, synced)
+        SELECT ?, ?, ?, '{}', 0
+        WHERE NOT EXISTS (SELECT 1 FROM sync_outbox WHERE synced = 0 AND table_name = ? AND record_id = ? AND operation = ?)`)
+        .run(String(tableName), String(recordId), op, String(tableName), String(recordId), op);
+    } catch (e) { if (!/closed|not open/i.test(e.message)) console.warn(`[sync] outbox write failed: ${e.message}`); }
   }
 
+  /** Records changed locally and not pushed yet (rows of a push in flight count until it succeeds). */
   pendingCount() {
     try {
-      return this.db.prepare('SELECT COUNT(*) AS n FROM sync_outbox WHERE synced = 0').get().n;
+      return this.db.prepare('SELECT COUNT(*) AS n FROM sync_outbox WHERE synced <> 1').get().n;
     } catch { return 0; }
   }
 
@@ -499,48 +570,166 @@ export class PostgresSyncService {
     try {
       this.db.prepare('INSERT INTO sync_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run(key, JSON.stringify(value));
-    } catch { /* ignore */ }
+    } catch (e) { console.warn(`[sync] state "${key}" not saved: ${e.message}`); }
   }
 
-  /** Executes SQL against PostgreSQL via psql with a strict timeout so offline mode never blocks. */
-  execPg(sql, { database = this.config.database, tuplesOnly = false, timeoutMs = 8000 } = {}) {
-    if (!this.enabled) return { ok: false, error: 'sync disabled' };
+  #psqlArgs(database, tuplesOnly) {
     const args = ['-h', this.config.host, '-p', this.config.port, '-U', this.config.user, '-d', database, '-v', 'ON_ERROR_STOP=1', '-X', '-q'];
     if (tuplesOnly) args.push('-t', '-A');
-    const res = spawnSync('psql', args, {
-      input: sql,
-      encoding: 'utf8',
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, PGPASSWORD: this.config.password, PGCONNECT_TIMEOUT: '3' }
-    });
-    if (res.error || res.status !== 0) {
-      const err = (res.stderr || res.error?.message || 'PostgreSQL connection failed').trim();
+    return args;
+  }
+
+  #psqlEnv() { return { ...process.env, PGPASSWORD: this.config.password, PGCONNECT_TIMEOUT: '3' }; }
+
+  #psqlResult(failed, stdout, stderr) {
+    if (failed) {
+      const err = String(stderr || 'PostgreSQL connection failed').trim();
       this.online = false;
       this.lastError = err;
       return { ok: false, error: err };
     }
     this.online = true;
     this.lastError = null;
-    return { ok: true, stdout: (res.stdout || '').trim() };
+    return { ok: true, stdout: String(stdout || '').trim() };
+  }
+
+  /** Executes SQL against PostgreSQL via psql and waits for it (command line and scripts). The server uses `execPgAsync`. */
+  execPg(sql, { database = this.config.database, tuplesOnly = false, timeoutMs = 8000 } = {}) {
+    if (!this.enabled) return { ok: false, error: 'sync disabled' };
+    const res = spawnSync('psql', this.#psqlArgs(database, tuplesOnly), {
+      input: sql,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+      env: this.#psqlEnv()
+    });
+    return this.#psqlResult(res.error || res.status !== 0, res.stdout, res.stderr || res.error?.message);
+  }
+
+  /** Same as `execPg` without blocking the event loop: the HTTP server keeps answering while psql runs. */
+  execPgAsync(sql, opts = {}) {
+    // a replaced `execPg` (tests, the publish probe) is honoured here too
+    if (Object.hasOwn(this, 'execPg')) return Promise.resolve(this.execPg(sql, opts));
+    const { database = this.config.database, tuplesOnly = false, timeoutMs = 8000 } = opts;
+    if (!this.enabled) return Promise.resolve({ ok: false, error: 'sync disabled' });
+    return new Promise(resolve => {
+      let out = '', err = '', done = false;
+      const finish = (failed, msg) => { if (done) return; done = true; clearTimeout(timer); resolve(this.#psqlResult(failed, out, msg ?? err)); };
+      let child;
+      try { child = spawn('psql', this.#psqlArgs(database, tuplesOnly), { env: this.#psqlEnv() }); }
+      catch (e) { resolve(this.#psqlResult(true, '', e.message)); return; }
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(true, `psql timed out after ${Math.round(timeoutMs / 1000)} s`); }, timeoutMs);
+      child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+      child.stdout.on('data', d => { out += d; });
+      child.stderr.on('data', d => { err += d; });
+      child.on('error', e => finish(true, e.message));
+      child.on('close', code => finish(code !== 0));
+      child.stdin.on('error', () => { /* psql ended before reading everything; `close` reports it */ });
+      child.stdin.end(sql);
+    });
+  }
+
+  /**
+   * Runs SQL that arrives as a sequence of statements: they are written to a temporary file one by one and psql
+   * reads the file, so the whole text never sits in memory. A replaced `execPg` (tests, the publish probe) gets the
+   * joined text instead.
+   */
+  #execSpooled(parts, opts = {}, nonBlocking) {
+    if (Object.hasOwn(this, 'execPg')) return this.execPg([...parts].join('\n'), opts);
+    if (!this.enabled) return { ok: false, error: 'sync disabled' };
+    const { database = this.config.database, tuplesOnly = false, timeoutMs = 8000 } = opts;
+    const dir = mkdtempSync(join(tmpdir(), 'ud-push-'));
+    const file = join(dir, 'push.sql');
+    const cleanup = () => { try { rmSync(dir, { recursive: true, force: true }); } catch (e) { console.warn(`[sync] temporary file not removed: ${e.message}`); } };
+    let fd;
+    try {
+      fd = openSync(file, 'w', 0o600);
+      for (const part of parts) { writeSync(fd, part); writeSync(fd, '\n'); }
+      closeSync(fd); fd = null;
+    } catch (e) {
+      if (fd != null) { try { closeSync(fd); } catch { /* already closed */ } }
+      cleanup();
+      return { ok: false, error: `push could not be prepared: ${e.message}` };
+    }
+    if (!nonBlocking) {
+      const input = openSync(file, 'r');
+      try {
+        const res = spawnSync('psql', this.#psqlArgs(database, tuplesOnly), { stdio: [input, 'pipe', 'pipe'], encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, env: this.#psqlEnv() });
+        return this.#psqlResult(res.error || res.status !== 0, res.stdout, res.stderr || res.error?.message);
+      } finally { closeSync(input); cleanup(); }
+    }
+    return new Promise(resolve => {
+      let out = '', err = '', done = false, input = null;
+      const finish = (failed, msg) => {
+        if (done) return; done = true; clearTimeout(timer);
+        if (input != null) { try { closeSync(input); } catch { /* already closed */ } }
+        cleanup();
+        resolve(this.#psqlResult(failed, out, msg ?? err));
+      };
+      let child, timer = null;
+      try { input = openSync(file, 'r'); child = spawn('psql', this.#psqlArgs(database, tuplesOnly), { stdio: [input, 'pipe', 'pipe'], env: this.#psqlEnv() }); }
+      catch (e) { finish(true, e.message); return; }
+      timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(true, `psql timed out after ${Math.round(timeoutMs / 1000)} s`); }, timeoutMs);
+      child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+      child.stdout.on('data', d => { out += d; });
+      child.stderr.on('data', d => { err += d; });
+      child.on('error', e => finish(true, e.message));
+      child.on('close', code => finish(code !== 0));
+    });
+  }
+
+  /** Runs a step generator (it yields `{ sql, opts }` and receives the psql result) with the blocking psql. */
+  #runSync(steps) {
+    let r = steps.next();
+    while (!r.done) r = steps.next(typeof r.value.sql === 'string' ? this.execPg(r.value.sql, r.value.opts) : this.#execSpooled(r.value.sql, r.value.opts, false));
+    return r.value;
+  }
+
+  /** Runs the same steps with the non-blocking psql. */
+  async #runAsync(steps) {
+    let r = steps.next();
+    while (!r.done) r = steps.next(typeof r.value.sql === 'string' ? await this.execPgAsync(r.value.sql, r.value.opts) : await this.#execSpooled(r.value.sql, r.value.opts, true));
+    return r.value;
+  }
+
+  /** One sync operation at a time: a second push or pull while one runs answers `code: 'BUSY'`. */
+  async #exclusive(kind, steps) {
+    if (this.busy) return { ok: false, code: 'BUSY', error: `A ${this.busy} is already running; wait for it to finish.`, status: this.status() };
+    this.busy = kind;
+    try { return await this.#runAsync(steps); }
+    finally { this.busy = null; }
   }
 
   /** Ensures the target database `kyrpy-uiux-designer-db` and all tables exist in PostgreSQL. */
-  ensureRemoteDatabase() {
-    const check = this.execPg(`SELECT 1 FROM pg_database WHERE datname = ${pgLiteral(this.config.database)};`, { database: this.config.adminDb, tuplesOnly: true, timeoutMs: 5000 });
+  ensureRemoteDatabase() { return this.#runSync(this.#ensureSteps()); }
+
+  *#ensureSteps() {
+    const check = yield { sql: `SELECT 1 FROM pg_database WHERE datname = ${pgLiteral(this.config.database)};`, opts: { database: this.config.adminDb, tuplesOnly: true, timeoutMs: 5000 } };
     if (!check.ok) return check;
     if (!check.stdout.includes('1')) {
-      const create = this.execPg(`CREATE DATABASE "${this.config.database}";`, { database: this.config.adminDb, timeoutMs: 8000 });
+      const create = yield { sql: `CREATE DATABASE "${this.config.database}";`, opts: { database: this.config.adminDb, timeoutMs: 8000 } };
       if (!create.ok && !String(create.error).includes('already exists')) return create;
     }
-    const schemaRes = this.execPg(PG_SCHEMA_SQL, { database: this.config.database, timeoutMs: 12000 });
+    const schemaRes = yield { sql: PG_SCHEMA_SQL, opts: { database: this.config.database, timeoutMs: 12000 } };
     if (schemaRes.ok) this.schemaInitialized = true;
     return schemaRes;
   }
 
+  /** How many changes were pushed so far: the running total of pruned rows plus the synced rows still in the outbox. */
   syncedCount() {
     try {
-      return this.db.prepare('SELECT COUNT(*) AS n FROM sync_outbox WHERE synced = 1').get().n;
+      return Number(this.getState('syncedTotal', 0)) + this.db.prepare('SELECT COUNT(*) AS n FROM sync_outbox WHERE synced = 1').get().n;
+    } catch { return 0; }
+  }
+
+  /** Synced outbox rows have no further use (a push mirrors the tables, it never replays them): keep their count, drop the rows. */
+  pruneOutbox() {
+    try {
+      const n = this.db.prepare('SELECT COUNT(*) AS n FROM sync_outbox WHERE synced = 1').get().n;
+      if (!n) return 0;
+      this.setState('syncedTotal', Number(this.getState('syncedTotal', 0)) + n);
+      this.db.prepare('DELETE FROM sync_outbox WHERE synced = 1').run();
+      return n;
     } catch { return 0; }
   }
 
@@ -568,6 +757,7 @@ export class PostgresSyncService {
       syncedCount: synced,
       lastSyncAt,
       lastError: this.lastError,
+      busy: this.busy,
       state: {
         last_push_at: this.getState('lastPushAt', lastSyncAt),
         last_pull_at: this.getState('lastPullAt', lastSyncAt),
@@ -576,77 +766,138 @@ export class PostgresSyncService {
     };
   }
 
-  /** Pushes all local SQLite tables to PostgreSQL `kyrpy-uiux-designer-db` in a single atomic transaction. */
-  pushToPostgres() {
+  /** The remote revision marker (changes on every push), `null` when nobody pushed yet. `{ ok:false }` when unreachable. */
+  remoteRevision() { return this.#runSync(this.#revisionSteps()); }
+
+  *#revisionSteps() {
+    const res = yield { sql: `SELECT value FROM sync_meta WHERE key = 'revision';`, opts: { tuplesOnly: true, timeoutMs: 8000 } };
+    if (!res.ok) return res;
+    return { ok: true, revision: res.stdout.trim() || null };
+  }
+
+  #refuse(code, error) {
+    this.lastError = error;
+    return { ok: false, code, needsForce: true, error, status: this.status() };
+  }
+
+  /**
+   * Pushes all local SQLite tables to PostgreSQL in a single atomic transaction: the remote becomes a mirror of the
+   * local database (remote rows that do not exist locally are deleted).
+   *
+   * Because of that, the push is refused (`code: 'REMOTE_CHANGED'`) when another machine pushed since this one last
+   * pulled or pushed — its work would be deleted. Pull first, or pass `force: true` to overwrite the remote anyway.
+   */
+  pushToPostgres(opts = {}) { return this.#runSync(this.#pushSteps(opts)); }
+
+  /** `pushToPostgres` for the server: psql runs without blocking other requests. */
+  pushToPostgresAsync(opts = {}) { return this.#exclusive('push', this.#pushSteps(opts)); }
+
+  *#pushSteps({ force = false } = {}) {
     if (!this.schemaInitialized) {
-      const init = this.ensureRemoteDatabase();
+      const init = yield* this.#ensureSteps();
       if (!init.ok) return { ok: false, status: this.status(), error: init.error };
     }
-
-    const statements = ['BEGIN;'];
-    const tableCounts = {};
-
-    for (const tbl of SYNC_TABLES) {
-      const rows = this.db.prepare(`SELECT * FROM ${tbl.name}`).all();
-      tableCounts[tbl.name] = rows.length;
-      if (!rows.length) {
-        statements.push(`DELETE FROM "${tbl.name}";`);
-        continue;
-      }
-      if (tbl.pk.length === 1) {
-        const pkCol = tbl.pk[0];
-        const idList = rows.map(r => pgLiteral(r[pkCol])).join(', ');
-        statements.push(`DELETE FROM "${tbl.name}" WHERE "${pkCol}" NOT IN (${idList});`);
-      }
-      // a remote superadmin that is not the local one steps down first: the single-superadmin index would reject
-      // upserting the new superadmin while the old one still holds the role (rows are written one by one)
-      if (tbl.name === 'users') {
-        const keep = rows.filter(r => r.role === 'superadmin').map(r => pgLiteral(r.id));
-        statements.push(`UPDATE "users" SET "role" = 'admin' WHERE "role" = 'superadmin' AND "id" NOT IN (${keep.length ? keep.join(', ') : '-1'});`);
-      }
-      const cols = Object.keys(rows[0]);
-      const colList = cols.map(c => `"${c}"`).join(', ');
-      const updateSet = cols
-        .filter(c => !tbl.pk.includes(c))
-        .map(c => `"${c}" = EXCLUDED."${c}"`)
-        .join(', ');
-
-      // Resolve any secondary UNIQUE column conflicts on remote PostgreSQL (e.g. recreated item with same key but new id)
-      if (tbl.uniqueCols) {
-        for (const uCol of tbl.uniqueCols) {
-          for (const r of rows) {
-            if (r[uCol] !== undefined && r[uCol] !== null) {
-              statements.push(`DELETE FROM "${tbl.name}" WHERE "${uCol}" = ${pgLiteral(r[uCol])} AND "id" != ${pgLiteral(r.id)};`);
-            }
-          }
-        }
-      }
-      if (tbl.uniqueTuple) {
-        for (const r of rows) {
-          const cond = tbl.uniqueTuple.map(c => `"${c}" = ${pgLiteral(r[c])}`).join(' AND ');
-          statements.push(`DELETE FROM "${tbl.name}" WHERE ${cond} AND "id" != ${pgLiteral(r.id)};`);
-        }
-      }
-
-      // Batch inserts in chunks of 250 rows for speed
-      const chunkSize = 250;
-      for (let i = 0; i < rows.length; i += chunkSize) {
-        const chunk = rows.slice(i, i + chunkSize);
-        const valuesSql = chunk.map(r => `(${cols.map(c => pgLiteral(r[c])).join(', ')})`).join(',\n');
-        if (updateSet) {
-          statements.push(`INSERT INTO "${tbl.name}" (${colList}) VALUES\n${valuesSql}\nON CONFLICT (${tbl.conflict}) DO UPDATE SET ${updateSet};`);
-        } else {
-          statements.push(`INSERT INTO "${tbl.name}" (${colList}) VALUES\n${valuesSql}\nON CONFLICT (${tbl.conflict}) DO NOTHING;`);
-        }
+    const known = this.getState('remoteRevision', null);
+    if (!force) {
+      const remote = yield* this.#revisionSteps();
+      if (!remote.ok) return { ok: false, status: this.status(), error: remote.error };
+      if (remote.revision && remote.revision !== known) {
+        return this.#refuse('REMOTE_CHANGED', 'PostgreSQL was changed by another machine since this one last synced. Pull first (or force the push to overwrite the remote: its newer rows will be deleted).');
       }
     }
+    const revision = randomUUID();
 
-    statements.push('COMMIT;');
-    const res = this.execPg(statements.join('\n'), { timeoutMs: 30000 });
-    if (!res.ok) return { ok: false, status: this.status(), error: res.error };
+    const tableCounts = {};
+    // only columns that exist on both sides are sent: one local-only column must not fail the whole push
+    const remoteCols = new Map();
+    const colRes = yield { sql: `SELECT table_name || '.' || column_name FROM information_schema.columns WHERE table_schema = current_schema();`, opts: { tuplesOnly: true, timeoutMs: 8000 } };
+    if (colRes.ok) {
+      for (const line of colRes.stdout.split('\n')) {
+        const [t, col] = line.trim().split('.');
+        if (t && col) { if (!remoteCols.has(t)) remoteCols.set(t, new Set()); remoteCols.get(t).add(col); }
+      }
+    }
+    const skippedColumns = {};
+    // the changes recorded so far belong to this push (synced = 2); what is written while psql runs is recorded anew
+    this.db.prepare('UPDATE sync_outbox SET synced = 2 WHERE synced = 0').run();
+
+    // The push is produced statement by statement and the rows are read in chunks: neither the SQL text nor a
+    // whole table is held in memory (the runner spools the statements to a temporary file for psql).
+    const db = this.db;
+    const statements = function* () {
+      yield 'BEGIN;';
+      // re-checked inside the transaction (row lock): two machines pushing at once cannot both pass the check above
+      if (!force) {
+        yield `DO $$ DECLARE cur TEXT; BEGIN
+  SELECT value INTO cur FROM sync_meta WHERE key = 'revision' FOR UPDATE;
+  IF cur IS DISTINCT FROM ${known ? pgLiteral(known) : 'NULL'} THEN RAISE EXCEPTION 'REMOTE_CHANGED'; END IF;
+END $$;`;
+      }
+      for (const tbl of SYNC_TABLES) {
+        const localCols = db.prepare(`PRAGMA table_info(${tbl.name})`).all().map(c => c.name);
+        const total = db.prepare(`SELECT COUNT(*) AS n FROM ${tbl.name}`).get().n;
+        tableCounts[tbl.name] = total;
+        if (!total) { yield `DELETE FROM "${tbl.name}";`; continue; }
+        if (tbl.pk.length === 1) {
+          const pkCol = tbl.pk[0];
+          const idList = db.prepare(`SELECT ${pkCol} AS k FROM ${tbl.name}`).all().map(r => pgLiteral(r.k)).join(', ');
+          yield `DELETE FROM "${tbl.name}" WHERE "${pkCol}" NOT IN (${idList});`;
+        }
+        // a remote superadmin that is not the local one steps down first: the single-superadmin index would reject
+        // upserting the new superadmin while the old one still holds the role (rows are written one by one)
+        if (tbl.name === 'users') {
+          const keep = db.prepare("SELECT id FROM users WHERE role = 'superadmin'").all().map(r => pgLiteral(r.id));
+          yield `UPDATE "users" SET "role" = 'admin' WHERE "role" = 'superadmin' AND "id" NOT IN (${keep.length ? keep.join(', ') : '-1'});`;
+        }
+        const known_ = remoteCols.get(tbl.name);
+        const cols = localCols.filter(c => !known_ || known_.has(c));
+        const skipped = localCols.filter(c => !cols.includes(c));
+        if (skipped.length) skippedColumns[tbl.name] = skipped;
+        const colList = cols.map(c => `"${c}"`).join(', ');
+        const updateSet = cols.filter(c => !tbl.pk.includes(c)).map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+
+        // A remote row that holds the same unique value under another id (e.g. an item recreated with the same key)
+        // goes first. One set-based statement per 500 rows instead of one statement per row; values are compared as
+        // text so the local value type never matters.
+        const uniqueSets = [...(tbl.uniqueCols || []).map(c => [c]), ...(tbl.uniqueTuple ? [tbl.uniqueTuple] : [])];
+        for (const ucols of uniqueSets) {
+          if (!localCols.includes('id') || !ucols.every(c => localCols.includes(c))) continue;
+          const alias = ucols.map((_, k) => `c${k}`);
+          const cond = ucols.map((c, k) => `r."${c}"::text = v.c${k}`).join(' AND ');
+          const where = ['id', ...ucols].map(c => `${c} IS NOT NULL`).join(' AND ');
+          let batch = [];
+          const flush = () => `DELETE FROM "${tbl.name}" AS r USING (VALUES\n${batch.join(',\n')}\n) AS v(id, ${alias.join(', ')}) WHERE ${cond} AND r."id"::text <> v.id;`;
+          for (const r of db.prepare(`SELECT id, ${ucols.join(', ')} FROM ${tbl.name} WHERE ${where}`).iterate()) {
+            batch.push(`(${[r.id, ...ucols.map(c => r[c])].map(pgText).join(', ')})`);
+            if (batch.length === 500) { yield flush(); batch = []; }
+          }
+          if (batch.length) yield flush();
+        }
+
+        // rows go out in chunks of 250, read from SQLite as they are written
+        const tail = updateSet ? `ON CONFLICT (${tbl.conflict}) DO UPDATE SET ${updateSet};` : `ON CONFLICT (${tbl.conflict}) DO NOTHING;`;
+        let chunk = [];
+        const insert = () => `INSERT INTO "${tbl.name}" (${colList}) VALUES\n${chunk.join(',\n')}\n${tail}`;
+        for (const r of db.prepare(`SELECT * FROM ${tbl.name}`).iterate()) {
+          chunk.push(`(${cols.map(c => pgLiteral(r[c])).join(', ')})`);
+          if (chunk.length === 250) { yield insert(); chunk = []; }
+        }
+        if (chunk.length) yield insert();
+      }
+      yield `INSERT INTO sync_meta (key, value) VALUES ('revision', ${pgLiteral(revision)}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();`;
+      yield 'COMMIT;';
+    };
+    const res = yield { sql: statements(), opts: { timeoutMs: 120000 } };
+    if (!res.ok) {
+      this.db.prepare('UPDATE sync_outbox SET synced = 0 WHERE synced = 2').run();   // nothing was pushed: still pending
+      if (String(res.error).includes('REMOTE_CHANGED')) return this.#refuse('REMOTE_CHANGED', 'PostgreSQL was changed by another machine during the push. Pull first.');
+      return { ok: false, status: this.status(), error: res.error };
+    }
 
     const now = new Date().toISOString();
-    this.db.prepare('UPDATE sync_outbox SET synced = 1, synced_at = ? WHERE synced = 0').run(now);
+    this.setState('remoteRevision', revision);
+    this.db.prepare('UPDATE sync_outbox SET synced = 1, synced_at = ? WHERE synced = 2').run(now);
+    this.pruneOutbox();
     this.lastSyncAt = now;
     this.setState('lastSyncAt', now);
     this.setState('lastPushAt', now);
@@ -657,41 +908,75 @@ export class PostgresSyncService {
       syncedAt: now,
       pushed: Object.keys(tableCounts).length,
       tableCounts,
+      skippedColumns,
       status: this.status()
     };
   }
 
-  pushAll(opts = {}) {
-    void opts;
-    return this.pushToPostgres();
+  pushAll({ force = false } = {}) {
+    return this.pushToPostgres({ force });
   }
 
-  /** Pulls records from PostgreSQL `kyrpy-uiux-designer-db` into local SQLite (upsert). */
-  pullFromPostgres() {
+  pushAllAsync({ force = false } = {}) {
+    return this.pushToPostgresAsync({ force });
+  }
+
+  /**
+   * Pulls PostgreSQL into the local SQLite database: remote rows replace local ones, and rows that were deleted
+   * remotely since the last sync are deleted locally (rows created locally after the last sync are kept).
+   *
+   * Refused (`code: 'LOCAL_UNSYNCED'`) when this database synced before and has local changes that were never
+   * pushed — the pull would overwrite them. Push first, or pass `force: true` to discard them.
+   */
+  pullFromPostgres(opts = {}) { return this.#runSync(this.#pullSteps(opts)); }
+
+  /** `pullFromPostgres` for the server: the remote tables are read without blocking other requests. */
+  pullFromPostgresAsync(opts = {}) { return this.#exclusive('pull', this.#pullSteps(opts)); }
+
+  *#pullSteps({ force = false } = {}) {
     if (!this.schemaInitialized) {
-      const init = this.ensureRemoteDatabase();
+      const init = yield* this.#ensureSteps();
       if (!init.ok) return { ok: false, status: this.status(), error: init.error };
     }
+    const lastSync = this.getState('lastSyncAt', null);
+    const pending = this.pendingCount();
+    if (!force && lastSync && pending > 0) {
+      return this.#refuse('LOCAL_UNSYNCED', `${pending} local change(s) were never pushed and would be overwritten. Push first (or force the pull to discard them).`);
+    }
+    const remoteRev = yield* this.#revisionSteps();
+    if (!remoteRev.ok) return { ok: false, status: this.status(), error: remoteRev.error };
 
     const pulledCounts = {};
     // system users (public library owner, AI agent) are matched by username: when the remote copy has another id,
     // local-only rows they own must follow the new id (see #remapSystemOwners)
     const systemBefore = this.#captureSystemOwners();
     const pulledIds = {};
+    const replaced = {};
+    // 1. read every remote table first: a failed or unreadable table aborts the pull before the local database is touched
+    const fetched = [];
+    for (const tbl of SYNC_TABLES) {
+      const localInfo = this.db.prepare(`PRAGMA table_info(${tbl.name})`).all();
+      if (!localInfo.length) continue;
+      const q = `SELECT COALESCE(json_agg(t), '[]'::json) FROM (SELECT * FROM "${tbl.name}") t;`;
+      const res = yield { sql: q, opts: { tuplesOnly: true, timeoutMs: 60000 } };
+      if (!res.ok) { this.lastError = res.error; return { ok: false, status: this.status(), error: res.error }; }
+      let rows;
+      try { rows = JSON.parse(res.stdout || '[]'); }
+      catch (e) { this.lastError = `Pull failed on ${tbl.name}: unreadable answer (${e.message})`; return { ok: false, status: this.status(), error: this.lastError }; }
+      pulledCounts[tbl.name] = rows.length;
+      if (rows.length) fetched.push({ tbl, rows, localCols: new Set(localInfo.map(c => c.name)) });
+    }
+    // somebody may have edited while the remote tables were read (non-blocking pull): same rule as at the start
+    if (!force && lastSync && this.pendingCount() > 0) {
+      return this.#refuse('LOCAL_UNSYNCED', 'Local changes were made while the pull was reading PostgreSQL. Push first (or force the pull to discard them).');
+    }
+    // 2. apply all tables, the system-owner remap and the reference repair in ONE transaction (all or nothing)
     this.db.exec('PRAGMA foreign_keys = OFF;');
+    let current = '';
     try {
-      for (const tbl of SYNC_TABLES) {
-        const localInfo = this.db.prepare(`PRAGMA table_info(${tbl.name})`).all();
-        if (!localInfo.length) continue;
-        const localCols = new Set(localInfo.map(c => c.name));
-
-        const q = `SELECT COALESCE(json_agg(t), '[]'::json) FROM (SELECT * FROM "${tbl.name}") t;`;
-        const res = this.execPg(q, { tuplesOnly: true, timeoutMs: 15000 });
-        if (!res.ok) return { ok: false, status: this.status(), error: res.error };
-        let rows = [];
-        try { rows = JSON.parse(res.stdout || '[]'); } catch { rows = []; }
-        pulledCounts[tbl.name] = rows.length;
-        if (!rows.length) continue;
+      this.db.exec('BEGIN');
+      for (const { tbl, rows, localCols } of fetched) {
+        current = tbl.name;
 
         const cols = Object.keys(rows[0]).filter(c => localCols.has(c));
         if (!cols.length) continue;
@@ -712,12 +997,14 @@ export class PostgresSyncService {
             del: this.db.prepare(`DELETE FROM ${tbl.name} WHERE id = ?`)
           }));
         const delOrphanNodesStmt = ownerType ? this.db.prepare('DELETE FROM nodes WHERE owner_type = ? AND owner_id = ?') : null;
-        const delTupleStmt = (tbl.uniqueTuple && tbl.uniqueTuple.every(c => localCols.has(c)))
-          ? this.db.prepare(`DELETE FROM ${tbl.name} WHERE ${tbl.uniqueTuple.map(c => `${c} = ?`).join(' AND ')} AND id != ?`)
+        const findTupleStmt = (tbl.uniqueTuple && tbl.uniqueTuple.every(c => localCols.has(c)))
+          ? this.db.prepare(`SELECT id FROM ${tbl.name} WHERE ${tbl.uniqueTuple.map(c => `${c} = ?`).join(' AND ')} AND id != ?`)
           : null;
+        const delByIdStmt = findTupleStmt ? this.db.prepare(`DELETE FROM ${tbl.name} WHERE id = ?`) : null;
+        // local id -> remote id of a row that lost its unique value to a remote row (see #repointReplaced)
+        const lost = (replaced[tbl.name] ||= new Map());
 
-        this.db.exec('BEGIN');
-        try {
+        {
           const ids = (pulledIds[tbl.name] ||= new Set());
           for (const r of rows) {
             if (r.id != null) ids.add(Number(r.id));
@@ -727,11 +1014,16 @@ export class PostgresSyncService {
                 for (const old of oldRows) {
                   if (delOrphanNodesStmt) delOrphanNodesStmt.run(ownerType, old.id);
                   u.del.run(old.id);
+                  if (r.id != null) lost.set(Number(old.id), Number(r.id));
                 }
               }
             }
-            if (delTupleStmt) {
-              delTupleStmt.run(...tbl.uniqueTuple.map(c => r[c]), r.id);
+            if (findTupleStmt && tbl.uniqueTuple.every(c => r[c] !== undefined && r[c] !== null)) {
+              for (const old of findTupleStmt.all(...tbl.uniqueTuple.map(c => r[c]), r.id)) {
+                if (delOrphanNodesStmt) delOrphanNodesStmt.run(ownerType, old.id);
+                delByIdStmt.run(old.id);
+                if (r.id != null) lost.set(Number(old.id), Number(r.id));
+              }
             }
             stmt.run(...cols.map(c => {
               const v = r[c];
@@ -740,15 +1032,24 @@ export class PostgresSyncService {
               return v;
             }));
           }
-          this.db.exec('COMMIT');
-        } catch (e) {
-          try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
-          this.lastError = e.message;
-          return { ok: false, status: this.status(), error: `Pull failed on ${tbl.name}: ${e.message}` };
         }
       }
+      current = 'remote deletions';
+      const deletedCounts = this.#applyRemoteDeletions(fetched, pulledIds, lastSync);
+      Object.assign(pulledCounts, { deleted: deletedCounts });
+      current = 'reference repair';
       this.#remapSystemOwners(systemBefore, pulledIds);
+      const repointed = this.#repointReplaced(replaced, pulledIds);
+      if (Object.keys(repointed).length) Object.assign(pulledCounts, { repointed });
       healForeignKeys(this.db);
+      // the local database now is the remote state: the changes recorded so far (discarded local edits and the
+      // rows this pull wrote) are not waiting for a push
+      this.db.prepare('DELETE FROM sync_outbox WHERE synced <> 1').run();
+      this.db.exec('COMMIT');
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      this.lastError = e.message;
+      return { ok: false, status: this.status(), error: `Pull failed on ${current}: ${e.message}; nothing was changed locally` };
     } finally {
       try { this.db.exec('PRAGMA foreign_keys = ON;'); } catch { /* ignore */ }
     }
@@ -758,6 +1059,7 @@ export class PostgresSyncService {
     this.lastError = null;
     this.setState('lastSyncAt', now);
     this.setState('lastPullAt', now);
+    if (remoteRev.revision) this.setState('remoteRevision', remoteRev.revision);
     return {
       ok: true,
       direction: 'pull',
@@ -767,6 +1069,64 @@ export class PostgresSyncService {
       pulledProjects: pulledCounts.projects ?? 0,
       status: this.status()
     };
+  }
+
+  /**
+   * Rows deleted remotely since the last sync are deleted locally. A local row that is missing remotely is only
+   * removed when it existed at the last sync (`created_at` not later than it): rows created here afterwards are local
+   * work that was not pushed yet. Tables without `created_at` are left to the reference repair (their owners decide).
+   * Nothing is deleted on a first pull (no last sync) or for a table the remote returned empty.
+   */
+  #applyRemoteDeletions(fetched, pulledIds, lastSync) {
+    const out = {};
+    if (!lastSync) return out;
+    for (const { tbl, localCols } of fetched) {
+      if (tbl.pk.length !== 1 || tbl.pk[0] !== 'id' || !localCols.has('created_at') || tbl.name === 'users') continue;
+      const remote = pulledIds[tbl.name];
+      if (!remote?.size) continue;
+      const del = this.db.prepare(`DELETE FROM ${tbl.name} WHERE id = ?`);
+      const delNodes = DESIGN_TABLE_TYPES[tbl.name] ? this.db.prepare('DELETE FROM nodes WHERE owner_type = ? AND owner_id = ?') : null;
+      let n = 0;
+      for (const r of this.db.prepare(`SELECT id FROM ${tbl.name} WHERE datetime(created_at) <= datetime(?)`).all(lastSync)) {
+        if (remote.has(Number(r.id))) continue;
+        if (delNodes) delNodes.run(DESIGN_TABLE_TYPES[tbl.name], r.id);
+        del.run(r.id);
+        n += 1;
+      }
+      if (n) out[tbl.name] = n;
+    }
+    return out;
+  }
+
+  /**
+   * A local row that held the same unique value (username, key …) as a remote row under another id was replaced by
+   * the remote one. Rows that stayed local (not part of this pull) and pointed at the old id now point at the new
+   * one; rows that came from PostgreSQL already carry remote ids and are left alone. Returns `{ 'table.column': n }`.
+   */
+  #repointReplaced(replaced, pulledIds) {
+    const out = {};
+    const has = new Map();
+    const cols = t => { if (!has.has(t)) has.set(t, new Set(this.db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name))); return has.get(t); };
+    for (const [target, map] of Object.entries(replaced)) {
+      if (!map.size) continue;
+      for (const [table, column, typeCol, typeVal] of referencesTo(target)) {
+        const tc = cols(table);
+        if (!tc.has(column) || (typeCol && !tc.has(typeCol))) continue;
+        const keyCol = tc.has('id') ? 'id' : 'rowid';
+        const pulled = keyCol === 'id' ? pulledIds[table] : null;
+        const find = this.db.prepare(`SELECT ${keyCol} AS k FROM ${table} WHERE ${column} = ?${typeCol ? ` AND ${typeCol} = ?` : ''}`);
+        const set = this.db.prepare(`UPDATE OR IGNORE ${table} SET ${column} = ? WHERE ${keyCol} = ?`);
+        let n = 0;
+        for (const [oldId, newId] of map) {
+          for (const row of find.all(...(typeCol ? [oldId, typeVal] : [oldId]))) {
+            if (pulled?.has(Number(row.k))) continue;
+            n += Number(set.run(newId, row.k).changes || 0);
+          }
+        }
+        if (n) out[`${table}.${column}`] = n;
+      }
+    }
+    return out;
   }
 
   /** Local ids of the system users and, per table, the ids of rows they own (creator or root owner). */
@@ -794,7 +1154,6 @@ export class PostgresSyncService {
     for (const { username, id: oldId, rows } of before) {
       const newId = userIdByName(this.db, username);
       if (newId == null || Number(newId) === oldId) continue;
-      this.db.exec('BEGIN');
       try {
         for (const [t, list] of Object.entries(rows)) {
           const pulled = pulledIds[t] || new Set();
@@ -806,18 +1165,26 @@ export class PostgresSyncService {
             if (Number(r.root_owner_id) === oldId) setRoot.run(newId, r.id, oldId);
           }
         }
-        this.db.exec('COMMIT');
       } catch (e) {
-        try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
-        this.lastError = `remap of system user ${username} failed: ${e.message}`;
+        // runs inside the pull transaction: a failed remap rolls the whole pull back
+        throw new Error(`remap of system user ${username} failed: ${e.message}`);
       }
     }
   }
 
-  /** Bi-directional sync: pushes local state & outbox to PostgreSQL, ensuring both DBs match. */
-  syncNow() {
-    const pushRes = this.pushToPostgres();
+  /**
+   * Pushes the local state to PostgreSQL (the remote becomes a mirror of the local database). It never pulls: a pull
+   * replaces local rows, so it stays an explicit action (`pullFromPostgres`). The answer says so (`direction: 'push'`).
+   */
+  syncNow({ force = false } = {}) {
+    const pushRes = this.pushToPostgres({ force });
     if (!pushRes.ok) return pushRes;
-    return { ...pushRes, push: pushRes, direction: 'bidirectional' };
+    return { ...pushRes, push: pushRes, direction: 'push', pulled: false };
+  }
+
+  async syncNowAsync({ force = false } = {}) {
+    const pushRes = await this.pushToPostgresAsync({ force });
+    if (!pushRes.ok) return pushRes;
+    return { ...pushRes, push: pushRes, direction: 'push', pulled: false };
   }
 }

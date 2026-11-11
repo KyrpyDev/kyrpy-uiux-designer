@@ -21,7 +21,7 @@ const sha = f => createHash('sha256').update(readFileSync(f)).digest('hex');
 function buildProdDb(file) {
   const c = buildContainer({ dbFile: file, syncEnabled: false });
   const pub = c.publicUserId();
-  const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret' }).user;
+  const bob = c.auth.register({ username: 'bob', email: 'bob@example.com', password: 'bobsecret1' }).user;
   const kyrpy = c.users.findByUsernameOrEmail('superadmin');
 
   // public library items (admin-made public items of project 1 belong to `public`)

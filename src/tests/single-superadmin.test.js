@@ -60,7 +60,7 @@ test('superadmin edits public items directly; admin files a change request; admi
 test('there can be only one superadmin (service and DB index)', () => {
   const c = fresh();
   const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
-  assert.throws(() => c.auth.createUser({ username: 'second', role: 'superadmin' }, kyrpy), /only one superadmin/);
+  assert.throws(() => c.auth.createUserByAdmin(kyrpy, { username: 'second', role: 'superadmin' }), /only one superadmin/);
   assert.throws(() => c.auth.updateUser(admin.id, { role: 'superadmin' }, kyrpy), /only one superadmin/);
   const reg = c.auth.register({ username: 'sneaky', email: 'sneaky@example.com', password: 'secret123', role: 'superadmin' });
   assert.equal(reg.user.role, 'designer', 'registration never yields a superadmin');
@@ -73,12 +73,12 @@ test('there can be only one superadmin (service and DB index)', () => {
 test('the superadmin cannot be deleted, suspended or demoted, not even by themselves; admins cannot touch them', () => {
   const c = fresh();
   const kyrpy = u(c, 'superadmin'), admin = u(c, 'admin');
-  assert.throws(() => c.auth.removeUser(kyrpy.id, kyrpy));
+  assert.throws(() => c.auth.deleteUser(kyrpy, kyrpy.id));
   assert.throws(() => c.auth.updateUser(kyrpy.id, { status: 'suspended' }, kyrpy), /suspended/);
   assert.throws(() => c.auth.updateUser(kyrpy.id, { role: 'admin' }, kyrpy), /superadmin/);
   assert.throws(() => c.auth.updateUser(kyrpy.id, { role: 'designer' }, kyrpy));
   assert.throws(() => c.auth.updateUser(kyrpy.id, { displayName: 'x' }, admin), e => e.name === 'ForbiddenError');
-  assert.throws(() => c.auth.removeUser(kyrpy.id, admin));
+  assert.throws(() => c.auth.deleteUser(admin, kyrpy.id));
   assert.equal(u(c, 'superadmin').role, 'superadmin');
   c.close();
 });

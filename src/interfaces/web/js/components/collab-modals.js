@@ -15,6 +15,13 @@ import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
 
+/** A sync answer the server refused (`ok: false`, e.g. the remote changed since the last pull) is shown, not reported as done. */
+function syncDone(res) {
+  if (res?.ok !== false) return true;
+  toast(res.error || 'PostgreSQL sync failed', 'error');
+  return false;
+}
+
 const ROLE_LABELS = {
   superadmin: 'superadmin (Full System)',
   admin: 'Admin (Users + All Projects)',
@@ -44,7 +51,7 @@ export async function openAuthModal() {
   users = users.filter(u => u && !u.system);   // system accounts (public library owner, AI agent) cannot sign in
 
   let mode = 'login'; // 'login' | 'register'
-  const usernameInput = h('input', { type: 'text', placeholder: 'Username or email (default: admin)', value: '' });
+  const usernameInput = h('input', { type: 'text', placeholder: 'Username or email', value: '' });
   const emailInput = h('input', { type: 'email', placeholder: 'email@example.com' });
   const displayInput = h('input', { type: 'text', placeholder: 'Display Name' });
   const passwordInput = h('input', { type: 'password', placeholder: 'Password (default for admin: admin)' });
@@ -105,7 +112,7 @@ export async function openAuthModal() {
           h('label', { class: 'field grow' }, h('span', {}, 'Display Name'), displayInput),
           h('label', { class: 'field' }, h('span', {}, 'Role'), roleSelect)
         ),
-        h('label', { class: 'field' }, h('span', {}, 'Password (min 4 chars)'), passwordInput),
+        h('label', { class: 'field' }, h('span', {}, 'Password (8+ characters, a letter and a digit)'), passwordInput),
         h('button', {
           class: 'btn primary',
           onclick: async () => {
@@ -205,10 +212,10 @@ export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: tru
     if (existingGate) existingGate.remove();
 
     let tab = 'login';
-    const userInp = h('input', { type: 'text', placeholder: 'Username or email (default: admin)', value: 'admin' });
+    const userInp = h('input', { type: 'text', placeholder: 'Username or email', value: '', autocomplete: 'username' });
     const emailInp = h('input', { type: 'email', placeholder: 'you@example.com' });
     const displayInp = h('input', { type: 'text', placeholder: 'Full Name / Display Name' });
-    const passInp = h('input', { type: 'password', placeholder: 'Password (default: admin)', value: '' });
+    const passInp = h('input', { type: 'password', placeholder: 'Password', value: '', autocomplete: 'current-password' });
     const errBox = h('div', { class: 'muted', style: { color: '#ef4444', fontSize: '12px', minHeight: '16px' } });
     const bodyBox = h('div', { class: 'stack', style: { gap: '12px' } });
 
@@ -270,7 +277,7 @@ export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: tru
           h('label', { class: 'field' }, h('span', {}, 'Username'), userInp),
           h('label', { class: 'field' }, h('span', {}, 'Email'), emailInp),
           h('label', { class: 'field' }, h('span', {}, 'Display Name'), displayInp),
-          h('label', { class: 'field' }, h('span', {}, 'Password (min 4 chars)'), passInp),
+          h('label', { class: 'field' }, h('span', {}, 'Password (8+ characters, a letter and a digit)'), passInp),
           errBox,
           h('button', {
             class: 'btn primary ud-gate-register-btn',
@@ -358,7 +365,7 @@ export function ensureAuthGate({ authConfig = { appMode: 'dev', bypassLogin: tru
           paddingTop: '8px',
           borderTop: '1px solid var(--line, rgba(255,255,255,0.08))'
         }
-      }, 'Default startup installer account: username "admin" / password "admin"')
+      }, 'A fresh install starts with the accounts listed in README.md; change their passwords after the first sign-in.')
     ));
 
     renderGateCard();
@@ -398,10 +405,12 @@ export async function openAdminUsersModal() {
             style: { alignSelf: 'flex-end' },
             onclick: async () => {
               if (!uName.value.trim()) return toast('Username is required', 'error');
+              if (!uEmail.value.trim()) return toast('Email is required', 'error');
+              if (!uPass.value) return toast('Password is required (8+ characters, a letter and a digit)', 'error');
               try {
                 await api.createUser({
                   username: uName.value.trim(),
-                  email: uEmail.value.trim() || `${uName.value.trim()}@superadmin.com`,
+                  email: uEmail.value.trim(),
                   displayName: uDisplay.value.trim() || uName.value.trim(),
                   password: uPass.value,
                   role: uRole.value
@@ -1637,7 +1646,7 @@ export async function openSyncModal(initialTab = 'sync') {
 
       host.append(
         h('div', { style: { padding: '12px', border: '1px solid var(--line)', borderRadius: '12px', background: 'rgba(16,185,129,0.08)' } },
-          h('div', { style: { fontWeight: '700', fontSize: '14px' } }, `PostgreSQL Database: ${st.database} @ ${st.host}:${st.port}`),
+          h('div', { style: { fontWeight: '700', fontSize: '14px' } }, st.database ? `PostgreSQL Database: ${st.database} @ ${st.host}:${st.port}` : 'PostgreSQL sync (connection details are shown to administrators)'),
           h('div', { class: 'muted', style: { marginTop: '4px' } }, `Local SQLite Outbox Pending: ${st.pendingCount} · Synced Total: ${st.syncedCount} · Browser Offline Outbox: ${browserOutbox.length}`),
           h('div', { class: 'muted' }, `Last Push: ${st.state?.last_push_at || 'never'} · Last Pull: ${st.state?.last_pull_at || 'never'} · Status: ${st.state?.last_sync_status || 'ready'}`)
         ),
@@ -1646,24 +1655,27 @@ export async function openSyncModal(initialTab = 'sync') {
             class: 'btn primary',
             onclick: async () => {
               try {
-                const res = await withSyncProgress('Syncing with PostgreSQL (push & pull)…', async () => {
-                  await api.flushOutbox();
-                  const r = await api.syncNow({ pull: true, forceFullPush: false });
-                  await reloadLibrary();
-                  return r;
+                const res = await withSyncProgress('Pushing to PostgreSQL…', async () => {
+                  const replay = await api.flushOutbox();
+                  if (replay.dropped.length) toast(`${replay.dropped.length} queued offline change(s) were refused by the server and removed (first: ${replay.dropped[0].message}).`, 'error', 8000);
+                  if (replay.foreign) toast(`${replay.foreign} queued change(s) belong to another account and stay queued.`, 'info', 6000);
+                  return api.syncNow({});
                 }, { startPending: st.pendingCount });
-                toast(`Synced with PostgreSQL! Pushed ${res.push?.pushed ?? 0} changes.`, 'ok');
+                if (!syncDone(res)) return;
+                toast(`Pushed to PostgreSQL (${res.push?.pushed ?? 0} tables).`, 'ok');
                 await refresh();
               } catch (e) {
                 toast(e.message, 'error');
               }
             }
-          }, '⟳ Sync Now (Push & Pull)'),
+          }, '⟳ Sync Now (Push)'),
           h('button', {
             class: 'btn',
             onclick: async () => {
               try {
-                const res = await withSyncProgress('Pushing the full snapshot to PostgreSQL…', () => api.syncPush({ forceFull: true }));
+                if (!await confirmBox('Overwrite PostgreSQL with this database? Rows that other machines pushed and that do not exist here are deleted there.', { okLabel: 'Overwrite PostgreSQL' })) return;
+                const res = await withSyncProgress('Pushing the full snapshot to PostgreSQL…', () => api.syncPush({ force: true }));
+                if (!syncDone(res)) return;
                 toast(`Full snapshot pushed to PostgreSQL (${res.pushed} tables/batches)`, 'ok');
                 await refresh();
               } catch (e) {
@@ -1675,7 +1687,13 @@ export async function openSyncModal(initialTab = 'sync') {
             class: 'btn',
             onclick: async () => {
               try {
-                const res = await withSyncProgress('Pulling from PostgreSQL…', async () => { const r = await api.syncPull(); await reloadLibrary(); return r; });
+                const pull = async body => await withSyncProgress('Pulling from PostgreSQL…', async () => { const r = await api.syncPull(body); if (r?.ok !== false) await reloadLibrary(); return r; });
+                let res = await pull({});
+                if (res?.ok === false && res.code === 'LOCAL_UNSYNCED') {
+                  if (!await confirmBox(`${res.error} Discard the local changes and pull?`, { okLabel: 'Discard and pull' })) return;
+                  res = await pull({ force: true });
+                }
+                if (!syncDone(res)) return;
                 toast(`Pulled ${res.pulledUsers} users & ${res.pulledProjects} projects from PostgreSQL`, 'ok');
                 await refresh();
               } catch (e) {

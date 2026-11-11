@@ -198,6 +198,12 @@ export function normalizeEvents(input) {
   return input.map(normalizeEventBinding).filter(Boolean);
 }
 
+/** Device templates added at run time (custom devices). `DEVICES` itself is never written. */
+const customDevices = new Map();
+export function registerDevice(key, d) { if (key) customDevices.set(String(key), d); }
+export function unregisterDevice(key) { customDevices.delete(String(key)); }
+export function deviceByKey(key) { return key == null ? undefined : (customDevices.get(String(key)) ?? DEVICES[key]); }
+
 export const DEVICES = {
   'iphone-15': { name: 'iPhone 15', width: 390, height: 844, category: 'mobile', cornerRadius: 44, meta: { modes: ['dark', 'light'], defaultMode: 'dark', darkTheme: 'liquid', lightTheme: 'liquid-light' } },
   'iphone-16-pro-max': { name: 'iPhone 16 Pro Max', width: 440, height: 956, category: 'mobile', cornerRadius: 48, meta: { modes: ['dark', 'light'], defaultMode: 'dark', darkTheme: 'glassmorphism-dark', lightTheme: 'glassmorphism-light' } },
@@ -462,7 +468,7 @@ export function normalizeDesign(ownerType, input, { partial = false } = {}) {
   if (!partial || has('width') || has('height')) {
     if (T.fixedSize) { out.width = T.size[0]; out.height = T.size[1]; }
     else {
-      const dev = ownerType === 'screen' ? DEVICES[input.meta?.device] : null;
+      const dev = ownerType === 'screen' ? deviceByKey(input.meta?.device) : null;
       out.width = posNum(input.width, dev?.width ?? T.size[0]);
       out.height = posNum(input.height, dev?.height ?? T.size[1]);
     }

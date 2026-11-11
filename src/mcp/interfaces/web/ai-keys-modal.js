@@ -70,13 +70,30 @@ async function copy(text, what) {
   catch { toast('Copy failed — select the text and copy it by hand', 'error'); }
 }
 
+/** Plaintext keys issued since this page was loaded (memory only): their setup screen can be reopened with the key filled in. */
+const issued = new Map();
+
+/** The "copy all steps / download script" screen for an existing key, reachable any time from the key list. */
+function setupPanel(k, onClose) {
+  const key = issued.get(k.id) || '';
+  return h('div', { class: 'aik-card aik-reveal', dataset: { act: 'key-setup' } },
+    h('div', { class: 'row spread' },
+      h('h4', {}, `Setup script for "${k.name}" — ${k.kind === 'account' ? 'all your projects (account key)' : k.projectName || k.projectKey || 'project'}`),
+      h('button', { class: 'btn sm', onclick: onClose }, 'Close')),
+    h('div', { class: 'aik-warn' }, key
+      ? 'This key was issued in this session, so the scripts below hold it. After a page reload it is no longer available here.'
+      : `Keys are stored hashed, so the designer cannot show "${k.prefix}…" again. Paste your key below to get a complete script, or leave it empty: the script then uses a placeholder you replace by hand. Lost the key too? Use Rotate to get a new one with a ready script.`),
+    connectPanel({ key, projects: k.kind === 'account' ? [] : [{ id: k.projectId, key: k.projectKey, name: k.projectName }], projectId: k.projectId ?? null, keyKind: k.kind === 'account' ? 'account' : 'project' }));
+}
+
 /** One-time panel that shows a new plaintext key and ready-to-paste client configuration. */
 function revealPanel(result, project) {
+  if (result.apiKey?.id != null) issued.set(result.apiKey.id, result.key);
   const secret = h('input', { class: 'aik-secret', type: 'text', readonly: true, value: result.key, 'aria-label': 'New API key', onfocus: e => e.target.select() });
   return h('div', { class: 'aik-card aik-reveal', role: 'status', 'aria-live': 'polite' },
     h('h4', {}, `Key "${result.apiKey.name}" for ${result.apiKey.kind === 'account' ? 'all your projects (account key)' : result.apiKey.projectName || project?.name || 'project'}`),
     h('div', { class: 'row' }, secret, h('button', { class: 'btn sm primary', onclick: () => copy(result.key, 'Key') }, 'Copy key')),
-    h('div', { class: 'aik-warn' }, '⚠ Copy it now — this key is shown only once. Store it in your AI client or an environment variable, never in the repository.'),
+    h('div', { class: 'aik-warn' }, '⚠ Copy it now — this key is shown only once. Store it in your AI client or an environment variable, never in the repository. The setup scripts stay available: "Setup script" next to the key in the list below.'),
     h('h4', { style: { marginTop: '10px' } }, 'Connect your AI coder with this key'),
     connectPanel({ key: result.key, projects: project ? [project] : [], projectId: project?.id ?? null, keyKind: result.apiKey.kind === 'account' ? 'account' : 'project' })
   );
@@ -184,6 +201,10 @@ export async function openAiKeysModal() {
         h('td', { class: 'aik-hide-sm' }, k.expiresAt ? when(k.expiresAt) : 'never'),
         h('td', { class: `aik-st-${k.status}` }, STATUS_LABEL[k.status] || k.status),
         h('td', { style: { whiteSpace: 'nowrap' } },
+          live ? h('button', {
+            class: 'btn sm', style: { marginRight: '4px' }, title: 'Copy or download the configuration script for this key again', dataset: { act: 'key-setup-open' },
+            onclick: async () => { reveal = setupPanel(k, async () => { reveal = null; await render(); }); await render(); host.querySelector('[data-act="key-setup"]')?.scrollIntoView({ block: 'nearest' }); }
+          }, 'Setup script') : '',
           k.status === 'active' ? h('button', {
             class: 'btn sm', title: 'Issue a new key; this one keeps working for 24 hours',
             onclick: async () => {

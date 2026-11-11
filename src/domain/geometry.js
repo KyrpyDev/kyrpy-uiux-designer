@@ -194,6 +194,32 @@ export function scaleNodeSet(nodes, sx, sy) {
   return out;
 }
 
+/**
+ * Responsive re-layout of a screen's nodes when its device changes from (from.w × from.h) to (to.w × to.h).
+ *  - a node spanning (almost) the full width / height keeps spanning it (backgrounds, bars, full-width containers stretch);
+ *  - every other node keeps its aspect ratio (uniform factor) and its relative position: the centre moves
+ *    proportionally on each axis, so centred items stay centred and edge margins scale with the screen.
+ * Children of a `<g>` live in the group's coordinate space and follow its transform, so they get no patch.
+ * Returns [{ id, attrs }].
+ */
+export function fitNodesToScreen(nodes, from, to, { span = 0.9 } = {}) {
+  const fw = from.w > 0 ? from.w : 1, fh = from.h > 0 ? from.h : 1;
+  const sx = to.w / fw, sy = to.h / fh, s = Math.min(sx, sy);
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const inGroup = n => { for (let p = byId.get(n.parentId), i = 0; p && i < 64; p = byId.get(p.parentId), i++) if (p.tag === 'g') return true; return false; };
+  const out = [];
+  for (const n of nodes) {
+    if (inGroup(n)) continue;
+    const b = nodeBBox(n, nodes);
+    const fullW = b.w >= fw * span, fullH = b.h >= fh * span;
+    const w = b.w * (fullW ? sx : s), h = b.h * (fullH ? sy : s);
+    const x = fullW ? b.x * sx : (b.x + b.w / 2) * sx - w / 2;
+    const y = fullH ? b.y * sy : (b.y + b.h / 2) * sy - h / 2;
+    out.push({ id: n.id, attrs: resizeAttrs(n, b, { x, y, w, h }) });
+  }
+  return out;
+}
+
 /* ---------- Container & Carousel Container Geometry Helpers ---------- */
 
 /** Returns true if a node is a Container or Carousel Container (shell / outer box of sub-elements). */

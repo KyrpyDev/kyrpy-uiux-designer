@@ -1,14 +1,15 @@
 /** Routes of themes, workflows, settings and project export. */
 export function miscRoutes(router, c) {
   router.get('/api/settings', () => c.settings.get());
-  router.put('/api/settings', ({ body }) => c.settings.update(body));
+  const admin = actor => c.auth.assertAdmin(actor);
+  router.put('/api/settings', ({ body, actor }) => { admin(actor); return c.settings.update(body); });
 
   router.get('/api/themes', () => c.themes.list());
-  router.post('/api/themes', ({ body }) => c.themes.create(body));
+  router.post('/api/themes', ({ body, actor }) => { admin(actor); return c.themes.create(body); });
   router.get('/api/themes/:id', ({ params }) => c.themes.get(params.id));
-  router.put('/api/themes/:id', ({ params, body }) => c.themes.update(params.id, body));
-  router.delete('/api/themes/:id', ({ params }) => c.themes.remove(params.id));
-  router.post('/api/themes/:id/clone', ({ params, body }) => c.themes.clone(params.id, body?.name));
+  router.put('/api/themes/:id', ({ params, body, actor }) => { admin(actor); return c.themes.update(params.id, body); });
+  router.delete('/api/themes/:id', ({ params, actor }) => { admin(actor); return c.themes.remove(params.id); });
+  router.post('/api/themes/:id/clone', ({ params, body, actor }) => { admin(actor); return c.themes.clone(params.id, body?.name); });
 
   router.get('/api/workflows', ({ query, actor }) =>
     c.workflows.list({
@@ -29,8 +30,8 @@ export function miscRoutes(router, c) {
   router.post('/api/workflows/from-screen', ({ body, actor, projectId }) =>
     c.workflows.generateFromScreen({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor })
   );
-  router.post('/api/workflows/:id/import-routes', ({ params, body }) => c.workflows.importRoutes(params.id, body || {}));
-  router.get('/api/workflows/:id', ({ params }) => c.workflows.get(params.id));
+  router.post('/api/workflows/:id/import-routes', ({ params, body, actor }) => c.workflows.importRoutes(params.id, body || {}, { actor }));
+  router.get('/api/workflows/:id', ({ params, actor }) => c.workflows.assertCanRead(c.workflows.get(params.id), actor));
   router.get('/api/workflows/:id/lineage', ({ params }) => c.workflows.getLineage(params.id));
   router.put('/api/workflows/:id', ({ params, body, actor }) => c.workflows.update(params.id, body, { actor }));
   router.delete('/api/workflows/:id', ({ params, actor, query }) =>
@@ -41,10 +42,10 @@ export function miscRoutes(router, c) {
     c.workflows.clone(params.id, body?.name || { ...(body || {}), projectId: body?.projectId ?? projectId }, { actor })
   );
   router.put('/api/workflows/:id/screens', ({ params, body, actor }) => c.workflows.placeScreen(params.id, body, { actor }));
-  router.delete('/api/workflows/:id/screens/:sid', ({ params }) => c.workflows.removeScreen(params.id, params.sid));
+  router.delete('/api/workflows/:id/screens/:sid', ({ params, actor }) => c.workflows.removeScreen(params.id, params.sid, { actor }));
   router.post('/api/workflows/:id/links', ({ params, body, actor }) => c.workflows.addLink(params.id, body, { actor }));
-  router.put('/api/workflows/:id/links/:lid', ({ params, body, actor }) => c.workflows.updateLink(params.lid, body, { actor }));
-  router.delete('/api/workflows/:id/links/:lid', ({ params }) => c.workflows.removeLink(params.lid));
+  router.put('/api/workflows/:id/links/:lid', ({ params, body, actor }) => c.workflows.updateLink(params.lid, body, { actor, workflowId: params.id }));
+  router.delete('/api/workflows/:id/links/:lid', ({ params, actor }) => c.workflows.removeLink(params.lid, { actor, workflowId: params.id }));
 
   // project export: either returns the files (the browser writes them to a picked folder) or writes to a server-side folder
   router.post('/api/export/bundle', ({ body }) => c.exporter.buildBundle(body));
@@ -55,7 +56,8 @@ export function miscRoutes(router, c) {
     const f = c.exporter.buildProjectHtml({ projectId: pid, themeKeys: query.get('theme') ? [query.get('theme')] : undefined, title: proj?.name || 'Project', projectKey: proj?.key || 'project' });
     return { raw: f.content, contentType: f.contentType, filename: query.get('download') === '1' ? f.filename : null };
   });
-  router.post('/api/export/folder', ({ body }) => {
+  router.post('/api/export/folder', ({ body, actor }) => {
+    admin(actor);
     const { folder, ...options } = body;
     const result = c.exporter.exportToFolder(options, folder);
     c.settings.update({ exportFolder: folder });

@@ -125,7 +125,7 @@ ${healthBox('/api/health', 'API health')}
 </ul>
 <h2>Authentication</h2>
 <ul>
-<li><strong>Session token</strong> from <code>POST /api/auth/login</code>, sent as <code>Authorization: Bearer &lt;token&gt;</code>, <code>x-auth-token: &lt;token&gt;</code> or <code>?token=</code>. An invalid or expired token answers <code>401</code> (except on <code>/api/auth/*</code> and <code>/api/bootstrap</code>).</li>
+<li><strong>Session token</strong> from <code>POST /api/auth/login</code>, sent as <code>Authorization: Bearer &lt;token&gt;</code>, <code>x-auth-token: &lt;token&gt;</code> or the <code>ud_auth_token</code> cookie the sign-in sets (never in the URL). An invalid or expired token answers <code>401</code> (except on <code>/api/auth/*</code> and <code>/api/bootstrap</code>).</li>
 <li><strong>No token</strong>: the request runs as the user named by the <code>x-user-id</code> header (active, non-system accounts only) or, without it, as the local default admin (offline / single-user mode).</li>
 <li>Every <code>POST / PUT / PATCH / DELETE</code> outside <code>/api/auth/*</code> needs write permission for the acting user, and broadcasts a <code>library-changed</code> event to <code>/api/events</code> listeners.</li>
 <li><strong>Project scope</strong>: <code>x-project-id</code> header or <code>?projectId=</code> (default 1).</li>

@@ -514,7 +514,7 @@ test('rotation: item icons turn about their own centre and keep the angle across
 test('sync: the server names the design a write touched; live designs patch it at once; library panel redraws only on real changes; pills can be hidden', () => {
   const rd = f => readFileSync(new URL(f, import.meta.url), 'utf8');
   const server = rd('../interfaces/http/server.js'), main = rd('../interfaces/web/js/main.js'), lib = rd('../interfaces/web/js/components/library-panel.js'), ta = rd('../interfaces/web/js/components/designer-test-actions.js');
-  assert.match(server, /broadcastSync\(url\.pathname\)/); assert.match(server, /designType: PLURAL_TYPES\[m\[1\]\], designId: Number\(m\[2\]\)/);
+  assert.match(server, /broadcastSync\(url\.pathname, req\.method\)/); assert.match(server, /designType: PLURAL_TYPES\[m\[1\]\], designId: Number\(m\[2\]\)/);
   assert.match(main, /fastPatch\(msg\);/); assert.doesNotMatch(main, /app\.library\?\.renderBody\?\.\(\);/);
   assert.match(lib, /on\('library:changed', \(\) => \{ this\.loadWorkflows\(\); this\.softRefresh\(\); \}\);/); assert.match(lib, /sig === this\.renderedSig\) return;/);
   assert.match(ta, /if \(livePillsShown\(\)\) this\.mountLiveEditPills\(\);/);

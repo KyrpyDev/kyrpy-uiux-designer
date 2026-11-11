@@ -49,9 +49,9 @@ export class MenuService {
     return this.menus.create(b.id, data);
   }
 
-  updateItem(itemId, patch) {
+  updateItem(itemId, patch, { buttonId = null } = {}) {
     const it = this.menus.get(Number(itemId));
-    if (!it) throw new NotFoundError('menu item', itemId);
+    if (!it || (buttonId != null && it.buttonId !== this.#button(buttonId).id)) throw new NotFoundError('menu item', itemId);
     const data = normalizeMenuItem({ ...patch }, { partial: true });
     this.#check(data);
     const all = this.menus.list(it.buttonId);
@@ -93,9 +93,9 @@ export class MenuService {
     return this.get(b.id);
   }
 
-  removeItem(itemId) {
+  removeItem(itemId, { buttonId = null } = {}) {
     const it = this.menus.get(Number(itemId));
-    if (!it) throw new NotFoundError('menu item', itemId);
+    if (!it || (buttonId != null && it.buttonId !== this.#button(buttonId).id)) throw new NotFoundError('menu item', itemId);
     this.menus.delete(it.id);
     return { deleted: true, id: it.id };
   }

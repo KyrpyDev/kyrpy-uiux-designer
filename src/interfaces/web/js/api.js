@@ -1,4 +1,5 @@
 import { markEdited } from './edited.js';
+import { defaultResponseCache } from './response-cache.js';
 /**
  * HTTP client for the designer API with:
  *  - Session token & active user/project headers (`Authorization: Bearer`, `x-user-id`, `x-project-id`)
@@ -58,20 +59,23 @@ function safeStorageSet(key, val) {
   }
 }
 
+/** Offline copy of GET answers: IndexedDB (see response-cache.js), not `localStorage`. */
+const responseCache = defaultResponseCache(STORAGE_CACHE_PREFIX);
+
 // read-cache key of a GET: the icon version a client echoes back (`iconsSince`) does not change what the response
 // means, so it is left out (one entry per library query instead of one per icon version)
 export function cacheKeyFor(url) {
   return STORAGE_CACHE_PREFIX + String(url).replace(/([?&])iconsSince=[^&]*(&|$)/, (m, a, b) => (b ? a : '')).replace(/[?&]$/, '');
 }
 
-// drop entries written under the old per-version keys
-(function pruneVersionedLibraryCache() {
+// answers used to be kept in localStorage: with IndexedDB in place those copies only take up the quota
+(function dropLocalStorageResponses() {
   try {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof localStorage === 'undefined' || typeof indexedDB === 'undefined') return;
     const stale = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(STORAGE_CACHE_PREFIX) && k.includes('iconsSince=')) stale.push(k);
+      if (k && k.startsWith(STORAGE_CACHE_PREFIX)) stale.push(k);
     }
     stale.forEach(k => localStorage.removeItem(k));
   } catch {
@@ -102,16 +106,29 @@ export function getOfflineOutbox() {
   }
 }
 
+const OUTBOX_MAX = 200;
+
+/** Saves the queue (newest OUTBOX_MAX entries). Returns how many old entries did not fit; the page is told (`ud-outbox-overflow`). */
 function saveOfflineOutbox(items) {
-  safeStorageSet(STORAGE_OUTBOX, JSON.stringify(items.slice(-200)));
+  const lost = Math.max(0, items.length - OUTBOX_MAX);
+  safeStorageSet(STORAGE_OUTBOX, JSON.stringify(items.slice(-OUTBOX_MAX)));
+  if (lost) { try { window.dispatchEvent(new CustomEvent('ud-outbox-overflow', { detail: { lost } })); } catch { /* not in a page */ } }
+  return lost;
 }
 
-async function req(method, url, body) {
+/**
+ * @param {object} [opts] `queue: false` = do not put a failed write into the offline queue (the replay does that itself);
+ *   `idempotencyKey` = sent as `x-idempotency-key`, so the server answers a repeated write once.
+ */
+async function req(method, url, body, { queue = true, idempotencyKey = null } = {}) {
   const { token, userId, projectId } = getAuthSession();
   const headers = {
     'x-user-id': String(userId || 1),
     'x-project-id': String(projectId || 1)
   };
+  // every write carries a key: when the answer is lost and the write is repeated from the queue, the server does it once
+  const writeKey = method === 'GET' ? null : (idempotencyKey || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+  if (writeKey) headers['x-idempotency-key'] = writeKey;
   if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
 
@@ -123,14 +140,9 @@ async function req(method, url, body) {
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
     if (r.status === 401 && token && !url.startsWith('/api/auth/login')) {
+      // the session ended: never repeat the request without it; the page opens the sign-in gate
       setAuthSession({ token: '' });
-      const retryHeaders = { ...headers };
-      delete retryHeaders.authorization;
-      r = await fetch(url, {
-        method,
-        headers: retryHeaders,
-        body: body !== undefined ? JSON.stringify(body) : undefined
-      });
+      try { window.dispatchEvent(new CustomEvent('ud-session-expired')); } catch { /* not in a page */ }
     }
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
@@ -138,25 +150,19 @@ async function req(method, url, body) {
 
     // an `icons: null` answer ("your list is current") must not replace the cached full list
     if (method === 'GET' && ct.includes('json') && !(data && data.iconSummary && data.icons === null)) {
-      safeStorageSet(cacheKeyFor(url), JSON.stringify(data));
+      responseCache.put(cacheKeyFor(url), data);   // not awaited: the answer is returned at once
     }
     return data;
   } catch (err) {
     if (err instanceof ApiError) throw err;
     // Network / offline fallback
     if (method === 'GET') {
-      const cached = safeStorageGet(cacheKeyFor(url));
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch {
-          // ignore
-        }
-      }
-    } else if (!url.startsWith('/api/auth/')) {
+      const cached = await responseCache.get(cacheKeyFor(url));
+      if (cached !== undefined) return cached;
+    } else if (queue && !url.startsWith('/api/auth/')) {
       // never queue sign-in / profile / password requests: they would sit in localStorage in plain text
       const box = getOfflineOutbox();
-      box.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), method, url, body, queuedAt: new Date().toISOString() });
+      box.push({ id: writeKey, userId: userId || null, method, url, body, queuedAt: new Date().toISOString() });
       saveOfflineOutbox(box);
     }
     throw err;
@@ -191,21 +197,33 @@ export const api = {
   getSession: getAuthSession,
   setSession: setAuthSession,
   outbox: getOfflineOutbox,
+  /**
+   * Replays the writes queued while the server was unreachable.
+   * - an entry queued by another user stays in the queue (it is never sent with this session);
+   * - a write the server refuses (4xx) is dropped and reported: repeating it cannot succeed;
+   * - a write that still cannot reach the server stays queued;
+   * - each entry is sent with its own key, so a write whose answer was lost is not done twice.
+   * @returns {{flushed:number, remaining:number, dropped:Array<{method,url,status,message}>, foreign:number}}
+   */
   flushOutbox: async () => {
     const queue = getOfflineOutbox();
-    if (!queue.length) return { flushed: 0, remaining: 0 };
-    const remaining = [];
-    let flushed = 0;
+    if (!queue.length) return { flushed: 0, remaining: 0, dropped: [], foreign: 0 };
+    const me = getAuthSession().userId || null;
+    const remaining = [], dropped = [];
+    let flushed = 0, foreign = 0;
     for (const item of queue) {
+      if (item.userId != null && me != null && Number(item.userId) !== Number(me)) { remaining.push(item); foreign++; continue; }
       try {
-        await req(item.method, item.url, item.body);
+        await req(item.method, item.url, item.body, { queue: false, idempotencyKey: item.id });
         flushed++;
-      } catch {
-        remaining.push(item);
+      } catch (err) {
+        const st = err instanceof ApiError ? err.status : 0;
+        if (st >= 400 && st < 500 && ![401, 408, 429].includes(st)) dropped.push({ method: item.method, url: item.url, status: st, message: err.message });
+        else remaining.push(item);
       }
     }
     saveOfflineOutbox(remaining);
-    return { flushed, remaining: remaining.length };
+    return { flushed, remaining: remaining.length, dropped, foreign };
   },
 
   bootstrap: () => api.get('/api/bootstrap'),
@@ -242,7 +260,15 @@ export const api = {
   updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body).then(r => { markEdited(type, id); return r; }),
   /** Display order in the library: mode = front | back | forward | backward. */
   reorderDesign: (type, id, mode) => api.post(`/api/${PLURAL[type]}/${id}/order`, { mode }),
-  deleteDesign: (type, id) => api.del(`/api/${PLURAL[type]}/${id}`),
+  // an item used inside other designs answers 409 IN_USE: ask, then repeat with `force`
+  deleteDesign: (type, id) => api.del(`/api/${PLURAL[type]}/${id}`).catch(err => {
+    if (err?.status !== 409 || err.info?.code !== 'IN_USE') throw err;
+    const n = err.info.details?.usage ?? 'several';
+    if (typeof confirm !== 'function' || !confirm(`This ${type} is used ${n} time(s) in other designs.\nDeleting it removes those instances too. Delete anyway?`)) {
+      throw new ApiError('Not deleted: the item is still in use', err.info, 409);
+    }
+    return api.del(`/api/${PLURAL[type]}/${id}?force=1`);
+  }),
   cloneDesign: (type, id, nameOrBody) =>
     api.post(
       `/api/${PLURAL[type]}/${id}/clone`,
@@ -395,7 +421,7 @@ export const api = {
   syncStatus: () => api.get('/api/sync/status'),
   syncNow: (body = {}) => api.post('/api/sync/now', body),
   syncPush: (body = {}) => api.post('/api/sync/push', body),
-  syncPull: () => api.post('/api/sync/pull', {}),
+  syncPull: (body = {}) => api.post('/api/sync/pull', body),
 
   // ---- Trash Management ----
   trashList: (params = {}) => {

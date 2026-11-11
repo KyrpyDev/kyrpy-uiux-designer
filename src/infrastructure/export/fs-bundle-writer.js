@@ -7,6 +7,9 @@ export class FsBundleWriter {
   write(files, folder) {
     if (!isAbsolute(folder)) throw new ValidationError('export folder must be an absolute path');
     const root = resolve(folder);
+    // EXPORT_ROOT (when set) confines server-side exports to one folder tree
+    const base = process.env.EXPORT_ROOT ? resolve(process.env.EXPORT_ROOT) : null;
+    if (base && root !== base && !root.startsWith(base + sep)) throw new ValidationError(`export folder must be inside ${base}`);
     mkdirSync(root, { recursive: true });
     for (const f of files) {
       const rel = normalize(f.path);

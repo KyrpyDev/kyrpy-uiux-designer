@@ -328,6 +328,14 @@ export const SCHEMA_REGISTRY_SEED = {
     constraints: ['Infrastructure table; agents should not read or write it.'],
     columns: { key: 'State name.', value: 'JSON-encoded value.', mcp_context: C.mcp_context }
   },
+  login_failures: {
+    purpose: 'Failed sign-ins per account and address, used to limit password guessing. Local to this database, never synced.',
+    constraints: ['Infrastructure table; agents should not read or write it.'],
+    columns: {
+      bucket: 'SHA-256 of "<typed name>|<address>".', count: 'Failures in the current window.',
+      started_at: 'Start of the window (epoch milliseconds).', mcp_context: C.mcp_context
+    }
+  },
   schema_registry: {
     purpose: 'Describes every table and column for AI agents (this table). Table-level rows have column_name = "".',
     usage: 'Served to MCP clients as the design-system schema. Read it before creating or editing rows.',

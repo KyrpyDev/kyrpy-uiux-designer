@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 /**
  * SQLite repositories for Users, Sessions, Projects, Project Members, Collaborative Change Requests,
  * Editable Template Devices & Button Types, and Multi-language Translations.
  */
-import { publicUserId as publicUserIdOf } from '../../../domain/system-users.js';
+import { publicUserId as publicUserIdOf, defaultOwnerId as defaultOwnerIdOf } from '../../../domain/system-users.js';
+import { sessionKey } from '../session-token.js';
 
 const toUser = r => r && ({
   id: r.id,
@@ -37,8 +39,26 @@ export class UserRepository {
   findByUsernameOrEmail(identifier) {
     return this.getByUsernameOrEmail(identifier);
   }
+  /** Users holding a role (one query; the caller filters system accounts). */
+  listByRole(role) { return this.db.prepare('SELECT * FROM users WHERE role = ? ORDER BY id').all(String(role)).map(toUser); }
   /** Id of the immutable `public` system user (owner of the public library), or null. */
   publicUserId() { return publicUserIdOf(this.db); }
+  /**
+   * Failed sign-ins, kept in the database so every process that serves it (and a restarted one) counts together.
+   * The key is a hash: what was typed as a name is never stored. Map-like: get / set / delete / sweep.
+   */
+  loginFailureStore() {
+    const db = this.db;
+    const key = b => createHash('sha256').update(String(b)).digest('hex');
+    return {
+      get(b) { const r = db.prepare('SELECT count, started_at FROM login_failures WHERE bucket = ?').get(key(b)); return r ? { count: Number(r.count), start: Number(r.started_at) } : undefined; },
+      set(b, v) { db.prepare('INSERT INTO login_failures (bucket, count, started_at) VALUES (?, ?, ?) ON CONFLICT(bucket) DO UPDATE SET count = excluded.count, started_at = excluded.started_at').run(key(b), v.count, v.start); },
+      delete(b) { db.prepare('DELETE FROM login_failures WHERE bucket = ?').run(key(b)); },
+      sweep(before) { return Number(db.prepare('DELETE FROM login_failures WHERE started_at <= ?').run(before).changes || 0); }
+    };
+  }
+  /** Owner of records written without an actor: the superadmin by role, id 1 as a last resort. */
+  defaultOwnerId() { return defaultOwnerIdOf(this.db); }
 
   create(u) {
     const r = this.db.prepare(`INSERT INTO users (username,email,password_hash,salt,display_name,role,status,permissions,avatar_color)
@@ -71,25 +91,57 @@ export class UserRepository {
     return ok;
   }
 
+  /** Stores the session under the hash of its token (session-token.js); the clear token is only returned. */
+  /** What a user still owns: projects (as owner) and library items / workflows (as creator). */
+  ownedCounts(userId) {
+    const id = Number(userId);
+    const n = sql => { try { return Number(this.db.prepare(sql).get(id)?.n || 0); } catch { return 0; } };
+    const projects = n('SELECT COUNT(*) AS n FROM projects WHERE owner_id = ?');
+    let items = 0;
+    for (const t of ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows']) items += n(`SELECT COUNT(*) AS n FROM ${t} WHERE creator_id = ?`);
+    return { projects, items, total: projects + items };
+  }
+
   createSession(token, userId, expiresAt) {
-    this.db.prepare('INSERT OR REPLACE INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, Number(userId), expiresAt);
+    this.db.prepare('INSERT OR REPLACE INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(sessionKey(token), Number(userId), expiresAt);
     return { token, userId: Number(userId), expiresAt };
   }
 
   getSession(token) {
     if (!token) return null;
-    const s = this.db.prepare('SELECT * FROM sessions WHERE token = ?').get(String(token));
+    const key = sessionKey(token);
+    const s = this.db.prepare('SELECT * FROM sessions WHERE token = ?').get(key);
     if (!s) return null;
     if (s.expires_at && new Date(s.expires_at) < new Date()) {
-      this.db.prepare('DELETE FROM sessions WHERE token = ?').run(String(token));
+      this.db.prepare('DELETE FROM sessions WHERE token = ?').run(key);
       return null;
     }
     const user = this.get(s.user_id);
-    return user ? { token: s.token, userId: s.user_id, expiresAt: s.expires_at, user } : null;
+    return user ? { token: String(token), userId: s.user_id, expiresAt: s.expires_at, user } : null;
+  }
+
+  /** Rows written before tokens were hashed hold the clear token: replace each with its hash. Returns how many. */
+  hashLegacySessions() {
+    const rows = this.db.prepare("SELECT token FROM sessions WHERE token NOT LIKE 'h1:%'").all();
+    const upd = this.db.prepare('UPDATE OR REPLACE sessions SET token = ? WHERE token = ?');
+    for (const r of rows) upd.run(sessionKey(r.token), r.token);
+    return rows.length;
+  }
+
+  /** Signs a user out everywhere, except the session of `keepToken` (clear token) when given. Returns how many. */
+  deleteSessionsOfUser(userId, keepToken = null) {
+    return keepToken
+      ? this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(Number(userId), sessionKey(keepToken)).changes
+      : this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(Number(userId)).changes;
+  }
+
+  /** Removes every expired session; returns how many. */
+  purgeExpiredSessions(now = new Date().toISOString()) {
+    return this.db.prepare('DELETE FROM sessions WHERE expires_at IS NOT NULL AND expires_at < ?').run(now).changes;
   }
 
   deleteSession(token) {
-    return this.db.prepare('DELETE FROM sessions WHERE token = ?').run(String(token)).changes > 0;
+    return this.db.prepare('DELETE FROM sessions WHERE token = ?').run(sessionKey(token)).changes > 0;
   }
 }
 
@@ -233,6 +285,18 @@ export class ChangeRequestRepository {
     return { w: where.length ? `WHERE ${where.join(' AND ')}` : '', args };
   }
 
+  /** The list view: every column except the two snapshots (~100 KB each), which are neither read nor parsed. */
+  listLite(filter = {}) {
+    const { w, args } = this.#where(filter);
+    return this.db.prepare(`SELECT c.id, c.project_id, c.target_type, c.target_id, c.target_key, c.target_name, c.author_id, c.owner_id,
+        c.action, c.summary, c.diff_summary, c.status, c.reviewer_id, c.review_comment, c.created_at, c.reviewed_at,
+        ua.username AS author_username, ur.username AS reviewer_username
+      FROM change_requests c
+      LEFT JOIN users ua ON ua.id = c.author_id
+      LEFT JOIN users ur ON ur.id = c.reviewer_id
+      ${w} ORDER BY c.id DESC`).all(...args).map(r => { const { beforeSnapshot, afterSnapshot, ...lite } = toChange(r); return lite; });
+  }
+
   list(filter = {}) {
     const { w, args } = this.#where(filter);
     return this.db.prepare(`SELECT c.*, ua.username AS author_username, ur.username AS reviewer_username
@@ -281,6 +345,22 @@ export class ChangeRequestRepository {
       JSON.stringify(c.diffSummary || {}), c.status || 'pending');
     const saved = this.get(Number(r.lastInsertRowid));
     this.sync?.enqueue('change_requests', saved.id, 'upsert', saved);
+    return saved;
+  }
+
+  /** The pending edit request `authorId` already has for this item (publish requests excluded), or null. */
+  openEdit({ authorId, targetType, targetId }) {
+    const r = this.db.prepare(`SELECT id FROM change_requests WHERE author_id = ? AND target_type = ? AND target_id = ?
+      AND status = 'pending' AND action != 'publish' ORDER BY id DESC LIMIT 1`).get(Number(authorId), targetType, Number(targetId));
+    return r ? this.get(r.id) : null;
+  }
+
+  /** Replaces the "after" side of a pending request (the "before" side stays: it is what a reject restores). */
+  updateAfter(id, { afterSnapshot, diffSummary, summary, action, targetKey, targetName }) {
+    this.db.prepare(`UPDATE change_requests SET after_snapshot = ?, diff_summary = ?, summary = ?, action = ?, target_key = ?, target_name = ? WHERE id = ?`)
+      .run(JSON.stringify(afterSnapshot || {}), JSON.stringify(diffSummary || {}), summary || '', action || 'update', targetKey || '', targetName || '', Number(id));
+    const saved = this.get(id);
+    this.sync?.enqueue('change_requests', id, 'upsert', saved);
     return saved;
   }
 
@@ -458,8 +538,8 @@ export class TrashRepository {
     if (projectId != null && projectId !== '') { where.push('t.project_id = ?'); args.push(Number(projectId)); }
     if (visibility) { where.push('t.visibility = ?'); args.push(visibility); }
     if (q) {
-      where.push('(t.item_key LIKE ? OR t.item_name LIKE ? OR t.label LIKE ?)');
-      const l = `%${q}%`;
+      where.push(`(t.item_key LIKE ? ESCAPE '\\' OR t.item_name LIKE ? ESCAPE '\\' OR t.label LIKE ? ESCAPE '\\')`);
+      const l = `%${String(q).replace(/[\\%_]/g, '\\$&')}%`;
       args.push(l, l, l);
     }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';

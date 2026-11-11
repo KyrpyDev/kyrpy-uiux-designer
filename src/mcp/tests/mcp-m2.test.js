@@ -85,7 +85,8 @@ test('M2: initialize negotiates the protocol version and issues a session id', a
     assert.equal(n.status, 202);
     assert.equal((await w.rpc('ping', {}, { headers: { 'mcp-session-id': sid } })).body.result && true, true);
     assert.equal((await w.rpc('ping', {}, { headers: { 'mcp-session-id': 'nope' } })).status, 404, 'unknown session');
-    const del = await fetch(`${w.base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': sid } });
+    assert.equal((await fetch(`${w.base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': sid } })).status, 401, 'ending a session needs the key');
+    const del = await fetch(`${w.base}/mcp`, { method: 'DELETE', headers: { 'mcp-session-id': sid, authorization: `Bearer ${w.key}` } });
     assert.equal(del.status, 200);
     assert.equal((await w.rpc('ping', {}, { headers: { 'mcp-session-id': sid } })).status, 404, 'deleted session');
     assert.equal((await w.rpc('ping', {}, { headers: { 'mcp-protocol-version': '1999-01-01' } })).status, 400);
@@ -312,7 +313,10 @@ test('M2: helpers — tar paths, input validation, origin rule', () => {
     ['arguments.n must be ≥ 1', 'arguments.x is not a known argument']);
   assert.equal(originAllowed(undefined, 'h'), true);
   assert.equal(originAllowed('http://127.0.0.1:9999', 'h'), true);
-  assert.equal(originAllowed('https://designer.example.com', 'designer.example.com'), true);
+  // "Origin equals Host" proves nothing under DNS rebinding: a public host must be configured
+  assert.equal(originAllowed('https://designer.example.com', 'designer.example.com'), false);
+  assert.equal(originAllowed('https://designer.example.com', 'designer.example.com', ['designer.example.com']), true);
+  assert.equal(originAllowed('https://designer.example.com', 'h', ['https://designer.example.com/']), true);
   assert.equal(originAllowed('https://evil.example', 'designer.example.com'), false);
   assert.equal(originAllowed('https://app.example', 'h', ['https://app.example']), true);
 });

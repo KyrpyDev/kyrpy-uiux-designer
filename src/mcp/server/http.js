@@ -7,7 +7,8 @@
  *   GET    /mcp/bundles/<token>  single-use bundle download (no auth header; the token is the secret)
  *
  * Security: API key on every request (no caching, so revocation is immediate), Origin check against
- * DNS rebinding, body size cap, per-key rate limit, audit log of every tool call.
+ * DNS rebinding, body size cap, per-key rate limit, a limit on rejected keys per address, a cap on sessions
+ * per key, audit log of every tool call.
  */
 import { randomUUID } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
@@ -16,6 +17,8 @@ import { publicBaseUrl } from '../../interfaces/http/base-url.js';
 
 const MAX_BODY = 1024 * 1024;
 const SESSION_TTL_MS = 24 * 3600 * 1000;
+const MAX_SESSIONS_PER_KEY = 32;
+const SWEEP_MS = 60_000;
 
 const send = (res, status, body, headers = {}) => {
   const isJson = body !== undefined && typeof body !== 'string';
@@ -35,14 +38,22 @@ async function readJson(req) {
   catch { throw new DomainError('invalid JSON', 'PARSE', 400); }
 }
 
-/** Origin is allowed when absent (non-browser clients), loopback, or the server's own host. */
+const LOOPBACK = ['localhost', '127.0.0.1', '[::1]', '::1'];
+const hostOf = v => { try { return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`).host.toLowerCase(); } catch { return ''; } };
+
+/**
+ * Origin is allowed when absent (non-browser clients), loopback, or listed in `extra` (MCP_ALLOWED_ORIGINS,
+ * ALLOWED_ORIGINS, PUBLIC_BASE_URL: full origins or bare hosts).
+ * The request's own `Host` header only counts when it is a loopback name: under DNS rebinding the browser sends
+ * the attacker's domain as both Origin and Host, so "Origin equals Host" proves nothing for any other name.
+ */
 export function originAllowed(origin, host, extra = []) {
   if (!origin) return true;
   try {
     const o = new URL(origin);
-    if (['localhost', '127.0.0.1', '[::1]', '::1'].includes(o.hostname)) return true;
-    if (host && o.host === host) return true;
-    return extra.includes(o.origin);
+    if (LOOPBACK.includes(o.hostname)) return true;
+    if (extra.some(x => x === o.origin || hostOf(x) === o.host.toLowerCase())) return true;
+    return false;
   } catch { return false; }
 }
 
@@ -52,6 +63,14 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
 
   const closeStreams = s => { for (const r of s.streams || []) { try { r.end(); } catch { /* gone */ } } s.streams?.clear(); };
   const sweep = () => { const t = Date.now(); for (const [k, v] of sessions) if (t - v.lastSeen > SESSION_TTL_MS && !v.streams?.size) { closeStreams(v); sessions.delete(k); } };
+  // expired sessions go on a timer, not on every request
+  const sweeper = setInterval(sweep, SWEEP_MS);
+  sweeper.unref?.();
+  /** A key that keeps initializing replaces its own oldest idle sessions instead of growing the table. */
+  const capSessions = apiKeyId => {
+    const own = [...sessions].filter(([, v]) => v.apiKeyId === apiKeyId).sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+    while (own.length >= MAX_SESSIONS_PER_KEY) { const [k, v] = own.shift(); closeStreams(v); sessions.delete(k); }
+  };
 
   /** Sends notifications/resources/updated to every open stream of the project's sessions subscribed to the uri. */
   const notify = (projectId, uris) => {
@@ -76,11 +95,15 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
 
   const baseUrlOf = publicBaseUrl;
 
+  /** Checks the API key. Rejected keys are counted per client address; past the limit every attempt gets 429. */
   const authenticate = (req, ip) => {
+    const fails = limiter.status('authfail', ip);
+    if (fails.used >= fails.limit) throw new DomainError('too many rejected API keys from this address; try again later', 'RATE_LIMITED', 429);
     const header = String(req.headers.authorization || '');
     const key = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (!key) throw new DomainError('missing API key: send "Authorization: Bearer kud_…"', 'UNAUTHORIZED', 401);
-    return apiKeys.authenticate(key, { ip });
+    try { return apiKeys.authenticate(key, { ip }); }
+    catch (e) { if (e?.status === 401 || e?.status === 403) limiter.hit('authfail', ip); throw e; }
   };
 
   /** Returns true when the request was an MCP request (handled), false otherwise. */
@@ -101,7 +124,7 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
         apiKeys.audit.record({ apiKeyId: b.apiKeyId, event: 'bundle.download', ip });
         res.writeHead(200, {
           'content-type': 'application/gzip', 'content-length': b.buffer.length, 'cache-control': 'no-store',
-          'content-disposition': `attachment; filename="${b.filename}"`, 'x-content-sha256': b.sha256
+          'content-disposition': `attachment; filename="${String(b.filename).replace(/[^A-Za-z0-9._-]/g, '_')}"`, 'x-content-sha256': b.sha256
         });
         res.end(b.buffer);
         return true;
@@ -124,8 +147,12 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
         return true;
       }
       if (req.method === 'DELETE') {
+        // ending a session needs the key that opened it
+        const principal = authenticate(req, ip);
         const sid = req.headers['mcp-session-id'];
-        if (sid && sessions.has(String(sid))) { closeStreams(sessions.get(String(sid))); sessions.delete(String(sid)); }
+        const s = sid ? sessions.get(String(sid)) : null;
+        if (s && s.apiKeyId !== principal.apiKeyId) { send(res, 403, rpcError(RPC.INVALID_REQUEST, 'session belongs to another API key')); return true; }
+        if (s) { closeStreams(s); sessions.delete(String(sid)); }
         send(res, 200, '');
         return true;
       }
@@ -146,11 +173,11 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
       catch (e) { send(res, e.status === 413 ? 413 : 400, rpcError(RPC.PARSE, e.message)); return true; }
       if (Array.isArray(msg)) { send(res, 400, rpcError(RPC.INVALID_REQUEST, 'JSON-RPC batches are not supported')); return true; }
 
-      sweep();
       const headers = {};
       const sid = req.headers['mcp-session-id'] ? String(req.headers['mcp-session-id']) : null;
       if (msg?.method === 'initialize') {
         const id = randomUUID();
+        capSessions(principal.apiKeyId);
         sessions.set(id, { apiKeyId: principal.apiKeyId, projectId: principal.project?.id ?? null, protocolVersion: protocol.negotiate(msg.params?.protocolVersion), lastSeen: Date.now(), subscriptions: new Set(), streams: new Set() });
         headers['mcp-session-id'] = id;
       } else if (sid) {
@@ -185,6 +212,6 @@ export function createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allo
     for (const s of sessions.values()) openStreams += s.streams?.size || 0;
     return { activeSessions: sessions.size, openStreams };
   };
-  handle.stop = () => { if (poller) clearInterval(poller); for (const s of sessions.values()) closeStreams(s); };
+  handle.stop = () => { clearInterval(sweeper); if (poller) clearInterval(poller); for (const s of sessions.values()) closeStreams(s); };
   return handle;
 }

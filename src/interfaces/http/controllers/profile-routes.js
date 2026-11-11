@@ -4,8 +4,8 @@
  */
 export function profileRoutes(router, c) {
   router.get('/api/auth/profile', ({ token }) => c.profile.get(token));
-  router.put('/api/auth/profile', ({ token, body }) => c.profile.update(token, body));
-  router.post('/api/auth/profile/password', ({ token, body }) => c.profile.changePassword(token, body));
+  router.put('/api/auth/profile', ({ token, body }) => c.profile.updateAsync(token, body || {}));
+  router.post('/api/auth/profile/password', ({ token, body }) => c.profile.changePasswordAsync(token, body || {}));
   router.get('/api/auth/profile/sessions', ({ token }) => ({ sessions: c.profile.sessions(token) }));
   router.post('/api/auth/profile/sessions/revoke-others', ({ token }) => c.profile.revokeOtherSessions(token));
   router.delete('/api/auth/profile/sessions/:sid', ({ token, params }) => c.profile.revokeSession(token, params.sid));

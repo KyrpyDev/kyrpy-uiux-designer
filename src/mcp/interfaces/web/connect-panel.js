@@ -48,8 +48,9 @@ function injectStyles() {
  *   key: plaintext key (only right after create / rotate). projects: owned projects, used for the
  *   server-name suggestion when one machine talks to several projects.
  */
-export function connectPanel({ key = '', projects = [], projectId = null, keyKind: fixedKind = null } = {}) {
+export function connectPanel({ key: givenKey = '', projects = [], projectId = null, keyKind: fixedKind = null } = {}) {
   injectStyles();
+  let key = givenKey;
   const url = `${location.origin}/mcp`;
   const prefs = loadPrefs();
   let client = CLIENTS.some(c => c.id === prefs.client) ? prefs.client : 'claude-code';
@@ -74,6 +75,11 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
     h('option', { value: 'env', selected: keyMode === 'env' }, 'Environment variable (recommended)'),
     h('option', { value: 'inline', selected: keyMode === 'inline' }, 'Inline in the command / user config'));
 
+  // keys are stored hashed: for a script made later the user pastes the key (it stays in this page only)
+  const keyInput = givenKey ? null : h('input', { type: 'password', placeholder: 'kud_live_… (optional)', autocomplete: 'off', spellcheck: 'false',
+    'aria-label': 'API key to write into the script', dataset: { act: 'paste-key' } });
+  keyInput?.addEventListener('input', () => { key = keyInput.value.trim(); modeSel.disabled = !key; if (!key) { keyMode = 'env'; modeSel.value = 'env'; } draw(); });
+
   const grid = h('div', { class: 'aic-clients', role: 'radiogroup', 'aria-label': 'AI coding client' });
   const out = h('div', { class: 'aic' });
   const remember = () => savePrefs({ client, shell, keyMode, ...(fixedKind ? {} : { keyKind }) });
@@ -86,7 +92,10 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
   const draw = () => {
     const setup = buildClientSetup({ client, url, key, keyMode, shell, serverName: serverName.value, envVar: envVar.value, projectKey: proj?.key || '', keyKind,
       fallbackShell: onWindows() ? 'powershell' : 'posix' });
-    const file = setupAsFile(setup);
+    // one script file per terminal; the shell-neutral recipe has no single file, so every format is offered
+    const args = { client, url, key, keyMode, serverName: serverName.value, envVar: envVar.value, projectKey: proj?.key || '', keyKind };
+    const files = (setup.shell === 'any' ? SHELLS.map(([v]) => v).filter(v => v !== 'any') : [setup.shell])
+      .map(sh => setupAsFile(buildClientSetup({ ...args, shell: sh }))).filter(Boolean);
     // "any shell" exists for Claude Code only: say which syntax the other clients are shown in
     const fellBack = shell === 'any' && setup.shell !== 'any'
       ? `No shell-neutral script for ${setup.label}: shown for ${SHELLS.find(([v]) => v === setup.shell)?.[2] || setup.shell}. Pick your terminal above for another one.` : '';
@@ -108,8 +117,9 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
       h('div', { class: 'row spread' },
         h('div', { class: 'aic-prompt' }, 'Then tell your agent: ', h('b', {}, `“${setup.prompt}”`)),
         h('div', { class: 'row', style: { gap: '6px' } },
-          file ? h('button', { type: 'button', class: 'btn sm', title: `Save ${file.filename}, then run in the repository root: ${file.run}`, dataset: { act: 'download-script' },
-            onclick: () => download(file) }, `Download .${file.filename.split('.').pop()}`) : '',
+          files.length > 1 ? h('span', { class: 'aic-prompt' }, 'Download script:') : '',
+          ...files.map(file => h('button', { type: 'button', class: 'btn sm', title: `Save ${file.filename}, then run in the repository root: ${file.run}`, dataset: { act: 'download-script' },
+            onclick: () => download(file) }, files.length > 1 ? `.${file.filename.split('.').pop()}` : `Download .${file.filename.split('.').pop()}`)),
           h('button', { type: 'button', class: 'btn sm primary', onclick: () => copy(setupAsText(setup), `${setup.label} setup`) }, 'Copy all steps')))
     );
   };
@@ -134,7 +144,8 @@ export function connectPanel({ key = '', projects = [], projectId = null, keyKin
     shells,
     h('div', { class: 'aic-opts' },
       h('label', { class: 'field' }, h('span', {}, 'Key type'), kindSel),
-      h('label', { class: 'field' }, h('span', {}, key ? 'Key goes into' : 'Key goes into (key not shown again)'), modeSel),
+      keyInput ? h('label', { class: 'field' }, h('span', {}, 'Your key (not stored — paste to fill the script)'), keyInput) : '',
+      h('label', { class: 'field' }, h('span', {}, 'Key goes into'), modeSel),
       h('label', { class: 'field' }, h('span', {}, 'Server name'), serverName),
       h('label', { class: 'field' }, h('span', {}, 'Env variable'), envVar),
       proj ? h('label', { class: 'row', style: { gap: '6px', fontSize: '12px', color: 'var(--muted)' } }, perProject, h('span', {}, `Name per project (${proj.key})`)) : ''),

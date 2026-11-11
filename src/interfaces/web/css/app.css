@@ -868,6 +868,9 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 /* one tool bar: the second (path tools) row is replaced by the drop-down tool menus at the end of the first */
 .dz-toprow > .dz-pathbar { display: none; }
 .tool-menu-btn { width: auto; gap: 1px; padding: 0 5px; }
+/* a menu button that shows text (designer switch, test device): the label is cut at 20 characters, never wraps */
+.btn.tool-menu-btn.text-menu { gap: 5px; padding: 0 8px; flex: none; width: auto; min-width: max-content; max-width: none; }
+.text-menu-label { flex: none; max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .tool-menu-panel { position: fixed; z-index: 400; min-width: 210px; display: flex; flex-direction: column; padding: 4px; background: var(--panel2, #101a2e); border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .6); }
 .tool-menu-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: transparent; border: 0; border-radius: 7px; color: var(--text, #dbe6ff); text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
 .tool-menu-item:hover, .tool-menu-item:focus-visible { background: rgba(46, 155, 255, .18); outline: 0; }

@@ -28,6 +28,7 @@ import { writeFileSync, mkdirSync, existsSync, rmSync, copyFileSync } from 'node
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, healForeignKeys } from '../infrastructure/sqlite/database.js';
+import { dropOutboxTriggers } from '../infrastructure/sqlite/outbox-triggers.js';
 import { PG_SCHEMA_SQL } from '../infrastructure/postgres/pg-sync-service.js';
 import { buildContainer } from '../composition-root.js';
 import { DEFAULT_ACCOUNTS } from '../application/passwords.js';
@@ -113,6 +114,7 @@ const designTables = DESIGN_TABLES;
 /** Catalog tables exported only as their built-in seed rows (custom rows are user-authored). */
 const CATALOG_TABLES = ['themes', 'template_devices', 'template_buttons'];
 
+dropOutboxTriggers(db);   // the snapshot records no sync changes (the app re-creates the tracking on start)
 db.exec('PRAGMA foreign_keys = OFF;');
 db.exec('BEGIN;');
 try {
@@ -218,7 +220,7 @@ try {
 
   // 3e'. MCP layer: keys, audit, versions, changesets, requests and bindings are private per instance;
   //      only the built-in (global, seed) AI pack templates and the schema registry are public.
-  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items', 'design_focus']) {
+  for (const t of ['api_keys', 'mcp_audit_log', 'changeset_ops', 'changesets', 'project_versions', 'item_requests', 'code_bindings', 'version_items', 'design_focus', 'login_failures']) {
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t)) db.exec(`DELETE FROM ${t};`);
   }
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ai_artifacts'").get()) {
@@ -255,7 +257,7 @@ try {
   const expected = [`1:superadmin`, `2:admin`, `${Math.max(PUB, 2) + 1}:user`, `${PUB}:${PUBLIC_USERNAME}`].sort().join(',');
   if (users.map(u => `${u.id}:${u.username}`).sort().join(',') !== expected) leaks.push(`users are [${users.map(u => u.username).join(', ')}], expected exactly superadmin, admin, user, ${PUBLIC_USERNAME}`);
   if (users.some(u => u.username === PUBLIC_USERNAME && u.password_hash !== '')) leaks.push(`"${PUBLIC_USERNAME}" has a password hash`);
-  for (const t of ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changesets', 'changeset_ops', 'item_requests', 'project_versions', 'version_items', 'code_bindings', 'design_focus', 'sync_outbox']) {
+  for (const t of ['sessions', 'api_keys', 'change_requests', 'trash_items', 'mcp_audit_log', 'changesets', 'changeset_ops', 'item_requests', 'project_versions', 'version_items', 'code_bindings', 'design_focus', 'sync_outbox', 'login_failures']) {
     if (!hasTable(t)) continue;
     const n = db.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).get().n;
     if (n) leaks.push(`${n} row(s) left in ${t}`);

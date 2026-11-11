@@ -455,5 +455,34 @@ ALTER TABLE themes_v2 RENAME TO themes;
 
   /* 8: a menu item can show a library button (shape / style) besides its icon */ `
 ALTER TABLE menu_items ADD COLUMN ref_button_id INTEGER REFERENCES buttons(id) ON DELETE SET NULL;
+`,
+
+  /* 9: indexes for the list filters (visibility / project / creator), the display order and the open change request lookup */
+  ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows'].map(t => `
+CREATE INDEX IF NOT EXISTS idx_${t}_scope ON ${t}(visibility, project_id);
+CREATE INDEX IF NOT EXISTS idx_${t}_creator ON ${t}(creator_id);`).join('') + ['paths', 'icons', 'buttons', 'elements', 'screens'].map(t => `
+CREATE INDEX IF NOT EXISTS idx_${t}_order ON ${t}(position, name);`).join('') + `
+CREATE INDEX IF NOT EXISTS idx_changes_author ON change_requests(author_id, target_type, target_id, status);
+`,
+
+  /* 10: sign-in looks users up case-insensitively: index the lower-cased name and address */ `
+CREATE INDEX IF NOT EXISTS idx_users_lower_username ON users(LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email));
+`,
+
+  /* 11: the sync outbox keeps (table, record, operation) only: drop pushed rows, row copies and repeats; index the record lookup */ `
+DELETE FROM sync_outbox WHERE synced = 1;
+DELETE FROM sync_outbox WHERE id NOT IN (
+  SELECT MIN(id) FROM sync_outbox GROUP BY table_name, record_id, CASE WHEN operation = 'delete' THEN 'delete' ELSE 'upsert' END);
+UPDATE sync_outbox SET payload = '{}', operation = CASE WHEN operation = 'delete' THEN 'delete' ELSE 'upsert' END;
+CREATE INDEX IF NOT EXISTS idx_sync_outbox_record ON sync_outbox(table_name, record_id, operation, synced);
+`,
+
+  /* 12: failed sign-ins per account + address, shared by every process that opens this database (local only, never synced) */ `
+CREATE TABLE IF NOT EXISTS login_failures (
+  bucket     TEXT PRIMARY KEY,
+  count      INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL
+);
 `
 ];

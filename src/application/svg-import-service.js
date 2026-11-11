@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { ValidationError } from '../domain/errors.js';
@@ -8,6 +9,19 @@ import { parsePath, serializePath } from '../domain/path-data.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+/**
+ * Server-side import paths stay inside the allowed roots: IMPORT_ROOTS (comma separated) when set, else the repository
+ * the home folder of the user running the server, the temp folder and the system fonts. Stops `..` / absolute paths from reading any file on the host.
+ */
+function confinedPath(input) {
+  const resolved = resolve(repoRoot, String(input).trim());
+  const roots = (process.env.IMPORT_ROOTS ? process.env.IMPORT_ROOTS.split(',') : [repoRoot, homedir(), tmpdir(), '/usr/share/fonts']).map(r => resolve(r.trim())).filter(Boolean);
+  if (!roots.some(r => resolved === r || resolved.startsWith(r.endsWith(sep) ? r : r + sep))) {
+    throw new ValidationError(`"${input}" is outside the folders the server may import from`);
+  }
+  return resolved;
+}
 
 const IMPORT_TARGETS = ['path', 'icon', 'button', 'element'];
 
@@ -515,7 +529,7 @@ export class SvgImportService {
         entries.push({ name: rawName.replace(/[-_]+/g, ' ').trim() || 'svg item', svg: f.svg });
       }
     } else if (folderPath && String(folderPath).trim()) {
-      const resolved = resolve(repoRoot, String(folderPath).trim());
+      const resolved = confinedPath(folderPath);
       if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
         throw new ValidationError(`SVG folder not found: "${folderPath}"`);
       }
@@ -606,7 +620,7 @@ export class SvgImportService {
 
     // 1. Check server fontPath if provided
     if (fontPath && String(fontPath).trim()) {
-      const resolved = resolve(repoRoot, String(fontPath).trim());
+      const resolved = confinedPath(fontPath);
       if (!existsSync(resolved) || !statSync(resolved).isFile()) {
         throw new ValidationError(`Font file not found: "${fontPath}"`);
       }

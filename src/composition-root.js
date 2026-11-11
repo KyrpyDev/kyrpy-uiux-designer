@@ -76,7 +76,7 @@ function seedNewPresets(db, services, importer) {
   } catch (e) { console.warn('preset seeding skipped:', e.message); }
 }
 
-export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } = {}) {
+export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, seed = true } = {}) {
   const resolvedDbFile = dbFile || dbPath || './data/designer.db';
   const db = openDatabase(resolvedDbFile);
   const transaction = fn => inTransaction(db, fn);
@@ -102,8 +102,12 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
   const workflowRepo = new WorkflowRepository(db, pgSync);
   const settingsRepo = new SettingsRepository(db, pgSync);
 
+  // `seed: false` builds the services without the start-up writes (default accounts, default project, templates,
+  // presets, themes). Migrations and the MCP schema still run when the database is opened.
   const auth = new AuthService({ users: userRepo, transaction });
-  const projects = new ProjectService({ projects: projectRepo, users: userRepo, auth, changes: changeRepo, db, designs, nodes, workflows: workflowRepo, transaction });
+  if (seed) auth.seed();
+  const projects = new ProjectService({ projects: projectRepo, users: userRepo, auth, changes: changeRepo, designs, nodes, workflows: workflowRepo, transaction });
+  if (seed) projects.seed();
   const collaboration = new CollaborationService({
     changes: changeRepo,
     projects,
@@ -143,8 +147,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     trash: trashRepo,
     transaction
   });
-  collaboration.services = services;
-  collaboration.workflows = workflows;
+  collaboration.bind({ services, workflows });
 
   const trash = new TrashService({
     trash: trashRepo,
@@ -158,6 +161,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     transaction
   });
   const templates = new TemplateService({ templates: templateRepo, services, transaction });
+  if (seed) templates.seed();
   const translations = new TranslationService({ translations: translationRepo });
   const settings = new SettingsService({ settings: settingsRepo });
   const menuService = new MenuService({ buttons: designs.button, icons: designs.icon, screens: designs.screen, elements: designs.element, menus });
@@ -172,25 +176,24 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     parseSvg: svgTextToNodes,
     transaction
   });
-  projects.services = services;
-  projects.libraryTransfer = libraryTransfer;
-  collaboration.libraryTransfer = libraryTransfer;
+  projects.bind({ services, libraryTransfer });
+  collaboration.bind({ libraryTransfer });
   const exporter = new ExportService({ services, workflows, themes, menus: menuService, render, settings, templates, writer: new FsBundleWriter() });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
-  seedNewPresets(db, services, importer);
+  if (seed) seedNewPresets(db, services, importer);
   // MCP layer (src/mcp): API keys, schema registry, content hashes
   const mcp = buildMcpModule({
     projectService: projects,
     db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
     services, workflows, exporter, settings, collaboration, parseSvg: svgTextToNodes,
-    allowedOrigins: String(process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+    allowedOrigins: [process.env.MCP_ALLOWED_ORIGINS, process.env.ALLOWED_ORIGINS, process.env.PUBLIC_BASE_URL].flatMap(v => String(v || '').split(',')).map(s => s.trim()).filter(Boolean)
   });
 
   // Ensure all built-in themes (all 15 design style families in dark & light modes) exist and are up to date
-  themes.seedBuiltins();
+  if (seed) themes.seedBuiltins();
 
   const profile = new ProfileService({ users: userRepo, profiles: new ProfileRepository(db), auth, transaction });
   // large icon libraries (pack imports): summary lists, paged search, sprites by id; version bumps on icon changes
@@ -205,7 +208,6 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {} } =
     users: userRepo,
     projects,
     collaboration,
-    collab: collaboration,
     trash,
     libraryTransfer,
     templates,

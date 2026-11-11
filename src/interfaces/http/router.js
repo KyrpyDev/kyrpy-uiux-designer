@@ -21,7 +21,9 @@ export class Router {
     for (const r of this.routes) {
       if (r.method !== method) continue;
       const m = r.re.exec(path);
-      if (m) return { handler: r.handler, params: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) };
+      if (!m) continue;
+      try { return { handler: r.handler, pattern: r.pattern, params: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])])) }; }
+      catch { return null; }   // malformed percent-encoding
     }
     return null;
   }
