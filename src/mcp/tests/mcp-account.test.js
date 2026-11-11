@@ -76,7 +76,7 @@ test('account key: uiux_init without a choice returns projects + versions and as
   try {
     const sel = await w.ok('uiux_init', { platform: 'claude' });
     assert.equal(sel.needsSelection, true);
-    assert.deepEqual(sel.options.map(o => o.mode), ['download', 'clone', 'edit']);
+    assert.deepEqual(sel.options.map(o => o.mode), ['download', 'clone', 'edit', 'create', 'reverse']);
     assert.ok(sel.askHuman.some(s => /ask the human/i.test(s)));
     const mine = sel.projects.find(p => p.key === w.mine.key);
     const pub = sel.projects.find(p => p.key === w.bobPub.key);

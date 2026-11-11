@@ -26,7 +26,9 @@ import { ProjectLibraryService } from './application/project-library-service.js'
 import { ItemRequestService } from './application/item-request-service.js';
 import { BindingService } from './application/binding-service.js';
 import { DesignSessionService } from './application/design-session-service.js';
+import { StudioToolsService } from './application/studio-tools-service.js';
 import { FocusRepository } from './infrastructure/sqlite/focus-repository.js';
+import { ApiBridge } from './server/api-bridge.js';
 import { AGENT_USERNAME } from './domain/agent-user.js';
 import { publicUserId as publicUserIdOf } from '../domain/system-users.js';
 
@@ -43,7 +45,7 @@ const safeEqual = (a, b) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, parseSvg, pollMs, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
+export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, parseSvg, pollMs, getContainer = null, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
   const { pepper, source: pepperSource } = loadKeyPepper(dbFile);
   const hashKey = plaintext => createHmac('sha256', pepper).update(plaintext).digest('hex');
 
@@ -99,12 +101,19 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
     const design = accounts && changesets
       ? new DesignSessionService({ focus: new FocusRepository(db), accounts, projectService, projects, users, versions, changesets, query, versionRepo, services, workflows, db, transaction, ...(now ? { now } : {}) })
       : null;
-    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design });
+    const resolveContainer = getContainer || (() => ({
+      db, users, auth, projects: projectService || projects, services, ...services, workflows, exporter, settings, collaboration, mcp: out, publicUserId
+    }));
+    const apiBridge = new ApiBridge({ getContainer: resolveContainer, apiKeys, accounts, design, versions });
+    const studioTools = new StudioToolsService({ getContainer: resolveContainer, db, query, reads, hashes: contentHashes, library, versions, parseSvg, transaction, publicUserId });
+    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design, apiBridge, studioTools });
     const http = createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins, versions, ...(pollMs ? { pollMs } : {}) });
     // live updates for subscribed sessions (resources/subscribe + GET /mcp event stream)
     versions.onChange = projectId => http.notify(projectId, ['uiux://project/manifest', 'uiux://project/versions']);
     requests.onChange = projectId => http.notify(projectId, ['uiux://requests/open']);
-    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, design, http });
+    apiBridge.onMutate = projectId => http.notify(projectId, ['uiux://project/manifest']);
+    studioTools.onMutate = projectId => http.notify(projectId, ['uiux://project/manifest']);
+    Object.assign(out, { query, bundles, limiter, protocol, aiPack, versions, changesets, library, requests, bindings, design, apiBridge, studioTools, http });
   }
   return out;
 }

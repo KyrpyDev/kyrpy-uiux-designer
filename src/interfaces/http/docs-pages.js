@@ -9,35 +9,12 @@ import { SUPPORTED_PROTOCOL_VERSIONS, SERVER_INFO, RESOURCES, RESOURCE_TEMPLATES
 import { TOOLS } from '../../mcp/server/tools.js';
 import { buildClientSetup, CLIENTS, KEY_PLACEHOLDER, DEFAULT_ENV_VAR } from '../../mcp/interfaces/web/client-setup.js';
 import { APP_VERSION } from './controllers/health-routes.js';
+import { OPERATION_BY_ROUTE, buildRouteNotes } from './api-catalog.js';
 
 export const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 
-/** Optional one-line descriptions for well-known routes ("METHOD pattern" → text). Routes without one still list. */
-const ROUTE_NOTES = {
-  'GET /api/health': 'Server health: version, uptime, database probe (no auth).',
-  'GET /api/health/mcp': 'MCP layer health: enabled, protocol version, tool / resource / prompt counts, active sessions (no auth).',
-  'GET /api/bootstrap': 'Everything the web client needs at start-up (settings, themes, library, user).',
-  'GET /api/auth/config': 'Login configuration (whether sign-in is required, registration open).',
-  'POST /api/auth/login': 'Sign in; returns a session token.',
-  'POST /api/auth/logout': 'Ends the current session.',
-  'POST /api/auth/register': 'Creates a user account.',
-  'GET /api/auth/me': 'The user behind the current token.',
-  'GET /api/library': 'Library lists (icons, items, screens, workflows) of the visible projects.',
-  'GET /api/catalog/search': 'Search across the item catalog.',
-  'GET /api/settings': 'Designer settings.',
-  'PUT /api/settings': 'Updates designer settings.',
-  'GET /api/themes': 'Design styles (themes).',
-  'GET /api/workflows': 'Workflow list (filters: q, projectId, visibility, creatorId).',
-  'POST /api/workflows/from-screen': 'New workflow from a screen: the screen and every screen its menu items / click actions route to, recursively ({ screenId, name }).',
-  'POST /api/workflows/:id/import-routes': 'Adds a screen and every screen its routes reach to the workflow, linked ({ screenId, x, y }).',
-  'GET /api/projects': 'Projects visible to the actor.',
-  'GET /api/changes': 'Collaborative change requests.',
-  'GET /api/trash': 'Deleted items waiting for restore or purge.',
-  'GET /api/me/api-keys': 'Your AI access keys (metadata only; the secret is shown once on creation).',
-  'POST /api/me/api-keys': 'Creates an AI access key (kud_…) for MCP clients.',
-  'POST /api/export/bundle': 'Builds an export bundle (files returned to the browser).',
-  'GET /api/sync/status': 'PostgreSQL sync status.'
-};
+/** One-line descriptions and MCP action metadata for every registered route ("METHOD pattern" → text). */
+const ROUTE_NOTES = buildRouteNotes();
 
 const STYLE = `
 :root { color-scheme: light dark; --bg: #f6f8fb; --panel: #ffffff; --line: #d9e1ec; --text: #142033; --muted: #5a6b84; --accent: #1a73e8; --code: #eef2f8;
@@ -110,8 +87,13 @@ export function renderApiDocs(routes, { version = APP_VERSION } = {}) {
   const names = [...groups.keys()].sort((a, b) => (a === 'health' ? -1 : b === 'health' ? 1 : a.localeCompare(b)));
   const toc = names.map(g => `<a href="#g-${esc(g)}">${esc(g)}</a> <span class="muted">(${groups.get(g).length})</span>`).join(' · ');
   const sections = names.map(g => `<h3 id="g-${esc(g)}">/api/${esc(g)}</h3><div class="tbl"><table><tbody>${groups.get(g).map(r => {
+    const op = OPERATION_BY_ROUTE.get(`${r.method} ${r.pattern}`);
     const note = ROUTE_NOTES[`${r.method} ${r.pattern}`];
-    return `<tr><td style="white-space:nowrap"><span class="m ${esc(r.method)}">${esc(r.method)}</span></td><td><code>${esc(prettyPattern(r.pattern))}</code>${note ? `<div class="muted">${esc(note)}</div>` : ''}</td></tr>`;
+    const argParts = [];
+    if (op?.params) argParts.push(`params: ${Object.keys(op.params).join(', ')}`);
+    if (op?.query) argParts.push(`query: ${Object.keys(op.query).join(', ')}`);
+    if (op?.body) argParts.push(`body: ${Object.keys(op.body).join(', ')}`);
+    return `<tr><td style="white-space:nowrap"><span class="m ${esc(r.method)}">${esc(r.method)}</span></td><td><code>${esc(prettyPattern(r.pattern))}</code>${op?.action ? `<span class="badge">api.${esc(op.action)}</span>` : ''}${note ? `<div class="muted">${esc(note)}</div>` : ''}${argParts.length ? `<div class="muted" style="font-size:12.5px">${esc(argParts.join(' · '))}</div>` : ''}</td></tr>`;
   }).join('')}</tbody></table></div>`).join('\n');
 
   const body = `<h1>REST API reference</h1>

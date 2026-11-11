@@ -5,7 +5,9 @@
  * Template syntax (see ai-pack-render.js): {{var}}, {{#each list}}…{{this}}…{{/each}}, {{#if var}}…{{/if}}.
  * Bump TEMPLATE_VERSION whenever a body changes, so `uiux_init` updates installed packs.
  */
-export const TEMPLATE_VERSION = 6;
+export const TEMPLATE_VERSION = 8;
+
+import { REVERSE_ARTIFACTS } from './reverse-pack-templates.js';
 
 export const AGENT_NAME = 'kyrpy-uiux-designer';
 export const SKILL_NAME = 'kyrpy-skill-uiux-designer';
@@ -80,6 +82,12 @@ Styles: {{#each styles}}\`{{this}}\` {{/each}}(default \`{{defaultStyle}}\`) · 
 | \`uiux_check_update\` | cheap start-of-session check: is the pack, design or the MCP tool set newer than this repository? |
 | \`uiux_import_styles\` | list the design styles / button types the server offers; download and merge new ones into \`{{uiuxRoot}}/source/\` so they can be switched locally |
 | \`uiux_restore_version\` | propose rolling the project back to an earlier version (reviewed like any changeset) |
+| \`uiux_api_docs\` | inspect structured documentation for every Designer backend API function (\`interfaces/web/js/api.js\` and \`/api/*\` routes), parameters, scopes and \`callableNow\` (also exposed at \`uiux://api/docs\` and \`uiux://api/docs/{group}\`) |
+| \`uiux_api_call\` | invoke any allowed Designer backend API function by \`action\` (e.g. \`saveTemplateDevice\`, \`applyProjectButtonSettings\`, \`importSvg\`, \`createDesign\`, \`addNode\`, \`patchNode\`, \`addAnimation\`, \`menuConfig\`, \`addMenuItem\`, \`workflowFromScreen\`, \`importScreenRoutes\`, \`saveTranslation\`, \`adoptProjectDependencies\`, \`snapshotProjectVersion\`, \`exportProjectHtml\`) or \`{ method, path }\`, scoped to this API key and project |
+| \`uiux_public_library\` / \`uiux_use_public_element\` | browse & search curated public \`element\`s (cards, containers, carousels, popups, drawers, bars, page-builder blocks), buttons, icons, paths, screens and workflows, and adopt/place any public element (with all sub-items) into your project |
+| \`uiux_copy_item_to_project\` | search across public, private and visible project libraries and deep-copy ANY item (\`path\`, \`icon\`, \`button\`, \`element\`, \`screen\`, \`workflow\`, with sub-item cascade) into the target project to edit without modifying the original |
+| \`uiux_list_project_items\` / \`uiux_create_item\` / \`uiux_update_item\` / \`uiux_delete_item\` | first-class direct CRUD (plus Trash restore) across all 6 item kinds (\`path\`, \`icon\`, \`button\`, \`element\`, \`screen\`, \`workflow\`) |
+| \`uiux_graphic_tool\` | pure-domain graphical & vector editing tools: \`add_shape\`, \`add_pen_path\`, \`place_instance\`, \`union\` / \`subtract\` / \`intersect\` / \`exclude\` pathfinder, \`crop\` / \`crop_to_canvas\`, \`convert_to_path\`, \`combine_paths\`, \`break_apart\`, \`join_paths\`, \`reverse_path\`, \`simplify_path\`, \`bake_transform\`, \`round_corners\`, \`smooth_vertices\`, \`sharp_vertices\`, \`cut_path\`, \`edit_vertices\`, \`explode_icon\`, \`extract_paths_to_library\`, \`extract_as_element\`, \`align\`, \`distribute\`, \`move\`, \`resize\`, \`fit_to_screen\`, \`flip\`, \`rotate\`, \`group\`, \`ungroup\`, \`reorder_layer\`, \`duplicate_nodes\`, \`style_nodes\`, \`delete_nodes\` |
 
 ## Procedure: keep this repository current (every session)
 1. Read \`.uiux/uiux.lock.json\`; call \`uiux_check_update { installed: [{path, recordedChecksum: lock.pack.files[path], currentChecksum: sha256 of the file on disk}], manifestHash: lock.manifestHash, toolsHash: lock.toolsHash, packVersion: lock.pack.version }\`.
@@ -179,7 +187,9 @@ Only when a human asks for it, and only if the server lists the \`propose\` tool
 /** Seed rows: one body per kind; `platform: 'any'` means the platform wrapper decides path and frontmatter. */
 export const BUILTIN_ARTIFACTS = [
   { kind: 'agent', name: AGENT_NAME, platform: 'any', template: AGENT },
-  { kind: 'skill', name: SKILL_NAME, platform: 'any', template: SKILL }
+  { kind: 'skill', name: SKILL_NAME, platform: 'any', template: SKILL },
+  // optional pack "reverse-engineer" (uiux_init { mode: "reverse" } / packs): see reverse-pack-templates.js
+  ...REVERSE_ARTIFACTS
 ];
 
 export const PLATFORMS = ['claude', 'antigravity', 'agents-md', 'cursor', 'generic'];

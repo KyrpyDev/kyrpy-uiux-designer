@@ -4,14 +4,9 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
-import { Router } from './router.js';
-import { designRoutes } from './controllers/design-routes.js';
-import { miscRoutes } from './controllers/misc-routes.js';
-import { healthRoutes, mcpHealth } from './controllers/health-routes.js';
+import { buildApiRouter } from './api-catalog.js';
+import { mcpHealth } from './controllers/health-routes.js';
 import { renderApiDocs, renderMcpDocs, mcpReadme } from './docs-pages.js';
-import { collabRoutes } from './controllers/collab-routes.js';
-import { profileRoutes } from './controllers/profile-routes.js';
-import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
 import { DomainError } from '../../domain/errors.js';
 import { publicBaseUrl } from './base-url.js';
 import { checkQuery, checkBody } from './input.js';
@@ -115,13 +110,7 @@ async function serveFile(res, root, rel, req = null) {
 /** Builds the node http server around the container's use cases. Static: /domain/* (shared pure code) and the web app. */
 export function createHttpServer(container, { webRoot, domainRoot }) {
   const mcpWebRoot = fileURLToPath(new URL('../../mcp/interfaces/web/', import.meta.url));
-  const router = new Router();
-  healthRoutes(router, container);
-  designRoutes(router, container);
-  miscRoutes(router, container);
-  collabRoutes(router, container);
-  if (container.profile) profileRoutes(router, container);
-  if (container.mcp) mcpRoutes(router, container);
+  const router = buildApiRouter(container);
 
   // Sync signal: every successful write bumps the library version and tells connected clients to re-sync,
   // so their cached lists (including duplicates or stale rows) are replaced with the server's copy.
@@ -137,6 +126,7 @@ export function createHttpServer(container, { webRoot, domainRoot }) {
     const msg = `data: ${JSON.stringify({ type: 'library-changed', version: syncVersion, scope, ...touched(path) })}\n\n`;
     for (const c of syncClients) c.write(msg);
   };
+  container.notifySync = broadcastSync;
 
   // A write repeated with the same `x-idempotency-key` by the same user (the offline queue replays a write whose
   // answer was lost) is answered from here instead of being done twice. Kept for an hour, at most 1000 answers;

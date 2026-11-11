@@ -367,7 +367,7 @@ export class SvgImportService {
   /**
    * Imports a single `<svg>` document into the target library (`path`, `icon`, `button`, or `element`).
    */
-  import({ svg, as = 'icon', name, category = 'imported', projectId = 1, visibility = 'public' } = {}, { actor = null, actorId = null } = {}) {
+  import({ svg, as = 'icon', name, key, category = 'imported', projectId = 1, visibility = 'public' } = {}, { actor = null, actorId = null } = {}) {
     if (typeof svg !== 'string' || !svg.includes('<svg')) throw new ValidationError('svg text is required');
     if (!IMPORT_TARGETS.includes(as)) throw new ValidationError('import as path, icon, button or element');
     let parsed;
@@ -376,7 +376,8 @@ export class SvgImportService {
     const label = name || labelFromKey(slugify(`imported ${as}`));
     const baseMeta = {
       projectId: Number(projectId) || 1,
-      visibility: visibility === 'project' ? 'project' : 'public'
+      visibility: visibility === 'project' ? 'project' : (visibility === 'private' ? 'private' : 'public'),
+      ...(key ? { key } : {})
     };
     const createOpts = { actor, actorId };
 

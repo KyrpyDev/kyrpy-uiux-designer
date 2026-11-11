@@ -96,7 +96,8 @@ export class TemplateService {
       grid: Math.max(1, Number(input.grid) || 24),
       locked: !!input.locked,
       meta: { modes: ['dark', 'light'], defaultMode: 'dark', darkTheme: 'liquid', lightTheme: 'liquid-light', ...(input.meta || {}) },
-      builtin: false
+      builtin: false,
+      ...(input.createdBy != null ? { createdBy: Number(input.createdBy) } : {})
     });
     this.#register(created);
     return created;
@@ -126,7 +127,7 @@ export class TemplateService {
     return { deleted: true, id: existing.id };
   }
 
-  saveDevice(input = {}) {
+  saveDevice(input = {}, actor = null) {
     if (input.id && this.templates.getDevice(Number(input.id))) {
       return this.updateDevice(Number(input.id), input);
     }
@@ -136,7 +137,8 @@ export class TemplateService {
     }
     return this.createDevice({
       ...input,
-      cornerRadius: input.cornerRadius ?? input.radius ?? 32
+      cornerRadius: input.cornerRadius ?? input.radius ?? 32,
+      ...(actor?.id != null && input.createdBy == null ? { createdBy: actor.id } : {})
     });
   }
 
@@ -144,7 +146,7 @@ export class TemplateService {
   listButtons() { return this.templates.listButtons(); }
   listButtonTemplates() { return this.listButtons(); }
 
-  saveButtonTemplate(input = {}) {
+  saveButtonTemplate(input = {}, actor = null) {
     if (input.id && this.templates.getButton(Number(input.id))) {
       return this.updateButton(Number(input.id), input);
     }
@@ -152,7 +154,10 @@ export class TemplateService {
       const ex = this.templates.getButtonByKey(String(input.key));
       return this.updateButton(ex.id, input);
     }
-    return this.createButton(input);
+    return this.createButton({
+      ...input,
+      ...(actor?.id != null && input.createdBy == null ? { createdBy: actor.id } : {})
+    });
   }
 
   removeButtonTemplate(id) { return this.deleteButton(id); }
@@ -177,7 +182,8 @@ export class TemplateService {
       hoverEffect: input.hoverEffect || 'glow',
       indicatorEffect: input.indicatorEffect || 'none',
       meta: input.meta || {},
-      builtin: false
+      builtin: false,
+      ...(input.createdBy != null ? { createdBy: Number(input.createdBy) } : {})
     };
     const customNodes = Array.isArray(input.nodesTemplate) && input.nodesTemplate.length
       ? input.nodesTemplate

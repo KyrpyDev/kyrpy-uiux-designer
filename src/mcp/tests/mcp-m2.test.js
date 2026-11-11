@@ -226,7 +226,7 @@ test('M2: schema overview, single table, tokens and resources', async () => {
     assert.match((await w.call('uiux_get_tokens', { format: 'ts' })).structuredContent.text, /export const tokens/);
 
     const list = (await w.rpc('resources/list')).body.result.resources.map(r => r.uri);
-    assert.deepEqual(list, ['uiux://schema', 'uiux://project/manifest', 'uiux://requests/open', 'uiux://project/versions']);
+    assert.deepEqual(list, ['uiux://schema', 'uiux://api/docs', 'uiux://project/manifest', 'uiux://requests/open', 'uiux://project/versions']);
     assert.ok((await w.rpc('resources/templates/list')).body.result.resourceTemplates.length >= 4);
     const r1 = (await w.rpc('resources/read', { uri: 'uiux://item/icon/ada-star' })).body.result.contents[0];
     assert.equal(JSON.parse(r1.text).key, 'ada-star');

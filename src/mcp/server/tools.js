@@ -6,6 +6,8 @@
 import { createHash } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
 import { SCHEMA_VERSION } from '../application/design-query-service.js';
+import { GRAPHIC_OPERATIONS } from '../application/studio-tools-service.js';
+import { REVERSE_PACK, REVERSE_AGENT_NAME, REVERSE_SKILL_NAME, REVERSE_WORKDIR } from '../domain/reverse-pack-templates.js';
 
 const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
@@ -14,6 +16,7 @@ const typesProp = { type: 'array', items: { type: 'string', enum: ITEM_TYPES }, 
 const styleProp = str('Style key (for example "liquid" or "liquid-light"); see uiux_get_schema → styles. Default: the designer\'s current style.', { maxLength: 80 });
 
 const PLATFORM_PROP = { type: 'string', enum: ['claude', 'antigravity', 'agents-md', 'cursor', 'generic'], description: 'Your client: claude (Claude Code), antigravity, agents-md (AGENTS.md section), cursor, generic (docs/uiux/*.md). Default claude.' };
+const PACKS_PROP = { type: 'array', items: { type: 'string', enum: [REVERSE_PACK] }, maxItems: 4, description: `Optional packs to install / keep up to date next to the designer pack (from .uiux/config.json → packs). "${REVERSE_PACK}": the ${REVERSE_AGENT_NAME} agent + skill that reverse-engineer a running app into the project (uiux_init mode "reverse" adds it itself).` };
 const CLIENT_IDS = ['claude-code', 'codex', 'gemini', 'antigravity', 'cursor', 'vscode', 'windsurf', 'cline', 'opencode', 'zed', 'claude-desktop', 'bridge', 'generic'];
 
 /* ---------- account (user-wide) keys: clone a design → build an app → push it back as a new project ---------- */
@@ -78,13 +81,15 @@ const ACCOUNT_TOOLS = [
 /* ---------- account-key init: list projects + versions → the human chooses clone or edit@version ---------- */
 
 const INIT_ACCOUNT_PROPERTIES = {
-  mode: { type: 'string', enum: ['download', 'clone', 'edit'], description: 'Account keys: what the HUMAN chose after the selection list. download = read-only local copy of any visible project (nothing is created or changed on the server); clone = copy a visible project into a NEW project of theirs; edit = work on one of their own projects at a version. Omit on the first call to get the list.' },
+  mode: { type: 'string', enum: ['download', 'clone', 'edit', 'create', 'reverse'], description: 'Account keys: what the HUMAN chose after the selection list. download = read-only local copy of any visible project (nothing is created or changed on the server); clone = copy a visible project into a NEW project of theirs; edit = work on one of their own projects at a version; create = a NEW empty project of theirs (ask for the project name → newProjectName) into which you push every item and workflow of this repository\'s app; reverse = a NEW empty project (ask for the name) plus the reverse-engineering agent + skill: you install and run an existing app (APK on an emulator, or a web app), use every screen and push what you find. create / reverse need no "project". Omit on the first call to get the list.' },
   project: str('Account keys: the chosen project key (source for clone, target for edit).', { maxLength: 80 }),
   version: { type: 'integer', minimum: 1, description: 'Account keys: the chosen version number (default: head). clone copies the head; edit at an older version records it as baseVersion (restore:true brings the project back to it, reviewed).' },
-  newProjectName: str('clone: name of the new project (default "<source name> app").', { maxLength: 120 }),
-  newProjectKey: str('clone: optional key of the new project.', { maxLength: 80 }),
-  newProjectDescription: str('clone: description of the new project.', { maxLength: 2000 }),
-  visibility: { type: 'string', enum: ['private', 'public'], description: 'clone: visibility of the new project (default private).' },
+  newProjectName: str('clone: name of the new project (default "<source name> app"). create / reverse: REQUIRED — ask the human for it.', { maxLength: 120 }),
+  newProjectKey: str('clone / create / reverse: optional key of the new project.', { maxLength: 80 }),
+  newProjectDescription: str('clone / create / reverse: description of the new project.', { maxLength: 2000 }),
+  visibility: { type: 'string', enum: ['private', 'public'], description: 'clone / create / reverse: visibility of the new project (default private).' },
+  appSource: str('reverse: the app the human named — a local APK path, a download URL, a package id or a web URL. It is written into init-prompt.md for you; the server never downloads or runs it. NEVER put login details here or in any other uiux argument.', { maxLength: 500 }),
+  appPlatform: { type: 'string', enum: ['android', 'web'], description: 'reverse: android (APK on a device / emulator, default) or web (browser).' },
   restore: { type: 'boolean', description: 'edit at an older version: submit a restore changeset that brings the project back to that version (the owner approves it in the designer). Needs the propose scope.' },
   versionsPerProject: { type: 'integer', minimum: 1, maximum: 50, description: 'Selection list: versions shown per project (default 10).' }
 };
@@ -92,12 +97,16 @@ const ACCOUNT_ONLY_INIT = Object.keys(INIT_ACCOUNT_PROPERTIES);
 
 const versionRow = v => ({ number: v.number, status: v.status, source: v.source, label: v.label || '', message: v.message || '', items: v.items, createdAt: v.createdAt });
 
+const NEW_PROJECT_SCOPES = 'This key cannot do it: creating a project needs the "create" scope and pushing into it needs "propose" (or a design key). Create such an account key in the designer (AI Access Keys).';
+const PUSH_NOTE = principal => (principal.strict ? 'Design key: the push is saved directly (uiux_save).' : 'The push arrives as changesets that you approve in the designer.');
+
 /** First account-key call: everything the human needs to choose, and how the agent must ask. */
 function initSelection({ principal, accounts, versions }, args) {
   const per = Math.min(Math.max(1, Number(args.versionsPerProject) || 10), 50);
   const list = accounts.listProjects(principal, { limit: 200 });
   const canCreate = principal.scopes.includes('create');
   const canPropose = principal.scopes.includes('propose');
+  const canPush = canPropose || principal.strict === true;
   const projects = list.projects.map(p => {
     let vs = null;
     try {
@@ -113,6 +122,8 @@ function initSelection({ principal, accounts, versions }, args) {
     '  1) DOWNLOAD a project read-only into this repository (nothing is created on the server)',
     '  2) CLONE a project into a NEW project of yours (the source is never changed)',
     '  3) EDIT one of your own projects, at a version you choose',
+    '  4) CREATE a new project (you give its name) and push all items and workflows of this repository\'s app into it',
+    '  5) REVERSE-ENGINEER an existing app (you give a project name and an APK file / URL): it is installed on an emulator, every screen is used, and everything found is pushed into the new project',
     '', ...lines
   ].join('\n');
   return {
@@ -121,20 +132,24 @@ function initSelection({ principal, accounts, versions }, args) {
     options: [
       { mode: 'download', available: true, label: 'Download a project (read-only copy, all design + button styles)', needs: ['project'], note: 'Installs the design and every design style / button style into the repository. Nothing is created or changed on the server; pushes are not possible for a project you do not own.' },
       { mode: 'clone', available: canCreate, label: 'Clone a project and create a new project', needs: ['project', 'newProjectName (optional)'], note: canCreate ? 'Copies the head version of any project you can see into a new private project owned by you.' : 'This key has no "create" scope: create an account key with "create" in the designer (AI Access Keys).' },
-      { mode: 'edit', available: projects.some(p => p.canEdit), label: 'Edit an existing project at a version', needs: ['project (owned)', 'version (default head)'], note: canPropose ? 'Pushes go to that project as changesets; the owner approves them.' : 'This key has no "propose" scope: it can pull the design but not push changes.' }
+      { mode: 'edit', available: projects.some(p => p.canEdit), label: 'Edit an existing project at a version', needs: ['project (owned)', 'version (default head)'], note: canPropose ? 'Pushes go to that project as changesets; the owner approves them.' : 'This key has no "propose" scope: it can pull the design but not push changes.' },
+      { mode: 'create', available: canCreate && canPush, label: 'Create a new project and push this app into it (all items + workflows)', needs: ['newProjectName (ask the human)'], note: canCreate && canPush ? `Creates an empty private project owned by you; the agent inventories this repository and pushes every icon, button, element, screen and workflow. ${PUSH_NOTE(principal)}` : NEW_PROJECT_SCOPES },
+      { mode: 'reverse', available: canCreate && canPush, label: 'Reverse-engineer an existing app into a new project', needs: ['newProjectName (ask the human)', 'appSource (APK path / URL, optional at this step)'], note: canCreate && canPush ? `Creates an empty private project and installs the ${REVERSE_AGENT_NAME} agent + skill: emulator setup, APK install, sign-in, a crawl of every screen, then the push. Login details stay on the local machine. ${PUSH_NOTE(principal)}` : NEW_PROJECT_SCOPES }
     ],
     projects,
     total: list.total,
     askHuman: [
       'STOP and ask the human before writing any file. Do not choose for them.',
-      'Show them `question` (or the projects[] table: key, name, role, head, versions) and ask: download, clone or edit? which project? which version? For clone also ask the new project name.',
+      'Show them `question` (or the projects[] table: key, name, role, head, versions) and ask: download, clone, edit, create or reverse-engineer? For download / clone / edit: which project? which version? For clone, create and reverse also ask the NEW project name. For reverse also ask which app (APK file or URL) — login details are asked later and stay local.',
       'If your client supports MCP elicitation or a choice prompt, use it; otherwise ask in chat and wait for the answer.',
-      'Then call uiux_init again with { mode, project, version?, newProjectName? } plus your usual platform / framework / client arguments.'
+      'Then call uiux_init again with { mode, project, version?, newProjectName? } (create / reverse: { mode, newProjectName, appSource? }, no project) plus your usual platform / framework / client arguments.'
     ],
     examples: [
       { mode: 'download', project: projects[0]?.key || '<project-key>' },
       { mode: 'clone', project: projects.find(p => p.canClone)?.key || '<project-key>', newProjectName: 'My app' },
-      { mode: 'edit', project: projects.find(p => p.canEdit)?.key || '<owned-project-key>', version: projects.find(p => p.canEdit)?.head || 1 }
+      { mode: 'edit', project: projects.find(p => p.canEdit)?.key || '<owned-project-key>', version: projects.find(p => p.canEdit)?.head || 1 },
+      { mode: 'create', newProjectName: 'My app' },
+      { mode: 'reverse', newProjectName: 'My app (reverse-engineered)', appSource: 'https://example.com/app.apk' }
     ]
   };
 }
@@ -150,15 +165,109 @@ function runInit({ principal, aiPack, bundles, limiter, baseUrl, versions }, arg
   return data;
 }
 
-/** Account keys: uiux_init without a choice returns the selection list; with a choice it runs clone / edit. */
+/**
+ * uiux_init { mode: "create" | "reverse" }: a NEW empty project owned by the key's user.
+ *   create  → the agent pushes the app of the current repository into it (every item + all workflows)
+ *   reverse → additionally installs the reverse-engineering agent + skill; the agent runs an existing app (APK on an
+ *             emulator / web app), uses every screen and pushes what it finds
+ * Without newProjectName nothing is created: the answer tells the agent what to ask the human.
+ * The server never downloads, installs or runs the app, and never receives login details.
+ */
+function newProjectInit(ctx, own, pass) {
+  const { principal, accounts, versions } = ctx;
+  const reverse = own.mode === 'reverse';
+  const canPush = principal.scopes.includes('propose') || principal.strict === true;
+  if (!principal.scopes.includes('create')) throw new DomainError(`${own.mode} creates a new project: this account key needs the "create" scope`, 'SCOPE_DENIED', 403);
+  if (!canPush) throw new DomainError(`${own.mode} pushes items into the new project: this account key needs the "propose" scope (or a design key)`, 'SCOPE_DENIED', 403);
+  if (own.project) throw new DomainError(`mode "${own.mode}" always creates a NEW project: pass newProjectName, not "project". To push into the existing project "${own.project}" use mode "edit".`, 'VALIDATION', 422);
+  if (own.version || own.restore) throw new DomainError(`mode "${own.mode}" starts a new project at version 1: "version" and "restore" do not apply`, 'VALIDATION', 422);
+
+  const name = String(own.newProjectName ?? '').trim();
+  if (!name) {
+    const ask = [
+      'What should the new project be called? (required)',
+      ...(reverse ? [
+        `Which app should be reverse-engineered? A local APK file, a direct download URL, an installed package id, or a web URL.${own.appSource ? ` (given: ${own.appSource} — confirm it)` : ''}`,
+        'Do you own this app or are you allowed to analyse it?',
+        'Does the app need a sign-in? (Ask for the login details only after uiux_init, and keep them on this machine.)'
+      ] : [])
+    ];
+    const data = {
+      needsInput: true, mode: own.mode, missing: ['newProjectName'], ask,
+      askHuman: [
+        'STOP and ask the human; do not invent a project name.',
+        ...ask.map((q, i) => `${i + 1}. ${q}`),
+        `Then call uiux_init again with { mode: "${own.mode}", newProjectName: "<name>"${reverse ? ', appSource: "<apk path or url>", appPlatform: "android" | "web"' : ''} } plus your usual platform / framework / client arguments.`,
+        ...(reverse ? ['Never pass a password, token or one-time code to any uiux tool.'] : [])
+      ],
+      example: { mode: own.mode, newProjectName: 'My app', ...(reverse ? { appSource: 'https://example.com/app.apk', appPlatform: 'android' } : {}) }
+    };
+    return { summary: `ASK THE HUMAN for the new project name${reverse ? ' and the app (APK file or URL)' : ''}; nothing was created. Then call uiux_init again with { mode: "${own.mode}", newProjectName }.`, data };
+  }
+  if (accounts.listProjects(principal, { owned: true, limit: 500 }).projects.some(p => String(p.name).toLowerCase() === name.toLowerCase())) {
+    throw new DomainError(`you already have a project named "${name}": ask the human for another name, or use uiux_init { mode: "edit" } to push into the existing one`, 'CONFLICT', 409);
+  }
+
+  const app = reverse ? { source: own.appSource || '', platform: own.appPlatform || (/^https?:\/\/(?!.*\.(apk|xapk|apks)(\?|#|$))/i.test(own.appSource || '') ? 'web' : 'android') } : null;
+  const input = {
+    name, key: own.newProjectKey, visibility: own.visibility || 'private',
+    description: own.newProjectDescription || (reverse ? `Reverse-engineered from ${app.platform === 'web' ? 'the web app' : 'the app'} "${name}".` : `Design of the app "${name}", pushed from its repository.`)
+  };
+  // a design key focuses its new project; a plain account key names it on every call
+  const created = principal.strict && ctx.design ? ctx.design.create(principal, input) : accounts.createProject(principal, input);
+  const target = accounts.resolve(principal, created.project.key, 'propose');
+  ctx.design?.setFocus(principal, target);
+  const bound = accounts.bind(principal, target);
+  const head = versions ? versions.ensureHead(target.id).number : null;
+  const packs = [...new Set([...(Array.isArray(pass.packs) ? pass.packs : []), ...(reverse ? [REVERSE_PACK] : [])])];
+  const data = runInit({ ...ctx, principal: bound }, {
+    ...pass, ...(packs.length ? { packs } : {}), ...(app ? { app } : {}),
+    selection: { mode: own.mode, baseVersion: head, headVersion: head, ...(app ? { app: { source: String(app.source).slice(0, 500), platform: app.platform } } : {}) }
+  });
+  const key = created.project.key;
+  const direct = principal.strict === true;
+  const push = direct
+    ? 'uiux_stage_item … → uiux_list_edit_ops → uiux_save { message } (design key: applied at once to your own project)'
+    : `uiux_begin_changeset { project: "${key}" } → uiux_stage_item … → uiux_diff_changeset → uiux_submit_changeset { message }; the human approves it in the designer (Collaborate → Versions & AI Changesets)`;
+  data.selection = { mode: own.mode, project: created.project, version: head, empty: true, ...(app ? { app } : {}) };
+  data.push = { project: key, direct, order: ['icon', 'button', 'element', 'screen', 'workflow'], maxOpsPerChangeset: 500, how: push };
+  if (reverse) {
+    data.reverse = {
+      agent: REVERSE_AGENT_NAME, skill: REVERSE_SKILL_NAME, pack: REVERSE_PACK, workdir: REVERSE_WORKDIR, app,
+      files: data.files.filter(f => f.pack === REVERSE_PACK).map(f => f.path),
+      askHuman: ['Confirm the app (APK file / URL) and that they own it or may analyse it.', 'Login details, if the app needs a sign-in — keep them local, never in a uiux call.', 'What must not be touched (payments, real customers, production data).']
+    };
+  }
+  data.steps = [...data.steps,
+    `The NEW project "${key}" ("${created.project.name}") is empty and owned by @${created.project.owner}. Pass "project": "${key}" on every uiux_* call for this repository.`,
+    ...(reverse ? [
+      `LOAD THE AGENT NOW: read ${data.reverse.files.join(' and ') || `the ${REVERSE_AGENT_NAME} agent and ${REVERSE_SKILL_NAME} skill files`} and act as "${REVERSE_AGENT_NAME}" in this session.`,
+      `Ask the human what init-prompt.md section 1 lists (the app, the right to analyse it, login details, what not to touch). Keep login details in ${REVERSE_WORKDIR}/credentials.env (git-ignored) or environment variables.`,
+      'Set up the environment: adb devices -l → use a connected device or running emulator; none → check emulator -list-avds; no SDK / AVD → install the Android command-line tools, platform-tools, emulator and a system image, create an AVD, start it in the background, wait for sys.boot_completed. Ask before large downloads.',
+      `Download the app into ${REVERSE_WORKDIR}/app/, check it, install it (adb install -r -g), start it, sign in, then crawl every screen, menu, popup and control (state in ${REVERSE_WORKDIR}/crawl.json).`,
+      'Turn what you saw into items with every field filled: key (variable name), name, label, screen names, node names, onClick / events actions, popups as elements, menuItems, mcpContext.purpose and a detailed descriptionDev that tells a developer agent what to build.'
+    ] : [
+      'Follow init-prompt.md: inventory this repository\'s app (tokens, icons, components, screens / routes, navigation) and build every item in the uiux_get_item JSON format with key, name, label, descriptionDev and mcpContext.purpose; interactive nodes get names and actions.',
+      'Workflows are mandatory: one per feature area plus "app-overview" with every screen; every route transition is a link { from, fromNodeName, to, name, trigger }.'
+    ]),
+    `Push lowest level first (icons → buttons → elements → screens → workflows), at most 500 operations per changeset: ${push}.`,
+    'Report to the human: the project key, counts per item type, the workflows, and what waits for their approval.'];
+  return {
+    summary: `Created the new empty project "${key}" (owner @${created.project.owner}). ${reverse ? `Reverse-engineering pack installed (${REVERSE_AGENT_NAME} + ${REVERSE_SKILL_NAME}): read them now, set up the emulator, install and crawl the app, then push everything into "${key}".` : `Now push every item and all workflows of this repository's app into "${key}".`} Install plan: ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[].`,
+    data
+  };
+}
+
+/** Account keys: uiux_init without a choice returns the selection list; with a choice it runs clone / edit / create / reverse. */
 function accountInit(ctx, args) {
   const { principal, accounts, versions, changesets } = ctx;
   if (!accounts) throw new DomainError('account keys are not enabled on this server', 'NOT_FOUND', 404);
   const own = Object.fromEntries(ACCOUNT_ONLY_INIT.map(k => [k, args[k]]));
   const pass = Object.fromEntries(Object.entries(args).filter(([k]) => !ACCOUNT_ONLY_INIT.includes(k)));
+  if (own.mode === 'create' || own.mode === 'reverse') return newProjectInit(ctx, own, pass);
   if (!own.mode || !own.project) {
     const data = initSelection(ctx, own);
-    return { summary: `ASK THE HUMAN: clone or edit, which project and version? ${data.total} project(s) visible, ${data.projects.filter(p => p.canEdit).length} editable. Then call uiux_init again with { mode, project, version }.\n\n${data.question}`, data };
+    return { summary: `ASK THE HUMAN: download, clone, edit, create a new project, or reverse-engineer an app? ${data.total} project(s) visible, ${data.projects.filter(p => p.canEdit).length} editable. Then call uiux_init again with { mode, project, version } (create / reverse: { mode, newProjectName }).\n\n${data.question}`, data };
   }
 
   if (own.mode === 'download') {
@@ -602,7 +711,7 @@ export const TOOLS = [
   {
     name: 'uiux_init',
     title: 'Install / update the UI/UX design pack',
-    description: 'Call this first in a new repository, and again whenever you want to update. ACCOUNT keys: the first call (no mode/project) returns every project you can see with its versions and a question — ask the human whether to DOWNLOAD a project (read-only copy), CLONE a project into a new one of theirs or EDIT one of their own projects at a chosen version, then call again with { mode, project, version }. Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
+    description: 'Call this first in a new repository, and again whenever you want to update. ACCOUNT keys: the first call (no mode/project) returns every project you can see with its versions and a question — ask the human whether to DOWNLOAD a project (read-only copy), CLONE a project into a new one of theirs or EDIT one of their own projects at a chosen version, then call again with { mode, project, version }. Two more choices need only a project NAME from the human: { mode: "create", newProjectName } makes a new empty project and you push every item and all workflows of the app in this repository into it; { mode: "reverse", newProjectName, appSource } makes a new empty project and installs the reverse-engineering agent + skill — you set up an Android emulator if none is there, download, install and run the app (APK file or URL), sign in with the login the human gives you locally, use every screen and menu, and push everything you find (never send login details to this server). Returns an install plan: the kyrpy-uiux-designer agent and kyrpy-skill-uiux-designer skill files for your client platform, .uiux/config.json, .gitignore lines, a design bundle with shell steps, the lockfile to write, and ordered steps. Pass `installed` (paths with the checksum recorded in .uiux/uiux.lock.json and the checksum of the file on disk now) so only changed files come back and files you edited are never overwritten.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -617,6 +726,7 @@ export const TOOLS = [
         },
         manifestHash: str('manifestHash from the lockfile; skips the bundle when the design is unchanged.', { maxLength: 64 }),
         includeBundle: { type: 'boolean', description: 'Include a design bundle (default true).' },
+        packs: PACKS_PROP,
         client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client, for mcpSetup (per-repository key storage + config). Default from platform: claude → claude-code, antigravity, cursor, agents-md → codex, generic.' },
         shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'], description: 'The human\'s shell for mcpSetup commands (default posix). On Windows pass powershell or cmd, and run bundle.installByShell.<shell> instead of bundle.install.' },
         serverName: str('MCP server name used in the client config (default "kyrpy-uiux"). Use one name per project when a client keeps several projects at user level.', { maxLength: 60 }),
@@ -831,6 +941,7 @@ export const TOOLS = [
         styles: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 },
         installed: { type: 'array', maxItems: 50, items: { type: 'object', properties: { path: str('Repository-relative path.', { maxLength: 300 }), recordedChecksum: str('sha256 from the lockfile.', { maxLength: 64 }), currentChecksum: str('sha256 of the file on disk now.', { maxLength: 64 }) }, required: ['path'], additionalProperties: false }, description: 'Pack files in the repository (lockfile pack.files with their current checksums).' },
         manifestHash: str('manifestHash from the lockfile.', { maxLength: 64 }),
+        packs: PACKS_PROP,
         toolsHash: str('toolsHash from the lockfile (absent in older repositories: an update is then reported).', { maxLength: 64 }),
         packVersion: str('pack.version from the lockfile (informational).', { maxLength: 40 })
       },
@@ -910,5 +1021,407 @@ export const TOOLS = [
   },
   ...M4_TOOLS,
   ...ACCOUNT_TOOLS,
-  ...DESIGN_TOOLS
+  ...DESIGN_TOOLS,
+  {
+    name: 'uiux_api_docs',
+    title: 'Backend API documentation',
+    description: 'Returns structured documentation for all Designer backend API operations (`interfaces/web/js/api.js` actions and `/api/*` routes) that can be invoked via `uiux_api_call`, including action names, HTTP methods, route patterns, required scopes, parameters, query fields, request body fields, and whether this API key can call each operation now. Use this to discover every backend action available for reverse engineering, screen/node/menu/animation/workflow editing, custom device templates, project button settings, translations, exports, and library operations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        group: str('Filter by API group (e.g. "designs", "nodes", "animations", "menus", "workflows", "imports", "exports", "projects", "templates", "translations", "trash", "library", "versions", "changesets", "changes", "requests").', { maxLength: 40 }),
+        action: str('Exact `api.*` action name or alias (e.g. "createDesign", "addNode", "menuConfig", "workflowFromScreen", "importScreenRoutes", "saveTemplateDevice").', { maxLength: 80 }),
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'Filter by HTTP method.' },
+        query: str('Free-text search across action names, routes, parameters, and descriptions.', { maxLength: 120 }),
+        includeBlocked: { type: 'boolean', description: 'Include session-only / blocked routes with their `blockedReason` (default false).' },
+        limit: { type: 'integer', minimum: 1, maximum: 300, description: 'Maximum operations returned (default 200).' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    account: 'none',
+    run: ({ principal, apiBridge }, args) => {
+      const data = apiBridge.docs(principal, args);
+      return { summary: `${data.returned} of ${data.total} backend API operation(s) across ${data.groups.length} group(s). Call uiux_api_call with action or { method, path }.`, data };
+    }
+  },
+  {
+    name: 'uiux_api_call',
+    title: 'Invoke a Designer backend API action',
+    description: 'Executes any allowed Designer backend API operation in-process using either an `action` name from `uiux_api_docs` (matching `interfaces/web/js/api.js`, e.g. `createDesign`, `updateDesign`, `addNode`, `patchNode`, `replaceNodes`, `addAnimation`, `menuConfig`, `addMenuItem`, `workflowFromScreen`, `importScreenRoutes`, `placeScreen`, `addLink`, `saveTemplateDevice`, `applyProjectButtonSettings`, `importSvg`, `onlineSearch`, `onlineImport`, `saveTranslation`, `adoptProjectDependencies`, `snapshotProjectVersion`, `exportProjectHtml`) or `{ method, path }`. Item references (`id`, `screenId`, `fromScreenId`, `toScreenId`, `refId`, `iconId`, `targetScreenId`, `targetElementId`, `itemId`, and `onClick`/`events` `targetId`) accept numeric IDs, item keys, or item UIDs. Scoped strictly to this API key\'s user, scopes, and project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: str('API function name from `uiux_api_docs` (e.g. "createDesign", "addNode", "workflowFromScreen", "importScreenRoutes", "saveTemplateDevice").', { maxLength: 80 }),
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'HTTP method when calling by `{ method, path }` instead of `action`.' },
+        path: str('Backend route path starting with `/api/` when calling by `{ method, path }` instead of `action`.', { maxLength: 500 }),
+        params: { type: 'object', description: 'Route parameters when calling by `action` (e.g. `{ type: "screen", id: "home-screen", nid: 12 }`).' },
+        query: { type: 'object', description: 'URL query parameters (e.g. `{ q: "home", force: "1" }`).' },
+        body: { type: 'object', description: 'JSON request body object (see `uiux_api_docs` → `body` for fields).' }
+      },
+      additionalProperties: false
+    },
+    accountProperties: {
+      project: str('Account keys: project key (from `uiux_list_projects`) for project-scoped API actions. Optional for design keys (uses the focused project) and not needed for account-level actions like `projects` or `createProject`.', { maxLength: 80 })
+    },
+    scope: 'read',
+    account: 'select',
+    readOnly: false,
+    run: async ({ principal, apiBridge, ip, baseUrl }, args) => {
+      const data = await apiBridge.call(principal, args, { ip, baseUrl });
+      return { summary: `${data.method} ${data.path} (${data.action}) succeeded${data.project ? ` [project: ${data.project}]` : ''}.`, data };
+    }
+  },
+  {
+    name: 'uiux_public_library',
+    title: 'Browse & search public elements and library items',
+    description: 'Searches and inspects curated Public Library items across all 6 item types (`element`, `button`, `icon`, `path`, `screen`, `workflow`), with dedicated support for reusable public UI elements (cards, containers, carousels, popups, drawers, toolbars, tabs, hero/CTA/pricing/page-builder blocks) and button templates. Pass `ref` (`uid`, `key`, or `id`) to fetch one public item in full JSON or rendered SVG, or pass `query` / `type` / `category` / `onlyElements: true` to browse.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        types: typesProp,
+        onlyElements: { type: 'boolean', description: 'When true, searches reusable public `element` items only.' },
+        query: str('Free-text search across key, name, label, category, tags, developer notes and AI context.', { maxLength: 200 }),
+        category: str('Filter by public library category (e.g. "containers", "cards", "navigation", "templates", "page-builder").', { maxLength: 80 }),
+        ref: str('Fetch a specific public item by `uid`, `key`, or `id`.', { maxLength: 120 }),
+        detail: { type: 'string', enum: ['summary', 'full'], description: 'Search output detail: "summary" (default) or "full" (includes nodes, animations, menus, links).' },
+        format: { type: 'string', enum: ['json', 'svg'], description: 'When `ref` is given: "json" (default) or rendered "svg".' },
+        style: styleProp,
+        includeCategories: { type: 'boolean', description: 'Include public category breakdown (default true).' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum results returned (default 40).' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    account: 'none',
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.publicLibrary(principal, args);
+      if (data.mode === 'item') {
+        const k = data.key || data.item?.key;
+        return { summary: `Public ${data.type || data.item?.type} "${k}" (${data.dependencies.length} sub-item dependency/ies).`, data };
+      }
+      return { summary: `${data.returned} of ${data.total} public library item(s) matched. Call uiux_use_public_element or uiux_copy_item_to_project to adopt and edit in your project.`, data };
+    }
+  },
+  {
+    name: 'uiux_use_public_element',
+    title: 'Use a public element or item in the project',
+    description: 'Copies a public `element` (or public `button`, `icon`, `path`, `screen`, `workflow`) together with all transitive sub-items (`element → button → icon → path`) into the target project as editable `project`-scoped items, and optionally places it as an `instance` node onto a screen, element, button, or icon (`placeOn`). Reuses an existing project clone unless `copyAsNew: true` or `newName`/`newKey` is specified.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Public element/item `key`, `uid`, or `id` (from `uiux_public_library`).', { minLength: 1, maxLength: 120 }),
+        type: typeProp,
+        copyAsNew: { type: 'boolean', description: 'Always create a fresh editable copy even if this public item was already cloned into the project.' },
+        newName: str('Optional custom name for the project copy.', { maxLength: 120 }),
+        newKey: str('Optional custom key for the project copy.', { maxLength: 80 }),
+        label: str('Optional display label override.', { maxLength: 200 }),
+        descriptionDev: str('Optional developer documentation override.', { maxLength: 8000 }),
+        mcpContext: { type: 'object', description: 'Optional AI context (`{ purpose, usage, notes, ... }`).' },
+        width: { type: 'number', minimum: 1, maximum: 10000 },
+        height: { type: 'number', minimum: 1, maximum: 20000 },
+        placeOn: {
+          type: 'object',
+          description: 'Optional target design (`screen`, `element`, `button`, `icon`) to immediately place an instance of the adopted item onto.',
+          properties: {
+            type: { type: 'string', enum: ['icon', 'button', 'element', 'screen'], description: 'Target design type (default "screen").' },
+            ref: str('Target design `key`, `uid`, or `id`.', { minLength: 1, maxLength: 120 }),
+            name: str('Optional layer name for the placed instance node.', { maxLength: 120 }),
+            parentId: { type: 'integer', description: 'Optional parent group/container node ID.' },
+            parentName: str('Optional parent group/container node name.', { maxLength: 120 }),
+            x: { type: 'number' },
+            y: { type: 'number' },
+            width: { type: 'number', minimum: 1 },
+            height: { type: 'number', minimum: 1 },
+            anchor: { type: 'string', enum: ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'], description: '9-point anchor placement on the target canvas.' },
+            margin: { type: 'number', minimum: 0 },
+            onClick: { type: 'object', description: 'Optional click action (e.g. `{ type: "screen", targetKey: "checkout" }` or `{ type: "popup", targetKey: "cart-modal" }`).' },
+            events: { type: 'array', items: { type: 'object' }, maxItems: 20 },
+            descriptionDev: str('Developer note on the placed instance node.', { maxLength: 2000 })
+          },
+          required: ['ref'],
+          additionalProperties: false
+        }
+      },
+      required: ['ref'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.usePublicElement(principal, args);
+      return {
+        summary: `${data.reusedExistingClone ? 'Reused existing project copy' : `Copied public ${data.item.type} "${data.sourcePublicItem.key}"`} as "${data.item.key}" in project "${data.project.key}"${data.subItemsCopied.length ? ` (+${data.subItemsCopied.length} sub-item(s))` : ''}${data.placedOn ? ` and placed onto ${data.placedOn.type} "${data.placedOn.key}" (node #${data.placedNode.id})` : ''}.`,
+        data
+      };
+    }
+  },
+  {
+    name: 'uiux_copy_item_to_project',
+    title: 'Search & copy any item into the project to edit',
+    description: 'Searches across ALL readable libraries (public library, your private library, shared/public projects, other projects you own, or the current project itself) and deep-copies ANY item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) — with recursive sub-item cascade (`workflow → screen → element → button → icon → path`) — into the target existing project as an editable `project` item without modifying the original source. Omit `ref` (or pass `searchOnly: true`) to search copyable candidates; pass `{ type, ref, newName?, newKey? }` (or `autoPickBest: true`) to copy.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        types: typesProp,
+        ref: str('Item `uid`, `key`, or `id` to copy into the project.', { maxLength: 120 }),
+        query: str('Search query to find copyable items across public, private, and visible project libraries.', { maxLength: 200 }),
+        sourceScope: { type: 'string', enum: ['all', 'public', 'private', 'other_projects', 'current_project'], description: 'Filter candidate sources (default "all").' },
+        sourceProject: str('Optional source project key or id when copying from a specific visible project.', { maxLength: 80 }),
+        category: str('Optional category filter.', { maxLength: 80 }),
+        searchOnly: { type: 'boolean', description: 'Return ranked copyable candidates without copying anything yet.' },
+        autoPickBest: { type: 'boolean', description: 'When `query` is given without `ref`, copy the highest-ranked match immediately.' },
+        newName: str('Optional new name for the editable project copy.', { maxLength: 120 }),
+        newKey: str('Optional new key for the editable project copy.', { maxLength: 80 }),
+        label: str('Optional display label for the project copy.', { maxLength: 200 }),
+        descriptionDev: str('Optional developer documentation override.', { maxLength: 8000 }),
+        mcpContext: { type: 'object', description: 'Optional AI context (`{ purpose, usage, notes }`).' },
+        limit: { type: 'integer', minimum: 1, maximum: 150, description: 'Max search candidates (default 30).' }
+      },
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.copyItemToProject(principal, args);
+      if (data.mode === 'search') {
+        return { summary: `${data.returned} of ${data.total} copyable item(s) found for project "${data.targetProject.key}". Pass { type, ref } to copy into the project.`, data };
+      }
+      return { summary: `Copied ${data.item.type} "${data.source.key}" into project "${data.targetProject.key}" as editable "${data.item.key}" (${data.subItemsCopied.length} sub-item(s) cascaded).`, data };
+    }
+  },
+  {
+    name: 'uiux_list_project_items',
+    title: 'List items in the project (CRUD Read)',
+    description: 'Lists and filters items belonging to the target project across all 6 item types (`path`, `icon`, `button`, `element`, `screen`, `workflow`), with per-type counts, dimensions, content hashes, and optional `includeTrash: true` to inspect soft-deleted items.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        types: typesProp,
+        query: str('Filter by key, name, label, category, tags, developer description or AI context.', { maxLength: 200 }),
+        category: str('Filter by exact category.', { maxLength: 80 }),
+        detail: { type: 'string', enum: ['summary', 'full'], description: '"summary" (default) or "full" (complete item JSON with nodes, animations, menus, links).' },
+        includeTrash: { type: 'boolean', description: 'Also list trashed items in this project that can be restored with uiux_delete_item { restore: true }.' },
+        limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Max items returned (default 100).' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.listProjectItems(principal, args);
+      return { summary: `Project "${data.project.key}": ${data.returned} of ${data.total} item(s)${data.trash ? ` (${data.trash.length} in trash)` : ''}.`, data };
+    }
+  },
+  {
+    name: 'uiux_create_item',
+    title: 'Create any item in the project (CRUD Create)',
+    description: 'Creates any of the 6 item kinds (`path`, `icon`, `button`, `element`, `screen`, `workflow`) directly in the owned project. Supports SVG import (`svg`), device templates (`deviceKey` for screens), button icon & popup/radial menus (`iconRef`, `menuConfig`, `menuItems`), container/carousel elements (`isContainer`, `containerType`), child `nodes` & `animations`, and workflow route auto-crawling (`fromScreen`) or explicit `screens` + `links`. Referenced public/foreign sub-items are automatically adopted into the project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        name: str('Human-readable item name.', { minLength: 1, maxLength: 120 }),
+        key: str('Optional dashed-lowercase variable key (auto-derived from `name` when omitted).', { maxLength: 80 }),
+        label: str('User-visible translatable label.', { maxLength: 200 }),
+        category: str('Library category (e.g. "general", "navigation", "cards", "containers").', { maxLength: 80 }),
+        tags: { type: 'array', items: str('Tag', { maxLength: 40 }), maxItems: 30 },
+        width: { type: 'number', minimum: 1, maximum: 10000 },
+        height: { type: 'number', minimum: 1, maximum: 20000 },
+        deviceKey: str('For `screen`: device template key from `uiux_get_schema` → `devices` (sets width, height, cornerRadius, grid).', { maxLength: 80 }),
+        isContainer: { type: 'boolean', description: 'For `element`: mark as a responsive layout container.' },
+        containerType: { type: 'string', enum: ['container', 'carousel'], description: 'For `element`: container kind.' },
+        iconRef: str('For `button`: optional icon `key`/`uid`/`id` to auto-build a surface + glyph button.', { maxLength: 120 }),
+        menuConfig: { type: 'object', description: 'For `button`: popup/radial/hub menu configuration (`{ enabled, layout, trigger, direction }`).' },
+        menuItems: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'For `button`: menu entries (`[{ name, label, action, icon, targetScreen, targetElement, parent }]`).' },
+        svg: str('For `path`, `icon`, `button`, `element`, `screen`: SVG markup to parse into vector nodes.', { maxLength: 262144 }),
+        nodes: { type: 'array', items: { type: 'object' }, maxItems: 1000, description: 'Child nodes (`shape`, `text`, `group`, or `instance` with `ref: { type, key | uid }`).' },
+        animations: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'Node animations (`[{ nodeIndex | nodeName | nodeId, type, durationMs, trigger, ... }]`).' },
+        fromScreen: str('For `workflow`: start screen `key`/`uid`/`id` to auto-crawl and lay out reachable screens & links.', { maxLength: 120 }),
+        screens: { type: 'array', items: { type: 'object' }, maxItems: 200, description: 'For `workflow`: placed screens (`[{ screen, x, y, collapsed }]`).' },
+        links: { type: 'array', items: { type: 'object' }, maxItems: 500, description: 'For `workflow`: routing links (`[{ from, to, fromNodeName, name, trigger, style, descriptionDev }]`).' },
+        meta: { type: 'object', description: 'Optional metadata object.' },
+        descriptionDev: str('Detailed developer specification (PURPOSE, LAYOUT, INTERACTIONS, STATES).', { maxLength: 16000 }),
+        mcpContext: { type: 'object', description: 'Structured AI context (`{ purpose, usage, notes, constraints }`).' }
+      },
+      required: ['type', 'name'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.createItem(principal, args);
+      return { summary: `Created ${data.item.type} "${data.item.key}" (${data.item.uid}) in project "${data.project.key}".`, data };
+    }
+  },
+  {
+    name: 'uiux_update_item',
+    title: 'Update any item in the project (CRUD Update)',
+    description: 'Updates any project item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) by `type` + `ref` (`key`, `uid`, or `id`). Supports metadata updates (`name`, `newKey`, `label`, `category`, `tags`, `width`, `height`, `scaleContent`, `locked`, `descriptionDev`, `mcpContext`, `meta`), replacing or appending `nodes` or `svg`, updating `animations`, updating button `menuConfig`/`menuItems`, and updating workflow `screens`/`links` or `importRoutesFromScreen`. Pass `copyIfForeign: true` to auto-copy a public/foreign item into the project before editing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        ref: str('Target item `key`, `uid`, or `id`.', { minLength: 1, maxLength: 120 }),
+        copyIfForeign: { type: 'boolean', description: 'If `ref` points to a public/foreign item outside this project, copy it into this project first and apply the update to the copy.' },
+        name: str('Updated item name.', { minLength: 1, maxLength: 120 }),
+        newKey: str('Rename item key inside this project.', { maxLength: 80 }),
+        key: str('Alias for `newKey`.', { maxLength: 80 }),
+        label: str('Updated display label.', { maxLength: 200 }),
+        category: str('Updated category.', { maxLength: 80 }),
+        tags: { type: 'array', items: str('Tag', { maxLength: 40 }), maxItems: 30 },
+        width: { type: 'number', minimum: 1, maximum: 10000 },
+        height: { type: 'number', minimum: 1, maximum: 20000 },
+        scaleContent: { type: 'boolean', description: 'Scale child nodes proportionally when resizing `width`/`height`.' },
+        locked: { type: 'boolean' },
+        meta: { type: 'object' },
+        menuConfig: { type: 'object', description: 'For `button`: merge into `meta.menu`.' },
+        menuItems: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'For `button`: replace menu items.' },
+        svg: str('Replace design nodes by parsing SVG markup.', { maxLength: 262144 }),
+        nodes: { type: 'array', items: { type: 'object' }, maxItems: 1000, description: 'Replace all child nodes of the design.' },
+        appendNodes: { type: 'array', items: { type: 'object' }, maxItems: 500, description: 'Append child nodes without removing existing nodes.' },
+        animations: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'Replace animations on the design.' },
+        replaceWorkflowGraph: { type: 'boolean', description: 'For `workflow`: clear existing screens/links before applying `screens`/`links` (default true when `screens` or `links` is passed).' },
+        screens: { type: 'array', items: { type: 'object' }, maxItems: 200, description: 'For `workflow`: screens to place.' },
+        links: { type: 'array', items: { type: 'object' }, maxItems: 500, description: 'For `workflow`: links to create.' },
+        importRoutesFromScreen: str('For `workflow`: crawl and import routes starting from this screen `key`/`uid`/`id`.', { maxLength: 120 }),
+        descriptionDev: str('Updated developer specification.', { maxLength: 16000 }),
+        mcpContext: { type: 'object', description: 'Merged into the item\'s `mcpContext` (`null` values delete keys).' }
+      },
+      required: ['type', 'ref'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.updateItem(principal, args);
+      return { summary: `Updated ${data.item.type} "${data.item.key}" in project "${data.project.key}"${data.copiedFromForeign ? ' (auto-copied into project from foreign/public library)' : ''}.`, data };
+    }
+  },
+  {
+    name: 'uiux_delete_item',
+    title: 'Delete or restore an item (CRUD Delete / Trash Restore)',
+    description: 'Soft-deletes a project item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) to the project Trash (`force: true` deletes even if referenced in other designs), OR restores a deleted item from Trash when `restore: true` (pass `trashId` or `{ type, ref }`). Public-library and foreign items can never be deleted.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: typeProp,
+        ref: str('Item `key`, `uid`, or `id` to delete (or key/originalId to restore when `restore: true`).', { maxLength: 120 }),
+        trashId: { type: 'integer', minimum: 1, description: 'Trash entry ID from `uiux_list_project_items { includeTrash: true }` when `restore: true`.' },
+        restore: { type: 'boolean', description: 'When true, restores a deleted item from Trash instead of deleting.' },
+        force: { type: 'boolean', description: 'Delete even when the item is instantiated in other designs.' }
+      },
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    destructive: true,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.deleteItem(principal, args);
+      if (data.restored) return { summary: `Restored ${data.item.type} "${data.item.key}" from Trash (#${data.trashId}) into project "${data.project.key}".`, data };
+      return { summary: `Moved ${data.type} "${data.key}" to Trash${data.trashId ? ` (#${data.trashId})` : ''} in project "${data.project.key}".`, data };
+    }
+  },
+  {
+    name: 'uiux_graphic_tool',
+    title: 'Graphical canvas, vector & layout editing tools',
+    description: 'Executes pure-domain graphical, vector, boolean pathfinder, pen/vertex, crop, icon-explode, component-extraction, alignment, distribution, transform, grouping, and layer z-order operations on any editable project design (`path`, `icon`, `button`, `element`, `screen`). Pass a single `operation` or batch multiple steps atomically in `operations: [...]`. Pass `copyIfForeign: true` to auto-copy a public/foreign item into the project before editing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['path', 'icon', 'button', 'element', 'screen'], description: 'Target design type.' },
+        ref: str('Target design `key`, `uid`, or `id`.', { minLength: 1, maxLength: 120 }),
+        copyIfForeign: { type: 'boolean', description: 'Copy a public/foreign item into the project automatically before applying graphical edits.' },
+        includeSvg: { type: 'boolean', description: 'Also return the rendered SVG of the edited design.' },
+        style: styleProp,
+        operation: { type: 'string', enum: GRAPHIC_OPERATIONS, description: 'Graphical operation to run (when running a single step).' },
+        operations: { type: 'array', items: { type: 'object' }, maxItems: 100, description: 'Batch of graphical step objects (`[{ operation, ... }]`) executed atomically in order.' },
+        nodeIds: { type: 'array', items: { type: 'integer' }, maxItems: 500, description: 'Target node IDs.' },
+        nodeId: { type: 'integer', description: 'Single target node ID.' },
+        nodeIndices: { type: 'array', items: { type: 'integer' }, maxItems: 500, description: '0-based node indices from `uiux_get_item`.' },
+        nodeIndex: { type: 'integer', minimum: 0, description: 'Single 0-based node index.' },
+        nodeNames: { type: 'array', items: str('Node name', { maxLength: 120 }), maxItems: 500, description: 'Target node names.' },
+        nodeName: str('Single target node name.', { maxLength: 120 }),
+        shape: { type: 'string', enum: ['rect', 'circle', 'ellipse', 'line', 'polygon', 'polyline', 'path', 'text', 'container', 'carousel'], description: 'For `add_shape`: primitive or layout container kind.' },
+        name: str('Node or group name.', { maxLength: 120 }),
+        role: str('Semantic node role (`glyph`, `surface`, `label`, `bg`, `container`, `carousel-container`, `instance`).', { maxLength: 60 }),
+        parentId: { type: 'integer' },
+        parentName: str('Parent group/container node name.', { maxLength: 120 }),
+        x: { type: 'number' },
+        y: { type: 'number' },
+        width: { type: 'number' },
+        height: { type: 'number' },
+        dx: { type: 'number' },
+        dy: { type: 'number' },
+        scaleX: { type: 'number' },
+        scaleY: { type: 'number' },
+        cx: { type: 'number' },
+        cy: { type: 'number' },
+        r: { type: 'number' },
+        rx: { type: 'number' },
+        ry: { type: 'number' },
+        x1: { type: 'number' },
+        y1: { type: 'number' },
+        x2: { type: 'number' },
+        y2: { type: 'number' },
+        d: str('SVG path `d` command string.', { maxLength: 131072 }),
+        points: { oneOf: [{ type: 'string', maxLength: 65536 }, { type: 'array', items: { type: 'object' }, maxItems: 2000 }], description: 'For `add_pen_path` (`[{ x, y, in?, out?, smooth? }]`) or `polygon`/`polyline`.' },
+        closed: { type: 'boolean', description: 'For `add_pen_path`: close the path (`Z`).' },
+        text: str('Text content for `text` nodes.', { maxLength: 4000 }),
+        fill: str('SVG fill color or `{{token}}` (e.g. "{{surface}}", "{{accent}}", "none").', { maxLength: 120 }),
+        stroke: str('SVG stroke color or `{{token}}`.', { maxLength: 120 }),
+        strokeWidth: { oneOf: [{ type: 'string', maxLength: 40 }, { type: 'number' }] },
+        opacity: { type: 'number', minimum: 0, maximum: 1 },
+        fontSize: { type: 'number', minimum: 4, maximum: 400 },
+        fontWeight: { oneOf: [{ type: 'string', maxLength: 40 }, { type: 'number' }] },
+        textAnchor: { type: 'string', enum: ['start', 'middle', 'end'] },
+        anchor: { type: 'string', enum: ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'], description: '9-point canvas anchor placement (`add_shape`, `place_instance`, `move`).' },
+        margin: { type: 'number', minimum: 0 },
+        itemType: { type: 'string', enum: ['path', 'icon', 'button', 'element'], description: 'For `place_instance`: sub-item type to place.' },
+        itemRef: str('For `place_instance`: `key`, `uid`, or `id` of the path/icon/button/element (public, private, or project — auto-copied into project if foreign!).', { maxLength: 120 }),
+        svg: str('For `import_svg_nodes`: inline SVG markup.', { maxLength: 262144 }),
+        mode: { type: 'string', enum: ['left', 'hcenter', 'right', 'top', 'vmiddle', 'bottom'], description: 'For `align`: alignment edge/center.' },
+        toCanvas: { type: 'boolean', description: 'For `align`: align each selected node directly to the design canvas bounds.' },
+        axis: { type: 'string', enum: ['h', 'v'], description: 'For `distribute` or `flip`: horizontal ("h") or vertical ("v").' },
+        degrees: { type: 'number', description: 'For `rotate`: clockwise angle in degrees (e.g. 90, -90, 45).' },
+        position: { type: 'string', enum: ['front', 'back', 'forward', 'backward', 'above', 'below'], description: 'For `reorder_layer`: z-order movement.' },
+        targetNodeId: { type: 'integer', description: 'For `reorder_layer` ("above" / "below"): reference sibling node ID.' },
+        targetNodeName: str('For `reorder_layer` ("above" / "below"): reference sibling node name.', { maxLength: 120 }),
+        tolerance: { type: 'number', minimum: 0.001, description: 'For `simplify_path`: Ramer-Douglas-Peucker tolerance.' },
+        radius: { type: 'number', minimum: 0.1, description: 'For `round_corners`: corner rounding radius.' },
+        vertexIndex: { type: 'integer', minimum: 0, description: 'For `cut_path`: vertex command index.' },
+        vertexIndices: { type: 'array', items: { type: 'integer', minimum: 0 }, maxItems: 1000, description: 'For `round_corners`, `smooth_vertices`, `sharp_vertices`: vertex indices (omit for all eligible vertices).' },
+        edits: { type: 'array', items: { type: 'object' }, maxItems: 1000, description: 'For `edit_vertices`: `[{ index, x?, y?, x1?, y1?, x2?, y2?, delete?: boolean }]`.' },
+        elementName: str('For `extract_as_element`: name of the new reusable element.', { maxLength: 120 }),
+        elementKey: str('For `extract_as_element`: key of the new reusable element.', { maxLength: 80 }),
+        replaceWithInstance: { type: 'boolean', description: 'For `extract_as_element`: replace the extracted nodes on the canvas with an instance of the new element (default true).' },
+        rows: { type: 'integer', minimum: 1, maximum: 20, description: 'For `duplicate_nodes`: grid rows.' },
+        cols: { type: 'integer', minimum: 1, maximum: 20, description: 'For `duplicate_nodes`: grid columns.' },
+        gapX: { type: 'number', description: 'For `duplicate_nodes`: horizontal grid gap.' },
+        gapY: { type: 'number', description: 'For `duplicate_nodes`: vertical grid gap.' },
+        copyStyleFromNodeId: { type: 'integer', description: 'For `style_nodes`: copy fill/stroke/role from this node ID.' },
+        copyStyleFromNodeName: str('For `style_nodes`: copy fill/stroke/role from this node name.', { maxLength: 120 }),
+        locked: { type: 'boolean' },
+        visible: { type: 'boolean' },
+        attrs: { type: 'object', description: 'Extra SVG attributes.' },
+        onClick: { type: 'object' },
+        events: { type: 'array', items: { type: 'object' }, maxItems: 20 },
+        descriptionDev: str('Developer note.', { maxLength: 4000 })
+      },
+      required: ['type', 'ref'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, studioTools }, args) => {
+      const data = studioTools.graphicTool(principal, args);
+      const opsSummary = data.steps.map(s => s.operation).join(' → ');
+      return {
+        summary: `Applied ${data.steps.length} graphical operation(s) (${opsSummary}) on ${data.item.type} "${data.item.key}" (${data.item.nodes?.length ?? 0} node(s)).`,
+        data
+      };
+    }
+  }
 ];

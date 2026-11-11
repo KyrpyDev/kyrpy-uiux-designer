@@ -12,12 +12,15 @@
 import { createHash } from 'node:crypto';
 import { ValidationError, ForbiddenError, NotFoundError } from '../../domain/errors.js';
 import { AGENT_NAME, SKILL_NAME, PLATFORMS } from '../domain/ai-pack-templates.js';
-import { renderTemplate, platformFiles, sectionBlock, SECTION_MARKER } from '../domain/ai-pack-render.js';
+import { renderTemplate, platformFiles, reversePackFiles, sectionBlock, SECTION_MARKER } from '../domain/ai-pack-render.js';
+import { REVERSE_PACK, REVERSE_AGENT_NAME, REVERSE_SKILL_NAME, REVERSE_WORKDIR } from '../domain/reverse-pack-templates.js';
 import { SCHEMA_VERSION } from './design-query-service.js';
-import { initPromptMd } from '../domain/init-prompt.js';
+import { initPromptMd, cleanAppInfo } from '../domain/init-prompt.js';
 import { BUTTON_STYLES } from '../../domain/entities.js';
 
 export const UIUX_ROOTS = ['uiux', 'themes'];
+/** Optional packs a repository can add to the designer pack (uiux_init / uiux_check_update `packs`). */
+export const EXTRA_PACKS = [REVERSE_PACK];
 const KINDS = { agent: AGENT_NAME, skill: SKILL_NAME };
 const MAX_TEMPLATE = 64 * 1024;
 const sha = s => createHash('sha256').update(s).digest('hex');
@@ -46,12 +49,15 @@ export class AiPackService {
     return [schema.defaultStyle, ...(pair && all.includes(pair) ? [pair] : [])];
   }
 
-  #options({ platform = 'claude', framework = '', uiuxRoot = 'uiux', styles } = {}) {
+  #options({ platform = 'claude', framework = '', uiuxRoot = 'uiux', styles, packs } = {}) {
     if (!PLATFORMS.includes(platform)) throw new ValidationError(`platform must be one of ${PLATFORMS.join(', ')}`);
     if (!UIUX_ROOTS.includes(uiuxRoot)) throw new ValidationError(`uiuxRoot must be one of ${UIUX_ROOTS.join(', ')}`);
     const fw = String(framework || '').trim();
     if (fw.length > 40 || /[<>`{}]/.test(fw)) throw new ValidationError('framework must be a short plain name (for example "react", "flutter")');
-    return { platform, framework: fw, uiuxRoot, styles: this.#styles(styles) };
+    const extra = [...new Set(Array.isArray(packs) ? packs : [])];
+    const bad = extra.filter(p => !EXTRA_PACKS.includes(p));
+    if (bad.length) throw new ValidationError(`unknown pack(s): ${bad.join(', ')}; available: ${EXTRA_PACKS.join(', ')}`);
+    return { platform, framework: fw, uiuxRoot, styles: this.#styles(styles), packs: extra };
   }
 
   #bodies(projectId) {
@@ -61,28 +67,42 @@ export class AiPackService {
     const g = Math.max(this.artifacts.global('agent', AGENT_NAME)?.version || 0, this.artifacts.global('skill', SKILL_NAME)?.version || 0);
     const overrides = [agent, skill].filter(a => a.scope === 'project');
     const packVersion = overrides.length ? `${g}.p${overrides.map(a => a.version).reduce((a, b) => a + b, 0)}` : String(g);
-    return { agent, skill, packVersion };
+    // optional reverse-engineer pack: seeded like the designer pack; absent on a database seeded before it existed → null
+    const reverse = {
+      agent: this.artifacts.effective(projectId, 'agent', REVERSE_AGENT_NAME),
+      skill: this.artifacts.effective(projectId, 'skill', REVERSE_SKILL_NAME)
+    };
+    return { agent, skill, packVersion, reverse };
   }
 
   /** Rendered pack files for one platform, each with a sha256 checksum of its exact content. */
   render(principal, opts = {}, { baseUrl }) {
     const o = this.#options(opts);
-    const { agent, skill, packVersion } = this.#bodies(principal.project.id);
+    const { agent, skill, packVersion, reverse } = this.#bodies(principal.project.id);
     const schema = this.query.schema();
     const vars = {
       agentName: AGENT_NAME, skillName: SKILL_NAME, projectKey: principal.project.key, projectName: principal.project.name,
       serverUrl: baseUrl, mcpUrl: `${baseUrl}/mcp`, styles: o.styles, defaultStyle: o.styles[0] || schema.defaultStyle,
-      uiuxRoot: o.uiuxRoot, framework: o.framework, schemaVersion: SCHEMA_VERSION, packVersion
+      uiuxRoot: o.uiuxRoot, framework: o.framework, schemaVersion: SCHEMA_VERSION, packVersion,
+      reverseAgentName: REVERSE_AGENT_NAME, reverseSkillName: REVERSE_SKILL_NAME, reverseWorkdir: REVERSE_WORKDIR
     };
     // each body shows its own version, so overriding one file does not change the other
     const label = a => (a.scope === 'project' ? `${this.artifacts.global(a.kind, a.name)?.version || 0}.p${a.version}` : String(a.version));
-    const files = platformFiles(o.platform, {
+    const laid = platformFiles(o.platform, {
       agent: renderTemplate(agent.template, { ...vars, packVersion: label(agent) }),
       skill: renderTemplate(skill.template, { ...vars, packVersion: label(skill) })
-    })
+    });
+    if (o.packs.includes(REVERSE_PACK)) {
+      if (!reverse.agent || !reverse.skill) throw new NotFoundError('ai pack template', REVERSE_PACK);
+      laid.push(...reversePackFiles(o.platform, {
+        agent: renderTemplate(reverse.agent.template, { ...vars, packVersion: label(reverse.agent) }),
+        skill: renderTemplate(reverse.skill.template, { ...vars, packVersion: label(reverse.skill) })
+      }).map(f => ({ ...f, pack: REVERSE_PACK })));
+    }
+    const files = laid
       .map(f => {
         const content = f.mode === 'section' ? sectionBlock(f.marker, f.content) : f.content;
-        return { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), content, checksum: sha(content) };
+        return { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), ...(f.pack ? { pack: f.pack } : {}), content, checksum: sha(content) };
       });
     return { platform: o.platform, packVersion, schemaVersion: SCHEMA_VERSION, options: o, files };
   }
@@ -94,7 +114,9 @@ export class AiPackService {
    *                       manifestHash, includeBundle,
    *                       client, shell, serverName, envVar   (MCP client configuration of this repository),
    *                       origin  (true, or { project, name, version }: the repository is a clone of that design),
-   *                       selection ({ mode: 'clone'|'edit', baseVersion, headVersion }: account-key init choice) }
+   *                       selection ({ mode: 'download'|'clone'|'edit'|'create'|'reverse', baseVersion, headVersion }: account-key init choice),
+   *                       packs   (optional packs, e.g. ['reverse-engineer']),
+   *                       app     ({ source, platform }: the app to reverse-engineer; never login details) }
    */
   init(principal, args = {}, { baseUrl, createBundle }) {
     const pack = this.render(principal, args, { baseUrl });
@@ -116,7 +138,8 @@ export class AiPackService {
       mcpClient: { client, serverName, keyKind, keyStorage: keyKind === 'account' ? 'user' : 'repository' },
       ...(args.origin ? { origin: typeof args.origin === 'object' ? args.origin : { project: principal.project.key, name: principal.project.name } } : {}),
       // account-key init: what the human chose (clone → new project, or edit an owned project at a version)
-      ...(args.selection ? { selection: args.selection } : {})
+      ...(args.selection ? { selection: args.selection } : {}),
+      ...(o.packs.length ? { packs: o.packs } : {})
     };
     const configContent = `${JSON.stringify(config, null, 2)}\n`;
     // init-prompt.md orders the coding assistant to build the standalone prototype; written once, never overwritten
@@ -125,7 +148,8 @@ export class AiPackService {
     const initPrompt = initPromptMd({
       mode, projectKey: principal.project.key, projectName: principal.project.name,
       sourceKey: sel.source || args.origin?.project, sourceName: args.origin?.name, sourceVersion: sel.sourceVersion ?? args.origin?.version,
-      version: sel.headVersion ?? sel.baseVersion, framework: o.framework, root: o.uiuxRoot,
+      version: sel.headVersion ?? sel.baseVersion, framework: o.framework, root: o.uiuxRoot, app: cleanAppInfo(args.app),
+      reverse: { agentName: REVERSE_AGENT_NAME, skillName: REVERSE_SKILL_NAME, workdir: REVERSE_WORKDIR },
       styles: this.query.schema().styles.map(st => st.key), defaultStyle: o.styles[0], buttonStyles: BUTTON_STYLES.map(b => b.key)
     });
     const candidates = [...pack.files, { path: CONFIG_PATH, mode: 'file', content: configContent, checksum: sha(configContent) },
@@ -133,7 +157,7 @@ export class AiPackService {
 
     const files = candidates.map(f => {
       const inst = installed.get(f.path);
-      const base = { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), checksum: f.checksum };
+      const base = { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), ...(f.pack ? { pack: f.pack } : {}), checksum: f.checksum };
       if (!inst || !inst.currentChecksum) return { ...base, action: 'create', content: f.content };
       if (f.once) return { ...base, action: 'skip', reason: 'written once at init' };
       const locallyEdited = inst.recordedChecksum && inst.currentChecksum !== inst.recordedChecksum;
@@ -157,7 +181,7 @@ export class AiPackService {
       manifestHash: bundle ? bundle.manifestHash : (args.manifestHash || manifest.manifestHash),
       styles: o.styles, allStyles: bundle ? true : undefined, uiuxRoot: o.uiuxRoot, adapters: ['web'],
       pack: {
-        platform: o.platform, version: pack.packVersion,
+        platform: o.platform, version: pack.packVersion, ...(o.packs.length ? { packs: o.packs } : {}),
         files: Object.fromEntries(files.map(f => [f.path, f.action === 'conflict' ? (prev[f.path] || null) : f.checksum]))
       },
       ...(bundle ? { bundle: { sha256: bundle.sha256, filename: bundle.filename } } : {}),
@@ -169,6 +193,7 @@ export class AiPackService {
       `Write every entry of files[] whose action is "create" or "update" to its path with exactly the given content (create folders as needed). For mode "section", replace the text between "<!-- ${SECTION_MARKER}:start -->" and "<!-- ${SECTION_MARKER}:end -->" in that file, or append the block (create the file if it does not exist). Skip "skip" entries.`,
       'For every "conflict" entry write the content to writeTo instead, do not touch the original file, and tell the human which files need a manual merge.',
       `Add the lines of gitignore[] to .gitignore if they are missing.`,
+      ...(o.packs.includes(REVERSE_PACK) ? [`The reverse-engineering agent "${REVERSE_AGENT_NAME}" and skill "${REVERSE_SKILL_NAME}" are in files[] (pack "${REVERSE_PACK}"). After writing them, READ both files now and follow them in THIS session — do not wait for a restart of the client to load them. Pass packs: ["${REVERSE_PACK}"] on later uiux_init / uiux_check_update calls so they stay up to date.`] : []),
       ...(mcpSetup ? [keyKind === 'account'
         ? `This is an ACCOUNT key (one key for all of the user's projects). Pass "project": "${principal.project.key}" (from .uiux/config.json → project) on every uiux_* call made for this repository.`
         : `MCP client for this repository: mcpSetup.steps show how the human keeps THIS project's key per repository (${mcpSetup.keyKind === 'project' ? 'local scope / .envrc / .gemini/.env' : 'user scope'}). You never see or write the key: show the steps to the human if the connection must be set up for teammates or another client.`] : []),

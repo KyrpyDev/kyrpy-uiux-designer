@@ -8,6 +8,7 @@
  *   {{#each name}}…{{this}}…{{/each}}   repeated for every element of the array vars[name]
  */
 import { AGENT_NAME, SKILL_NAME, PLATFORMS } from './ai-pack-templates.js';
+import { REVERSE_AGENT_NAME, REVERSE_SKILL_NAME, REVERSE_AGENT_DESC, REVERSE_SKILL_DESC } from './reverse-pack-templates.js';
 import { ValidationError } from '../../domain/errors.js';
 
 export const SECTION_MARKER = 'kyrpy-uiux';
@@ -54,6 +55,36 @@ export function platformFiles(platform, { agent, skill }) {
       return [
         { path: `docs/uiux/${AGENT_NAME}.md`, mode: 'file', content: agent },
         { path: `docs/uiux/${SKILL_NAME}.md`, mode: 'file', content: skill }
+      ];
+  }
+}
+
+/**
+ * Files of the optional "reverse-engineer" pack (its own agent + skill) for a client platform. Always whole files with
+ * their own paths (agents-md gets docs/uiux/ files, not a second AGENTS.md block: pack files are tracked by path).
+ */
+export function reversePackFiles(platform, { agent, skill }) {
+  if (!PLATFORMS.includes(platform)) throw new ValidationError(`platform must be one of ${PLATFORMS.join(', ')}`);
+  const a = REVERSE_AGENT_NAME, s = REVERSE_SKILL_NAME;
+  switch (platform) {
+    case 'claude':
+      return [
+        { path: `.claude/agents/${a}.md`, mode: 'file', content: frontmatter({ name: a, description: REVERSE_AGENT_DESC }) + agent },
+        { path: `.claude/skills/${s}/SKILL.md`, mode: 'file', content: frontmatter({ name: s, description: REVERSE_SKILL_DESC }) + skill }
+      ];
+    case 'antigravity':
+      return [
+        { path: `.agents/agents/${a}/agent.md`, mode: 'file', content: frontmatter({ name: a, description: REVERSE_AGENT_DESC }) + agent },
+        { path: `.agents/skills/${s}/SKILL.md`, mode: 'file', content: frontmatter({ name: s, description: REVERSE_SKILL_DESC }) + skill }
+      ];
+    case 'cursor':
+      return [{ path: `.cursor/rules/${a}.mdc`, mode: 'file', content: `---\ndescription: ${REVERSE_SKILL_DESC}\nglobs:\nalwaysApply: false\n---\n\n${agent}\n\n${skill}` }];
+    case 'agents-md':
+    case 'generic':
+    default:
+      return [
+        { path: `docs/uiux/${a}.md`, mode: 'file', content: agent },
+        { path: `docs/uiux/${s}.md`, mode: 'file', content: skill }
       ];
   }
 }

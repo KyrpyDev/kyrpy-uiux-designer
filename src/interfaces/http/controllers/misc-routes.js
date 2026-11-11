@@ -39,7 +39,7 @@ export function miscRoutes(router, c) {
   );
   router.post('/api/workflows/:id/restore', ({ params, body, actor }) => c.workflows.restore(params.id, body, { actor }));
   router.post('/api/workflows/:id/clone', ({ params, body, actor, projectId }) =>
-    c.workflows.clone(params.id, body?.name || { ...(body || {}), projectId: body?.projectId ?? projectId }, { actor })
+    c.workflows.clone(params.id, { ...(body || {}), projectId: body?.projectId ?? projectId }, { actor })
   );
   router.put('/api/workflows/:id/screens', ({ params, body, actor }) => c.workflows.placeScreen(params.id, body, { actor }));
   router.delete('/api/workflows/:id/screens/:sid', ({ params, actor }) => c.workflows.removeScreen(params.id, params.sid, { actor }));

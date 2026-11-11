@@ -14,10 +14,12 @@ Source: `src/mcp/` (details per milestone in [`src/mcp/README.md`](src/mcp/READM
 
 ## 2. First run in a repository: `uiux_init`
 
-1. **Account key, first call**: returns every project the user can see with its versions and a question. The agent must ask the human, then call again with `{ mode, project, version }`:
+1. **Account key, first call**: returns every project the user can see with its versions and a question. The agent must ask the human, then call again with `{ mode, project?, newProjectName?, version? }`:
    - **download** — read-only copy of any visible project; nothing is created or changed on the server.
    - **clone** — copy any visible project (head version) into a NEW private project owned by the user; the source never changes. Needs the `create` scope.
    - **edit** — work on one of the user's own projects at a chosen version (`restore: true` submits a restore changeset for an older version).
+   - **create** — create a NEW empty private project (`newProjectName` required; needs `create`) to inventory and push an existing repository's UI items and workflows into the Designer.
+   - **reverse** — create a NEW empty private project (`newProjectName` required; optional `appSource`, `appPlatform`) and install the **`kyrpy-uiux-reverse-engineer`** agent + **`kyrpy-skill-uiux-reverse-engineer`** skill to crawl a live Android APK/emulator or web app and reconstruct `path → icon → button → element → screen → workflow` items.
 2. Returns an install plan: the `kyrpy-uiux-designer` agent and `kyrpy-skill-uiux-designer` skill for the client platform (`claude`, `antigravity`, `agents-md`, `cursor`, `generic`), `.uiux/config.json`, `.uiux/uiux.lock.json`, `.gitignore` lines, a design bundle with shell steps, MCP client setup, and ordered steps.
 3. **All design styles and button styles are downloaded** so the developer can switch while working: `node uiux/source/switch-style.mjs --list | <design-style> [<button-style>] | --button <button-style>` copies the chosen style to `uiux/active/`. Button styles ship as CSS (`[data-button-style="pill"]`), TypeScript and JSON; the default button icon size is 95% (range 50–100%).
 4. Re-running `uiux_init` is the update path: pass `installed` (path + recorded + current sha256) and only changed files come back; files edited locally are never overwritten (a `<path>.uiux-new` copy is written for a manual merge). Per-project template overrides and global template edits are managed in the designer.
@@ -33,6 +35,7 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 | `uiux_init` | read | Call this first in a new repository, and again whenever you want to update. |
 | `uiux_get_ai_pack` | read | Returns the rendered agent and skill files of this project for a client platform, with checksums. |
 | `uiux_check_update` | read | Call at the START of every session: compares the repository's pack checksums, manifestHash and toolsHash with the server (newer agent/skill/config, changed design, new MCP abilities). Cheap, builds no bundle. |
+| `uiux_refresh_info` | read | Reads the live server tool catalog, versions and projects, diffing against stale cached sessions (`toolsHash` / `knownTools`). |
 | `uiux_whoami` | read | Shows which user, project and scopes this API key acts for, when it expires, and the current rate-limit budget. Design keys also show their focused project. |
 | `uiux_list_projects` | read | Account keys only. Lists the visible projects (design keys: only your own) and marks the focused one. |
 | `uiux_clone_project` | create | Account keys. Copies a project into a NEW private project under a NEW name (`name` is always required; the source never changes) and focuses it. Design keys: own projects only. |
@@ -81,7 +84,7 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 | `uiux_get_request` | read | Status of one item request and the item that fulfilled it (poll this as the requester). |
 | `uiux_cancel_request` | request | Cancels an open or claimed request, for example because a candidate fits. |
 | `uiux_claim_request` | propose | The designer agent takes an open request before building the item (clone the closest candidate before creating from scratch). |
-| `uiux_fulfill_request` | propose | Links the item that fulfils a request: an existing item (ref; a public or own private item, e.g. |
+| `uiux_fulfill_request` | propose | Links the item that fulfils a request: an existing item (`ref`; public or own private items are cloned into the project first) or a staged item (`ref` + `changeset`). |
 
 ### Code bindings
 
@@ -89,6 +92,51 @@ Scope = the key scope a tool needs. Text inside items (labels, descriptions, `mc
 |---|---|---|
 | `uiux_bind_code` | propose | Records where project items live in the app code (file + symbol), up to 200 per call; remove:true deletes them. |
 | `uiux_list_bindings` | read | Code bindings of the project, optionally for one item (type + ref) or one file. |
+
+### Public library, public elements & cascade copy-to-project
+
+*(Available to project and standard account keys; strict `design`-scope keys stay isolated to the user's own projects.)*
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `uiux_public_library` | read | Browses, searches and inspects curated **public elements** and public library items across all 6 types (`element`, `button`, `icon`, `path`, `screen`, `workflow`) with per-type counts, category facets (cards, containers, carousels, popups, drawers, bars, hub menus), container/carousel flags (`isContainer`, `containerType`), dependency lists, and optional single-item inspection (`ref`, `format: "json" \| "svg"`, `style`). |
+| `uiux_use_public_element` | propose | Copies/adopts a public item (`element`, `button`, `icon`, `path`, `screen`, or `workflow`)—cascading every referenced sub-item—into the owned target project, applies optional `newName`, `newKey`, `label`, `width`, `height`, `descriptionDev`, `mcpContext`, and optionally places an instance directly onto a project `screen`, `element`, `button`, or `icon` via `placeOn: { type, ref, x?, y?, anchor?, width?, height?, parentId?, onClick?, events? }`. |
+| `uiux_copy_item_to_project` | propose (`read` when `searchOnly: true`) | Searches across `public`, `private`, `current_project`, and `other_projects` libraries (`searchOnly: true` or omitting `ref` returns ranked candidates) and deep-copies any item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) with all transitive sub-items into the owned target project (`newName`, `newKey`) so it can be freely edited without modifying the source. |
+
+### Direct CRUD for all 6 item types + Trash restore
+
+All direct CRUD mutations operate strictly on **owned projects**; public-library and foreign items are never modified or deleted in place (pass `copyIfForeign: true` on update to fork into the project first).
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `uiux_list_project_items` | read | Lists and filters project items across all 6 types (`path`, `icon`, `button`, `element`, `screen`, `workflow`) with `countsByType`, dimensions, `contentHash`, `detail: "summary" \| "full"`, and `includeTrash: true` to inspect soft-deleted items in the project Trash. |
+| `uiux_create_item` | propose | Creates any of the 6 item types (`path`, `icon`, `button`, `element`, `screen`, `workflow`) directly in the owned project. Supports inline `svg` import, screen `deviceKey` presets, button `iconRef` + `menuConfig` + `menuItems`, container/carousel elements (`isContainer`, `containerType`), child `nodes` & `animations`, and workflow route auto-crawling (`fromScreen`) or explicit `screens` + `links`. |
+| `uiux_update_item` | propose | Updates any project item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) by `type` + `ref`: metadata (`name`, `newKey`, `label`, `category`, `tags`, `width`, `height`, `scaleContent`, `locked`, `descriptionDev`, `mcpContext`, `meta`), `svg`, `nodes` / `appendNodes`, `animations`, button `menuConfig` / `menuItems`, and workflow `screens` / `links` / `importRoutesFromScreen`. With `copyIfForeign: true`, clones a public/foreign item into the project first and edits the clone. |
+| `uiux_delete_item` | propose | Soft-deletes a project item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) to the per-user project **Trash** (`force: true` deletes even when instantiated elsewhere), OR restores a deleted item from Trash with `restore: true` (`trashId` or `{ type, ref }`), preserving its original `uid` and workflow links. |
+
+### Graphical canvas, vector & layout editing (`uiux_graphic_tool`)
+
+| Tool | Scope | What it does |
+|---|---|---|
+| `uiux_graphic_tool` | propose | Runs **38 pure-domain graphical, vector, boolean pathfinder, Bezier/vertex, crop, explode, extraction, alignment, transform, and grouping operations** on any editable project design (`path`, `icon`, `button`, `element`, `screen`). Accepts a single `operation` or an atomic ordered batch `operations: [...]`, optional `copyIfForeign: true`, and `includeSvg: true` (`style`). |
+
+**`uiux_graphic_tool` operation groups (38 operations):**
+
+| Group | Operations |
+|---|---|
+| **Primitives, Pen & Placement** | `add_shape` (`rect`, `circle`, `ellipse`, `line`, `polygon`, `polyline`, `path`, `text`, `container`, `carousel`), `add_pen_path` (points with optional cubic Bezier `in`/`out` handles + `closed`), `place_instance` (9-point `anchor` + auto-adopt of public/foreign items), `import_svg_nodes` |
+| **Boolean Pathfinder & Crop** | `union`, `subtract`, `intersect`, `exclude`, `crop` (clip to `{ x, y, width, height }`), `crop_to_canvas` (`0..width × 0..height`) |
+| **Path & Bezier Vertex Editing** | `convert_to_path`, `combine_paths`, `break_apart`, `join_paths`, `reverse_path`, `simplify_path` (`tolerance`), `bake_transform`, `round_corners` (`radius`), `smooth_vertices`, `sharp_vertices`, `cut_path` (`cutAt: { segIndex, t }`), `edit_vertices` (`vertexEdits`: `move` / `insert` / `delete` / `handles`) |
+| **Explode & Component Extraction** | `explode_icon` (expand placed icon instance into editable shapes), `extract_paths_to_library` (save `<path>` nodes as reusable `24×24` `path` items), `extract_as_element` (extract selected Screen nodes into a reusable `element` and replace with an instance) |
+| **Layout, Transform, Grouping & Style** | `align` (`left` / `center` / `right` / `top` / `middle` / `bottom` to `selection` or `canvas`), `distribute` (`horizontal` / `vertical`), `move` (`dx`/`dy` or `x`/`y`), `resize` (`width`/`height` or `scaleX`/`scaleY`), `fit_to_screen` (responsive container clamping), `flip` (`h` / `v`), `rotate` (`degrees`), `group`, `ungroup`, `reorder_layer` (`front` / `back` / `forward` / `backward`), `duplicate_nodes` (`2×2` grid option), `style_nodes` (`fill`, `stroke`, `strokeWidth`, `opacity`, `copyFromNode*`), `delete_nodes` |
+
+### Backend API Bridge (all allowed Designer API actions)
+
+| Tool / Resource | Scope | What it does |
+|---|---|---|
+| `uiux_api_docs` | read | Queries the canonical catalog of all 168 Designer backend routes (`api.*` actions & `/api/*` endpoints), returning parameters, scopes, `mcpAllowed`, `callableNow`, and blocked reasons. Filter by `group`, `query`, `method`, `scope`, or `includeBlocked`. |
+| `uiux_api_call` | read / propose / request / create (per action) | Invokes any allowed Designer backend API action in-process by `action` (e.g. `saveTemplateDevice`, `applyProjectButtonSettings`, `importSvg`, `importFont`, `onlineSearch`, `onlineImport`, `createDesign`, `addNode`, `patchNode`, `addAnimation`, `menuConfig`, `addMenuItem`, `workflowFromScreen`, `importScreenRoutes`, `saveTranslation`, `copyToProjects`, `adoptProjectDependencies`, `snapshotProjectVersion`, `exportProjectHtml`) or `{ method, path }`. Works identically in embedded `serve` and standalone `mcp` modes while HTTP `/api/*` continues rejecting `kud_…` keys with 401. |
+| `uiux://api/docs` · `uiux://api/docs/{group}` | read | MCP resources exposing the full machine-readable backend API catalog or a single route group (`templates`, `designs`, `nodes`, `menus`, `workflows`, `library`, `import-export`, `translations`, `versions`, `trash`, …). |
 
 ## 3b. AI-assisted design (design the app with a CLI coding agent, no designer GUI)
 
@@ -132,6 +180,15 @@ Versions are ordinary projects linked to their master (`settings.ai.versionOf`),
 ## 5. Typical flows
 
 - **Build an app from a design**: `uiux_init` (choose clone or download) → `uiux_get_schema` → `uiux_export_app` (working HTML app + `app/interactions.json` with every action, menu, workflow link and developer note) → implement from `uiux/<style>/` (tokens, icon sprite) → verify.
+- **Use public elements & copy any item into your project to edit**:
+  1. Browse curated public elements: `uiux_public_library { type: "element", query: "card" }`.
+  2. Adopt a public element and place it straight onto a screen: `uiux_use_public_element { type: "element", ref: "<public-key>", placeOn: { type: "screen", ref: "home", anchor: "top-center", y: 24 } }`.
+  3. Search & cascade-copy any item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) to customize in your project without touching the source: `uiux_copy_item_to_project { type: "screen", ref: "<source-key>", newKey: "custom-home", newName: "Custom Home" }`.
+- **Direct CRUD + graphical vector editing**:
+  1. Create items across all 6 tiers with `uiux_create_item` (`path` → `icon` → `button` → `element` → `screen` → `workflow`, including `fromScreen` route auto-crawling).
+  2. Run vector & layout operations with `uiux_graphic_tool` (e.g. `{ type: "icon", ref: "badge-icon", operations: [{ operation: "add_shape", shape: "rect", name: "a", x: 2, y: 2, width: 14, height: 14 }, { operation: "add_shape", shape: "circle", name: "b", cx: 14, cy: 14, r: 7 }, { operation: "union", nodeNames: ["a", "b"], name: "merged" }, { operation: "round_corners", nodeName: "merged", radius: 2 }] }`).
+  3. Inspect project items & Trash with `uiux_list_project_items { includeTrash: true }`, update with `uiux_update_item`, soft-delete with `uiux_delete_item`, and restore with `uiux_delete_item { restore: true, type: "icon", ref: "badge-icon" }`.
+- **Reverse-engineer a live Android APK / emulator or web app**: `uiux_init { mode: "reverse", newProjectName: "My App", appSource: "…" }` → crawl every screen, popup, drawer and menu → register viewport (`uiux_api_call { action: "saveTemplateDevice", … }`), build hierarchical items (`uiux_create_item`, `uiux_graphic_tool`, `uiux_use_public_element`), generate screen-routing workflows (`fromScreen` or `workflowFromScreen`), and snapshot versions (`snapshotProjectVersion`).
 - **Pull design updates**: `uiux_get_manifest { ifNoneMatch | sinceVersion }` → `uiux_create_bundle` → run the returned install steps → regenerate converted files → update the lockfile.
 - **Push the existing app version** (reverse sync): `uiux_begin_changeset` → `uiux_stage_item` / `uiux_stage_delete` (with `binding`) → `uiux_diff_changeset` → `uiux_submit_changeset`; the owner approves in **Collaborate → Versions & AI Changesets**. Conflicts are resolved by re-staging with the head hash.
 - **AI-assisted design**: `uiux_edit_project` (pick) → `uiux_stage_item` … → `uiux_list_edit_ops` → `uiux_save` → (`uiux_save_as` for milestones) → `uiux_purge_versions { confirm: true }` when done. See §3b.

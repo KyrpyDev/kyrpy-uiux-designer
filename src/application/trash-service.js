@@ -38,8 +38,8 @@ export class TrashService {
       if (item.itemType === 'workflow') {
         const wfRepo = this.workflows.workflows;
         const rec = snap.record || {
-          key: item.itemKey,
-          name: item.itemName || item.itemKey,
+          key: item.key ?? item.itemKey,
+          name: item.name || item.itemName || item.key || item.itemKey,
           description: '',
           projectId: item.projectId ?? 1,
           visibility: item.visibility || 'public',
@@ -54,27 +54,26 @@ export class TrashService {
         wfRepo.restoreUid(created.id, snap.uid);
         for (const n of snap.nodes || []) {
           try {
-            wfRepo.placeScreen({
+            wfRepo.upsertNode({
               workflowId: created.id,
               screenId: n.screenId,
               x: n.x ?? 0,
               y: n.y ?? 0,
-              zoom: n.zoom ?? 1,
-              collapsed: Boolean(n.collapsed)
+              collapsed: Boolean(n.collapsed),
+              locked: Boolean(n.locked)
             });
           } catch (e) { skipped.push(noteSkipped('trash restore', e)); }
         }
         for (const l of snap.links || []) {
           try {
-            wfRepo.addLink({
-              workflowId: created.id,
+            wfRepo.createLink(created.id, {
               fromScreenId: l.fromScreenId,
               toScreenId: l.toScreenId,
-              triggerNodeId: l.triggerNodeId ?? null,
-              triggerLabel: l.triggerLabel ?? '',
-              kind: l.kind ?? 'navigate',
-              color: l.color ?? '#2e9bff',
-              waypoints: l.waypoints ?? []
+              fromNodeId: l.fromNodeId ?? l.triggerNodeId ?? null,
+              name: l.name ?? l.triggerLabel ?? '',
+              descriptionDev: l.descriptionDev ?? '',
+              style: l.style ?? 'curved',
+              trigger: l.trigger ?? 'tap'
             });
           } catch (e) { skipped.push(noteSkipped('trash restore', e)); }
         }
@@ -132,27 +131,26 @@ export class TrashService {
           const wfRepo = this.workflows.workflows;
           for (const wn of snap.workflowNodes || []) {
             try {
-              wfRepo.placeScreen({
+              wfRepo.upsertNode({
                 workflowId: wn.workflowId,
                 screenId: created.id,
                 x: wn.x ?? 0,
                 y: wn.y ?? 0,
-                zoom: wn.zoom ?? 1,
-                collapsed: Boolean(wn.collapsed)
+                collapsed: Boolean(wn.collapsed),
+                locked: Boolean(wn.locked)
               });
             } catch (e) { skipped.push(noteSkipped('trash restore', e)); }
           }
           for (const wl of snap.workflowLinks || []) {
             try {
-              wfRepo.addLink({
-                workflowId: wl.workflowId,
+              wfRepo.createLink(wl.workflowId, {
                 fromScreenId: wl.fromScreenId,
                 toScreenId: wl.toScreenId,
-                triggerNodeId: wl.triggerNodeId ?? null,
-                triggerLabel: wl.triggerLabel ?? '',
-                kind: wl.kind ?? 'navigate',
-                color: wl.color ?? '#2e9bff',
-                waypoints: wl.waypoints ?? []
+                fromNodeId: wl.fromNodeId ?? wl.triggerNodeId ?? null,
+                name: wl.name ?? wl.triggerLabel ?? '',
+                descriptionDev: wl.descriptionDev ?? '',
+                style: wl.style ?? 'curved',
+                trigger: wl.trigger ?? 'tap'
               });
             } catch (e) { skipped.push(noteSkipped('trash restore', e)); }
           }

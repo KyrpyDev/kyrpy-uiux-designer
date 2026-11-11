@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e9bff.svg)](./LICENSE)
 [![Runtime: Node.js 22+](https://img.shields.io/badge/Node.js-22%2B%20(Zero%20NPM%20Deps)-3fb950.svg)](https://nodejs.org)
 [![Database: Offline-First SQLite + PostgreSQL](https://img.shields.io/badge/Database-SQLite%20%2B%20PostgreSQL%20Sync-8a5cf6.svg)](./sql/)
-[![Tests: 72 Passing](https://img.shields.io/badge/Tests-72%2F72%20Passing-brightgreen.svg)](./src/tests/)
+[![Tests: 396 Passing](https://img.shields.io/badge/Tests-396%2F396%20Passing-brightgreen.svg)](./src/tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](./CONTRIBUTING.md)
 
 **Kyrpy UI/UX App Designer** is a zero-dependency, offline-first, collaborative vector & interactive UI/UX design studio built for **developers, product designers, and AI coding agents**.
@@ -198,37 +198,47 @@ See **Default Accounts** above: `superadmin` / `superadmin`, `admin` / `admin`, 
 
 ## 🛠 Key Features in Detail
 
-### 1. Vector, Path & Graphic Editing Studio
-- **Pen & Bezier Node Tool (`B` / `N`)**: Convert any shape to an editable path, drag control handles, toggle smooth/corner vertices (`S`/`K`), cut paths, join open endpoints, break apart subpaths, round corners, and simplify curves.
-- **Boolean Pathfinder Operations**: Unite, Minus Front, Intersect, Exclude, Divide, and Crop (`X`).
-- **9-Point Reference Snapping**: Instant alignment and distribution across the 9 anchor points of any canvas or selection box.
-- **SVG Folder & Font Importer**: Bulk-import entire folders of `.svg` files or extract glyph vectors from `.svg` / `.ttf` fonts directly into your Paths, Icons, Buttons, or Elements libraries.
+### 1. Vector, Path & Graphical Editing Studio (Web Canvas + MCP `uiux_graphic_tool`)
+- **Pen & Bezier Node Tool (`B` / `N`)**: Convert any shape (`rect`, `circle`, `ellipse`, `line`, `polygon`, `polyline`) to an editable Bezier `<path>`, drag control handles, edit/insert/delete vertices, toggle smooth/sharp vertices (`S`/`K`), cut paths at `(t, segment)`, join open endpoints, combine or break apart compound subpaths, reverse winding, round corners, simplify curves, and bake SVG `transform` matrices into coordinates.
+- **Boolean Pathfinder & Crop Operations**: Exact polygon/curve Boolean **Union (`unite`)**, **Subtract (`minus front`)**, **Intersect**, **Exclude (`XOR`)**, **Crop to Box (`X`)**, and **Crop to Canvas**.
+- **Component Explode & Reusable Extraction**: Explode placed icon instances into editable vector paths (`explode_icon`), extract `<path>` shapes into reusable `24×24` Path library items (`extract_paths_to_library`), or extract any node selection on a Screen into a reusable `Element` (`extract_as_element`).
+- **9-Point Anchor Placement, Layout & Grouping**: Place child instances at any 9-point reference anchor (`top-left` … `bottom-right`), align (`left`/`center`/`right`/`top`/`middle`/`bottom`), distribute (`horizontal`/`vertical`), move, resize, proportional `fit_to_screen` (responsive container clamping), flip (`h`/`v`), rotate, group/ungroup (`<g>`), reorder layer z-order (`front`/`back`/`forward`/`backward`), duplicate in a `2×2` grid, and copy/apply fill, stroke & opacity styles.
+- **SVG, Folder, Font & Online Iconify Importers**: Import inline SVG markup, entire `.svg` folders, `.svg`/`.ttf` font glyphs, or search & import open-source icon packs (Tabler, Lucide, Heroicons, Line MD, Meteocons, Devicon, Simple Icons) with preserved license attribution.
 
-### 2. Interactive Events, Animations & Menus
-- **Multi-Event Bindings**: Attach `click`, `dblclick`, `mouseover`, `mouseleave`, `release`, `drag`, `drop`, `rightclick`, `longpress`, or `focus` triggers to any element.
-- **Rich Event Actions**: Route to a Screen, Open an Element inline, Open a Popup/Modal dialog, Open a Small Floating Element Toolbar, Slide in a Drawer (`left`/`right`/`top`/`bottom`), Trigger CSS Keyframe Animations (`pulse`, `bounce`, `flip`, `shake`, `swing`, `glow`, `float`, `shine`, `slide-in`), or Navigate Back.
-- **Button Popup & Rotating Radial Menus**: Configure fan or list menus on any button. Each menu item supports custom icons, sub-menus up to 6 levels deep, visibility toggles (`👁`), screen routing, or **opening any Element from your library as a Popup/Modal Box**.
+### 2. Curated Public Elements Library & Cascade Copy-to-Project
+- **Rich Public Elements & Design Catalog**: Built-in public library (owned by the immutable `public` system user) shipping **114+ reusable Elements** (cards, forms, navbars, modals/popups, drawers, toolbars, responsive `container` shells, 2D/3D `carousel` containers, page-builder blocks), **211 Buttons**, **206 Icons**, **211 Paths**, **24 Screens**, **3 Workflows**, **30 Themes** across 15 Dark/Light style families, **12 Device Templates**, and **40 Button Style Templates**.
+- **Use Public Elements Anywhere**: Browse, filter by category/tags, preview in any of the 30 themes, and adopt/place any public element directly onto a project Screen or Container (`uiux_public_library` + `uiux_use_public_element` in MCP, or drag/insert in the Web Studio).
+- **Search & Cascade-Copy Any Item to Edit**: Search across public, private, and shared project libraries and deep-copy any `path`, `icon`, `button`, `element`, `screen`, or `workflow` into your active project (`Copy to Projects` in Web Studio or `uiux_copy_item_to_project` in MCP). Copying a Screen, Element, Button, or Workflow automatically cascades all referenced sub-items (`workflow → screen → element → button → icon → path`) into the target project with root-owner lineage preserved, so you can freely edit your project copy without mutating the source.
 
-### 3. Multi-Project Library Management & Center-Canvas Item Browser
-- **Topbar Multi-Project Selector**: Filter libraries across one or multiple projects simultaneously, switch active projects, or create new projects on the fly.
-- **Center-Canvas & 90%-Wide Modal Item Browser**: Browse all 6 item types (`path`, `icon`, `button`, `element`, `screen`, `workflow`) with `Select all`, `Non select`, and `Reverse selection` tools.
-- **Cascading Copy / Move to Projects**: Copy or move selected items into multiple projects as private items (`visibility: 'project'`). Moving or copying a Screen automatically copies all its sub-items (`elements → buttons → icons → paths`) into the target project.
-- **Immutable Public Default Library & Trash Bin**: Default public libraries are protected from accidental emptying (`409 Conflict`). Deleted items go to the **Trash Bin (`🗑 Trash`)** first, where they can be restored or permanently purged (public items require `admin`/`superadmin`).
+### 3. Interactive Events, Animations, Menus & Responsive Containers
+- **Multi-Event Bindings**: Attach `click`, `dblclick`, `mouseover`, `mouseleave`, `release`, `drag`, `drop`, `rightclick`, `longpress`, or `focus` triggers to any node.
+- **Rich Event Actions**: Route to a Screen (`{ type: 'screen', target }`), Open an Element inline, Open a Popup/Modal dialog, Open a Floating Element Toolbar, Slide in a Drawer (`left`/`right`/`top`/`bottom`), Trigger CSS Keyframe Animations (`pulse`, `bounce`, `flip`, `shake`, `swing`, `glow`, `float`, `shine`, `slide-in`, `fade`, `spin`), Toggle visibility, or Navigate Back.
+- **Button Popup, Radial, Hub, Drawer, Slider & 2D/3D Carousel Menus**: Configure fan, list, rotating hub, drawer, vertical/horizontal slider, or 2D/3D animated carousel menus on any button, with nested sub-menus up to 6 levels deep, custom icons, screen routing, and popup element triggers.
+- **Responsive Containers & Carousels**: `Container` and `Carousel` elements enforce inner/outer margins, responsive `fitNodesToScreen` viewport scaling, and child max-size clamping across mobile, tablet, and desktop viewports.
 
-### 4. Full-Stack Code & Bundle Exporter
-### 9. Multi-Format Library Export & Import (`HTML`, `SVG`, `JSON`)
+### 4. Multi-Project Library Management, Full Item CRUD & Trash Bin
+- **Full CRUD Across All 6 Item Types**: Create, Read/List, Update, Soft-Delete to Trash, and Restore from Trash for `path`, `icon`, `button`, `element`, `screen`, and `workflow`—both in the Web Studio (Center-Canvas & 90%-Wide Modal Item Browser) and directly over MCP (`uiux_create_item`, `uiux_list_project_items`, `uiux_update_item`, `uiux_delete_item`).
+- **Project-Scoped Keys & Per-User Trash Bin**: Keys are unique per project (`(project_id, key)`), so multiple projects can cleanly use canonical keys (`home`, `primary-btn`, `hero-card`). Deleted items are archived in a per-user **Trash Bin (`🗑 Trash`)** with full JSON + `uid` snapshots and can be restored losslessly (`restore: true`).
+- **Single-Superadmin Public Governance**: Only `superadmin` mutates the public library directly; collaborator edits create reviewable `change_requests` with visual before/after diffs.
+
+### 5. Self-Hosted Live API & MCP Documentation (`/docs/api` & `/docs/mcp`)
+- **`GET /docs/api`**: Live dark/light reference generated from the canonical 168-route backend catalog (`src/interfaces/http/api-catalog.js`), showing every HTTP endpoint, `api.<action>` client method, parameters, and MCP scope eligibility, plus a live `/api/health` probe.
+- **`GET /docs/mcp`**: Live reference for every registered MCP tool, resource URI, prompt, and copy-paste bearer-key setup, plus `/api/health/mcp`.
+
+### 6. Multi-Format Library Export & Import (`HTML`, `SVG`, `JSON`)
 Export and import **Paths**, **Icons**, **Buttons**, **Elements**, **Screens**, and **Workflows** directly into either **Project-Specific (`visibility: 'project'`)** or **Public (`visibility: 'public'`)** libraries in three interchangeable formats:
 - **`JSON` (`.json`)**: Structured `kyrpy-uiux-library-v2` bundle with cascading sub-items (`screen → element → button → icon → path` + menu items + workflow screen bindings).
 - **`SVG` (`.svg`)**: Standalone vector artwork or multi-item SVG sheet with embedded lossless library metadata (`<!-- KYRPY_UIUX_LIBRARY_PAYLOAD:... -->`) and raw `<svg>` shape parser fallback.
 - **`HTML` (`.html`)**: Self-contained interactive HTML catalog previewing every exported item with inline SVGs plus an embedded `#ud-library-payload` script for lossless round-trip re-import.
 
-### 10. Production Bundle Exporter
-Export any set of screens and themes into a clean, self-contained **HTML + CSS + TypeScript + JavaScript + SVG Sprite** bundle (`DEV-NOTES.md`, `manifest.json`, `screens/*.html`, `svg/sprite.svg`, `ts/app.ts`) ready for your engineering team or AI coding agents to wire into production.
+### 7. Production Bundle Exporter, Native Adapters & Standalone Prototype Shell
+- Export any project into a clean, self-contained **HTML + CSS + TypeScript + JavaScript + SVG Sprite** bundle (`DEV-NOTES.md`, `manifest.json`, `screens/*.html`, `svg/sprite.svg`, `ts/app.ts`, `app/interactions.json`), plus deterministic adapters for **Web**, **React TSX (`<Icon name="…"/>`)**, **Flutter (Dart)**, **Jetpack Compose (Kotlin)**, and **SwiftUI (Swift)**.
+- Every exported prototype includes the dependency-free **Options Menu (`uiux/source/prototype/options-menu.js`)** to live-switch **Device viewport** (responsive / phone / tablet / laptop / desktop), **Design style** (all 30 dark/light themes), and **Button type** (`circle`, `pill`, `rounded`, `squircle`, `square`, `sharp`, `outline`, `ghost`) at runtime, plus CLI style switching via `node uiux/source/switch-style.mjs`.
 
 ---
 
-### 11. User Profile, Password & Sessions
-The profile icon (top right) opens **My Profile**: edit display name and email (an email change asks for the current password), change the password (minimum 8 characters with a letter and a digit, never the username or email; other sessions are signed out), list active sessions and revoke one or all others, and see your activity. System users (`public`, `kyrpy-agent-designer`) cannot sign in or be edited.
+### 8. User Profile, Sessions & Security
+The profile icon (top right) opens **My Profile**: edit display name and email, change your password (minimum 8 characters with a letter and a digit; signs out other sessions), manage active sessions, and create/rotate/revoke **AI Access Keys (MCP)**. System users (`public`, `kyrpy-agent-designer`) cannot sign in or be edited.
 
 ## 🔌 MCP Server — Design ↔ Code Sync for AI Coding Agents
 
@@ -282,25 +292,21 @@ Then, in the app repository, tell your agent: *"Run uiux_init …"* (the panel s
 
 | Area | What you get |
 |---|---|
-| **API keys** | Per user × project, scopes `read` / `request` / `propose`, expiry, 24 h rotation grace, instant revoke, audit log. Only an HMAC hash is stored. |
-| **Account keys** | One user-wide key (scope `create` added) for every project you can see. On `uiux_init` the agent lists your projects **with their versions** and asks you: **clone** one into a new project of yours (build an app from it, push back as changesets), or **edit** one of your own projects at a chosen version (optional reviewed restore). Pushes only ever go to projects you own. |
+| **API keys** | Per user × project, scopes `read` / `request` / `propose`, expiry, 24 h rotation grace, instant revoke, audit log. Only an HMAC digest is stored. |
+| **Account & Design keys** | User-wide **Account keys** (`read`, `request`, `propose`, `create`, plus strict `design` scope for AI-assisted design sessions with `uiux_edit_project`, `uiux_save`, `uiux_save_as` `-vNNN` milestones, `uiux_manage_versions`, `uiux_purge_versions`). On `uiux_init`, choose **download**, **clone**, **edit**, **create** (from an existing repo), or **reverse** (reverse-engineer a live Android APK / emulator or web app into hierarchical UI items & workflows). |
 | **Connect any AI coder** | *AI Access Keys* generates setup for Claude Code, Codex, Gemini CLI, Antigravity, Cursor, VS Code, Windsurf, Cline, opencode, Zed, Claude Desktop and stdio bridges (bash / PowerShell / fish / cmd). Project keys stay per repository (Claude `--scope local`, `.gemini/.env`, direnv `.envrc`, VS Code input prompt), so several repos on one laptop never share a key. |
-| **Read & download** | Schema, manifest, ranked search, single items (JSON/SVG), tokens (JSON/CSS/TS), workflows, single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
-| **AI pack** | `uiux_init` installs the `kyrpy-uiux-designer` agent and `kyrpy-skill-uiux-designer` skill for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `.uiux/config.json` and a lockfile. Local edits are never overwritten. |
-| **Adapters** | `web` (tokens.css/ts, icon sprite, typed index), `react-tsx` (typed `<Icon name="…"/>`), and `flutter` / `compose` / `swiftui` (native token constants, icon catalog, SVGs). |
-| **Working HTML app** | `uiux_export_app` (or *Collaborate ▸ Download Project as HTML App*) packs the project as a working HTML app: every screen, workflow link, click/event action, popup, drawer and button menu works, and all images are SVG. `app/interactions.json` describes every interaction, menu, workflow and developer note in machine-readable form, so agents can inspect and re-implement the behaviour. |
-| **Versions** | Numbered project versions. Designer edits and approved AI pushes each create one, and `uiux_get_manifest { sinceVersion }` returns the exact delta. **Restore** any version (*Versions ▸ Restore…* or `uiux_restore_version`). It becomes a reviewable changeset that brings deleted items back with their original uid. |
-| **Live updates** | `resources/subscribe` plus a `GET /mcp` event stream: agents get `notifications/resources/updated` when a new version or an item request arrives. |
-| **Changesets** | `begin → stage (validated + dry-run) → diff → submit`. Nothing changes before a human approves it. Per-item conflict detection (`baseHash`): design wins for visual attributes, code wins for bindings. |
-| **Review** | *Collaborate ▸ Versions & AI Changesets* shows before/after previews and lets you approve all, approve some, or reject. AI items also appear in the Change List and the pending-changes count. |
-| **Item requests** | A coding agent asks for a missing item (the server searches first). The designer agent claims it, stages the item and fulfils the request, which completes on approval. Humans can work the same queue in *AI Item Requests*. |
-| **Code bindings** | Item ↔ file/symbol links. `stale` flags code that is behind the design, and re-pushing an unchanged app produces 0 operations. |
-| **Project scope** | A project's design system is self-contained, and **keys are unique per project**: every public or foreign item a project uses (including click and navigation targets) is cloned into the project library under its own key. |
-| **Portable interactions** | Click and event actions reference other items as `{type, uid, key}` and nodes by index. They survive cloning, syncing and pushing, and the content hash is instance-independent. |
-| **AI attribution** | Every AI-applied change is made by the system user **`kyrpy-agent-designer`**, which cannot sign in. The human reviewer is recorded as the approver. |
-| **Standards** | Key format, docs (`descriptionDev`, `mcpContext.purpose`), 24×24 icons, SVG sanitising, size limits, duplicates, references, hierarchy, accessibility basics. |
-| **Security** | Origin check, 1 MB bodies, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, tenant isolation. STRIDE review: [`src/mcp/SECURITY.md`](src/mcp/SECURITY.md). |
-| **PostgreSQL** | All MCP tables (keys, audit, AI pack, versions, changesets, requests, bindings) are in the PG schema and the snapshot sync. Synced key hashes only work on instances that share `KYRPY_UIUX_KEY_PEPPER`. |
+| **Public Elements & Copy-to-Project** | **`uiux_public_library`** browses/searches curated public elements, buttons, icons, paths, screens & workflows with category facets and JSON/SVG inspection; **`uiux_use_public_element`** adopts a public element (with all sub-items) into your project and optionally places it onto a Screen/Element at a 9-point anchor; **`uiux_copy_item_to_project`** searches across public, private & visible projects and cascade-copies any item into your project to edit without modifying the source. |
+| **Full Direct Item CRUD & Trash** | First-class Create, Read/List, Update, Soft-Delete & Trash Restore across **all 6 item types** (`path`, `icon`, `button`, `element`, `screen`, `workflow`) via **`uiux_create_item`**, **`uiux_list_project_items`**, **`uiux_update_item`** (with `copyIfForeign: true`), and **`uiux_delete_item`** (`restore: true` restores from Trash with original `uid`). |
+| **Graphical Editing Tools** | **`uiux_graphic_tool`** runs **38 pure-domain graphical & vector operations** (single step or atomic batch): primitives/containers/carousels (`add_shape`, `add_pen_path`, `place_instance`, `import_svg_nodes`), Boolean Pathfinder (`union`, `subtract`, `intersect`, `exclude`, `crop`, `crop_to_canvas`), Bezier/path ops (`convert_to_path`, `combine_paths`, `break_apart`, `join_paths`, `reverse_path`, `simplify_path`, `bake_transform`, `round_corners`, `smooth_vertices`, `sharp_vertices`, `cut_path`, `edit_vertices`), component extraction (`explode_icon`, `extract_paths_to_library`, `extract_as_element`), and layout/transform (`align`, `distribute`, `move`, `resize`, `fit_to_screen`, `flip`, `rotate`, `group`, `ungroup`, `reorder_layer`, `duplicate_nodes`, `style_nodes`, `delete_nodes`). |
+| **Full Backend API Bridge** | **`uiux_api_docs`** (`uiux://api/docs`, `uiux://api/docs/{group}`) and **`uiux_api_call`** expose all allowed Designer backend API functions (`api.*` actions & `/api/*` routes) in-process—device/button templates, SVG/font/Iconify imports, nodes, animations, menus, route-crawled workflows, translations, library transfer, version snapshots, and HTML/SVG exports—even in standalone MCP mode. |
+| **Read, styles & download** | Schema, manifest, ranked search, single items (JSON/SVG/HTML), tokens (JSON/CSS/TS), `uiux_import_styles` + `switch-style.mjs` + live `options-menu.js`, workflows, `uiux_check_update` / `uiux_refresh_info`, and single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
+| **AI & Reverse-Engineer packs** | `uiux_init` installs `kyrpy-uiux-designer` + `kyrpy-skill-uiux-designer` (and optional `kyrpy-uiux-reverse-engineer` + `kyrpy-skill-uiux-reverse-engineer`) for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `init-prompt.md`, `.uiux/config.json` and lockfile. Local edits are never overwritten. |
+| **Adapters & Working HTML app** | `web` (tokens.css/ts, hoisted icon sprite, typed index), `react-tsx` (typed `<Icon name="…"/>`), `flutter` / `compose` / `swiftui`, and `uiux_export_app` (working HTML app + `app/interactions.json` describing every interaction, menu, workflow and developer note). |
+| **Versions, Changesets & Review** | Numbered project versions (`uiux_get_manifest { sinceVersion }`, `uiux_restore_version`), live `GET /mcp` SSE notifications, reviewed changesets (`begin → stage → diff → submit`) with `baseHash` conflict detection in *Collaborate ▸ Versions & AI Changesets*, item-request queue (`uiux_request_item`), and code bindings (`uiux_bind_code`). |
+| **Project scope & portable actions** | Self-contained per-project keys (`(project_id, key)`), automatic clone-on-reference for foreign/public dependencies, portable `{type, uid, key}` click/event targets, and `kyrpy-agent-designer` attribution. |
+| **Security & PostgreSQL** | Origin check, 1 MB bodies, 120 calls/min and 10 bundles/h per key, 500 ops per changeset, strict tenant & public-library isolation, STRIDE review ([`src/mcp/SECURITY.md`](src/mcp/SECURITY.md)), and full MCP table parity in PostgreSQL sync. |
+
+Full MCP user guide: [`readme-mcp.md`](./readme-mcp.md) · Architecture & milestone internals: [`src/mcp/README.md`](./src/mcp/README.md).
 
 Run modes: embedded in `serve` at `/mcp` (disable with `MCP_MODE=off`), or standalone with `node src/main.js mcp --port 5181`.
 
@@ -327,7 +333,7 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
    - AI design co-pilots that propose layout refinements, accessibility (WCAG AAA) fixes, theme token harmonization, and interactive state wiring directly through the **Collaborative Change Request (`pending` → `approved` / `rejected`)** review pipeline.
    - Automated multi-persona UX evaluation agents that simulate user journeys across workflows and attach structured UX feedback to screens.
 
-2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions and restore, changesets, item requests, code bindings, per-project keys, web/React/Flutter/Compose/SwiftUI adapters, a working HTML app export, live subscriptions and PostgreSQL sync for AI coding agents.
+2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions and restore, changesets, item requests, code bindings, project/account/design keys, public elements & cascade copy-to-project, direct CRUD across all 6 item types + Trash restore, 38-operation graphical vector editing (`uiux_graphic_tool`), in-process backend API bridge (`uiux_api_docs` + `uiux_api_call`), reverse-engineering pack (`mode: "reverse"`), web/React/Flutter/Compose/SwiftUI adapters, working HTML app export, live SSE subscriptions and PostgreSQL sync for AI coding agents.
 
 3. **🔑 Use BYOK (Bring Your Own Key) for Users' AI-Assisted Item Generator Features**
    - Built-in **BYOK (Bring Your Own Key)** settings vault allowing each user to configure their own API keys (OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or local Ollama/vLLM endpoints) stored locally or encrypted per user profile.
@@ -341,7 +347,7 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
 ## 🧪 Running Tests & Server Management
 
 ```bash
-# Run the full automated suite: core (unit + integration + adversarial personas) + MCP milestones M0–M7
+# Run the full automated suite (396 tests): core (unit + integration + adversarial personas) + MCP milestones M0–M10
 # (the PostgreSQL round-trip test uses an isolated test database and is skipped when PG is unreachable)
 cd src && npm test
 

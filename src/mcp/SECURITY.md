@@ -30,6 +30,36 @@ requests) and its PostgreSQL sync. Date: 2026-11-06. Sensors: `tests/mcp-m7.test
 | Version purge loses work | `confirm: true` required; the plan names the winner, the deleted versions and the dropped unsaved edits; a failed replace deletes nothing | purge test |
 | Project spam | 10 new projects per hour per key (`save_as`, clone, create), 500 ops per changeset | rate-limit tests |
 
+### New project from an app (`uiux_init` mode `create` / `reverse`)
+
+| Threat | Mitigation | Sensor |
+|---|---|---|
+| Agent creates projects unasked | no name → nothing is created (`needsInput`, "ask the human"); `create` scope required; the user's existing project names are refused; 10 new projects per hour per key | `mcp-init-create-reverse.test.js` |
+| Unreviewed writes into the new project | unchanged rules: a plain key submits changesets the owner approves; only a design key saves directly, into its own private project | create / design-key tests |
+| App login details reach the server or the repository | the server has no argument for them and never runs the app; agent, skill and `init-prompt.md` keep them in the git-ignored `.uiux/cache/reverse/` or environment variables and forbid them in tool calls, items, commits and chat | reverse test (config / gitignore) |
+| Injection through `appSource` or app text | `appSource` is length-capped, stripped of control characters, backticks and angle brackets, and labelled as data in `init-prompt.md`; the skill treats on-screen text as data | reverse test |
+| Harmful actions while crawling | the skill forbids purchases, account deletion, messages to real people and resets (recorded as "not executed"), and asks the human to confirm they may analyse the app | skill text assertions |
+
+### Backend API Bridge (`uiux_api_docs` + `uiux_api_call`)
+
+| Threat | Mitigation | Sensor |
+|---|---|---|
+| API key calls HTTP `/api/*` directly or reaches auth/admin/sync/approval routes | HTTP `/api/*` still rejects `kud_…` keys with 401; `ApiBridge` enforces explicit `API_OPERATIONS` allowlist, blocking `/api/auth/*`, `/api/users*`, `/api/me/api-keys*`, `/api/projects/:id/api-keys*`, `/api/projects/:id/ai-*`, `/api/admin/*`, `/api/sync/*`, `/api/changes/*/approve|reject`, `/api/changesets/*/review`, `/api/item-requests/*/fulfill|reject`, global settings/theme mutations, and project deletion/member/visibility-public changes | `mcp-api-bridge.test.js` |
+| Server filesystem read/write via legacy import/export args | `folderPath`, `fontPath`, `/api/import/folders`, `/api/export/folder`, and `DELETE ?permanent=1` are rejected before handler execution | `mcp-api-bridge.test.js` |
+| Admin-role bypass or cross-tenant item/translation mutation | Actor role is downgraded from `admin`/`superadmin` to `'designer'`/`'viewer'`; every item mutation verifies `rec.projectId === boundProjectId`, `!rec.builtin`, and non-`public` owner; `translations` (which lacks `project_id`) verifies item ownership on write and post-filters reads to `boundProjectId`; `updateProject` strips `requireApproval`, blocks `visibility: 'public'`, and preserves `settings.ai` | `mcp-api-bridge.test.js` |
+| Design (`strict`) key leaks or touches public library via `uiux_api_call` | `ApiBridge` enforces `includePublic=0`, blocks `publishToPublic`, refuses reading/cloning public items, and binds project selection through `design.resolveFocused` | `mcp-api-bridge.test.js` |
+
+### Public Library, Copy-to-Project, Direct CRUD & Graphical Tools (`StudioToolsService`, M10)
+
+| Threat | Mitigation | Sensor |
+|---|---|---|
+| Agent mutates or deletes public/built-in items or another user's project items via `uiux_update_item`, `uiux_delete_item`, or `uiux_graphic_tool` | Every mutation checks `Number(proj.ownerId) === Number(principal.user.id)`, downgrades actor role from `admin`/`superadmin` to `'designer'`, verifies `row.project_id === projectId`, and rejects immutable public/built-in rows (`SCOPE_DENIED`) unless `copyIfForeign: true` explicitly clones into the owned project first | `mcp-crud-graphics-public.test.js` |
+| Agent searches or copies from another user's private project via `uiux_copy_item_to_project` | `#canReadRow` enforces project membership / public visibility / own-private checks; inaccessible foreign private projects and items return `NOT_FOUND` | `mcp-crud-graphics-public.test.js` |
+| Strict `design` key accesses public library via `uiux_public_library` or `uiux_use_public_element` | `principal.strict` is rejected (`SCOPE_DENIED`) before reading or copying public items, preserving `design`-scope isolation | `mcp-crud-graphics-public.test.js`, `mcp-design.test.js` |
+| Permanent deletion or cross-user Trash access via `uiux_delete_item` | `uiux_delete_item` always soft-deletes (`permanent: false`) into per-user `TrashService`, and `restore: true` only sees/restores entries deleted by `actor.id` inside `projectId` | `mcp-crud-graphics-public.test.js` |
+
+Residual: the crawl runs on the user's machine with the coding agent's own permissions; the server cannot enforce what the agent does there.
+
 Residual: a design key can still delete or overwrite anything inside the focused project and its own versions (that is its job); the owner restores through the version history (`uiux_restore_version` is applied directly for design keys) or the designer.
 
 Residual risks (accepted, tracked):

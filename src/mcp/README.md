@@ -41,14 +41,19 @@ mcp/
   infrastructure/export/tar-gz.js      zero-dep ustar + gzip writer
   server/http.js              Streamable HTTP transport (/mcp, /mcp/bundles/<token>)
   server/protocol.js          JSON-RPC: initialize, ping, tools/*, resources/*, prompts/list
-  server/tools.js             the M2 tools
+  server/tools.js             all MCP tool definitions
+  server/api-bridge.js        in-process Designer backend API catalog & execution bridge (M9)
   server/input-schema.js      tiny JSON-Schema validator for tool arguments
   server/rate-limiter.js      per-key fixed-window limits
   server/standalone.js        MCP-only http server
   domain/ai-pack-templates.js       built-in agent + skill bodies (TEMPLATE_VERSION)
+  domain/reverse-pack-templates.js  reverse-engineer agent + skill templates
+  domain/init-prompt.js             init-prompt.md generator (download / clone / edit / create / reverse)
+  domain/prototype-shell.js         standalone Options menu (device / style / button type)
   domain/ai-pack-render.js          {{var}} / #if / #each engine + per-platform file layout
   domain/web-adapter.js             icon sprite (shared defs hoisted) + typed index.ts
   application/ai-pack-service.js    render, uiux_init install plans, template overrides
+  application/studio-tools-service.js  public library, copy-to-project, direct 6-type CRUD + Trash, 38 graphic tools (M10)
   infrastructure/sqlite/ai-artifact-repository.js
   domain/item-validation.js         §14 static checks (key, docs, 24×24, SVG safety, sizes, a11y)
   infrastructure/sqlite/version-repository.js   project_versions, changesets, changeset_ops
@@ -59,7 +64,7 @@ mcp/
   application/item-request-service.js     M5 item requests
   application/binding-service.js          M6 code bindings
   domain/agent-user.js              the kyrpy-agent-designer system user
-  tests/mcp-m0 … mcp-m4, mcp-m5-m6, mcp-m7, mcp-pg-sync .test.js
+  tests/mcp-m0 … mcp-m4, mcp-m5-m6, mcp-m7, mcp-m8, mcp-api-bridge, mcp-crud-graphics-public, mcp-pg-sync .test.js
 ```
 
 ## M0 — what exists now
@@ -233,6 +238,27 @@ must stop and ask the human; MCP elicitation or a chat question). The second cal
 - `{ mode: "edit", project, version? }` → an owned project. At the head: normal install. At an older version: the plan
   records `selection.baseVersion`, reports what changed since (`sinceChosen`), and with `restore: true` submits a restore
   changeset back to that version for the owner's approval.
+- `{ mode: "create", newProjectName }` → a **new empty project** from a name the human gives (no `project`). Without
+  `newProjectName` nothing is created: the answer is `needsInput: true` with what to ask. The plan's `init-prompt.md`
+  orders the agent to inventory the repository's app and push **every item and all workflows** into the new project
+  (icons → buttons → elements → screens → workflows; `push.how` names the calls). Needs `create` + `propose` (or a
+  design key, whose push is saved directly).
+- `{ mode: "reverse", newProjectName, appSource?, appPlatform? }` → a new empty project **plus the reverse-engineer
+  pack**: the agent `kyrpy-uiux-reverse-engineer` and the skill `kyrpy-skill-uiux-reverse-engineer`
+  (`domain/reverse-pack-templates.js`, seeded into `ai_artifacts`). The steps tell the agent to read both files at once
+  and act on them in the running session: find a device or emulator (`adb devices -l`), otherwise install the Android
+  command-line tools, create and start an AVD; download the APK (file or URL), install and start it, sign in, crawl
+  every screen / menu / popup (`.uiux/cache/reverse/crawl.json`), map what it saw to items with `key` (variable name),
+  `name`, `label`, node names, `onClick` / `events`, popups as elements, `menuItems` and a structured `descriptionDev`
+  (PURPOSE, ENTRY, LAYOUT, DATA, STATE, ACTIONS, POPUPS, STATES, VALIDATION, EXIT, BACKEND …), then push.
+  The server only creates the project and returns text: it never downloads or runs the app, and login details are
+  never sent to it (they stay in the git-ignored `.uiux/cache/reverse/credentials.env` or environment variables).
+  `appSource` is cleaned and shown in `init-prompt.md` as data. A web URL selects `appPlatform: "web"` (browser crawl).
+
+**Optional packs** — `packs: ["reverse-engineer"]` on `uiux_init` / `uiux_check_update` (any key kind) installs and
+keeps the reverse-engineer agent + skill up to date in a repository that already has a project; `.uiux/config.json` and
+the lockfile record `packs`. Prompts: `create-project-from-app`, `reverse-engineer-app`. Sensor:
+`tests/mcp-init-create-reverse.test.js`.
 
 **All styles in the repository** — every `uiux_init` bundle now carries *all* design styles (`tokens/<style>.{json,css,ts}`
 and `adapters/web/<style>/` for each) plus all button styles (`tokens/button-styles.{json,css,ts}`,
@@ -265,3 +291,20 @@ Code: `application/design-session-service.js` (focus, edit session, save, save-a
 ## M8 — prototype, init-prompt, style import, update check
 
 `domain/init-prompt.js` (init-prompt.md, written once by `uiux_init`), `domain/prototype-shell.js` (dependency-free top-left Options menu: device / style / button type), `uiux_import_styles` (`BundleService.styleCatalog` / `createStyles`, merges into `uiux/source/`), `uiux_check_update` (`AiPackService.checkUpdate`, lockfile `toolsHash` from `server/tools.js`), `uiux_refresh_info` (live tool catalog + versions + projects read from the server; diffs against the session's `toolsHash` / `knownTools` so OLD sessions that cached an earlier tool list can discover new tools such as `uiux_create_project`). Sensors: `tests/mcp-m8.test.js`. Full reference: `readme-mcp.md`.
+
+## M9 — Backend API Bridge (`uiux_api_docs` + `uiux_api_call`)
+
+- **Catalog (`interfaces/http/api-catalog.js` + `/docs/api`)**: canonical registry of all 168 Designer backend routes mapped 1:1 to `interfaces/web/js/api.js` function names (`action`, `aliases`, `group`, `method`, `pattern`, `scope`, `mcpAllowed`, `accountOnly`, `needsProject`, `destructive`, `params`, `query`, `body`, `summary`, `blockedReason`). Both `interfaces/http/server.js` and `ApiBridge` mount routes via `buildApiRouter(container)`, and `GET /docs/api` renders `api.<action>` badges, field docs, and MCP scope notes directly from the catalog.
+- **In-process bridge (`server/api-bridge.js`)**: exposes `uiux_api_docs`, `uiux_api_call`, and resources `uiux://api/docs` + `uiux://api/docs/{group}` (works identically in `serve` and standalone `createMcpOnlyServer` mode, while HTTP `/api/*` still rejects `kud_…` keys with 401).
+- **Capabilities for reverse engineering & design**: custom emulator device templates (`saveTemplateDevice`), per-project button settings (`applyProjectButtonSettings`), inline SVG/font/online icon imports (`importSvg`, `importFont`, `onlineSearch`, `onlineImport`), full item/node/animation/menu editing (`createDesign`, `updateDesign`, `addNode`, `patchNode`, `replaceNodes`, `addAnimation`, `menuConfig`, `addMenuItem`), automatic screen-route workflow generation (`workflowFromScreen`, `importScreenRoutes`, `placeScreen`, `addLink`), multi-locale translations (`saveTranslation`, `translations`), library transfer (`copyToProjects`, `moveToProjects`, `saveToTargets`, `adoptProjectDependencies`), version snapshots (`snapshotProjectVersion`), and HTML/SVG/bundle exports (`exportProjectHtml`, `designSvg`). Item IDs in path params and body references accept numeric IDs, project keys, or item UIDs.
+- **Sensors**: `tests/mcp-api-bridge.test.js`.
+
+## M10 — Public Elements, Copy-to-Project, Direct 6-Type CRUD & Graphical Editing Tools (`StudioToolsService`)
+
+- **Service (`application/studio-tools-service.js`, wired in `composition.js` & `server/tools.js`)**:
+  - **Public Elements & Public Library (`uiux_public_library`, `uiux_use_public_element`)**: browses, filters and inspects curated public elements and items across all 6 types (`element`, `button`, `icon`, `path`, `screen`, `workflow`) with category facets, container/carousel flags, and JSON/SVG output; adopts public items (cascading all sub-items via `LibraryTransferService.copyToProjects`) into an owned project and optionally places an instance onto a target `screen`, `element`, `button`, or `icon` with 9-point anchor snapping (`anchor` or `x`/`y`) and portable `onClick` / `events`.
+  - **Search & Cascade Copy Any Item to Project (`uiux_copy_item_to_project`)**: searches across `public`, `private`, `current_project`, and `other_projects` scopes (`searchOnly: true` or no `ref`) and deep-copies any item (`path`, `icon`, `button`, `element`, `screen`, `workflow`) with recursive sub-item cascade into the owned target project under `newKey` / `newName` without mutating the source.
+  - **First-Class Direct CRUD + Trash Restore (`uiux_list_project_items`, `uiux_create_item`, `uiux_update_item`, `uiux_delete_item`)**: full Create, Read/List, Update, Soft-Delete to Trash, and Restore from Trash (`restore: true`, preserving original `uid` and workflow links) across all 6 item types (`path`, `icon`, `button`, `element`, `screen`, `workflow`), with inline SVG parsing, device presets (`deviceKey`), button `iconRef`/`menuConfig`/`menuItems`, container/carousel flags, `animations`, workflow `fromScreen` route auto-crawling, automatic foreign dependency adoption, and `copyIfForeign: true` fork-on-write.
+  - **Graphical Canvas & Vector Editing (`uiux_graphic_tool`)**: exposes **38 pure-domain operations** (`domain/path-ops.js`, `domain/path-tools.js`, `domain/node-ops.js`, `domain/geometry.js`) in single-step or atomic batch mode (`operations: [...]`): `add_shape` (incl. `container` & `carousel`), `add_pen_path`, `place_instance`, `import_svg_nodes`, Boolean Pathfinder (`union`, `subtract`, `intersect`, `exclude`), `crop`, `crop_to_canvas`, Bezier/path ops (`convert_to_path`, `combine_paths`, `break_apart`, `join_paths`, `reverse_path`, `simplify_path`, `bake_transform`, `round_corners`, `smooth_vertices`, `sharp_vertices`, `cut_path`, `edit_vertices`), component extraction (`explode_icon`, `extract_paths_to_library`, `extract_as_element`), and layout/transform (`align`, `distribute`, `move`, `resize`, `fit_to_screen`, `flip`, `rotate`, `group`, `ungroup`, `reorder_layer`, `duplicate_nodes`, `style_nodes`, `delete_nodes`).
+  - **AI Pack & Prompts**: `TEMPLATE_VERSION` bumped to `8` (`domain/ai-pack-templates.js`), plus updated `domain/reverse-pack-templates.js` and `domain/init-prompt.js`. Live SSE listeners receive `notifyProjectChanged` on every mutation.
+- **Sensors**: `tests/mcp-crud-graphics-public.test.js`.

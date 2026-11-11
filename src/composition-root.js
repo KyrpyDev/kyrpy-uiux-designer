@@ -184,8 +184,10 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
   const importer = new LegacyImporter({ themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
   if (seed) seedNewPresets(db, services, importer);
-  // MCP layer (src/mcp): API keys, schema registry, content hashes
+  // MCP layer (src/mcp): API keys, schema registry, content hashes, and in-process backend API bridge
+  let container = null;
   const mcp = buildMcpModule({
+    getContainer: () => container,
     projectService: projects,
     db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
     services, workflows, exporter, settings, collaboration, parseSvg: svgTextToNodes,
@@ -199,7 +201,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   // large icon libraries (pack imports): summary lists, paged search, sprites by id; version bumps on icon changes
   const iconCatalog = new IconCatalogService({ designs: designs.icon, nodes, render, version: installIconVersion(db) });
 
-  return {
+  container = {
     db,
     pgSync,
     nodes,
@@ -230,4 +232,5 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     publicUserId: () => publicUserId(db),
     close: () => db.close()
   };
+  return container;
 }

@@ -222,7 +222,7 @@ test('M3: prompts and server instructions', async () => {
     assert.match(init.instructions, /uiux_init/);
     assert.ok(init.capabilities.prompts);
     const prompts = (await w.rpc('prompts/list')).result.prompts;
-    assert.deepEqual(prompts.map(p => p.name), ['init-uiux', 'pull-design', 'need-ui-item', 'push-app-version']);
+    assert.deepEqual(prompts.map(p => p.name), ['init-uiux', 'pull-design', 'need-ui-item', 'create-project-from-app', 'reverse-engineer-app', 'push-app-version']);
     assert.ok(prompts.every(p => p.text === undefined));
     const got = (await w.rpc('prompts/get', { name: 'init-uiux', arguments: { platform: 'cursor', framework: 'react' } })).result;
     assert.match(got.messages[0].content.text, /uiux_init with platform "cursor", framework "react"/);
