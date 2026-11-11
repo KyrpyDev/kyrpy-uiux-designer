@@ -60,7 +60,7 @@ test('client specifics: header formats, CLI commands, TOML', () => {
   assert.ok(codex.steps[0].text.includes(KEY), 'codex always needs the env variable');
   assert.ok(codex.steps.some(s => s.text === `codex mcp add kyrpy-uiux --url ${URL} --bearer-token-env-var KYRPY_UIUX_API_KEY`));
   assert.ok(codex.steps.some(s => s.lang === 'toml' && s.text.includes('[mcp_servers.kyrpy-uiux]') && s.text.includes('bearer_token_env_var = "KYRPY_UIUX_API_KEY"')));
-  assert.deepEqual(codex.steps.map(s => s.title.split('.')[0]), ['1', '2', '3', '4'], 'steps numbered in order');
+  assert.deepEqual(codex.steps.map(s => s.title.split('.')[0]), ['1', '2', '3', '4', '5'], 'steps numbered in order');
 
   const gem = buildClientSetup({ client: 'gemini', url: URL });
   assert.equal(JSON.parse(gem.steps.find(s => s.lang === 'json').text).mcpServers['kyrpy-uiux'].httpUrl, URL);
@@ -335,9 +335,77 @@ test('admin + system variable + permanent self-deletion: verified across all scr
     const calls = readFileSync(logPath, 'utf8');
     assert.match(calls, new RegExp(`mcp add --transport http --scope user kyrpy-uiux .* \\| env=${KEY}`));
     assert.match(calls, /mcp get kyrpy-uiux/);
-    const leakScan = spawnSync('bash', ['-c', 'grep -rn "kud_live_" . || true'], { cwd: repoDir, encoding: 'utf8' });
-    assert.equal(leakScan.stdout.trim(), '', 'zero plaintext API keys remain anywhere in the repository directory');
+    // Verify .claude agentic folder structure and bootstrap files were created cleanly
+    assert.equal(existsSync(join(repoDir, '.claude', 'agents')), true, '.claude/agents created');
+    assert.equal(existsSync(join(repoDir, '.claude', 'skills', 'kyrpy-skill-uiux-designer', 'references')), true, '.claude/skills/.../references created');
+    assert.equal(existsSync(join(repoDir, '.claude', 'rules', 'kyrpy-uiux.md')), true, '.claude/rules/kyrpy-uiux.md created');
+    assert.equal(existsSync(join(repoDir, '.claude', 'commands', 'uiux-init.md')), true, '.claude/commands/uiux-init.md created');
+    assert.equal(JSON.parse(readFileSync(join(repoDir, '.uiux', 'agent-bootstrap.json'), 'utf8')).platform, 'claude');
+
+    // 5. Verify Antigravity (agy) connect-antigravity.sh creates .agents/ hierarchy + preserves existing files on re-run
+    const agyRepo = join(dir, 'agy-repo');
+    mkdirSync(agyRepo, { recursive: true });
+    const agyScript = setupAsFile(buildClientSetup({ client: 'antigravity', url: URL, key: KEY, shell: 'posix', keyKind: 'account', projectKey: 'demo-app' }));
+    const agyScriptPath = join(agyRepo, agyScript.filename);
+    writeFileSync(agyScriptPath, agyScript.text, { mode: 0o700 });
+    const agyRun = spawnSync('bash', [agyScriptPath], {
+      cwd: agyRepo,
+      env: { PATH: '/usr/bin:/bin', HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.equal(agyRun.status, 0, `agy exit 0:\nstdout=${agyRun.stdout}\nstderr=${agyRun.stderr}`);
+    assert.equal(existsSync(agyScriptPath), false, 'connect-antigravity.sh permanently deleted itself');
+    assert.equal(existsSync(join(agyRepo, '.agents', 'agents', 'kyrpy-uiux-designer')), true, '.agents/agents/kyrpy-uiux-designer created');
+    assert.equal(existsSync(join(agyRepo, '.agents', 'skills', 'kyrpy-skill-uiux-designer', 'references')), true, '.agents/skills/.../references created');
+    assert.match(readFileSync(join(agyRepo, '.agents', 'rules', 'kyrpy-uiux.md'), 'utf8'), /"platform": "antigravity"/);
+    assert.match(readFileSync(join(agyRepo, '.agents', 'workflows', 'uiux-init.md'), 'utf8'), /uiux_init/);
+    const agyMeta = JSON.parse(readFileSync(join(agyRepo, '.uiux', 'agent-bootstrap.json'), 'utf8'));
+    assert.equal(agyMeta.platform, 'antigravity');
+    assert.equal(agyMeta.project, 'demo-app');
+
+    // Re-running after user edits .agents/rules/kyrpy-uiux.md must NOT overwrite the existing file
+    writeFileSync(join(agyRepo, '.agents', 'rules', 'kyrpy-uiux.md'), '# custom rule\n');
+    writeFileSync(agyScriptPath, agyScript.text, { mode: 0o700 });
+    const agyRerun = spawnSync('bash', [agyScriptPath], {
+      cwd: agyRepo,
+      env: { PATH: '/usr/bin:/bin', HOME: dir, KYRPY_UIUX_ETC_DIR: etcDir, KYRPY_UIUX_ASSUME_ADMIN: '1' },
+      encoding: 'utf8'
+    });
+    assert.equal(agyRerun.status, 0);
+    assert.equal(readFileSync(join(agyRepo, '.agents', 'rules', 'kyrpy-uiux.md'), 'utf8'), '# custom rule\n', 'existing rule file preserved');
+
+    for (const target of [repoDir, agyRepo]) {
+      const leakScan = spawnSync('bash', ['-c', 'grep -rnE "kud_(live|test)_" . || true'], { cwd: target, encoding: 'utf8' });
+      assert.equal(leakScan.stdout.trim(), '', 'zero plaintext API keys remain anywhere in the repository directory');
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('agenticScaffoldFor aligns 1:1 with CLIENT_PLATFORM across every supported coding client', async () => {
+  const { agenticScaffoldFor } = await import('../interfaces/web/client-setup.js');
+  const { CLIENT_PLATFORM } = await import('../domain/ai-pack-templates.js');
+  const expectedRoots = {
+    'claude-code': '.claude/',
+    antigravity: '.agents/',
+    gemini: '.gemini/ + .agents/',
+    cursor: '.cursor/',
+    vscode: '.vscode/ + .github/ + .agents/',
+    windsurf: '.windsurf/',
+    cline: '.clinerules/',
+    codex: '.agents/ + AGENTS.md',
+    opencode: '.agents/ + AGENTS.md',
+    zed: '.agents/ + AGENTS.md',
+    'claude-desktop': 'docs/uiux/',
+    bridge: 'docs/uiux/',
+    generic: 'docs/uiux/'
+  };
+  for (const c of CLIENTS) {
+    const sc = agenticScaffoldFor(c.id, { projectKey: 'my-app', url: URL });
+    assert.equal(sc.platform, CLIENT_PLATFORM[c.id], `${c.id} platform parity`);
+    assert.equal(sc.rootLabel, expectedRoots[c.id], `${c.id} rootLabel`);
+    assert.ok(sc.dirs.includes('.uiux'), `${c.id} includes .uiux`);
+    assert.ok(sc.files.some(f => f.path === '.uiux/agent-bootstrap.json'), `${c.id} includes agent-bootstrap.json`);
   }
 });

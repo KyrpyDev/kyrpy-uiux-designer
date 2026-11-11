@@ -114,9 +114,18 @@ claude mcp add --transport http kyrpy-uiux http://127.0.0.1:5180/mcp --header "A
 
 ## M3 — AI pack + `uiux_init`
 
-- **`ai_artifacts`** holds the agent (`kyrpy-uiux-designer`) and skill (`kyrpy-skill-uiux-designer`) templates. The built-in ones are seeded from `domain/ai-pack-templates.js` and refresh when `TEMPLATE_VERSION` grows. Owners can override a body per project, admins can edit the global one, and user edits are never overwritten by the seed.
-- **Platforms:** `claude` (`.claude/agents`, `.claude/skills`), `antigravity` (`.agents/…`), `agents-md` (a marked section in `AGENTS.md`), `cursor` (`.cursor/rules/*.mdc`), `generic` (`docs/uiux/*.md`).
-- **`uiux_init`** returns an install plan:
+- **`ai_artifacts`** holds the agent (`kyrpy-uiux-designer`) and skill (`kyrpy-skill-uiux-designer`) templates (`TEMPLATE_VERSION = 10`). The built-in ones are seeded from `domain/ai-pack-templates.js` and refresh when `TEMPLATE_VERSION` grows. Owners can override a body per project, admins can edit the global one, and user edits are never overwritten by the seed.
+- **Platforms (9 native agentic layouts, auto-inferred from `client` when `platform` is omitted):**
+  - `antigravity` (`.agents/agents/kyrpy-uiux-designer/agent.md`, `.agents/skills/kyrpy-skill-uiux-designer/SKILL.md`, `references/tool-playbook.md`, `.agents/rules/kyrpy-uiux.md`, `.agents/workflows/uiux-sync.md`)
+  - `claude` (`.claude/agents/kyrpy-uiux-designer.md`, `.claude/skills/kyrpy-skill-uiux-designer/SKILL.md`, `references/tool-playbook.md`, `.claude/rules/kyrpy-uiux.md`, `.claude/commands/uiux-sync.md`)
+  - `gemini` (marked section in `GEMINI.md` + `.agents/skills/kyrpy-skill-uiux-designer/SKILL.md` + `references/tool-playbook.md`)
+  - `cursor` (`.cursor/rules/kyrpy-uiux-designer.mdc`, `.cursor/rules/kyrpy-uiux-rules.mdc`, `.cursor/rules/kyrpy-uiux-playbook.mdc`)
+  - `vscode` (`.github/agents/kyrpy-uiux-designer.agent.md`, `.github/instructions/kyrpy-uiux.instructions.md`, `.github/prompts/uiux-sync.prompt.md`, `.agents/skills/...`)
+  - `windsurf` (`.windsurf/rules/*.md`, `.windsurf/workflows/uiux-sync.md`)
+  - `cline` (`.clinerules/01-kyrpy-uiux-designer.md`, `02-kyrpy-skill-uiux-designer.md`, `03-kyrpy-uiux-playbook.md`)
+  - `agents-md` (a marked section in `AGENTS.md`, used by `codex`, `opencode`, `zed`)
+  - `generic` (`docs/uiux/*.md`)
+- **`uiux_init`** returns an install plan plus structured `agenticLayout` (directories + entry files by role) and `agentContext` (`editWorkflow`, scopes, item counts, active styles):
   - pack files plus `.uiux/config.json`, each marked `create` / `update` / `skip` / `conflict`;
   - `.gitignore` lines;
   - a bundle with `curl` → `sha256sum` → `tar` steps, skipped when the `manifestHash` is unchanged;
@@ -320,3 +329,12 @@ Code: `application/design-session-service.js` (focus, edit session, save, save-a
   - **Human-in-the-Loop Network Gate**: MCP calls (`actor.viaMcp === true`) cannot self-approve `capabilities.allowNetwork: true` (`reviewStatus` stays `'needs-human-review'` and CSP stays `connect-src 'none'` until a signed-in human approves in the Designer Inspector).
 - **MCP, REST, Inspector & Export**: tool #55 `uiux_element_script` (`policy`, `verify`, `get`, `set`, `verify_sri`, `remove`), `item.script` on `uiux_create_item` / `uiux_update_item` / `uiux_stage_item` / `uiux_validate_item` / `uiux_get_item` (`json` & sandboxed `html`) / `uiux_restore_version`, `scripts/elements/<key>.mjs` in `BundleService`, `js/elements/<key>.mjs` + `DEV-NOTES.md` in `ExportService`, 6 REST routes (`/api/elements/script-policy`, `/api/elements/:id/script*`), and Designer Inspector panel + live sandbox preview modal.
 - **Sensors**: `tests/mcp-element-script.test.js`.
+
+## M12 — Multi-Agent Platform Layouts, Progressive-Disclosure Skill Context & Client Setup Scaffolding
+
+- **Client-Specific Agentic Scaffolding (`interfaces/web/client-setup.js` → `agenticScaffoldFor`, `scaffoldLines`, `connect-panel.js`)**:
+  - Every generated setup recipe (`Copy all steps`) and self-deleting setup script (`connect-<client>.sh`, `.ps1`, `.cmd`, `.fish`) idempotently creates the selected coding agent's required folder hierarchy and starter bootstrap files (`.agents/` for Antigravity, `.claude/` for Claude Code, `.gemini/` + `.agents/` for Gemini CLI, `.cursor/rules/` for Cursor, `.vscode/` + `.github/` + `.agents/` for VS Code Copilot, `.windsurf/` for Windsurf, `.clinerules/` for Cline/Roo Code, `.agents/` + `AGENTS.md` bootstrap for Codex/opencode/Zed, and `docs/uiux/` for generic clients) plus `.uiux/agent-bootstrap.json` — preserving `$SUDO_USER` ownership under `sudo` and never writing API keys into repository files.
+- **Improved `uiux_init` & Progressive-Disclosure Skill Context (`domain/ai-pack-templates.js` `TEMPLATE_VERSION = 10`, `domain/ai-pack-render.js`, `application/ai-pack-service.js`)**:
+  - Bidirectional `CLIENT_PLATFORM` / `PLATFORM_CLIENT` resolution auto-selects the proper platform layout whenever `client` is passed without `platform`.
+  - Ships concise workspace guardrails (`rules/kyrpy-uiux.md`), a fast-scanning `SKILL.md` decision tree (key write-path matrix, unified `hub-menu` & mechanism-aware `labelPosition`, graphic tools, sandboxed element scripts), an on-demand `references/tool-playbook.md`, and `/uiux-sync` slash commands/workflows, alongside `agenticLayout` and `agentContext` metadata in `uiux_init`.
+- **Sensors**: `tests/client-setup.test.js`, `tests/mcp-m3.test.js`.

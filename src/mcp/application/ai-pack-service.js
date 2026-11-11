@@ -1,9 +1,10 @@
 /**
  * AI pack + init use cases.
  *
- *  - render():  the project's agent/skill files for a client platform (templates from ai_artifacts)
+ *  - render():  the project's agent/skill/rule/playbook/workflow files for a client platform (templates from ai_artifacts)
  *  - init():    an install plan for an app repository: pack files with create/update/skip/conflict actions,
- *               .uiux/config.json, .gitignore lines, a bundle, the lockfile to write, and ordered steps
+ *               .uiux/config.json, .gitignore lines, agenticLayout + agentContext metadata, a bundle, the lockfile
+ *               to write, and ordered steps
  *  - template overrides per project (owner/admin) and global edits (admin)
  *
  * Local edits are never overwritten silently: when the checksum of a file on disk differs from the checksum
@@ -11,13 +12,14 @@
  */
 import { createHash } from 'node:crypto';
 import { ValidationError, ForbiddenError, NotFoundError } from '../../domain/errors.js';
-import { AGENT_NAME, SKILL_NAME, PLATFORMS } from '../domain/ai-pack-templates.js';
-import { renderTemplate, platformFiles, reversePackFiles, sectionBlock, SECTION_MARKER } from '../domain/ai-pack-render.js';
+import { AGENT_NAME, SKILL_NAME, PLATFORMS, PLATFORM_CLIENT, CLIENT_PLATFORM } from '../domain/ai-pack-templates.js';
+import { renderTemplate, platformFiles, platformLayoutInfo, reversePackFiles, sectionBlock, SECTION_MARKER } from '../domain/ai-pack-render.js';
 import { REVERSE_PACK, REVERSE_AGENT_NAME, REVERSE_SKILL_NAME, REVERSE_WORKDIR } from '../domain/reverse-pack-templates.js';
 import { SCHEMA_VERSION } from './design-query-service.js';
 import { initPromptMd, cleanAppInfo } from '../domain/init-prompt.js';
 import { BUTTON_STYLES } from '../../domain/entities.js';
 
+export { PLATFORM_CLIENT, CLIENT_PLATFORM };
 export const UIUX_ROOTS = ['uiux', 'themes'];
 /** Optional packs a repository can add to the designer pack (uiux_init / uiux_check_update `packs`). */
 export const EXTRA_PACKS = [REVERSE_PACK];
@@ -28,8 +30,6 @@ export const LOCKFILE_PATH = '.uiux/uiux.lock.json';
 export const CONFIG_PATH = '.uiux/config.json';
 export const INIT_PROMPT_PATH = 'init-prompt.md';
 export const GITIGNORE_LINES = ['.uiux/cache/', '*.uiux-new', 'connect-*.sh', 'connect-*.ps1', 'connect-*.cmd', 'connect-*.fish'];
-/** Default MCP client recipe for a pack platform (see interfaces/web/client-setup.js CLIENTS). */
-export const PLATFORM_CLIENT = { claude: 'claude-code', antigravity: 'antigravity', cursor: 'cursor', 'agents-md': 'codex', generic: 'generic' };
 
 export class AiPackService {
   /** @param {{artifacts: import('../infrastructure/sqlite/ai-artifact-repository.js').AiArtifactRepository, query: any, bundles: any, projects: any, auth: any}} d */
@@ -49,15 +49,16 @@ export class AiPackService {
     return [schema.defaultStyle, ...(pair && all.includes(pair) ? [pair] : [])];
   }
 
-  #options({ platform = 'claude', framework = '', uiuxRoot = 'uiux', styles, packs } = {}) {
-    if (!PLATFORMS.includes(platform)) throw new ValidationError(`platform must be one of ${PLATFORMS.join(', ')}`);
+  #options({ platform, client, framework = '', uiuxRoot = 'uiux', styles, packs } = {}) {
+    const resolvedPlatform = platform || CLIENT_PLATFORM[client] || 'claude';
+    if (!PLATFORMS.includes(resolvedPlatform)) throw new ValidationError(`platform must be one of ${PLATFORMS.join(', ')}`);
     if (!UIUX_ROOTS.includes(uiuxRoot)) throw new ValidationError(`uiuxRoot must be one of ${UIUX_ROOTS.join(', ')}`);
     const fw = String(framework || '').trim();
     if (fw.length > 40 || /[<>`{}]/.test(fw)) throw new ValidationError('framework must be a short plain name (for example "react", "flutter")');
     const extra = [...new Set(Array.isArray(packs) ? packs : [])];
     const bad = extra.filter(p => !EXTRA_PACKS.includes(p));
     if (bad.length) throw new ValidationError(`unknown pack(s): ${bad.join(', ')}; available: ${EXTRA_PACKS.join(', ')}`);
-    return { platform, framework: fw, uiuxRoot, styles: this.#styles(styles), packs: extra };
+    return { platform: resolvedPlatform, framework: fw, uiuxRoot, styles: this.#styles(styles), packs: extra };
   }
 
   #bodies(projectId) {
@@ -90,7 +91,8 @@ export class AiPackService {
     const label = a => (a.scope === 'project' ? `${this.artifacts.global(a.kind, a.name)?.version || 0}.p${a.version}` : String(a.version));
     const laid = platformFiles(o.platform, {
       agent: renderTemplate(agent.template, { ...vars, packVersion: label(agent) }),
-      skill: renderTemplate(skill.template, { ...vars, packVersion: label(skill) })
+      skill: renderTemplate(skill.template, { ...vars, packVersion: label(skill) }),
+      vars
     });
     if (o.packs.includes(REVERSE_PACK)) {
       if (!reverse.agent || !reverse.skill) throw new NotFoundError('ai pack template', REVERSE_PACK);
@@ -102,7 +104,13 @@ export class AiPackService {
     const files = laid
       .map(f => {
         const content = f.mode === 'section' ? sectionBlock(f.marker, f.content) : f.content;
-        return { path: f.path, mode: f.mode, ...(f.marker ? { marker: f.marker } : {}), ...(f.pack ? { pack: f.pack } : {}), content, checksum: sha(content) };
+        return {
+          path: f.path, mode: f.mode,
+          ...(f.role ? { role: f.role } : {}),
+          ...(f.marker ? { marker: f.marker } : {}),
+          ...(f.pack ? { pack: f.pack } : {}),
+          content, checksum: sha(content)
+        };
       });
     return { platform: o.platform, packVersion, schemaVersion: SCHEMA_VERSION, options: o, files };
   }
@@ -118,7 +126,7 @@ export class AiPackService {
    *                       packs   (optional packs, e.g. ['reverse-engineer']),
    *                       app     ({ source, platform }: the app to reverse-engineer; never login details) }
    */
-  init(principal, args = {}, { baseUrl, createBundle }) {
+  init(principal, args = {}, { baseUrl, createBundle, toolsHash = null, headVersion = null }) {
     const pack = this.render(principal, args, { baseUrl });
     const o = pack.options;
     const installed = new Map((args.installed || []).map(i => [i.path, i]));
@@ -179,6 +187,8 @@ export class AiPackService {
       project: { key: principal.project.key, name: principal.project.name },
       schemaVersion: SCHEMA_VERSION,
       manifestHash: bundle ? bundle.manifestHash : (args.manifestHash || manifest.manifestHash),
+      ...(headVersion != null ? { version: headVersion } : {}),
+      ...(toolsHash ? { toolsHash } : {}),
       styles: o.styles, allStyles: bundle ? true : undefined, uiuxRoot: o.uiuxRoot, adapters: ['web'],
       pack: {
         platform: o.platform, version: pack.packVersion, ...(o.packs.length ? { packs: o.packs } : {}),
@@ -188,14 +198,49 @@ export class AiPackService {
       installedAt: new Date().toISOString()
     };
 
+    const layout = platformLayoutInfo(o.platform);
+    const byRole = role => pack.files.find(f => f.role === role)?.path || null;
+    const agenticLayout = {
+      platform: o.platform,
+      client,
+      rootDir: layout.rootDir,
+      directories: layout.directories,
+      entryFiles: {
+        agent: byRole('agent'),
+        skill: byRole('skill'),
+        playbook: byRole('playbook'),
+        rule: byRole('rule'),
+        workflow: byRole('workflow')
+      }
+    };
+    const scopes = Array.isArray(principal.scopes) && principal.scopes.length ? principal.scopes : ['read'];
+    const editWorkflow = principal.strict
+      ? 'direct-design-session'
+      : scopes.includes('propose')
+        ? 'reviewed-changeset'
+        : 'read-only';
+    const agentContext = {
+      keyKind,
+      scopes,
+      editWorkflow,
+      canAccessPublicLibrary: scopes.includes('read'),
+      projectCounts: manifest.counts || {},
+      totalItems: manifest.total ?? 0,
+      manifestHash: manifest.manifestHash,
+      activeStyles: o.styles,
+      defaultStyle: o.styles[0]
+    };
+
     const root = o.uiuxRoot;
+    const loadPaths = [agenticLayout.entryFiles.rule, agenticLayout.entryFiles.skill, agenticLayout.entryFiles.agent].filter(Boolean);
     const steps = [
-      `Write every entry of files[] whose action is "create" or "update" to its path with exactly the given content (create folders as needed). For mode "section", replace the text between "<!-- ${SECTION_MARKER}:start -->" and "<!-- ${SECTION_MARKER}:end -->" in that file, or append the block (create the file if it does not exist). Skip "skip" entries.`,
+      `Ensure the ${o.platform} agentic directories exist (${layout.directories.join(', ')}), then write every entry of files[] whose action is "create" or "update" to its path with exactly the given content. For mode "section", replace the text between "<!-- ${SECTION_MARKER}:start -->" and "<!-- ${SECTION_MARKER}:end -->" in that file, or append the block (create the file if it does not exist). Skip "skip" entries.`,
       'For every "conflict" entry write the content to writeTo instead, do not touch the original file, and tell the human which files need a manual merge.',
+      ...(loadPaths.length ? [`Load the installed ${o.platform} skill context now (${loadPaths.join(', ')}) so this session follows the latest rules and decision trees immediately${agenticLayout.entryFiles.playbook ? `; consult ${agenticLayout.entryFiles.playbook} on demand for deep JSON schemas, menu mechanisms, graphic tools, and sandboxed element scripts` : ''}.`] : []),
       `Add the lines of gitignore[] to .gitignore if they are missing.`,
       ...(o.packs.includes(REVERSE_PACK) ? [`The reverse-engineering agent "${REVERSE_AGENT_NAME}" and skill "${REVERSE_SKILL_NAME}" are in files[] (pack "${REVERSE_PACK}"). After writing them, READ both files now and follow them in THIS session — do not wait for a restart of the client to load them. Pass packs: ["${REVERSE_PACK}"] on later uiux_init / uiux_check_update calls so they stay up to date.`] : []),
       ...(mcpSetup ? [keyKind === 'account'
-        ? `This is an ACCOUNT key (one key for all of the user's projects). Pass "project": "${principal.project.key}" (from .uiux/config.json → project) on every uiux_* call made for this repository.`
+        ? `This is an ACCOUNT key (one key for all of the user's projects; edit workflow: ${editWorkflow}). Pass "project": "${principal.project.key}" (from .uiux/config.json → project) on every uiux_* call made for this repository.`
         : `MCP client for this repository: mcpSetup.steps show how the human keeps THIS project's key per repository (${mcpSetup.keyKind === 'project' ? 'local scope / .envrc / .gemini/.env' : 'user scope'}). You never see or write the key: show the steps to the human if the connection must be set up for teammates or another client.`] : []),
       ...(bundle ? [
         `Download and unpack the design bundle by running bundle.install in order (it replaces ${root}/source/). On macOS use "shasum -a 256 -c" instead of "sha256sum -c". On Windows run bundle.installByShell.powershell (PowerShell) or bundle.installByShell.cmd (cmd) instead: the same steps with curl.exe, tar.exe and Get-FileHash / certutil.`,
@@ -203,11 +248,13 @@ export class AiPackService {
       ] : ['The design is already up to date (manifestHash unchanged): no download needed.']),
       `Write lockfile as JSON to ${LOCKFILE_PATH}.`,
       'Check that no API key was written anywhere: `grep -rn "kud_live_\\|kud_test_" . --exclude-dir=node_modules --exclude-dir=.git` must print nothing.',
-      'Report to the human: files created/updated/conflicting, styles installed, item counts, and that they can now ask for "pull design updates".'
+      'Report to the human: agentic layout installed, files created/updated/conflicting, styles installed, item counts, and that they can now ask for "pull design updates" (or run /uiux-sync where supported).'
     ];
 
     return {
       project: principal.project, platform: o.platform, packVersion: pack.packVersion, schemaVersion: SCHEMA_VERSION,
+      agenticLayout,
+      agentContext,
       summary: {
         create: files.filter(f => f.action === 'create').length, update: files.filter(f => f.action === 'update').length,
         skip: files.filter(f => f.action === 'skip').length, conflict: files.filter(f => f.action === 'conflict').length,
@@ -227,7 +274,7 @@ export class AiPackService {
    * `toolsHash` is supplied by the caller (tools.js) and compared with the lockfile's.
    */
   checkUpdate(principal, args = {}, { baseUrl, toolsHash }) {
-    const plan = this.init(principal, { ...args, includeBundle: false }, { baseUrl, createBundle: () => null });
+    const plan = this.init(principal, { ...args, includeBundle: false }, { baseUrl, createBundle: () => null, toolsHash });
     const manifest = this.query.manifestPage(principal, { limit: 1 });
     const packChanged = plan.files.filter(f => f.action === 'create' || f.action === 'update').map(f => ({ path: f.path, action: f.action }));
     const conflicts = plan.files.filter(f => f.action === 'conflict').map(f => f.path);
@@ -235,7 +282,7 @@ export class AiPackService {
     const toolsChanged = Boolean(args.toolsHash) && args.toolsHash !== toolsHash;
     const updateAvailable = packChanged.length > 0 || conflicts.length > 0 || designChanged || toolsChanged || !args.toolsHash;
     return {
-      updateAvailable, packVersion: plan.packVersion, schemaVersion: plan.schemaVersion, toolsHash, manifestHash: manifest.manifestHash,
+      updateAvailable, platform: plan.platform, packVersion: plan.packVersion, schemaVersion: plan.schemaVersion, toolsHash, manifestHash: manifest.manifestHash,
       packChanged, conflicts, designChanged, toolsChanged,
       next: updateAvailable
         ? 'Call uiux_init with the same installed list, apply its steps (pack files, config, bundle), then write the returned lockfile (it records toolsHash).'

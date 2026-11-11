@@ -93,10 +93,25 @@ test('M3: template engine and platform layouts', () => {
     assert.ok(files.length >= 1, p);
     assert.ok(files.every(f => !f.path.startsWith('/') && !f.path.includes('..')), p);
   }
-  assert.deepEqual(platformFiles('claude', { agent: 'A', skill: 'S' }).map(f => f.path),
-    ['.claude/agents/kyrpy-uiux-designer.md', '.claude/skills/kyrpy-skill-uiux-designer/SKILL.md']);
+  assert.deepEqual(platformFiles('claude', { agent: 'A', skill: 'S' }).map(f => f.path), [
+    '.claude/agents/kyrpy-uiux-designer.md',
+    '.claude/skills/kyrpy-skill-uiux-designer/SKILL.md',
+    '.claude/skills/kyrpy-skill-uiux-designer/references/tool-playbook.md',
+    '.claude/rules/kyrpy-uiux.md',
+    '.claude/commands/uiux-sync.md'
+  ]);
+  assert.deepEqual(platformFiles('antigravity', { agent: 'A', skill: 'S' }).map(f => f.path), [
+    '.agents/agents/kyrpy-uiux-designer/agent.md',
+    '.agents/skills/kyrpy-skill-uiux-designer/SKILL.md',
+    '.agents/skills/kyrpy-skill-uiux-designer/references/tool-playbook.md',
+    '.agents/rules/kyrpy-uiux.md',
+    '.agents/workflows/uiux-sync.md'
+  ]);
   assert.match(platformFiles('claude', { agent: 'A', skill: 'S' })[0].content, /^---\nname: "kyrpy-uiux-designer"\ndescription: /);
+  assert.match(platformFiles('antigravity', { agent: 'A', skill: 'S' })[0].content, /skills: \["kyrpy-skill-uiux-designer"\]\ninheritMcp: true/);
   assert.equal(platformFiles('agents-md', { agent: 'A', skill: 'S' })[0].mode, 'section');
+  assert.equal(platformFiles('gemini', { agent: 'A', skill: 'S' })[0].mode, 'section');
+  assert.equal(platformFiles('gemini', { agent: 'A', skill: 'S' })[0].path, 'GEMINI.md');
   assert.equal(sectionBlock('m', ' x '), '<!-- m:start -->\nx\n<!-- m:end -->');
   assert.throws(() => platformFiles('vim', { agent: 'A', skill: 'S' }));
 });
@@ -124,8 +139,22 @@ test('M3: init plan for Claude Code renders the project into the agent and skill
     assert.ok(!r.isError, JSON.stringify(r));
     const plan = r.structuredContent;
     assert.deepEqual(plan.files.map(f => `${f.action}:${f.path}`), [
-      'create:.claude/agents/kyrpy-uiux-designer.md', 'create:.claude/skills/kyrpy-skill-uiux-designer/SKILL.md', 'create:.uiux/config.json', 'create:init-prompt.md']);
-    const [agent, skill, config] = plan.files;
+      'create:.claude/agents/kyrpy-uiux-designer.md',
+      'create:.claude/skills/kyrpy-skill-uiux-designer/SKILL.md',
+      'create:.claude/skills/kyrpy-skill-uiux-designer/references/tool-playbook.md',
+      'create:.claude/rules/kyrpy-uiux.md',
+      'create:.claude/commands/uiux-sync.md',
+      'create:.uiux/config.json',
+      'create:init-prompt.md'
+    ]);
+    const agent = plan.files[0], skill = plan.files[1], playbook = plan.files[2];
+    const config = plan.files.find(f => f.path === '.uiux/config.json');
+    assert.equal(plan.agenticLayout.rootDir, '.claude');
+    assert.equal(plan.agenticLayout.entryFiles.playbook, '.claude/skills/kyrpy-skill-uiux-designer/references/tool-playbook.md');
+    assert.equal(plan.agentContext.editWorkflow, 'reviewed-changeset');
+    assert.equal(plan.agentContext.projectCounts.icon, 2);
+    assert.match(playbook.content, /Menu Mechanism Label Resolution/);
+    assert.match(playbook.content, /uiux_element_script/);
     assert.match(agent.content, new RegExp(`project\\s+\\*\\*${w.p.key}\\*\\*`));
     assert.match(agent.content, /\(react\)/);
     assert.match(skill.content, new RegExp(`${w.base.replace(/[.]/g, '\\.')}/mcp`));
@@ -228,5 +257,32 @@ test('M3: prompts and server instructions', async () => {
     assert.match(got.messages[0].content.text, /uiux_init with platform "cursor", framework "react"/);
     assert.equal((await w.rpc('prompts/get', { name: 'init-uiux', arguments: { framework: '"; rm -rf /' } })).error.code, -32602);
     assert.equal((await w.rpc('prompts/get', { name: 'nope' })).error.code, -32602);
+  } finally { w.close(); }
+});
+
+test('M3+: uiux_init auto-selects platform from client and renders clean agentic layouts for all 9 platforms', async () => {
+  const w = await world();
+  try {
+    const cases = [
+      ['antigravity', 'antigravity', '.agents', '.agents/agents/kyrpy-uiux-designer/agent.md'],
+      ['claude-code', 'claude', '.claude', '.claude/agents/kyrpy-uiux-designer.md'],
+      ['gemini', 'gemini', '.gemini', 'GEMINI.md'],
+      ['cursor', 'cursor', '.cursor', '.cursor/rules/kyrpy-uiux-designer.mdc'],
+      ['vscode', 'vscode', '.github', '.github/agents/kyrpy-uiux-designer.agent.md'],
+      ['windsurf', 'windsurf', '.windsurf', '.windsurf/rules/kyrpy-uiux-designer.md'],
+      ['cline', 'cline', '.clinerules', '.clinerules/01-kyrpy-uiux-designer.md'],
+      ['codex', 'agents-md', 'AGENTS.md', 'AGENTS.md'],
+      ['opencode', 'agents-md', 'AGENTS.md', 'AGENTS.md'],
+      ['claude-desktop', 'generic', 'docs/uiux', 'docs/uiux/kyrpy-uiux-designer.md']
+    ];
+    for (const [client, expectedPlatform, expectedRoot, firstFile] of cases) {
+      const plan = (await w.call('uiux_init', { client, includeBundle: false })).structuredContent;
+      assert.equal(plan.platform, expectedPlatform, `${client} -> ${expectedPlatform}`);
+      assert.equal(plan.agenticLayout.rootDir, expectedRoot, `${client} rootDir`);
+      assert.equal(plan.files[0].path, firstFile, `${client} entry file`);
+      for (const f of plan.files) {
+        assert.ok(!/kud_(live|test)_/.test(f.content), `${client}/${f.path}: never contains literal kud_live_ or kud_test_`);
+      }
+    }
   } finally { w.close(); }
 });

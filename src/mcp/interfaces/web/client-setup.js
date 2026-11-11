@@ -76,7 +76,195 @@ export function prereqFor(client, shell = 'posix') {
 
 const json = v => JSON.stringify(v, null, 2);
 const sq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;          // POSIX single quotes
+const fsq = s => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`; // fish single quotes
 const psq = s => `'${String(s).replace(/'/g, "''")}'`;             // PowerShell single quotes
+
+const AGENT_NAME = 'kyrpy-uiux-designer';
+const SKILL_NAME = 'kyrpy-skill-uiux-designer';
+
+/**
+ * Proper agentic folder hierarchy and non-secret bootstrap files for each selected coding agent.
+ * Created idempotently (`if not exists`) in the repository root when running the setup steps or script,
+ * so the agent starts with the right workspace layout (e.g. `.agents/` for Antigravity, `.claude/` for Claude Code)
+ * before `uiux_init` even runs. Never holds an API key.
+ */
+export function agenticScaffoldFor(client = 'claude-code', {
+  serverName = DEFAULT_SERVER_NAME, envVar = DEFAULT_ENV_VAR, projectKey = '', keyKind = 'project', url = ''
+} = {}) {
+  const name = String(serverName || DEFAULT_SERVER_NAME).trim().replace(/[^A-Za-z0-9_.-]/g, '-') || DEFAULT_SERVER_NAME;
+  const ev = String(envVar || DEFAULT_ENV_VAR).trim().replace(/[^A-Za-z0-9_]/g, '_') || DEFAULT_ENV_VAR;
+  const proj = String(projectKey || '').trim().replace(/[^A-Za-z0-9_.-]/g, '');
+  const id = CLIENTS.some(c => c.id === client) ? client : 'claude-code';
+
+  const platformByClient = {
+    'claude-code': 'claude',
+    antigravity: 'antigravity',
+    gemini: 'gemini',
+    cursor: 'cursor',
+    vscode: 'vscode',
+    windsurf: 'windsurf',
+    cline: 'cline',
+    codex: 'agents-md',
+    opencode: 'agents-md',
+    zed: 'agents-md',
+    'claude-desktop': 'generic',
+    bridge: 'generic',
+    generic: 'generic'
+  };
+  const platform = platformByClient[id] || 'generic';
+  const initArgs = `{ "platform": "${platform}", "client": "${id}" }`;
+  const ruleBody = [
+    `# Kyrpy UI/UX Designer (\`${name}\` MCP)`,
+    '',
+    `- **First-time setup**: When \`.uiux/uiux.lock.json\` is missing, call \`uiux_init\` with \`${initArgs}\` on MCP server \`${name}\` and execute \`steps[]\` in order.`,
+    `- **Every session**: Read \`.uiux/uiux.lock.json\` and call \`uiux_check_update\` first; when \`updateAvailable\` is true, call \`uiux_init\` with the \`installed\` checksums.`,
+    proj ? `- **Project**: Bound to \`${proj}\` (${keyKind === 'account' ? `account key — pass "project": "${proj}" on project tools` : 'project key'}).` : `- **Key mode**: ${keyKind === 'account' ? 'Account key (first uiux_init lists projects to choose from)' : 'Project key'}.`,
+    `- **Security**: Never write \`${ev}\` or any \`kud_…\` API key into repository files, commits, or chat.`
+  ].join('\n');
+  const initWorkflowBody = [
+    `Initialize or update the Kyrpy UI/UX Designer pack in this repository via MCP server \`${name}\`:`,
+    '',
+    `1. If \`.uiux/uiux.lock.json\` exists, read \`pack.files\`, \`manifestHash\`, and \`toolsHash\` and compute sha256 checksums of installed pack files.`,
+    `2. Call \`uiux_init\` with \`${initArgs}\` (passing \`installed\` and \`manifestHash\` when updating; for account keys without a chosen project, ask me which mode and project first).`,
+    `3. Apply \`steps[]\` in order, unpack any design bundle, write \`.uiux/uiux.lock.json\`, and verify zero \`kud_…\` keys exist in the workspace (\`grep -rnE "kud_(live|test)_" .\`).`
+  ].join('\n');
+  const metaJson = JSON.stringify({
+    client: id,
+    platform,
+    serverName: name,
+    ...(url ? { mcpUrl: url } : {}),
+    apiKeyEnv: ev,
+    keyKind: keyKind === 'account' ? 'account' : 'project',
+    ...(proj ? { project: proj } : {}),
+    initArgs: { platform, client: id }
+  });
+
+  let rootLabel = 'docs/uiux/';
+  let dirs = ['docs/uiux', '.uiux'];
+  let files = [];
+
+  switch (id) {
+    case 'antigravity':
+      rootLabel = '.agents/';
+      dirs = [`.agents/agents/${AGENT_NAME}`, `.agents/skills/${SKILL_NAME}/references`, '.agents/rules', '.agents/workflows', '.uiux'];
+      files = [
+        { path: '.agents/rules/kyrpy-uiux.md', content: `---\nname: "kyrpy-uiux"\ndescription: "Kyrpy UI/UX Designer MCP bootstrap & session sync rule for Antigravity."\n---\n\n${ruleBody}` },
+        { path: '.agents/workflows/uiux-init.md', content: `---\ndescription: "Initialize or update the Kyrpy UI/UX Designer pack, skills, rules, and design bundle."\n---\n\n${initWorkflowBody}` }
+      ];
+      break;
+    case 'claude-code':
+      rootLabel = '.claude/';
+      dirs = ['.claude/agents', `.claude/skills/${SKILL_NAME}/references`, '.claude/rules', '.claude/commands', '.uiux'];
+      files = [
+        { path: '.claude/rules/kyrpy-uiux.md', content: ruleBody },
+        { path: '.claude/commands/uiux-init.md', content: `---\ndescription: "Initialize or update the Kyrpy UI/UX Designer pack, skills, rules, and design bundle."\n---\n\n${initWorkflowBody}` }
+      ];
+      break;
+    case 'gemini':
+      rootLabel = '.gemini/ + .agents/';
+      dirs = ['.gemini', `.agents/skills/${SKILL_NAME}/references`, '.agents/rules', '.uiux'];
+      files = [
+        { path: '.agents/rules/kyrpy-uiux.md', content: ruleBody }
+      ];
+      break;
+    case 'cursor':
+      rootLabel = '.cursor/';
+      dirs = ['.cursor/rules', '.uiux'];
+      files = [
+        { path: '.cursor/rules/kyrpy-uiux-rules.mdc', content: `---\ndescription: Kyrpy UI/UX Designer MCP bootstrap & session sync rule\nglobs:\nalwaysApply: true\n---\n\n${ruleBody}` }
+      ];
+      break;
+    case 'vscode':
+      rootLabel = '.vscode/ + .github/ + .agents/';
+      dirs = ['.vscode', '.github/agents', '.github/instructions', '.github/prompts', `.agents/skills/${SKILL_NAME}/references`, '.uiux'];
+      files = [
+        { path: '.github/instructions/kyrpy-uiux.instructions.md', content: `---\napplyTo: "**"\n---\n\n${ruleBody}` },
+        { path: '.github/prompts/uiux-init.prompt.md', content: `---\nmode: "agent"\ndescription: "Initialize or update the Kyrpy UI/UX Designer pack and design bundle."\n---\n\n${initWorkflowBody}` }
+      ];
+      break;
+    case 'windsurf':
+      rootLabel = '.windsurf/';
+      dirs = ['.windsurf/rules', '.windsurf/workflows', '.uiux'];
+      files = [
+        { path: '.windsurf/rules/kyrpy-uiux-rules.md', content: `---\ntrigger: "always_on"\ndescription: "Kyrpy UI/UX Designer MCP bootstrap & session sync rule"\n---\n\n${ruleBody}` },
+        { path: '.windsurf/workflows/uiux-init.md', content: `---\ndescription: "Initialize or update the Kyrpy UI/UX Designer pack and design bundle."\n---\n\n${initWorkflowBody}` }
+      ];
+      break;
+    case 'cline':
+      rootLabel = '.clinerules/';
+      dirs = ['.clinerules', '.uiux'];
+      files = [
+        { path: '.clinerules/00-kyrpy-uiux-bootstrap.md', content: ruleBody }
+      ];
+      break;
+    case 'codex':
+    case 'opencode':
+    case 'zed':
+      rootLabel = '.agents/ + AGENTS.md';
+      dirs = [`.agents/skills/${SKILL_NAME}/references`, '.uiux'];
+      files = [
+        { path: `.agents/skills/${SKILL_NAME}/BOOTSTRAP.md`, content: `${ruleBody}\n\n${initWorkflowBody}` }
+      ];
+      break;
+    default:
+      rootLabel = 'docs/uiux/';
+      dirs = ['docs/uiux', '.uiux'];
+      files = [
+        { path: 'docs/uiux/README.md', content: `${ruleBody}\n\n${initWorkflowBody}` }
+      ];
+      break;
+  }
+
+  files.push({ path: '.uiux/agent-bootstrap.json', content: metaJson });
+  const topDirs = [...new Set(dirs.map(d => d.split('/')[0]).filter(Boolean))];
+  return { client: id, platform, rootLabel, dirs, topDirs, files };
+}
+
+/** Shell commands that idempotently create the agentic folder tree + starter files (respecting $SUDO_USER ownership). */
+export function scaffoldLines(shell, scaffold) {
+  if (!scaffold) return '';
+  const { dirs, topDirs, files } = scaffold;
+  if (shell === 'powershell') {
+    const mk = `New-Item -ItemType Directory -Force -Path ${dirs.map(psq).join(', ')} | Out-Null`;
+    const wr = files.map(f => {
+      const lines = String(f.content).split('\n').map(psq).join(', ');
+      return `if (-not (Test-Path -LiteralPath ${psq(f.path)})) { @(${lines}) | Set-Content -LiteralPath ${psq(f.path)} -Encoding UTF8 }`;
+    });
+    return [mk, ...wr].join('\n');
+  }
+  if (shell === 'cmd') {
+    const mk = dirs.map(d => {
+      const w = d.replace(/\//g, '\\');
+      return `if not exist "${w}" mkdir "${w}"`;
+    });
+    const wr = files.map(f => {
+      const w = f.path.replace(/\//g, '\\');
+      const cmds = String(f.content).split('\n').map(line => {
+        if (!line) return 'echo.';
+        const esc = line.replace(/%/g, '%%').replace(/([&|<>^()])/g, '^$1');
+        return `echo:${esc}`;
+      }).join('& ');
+      return `if not exist "${w}" (${cmds})> "${w}"`;
+    });
+    return [...mk, ...wr].join('\n');
+  }
+  if (shell === 'fish') {
+    const mk = `mkdir -p ${dirs.map(fsq).join(' ')}`;
+    const wr = files.map(f => {
+      const args = String(f.content).split('\n').map(fsq).join(' ');
+      return `if not test -e ${fsq(f.path)}; printf '%s\\n' ${args} > ${fsq(f.path)}; end`;
+    });
+    const chown = `if test -n "$SUDO_USER" -a "$SUDO_USER" != "root"; set _uiux_ug "$SUDO_USER:"(id -gn "$SUDO_USER" 2>/dev/null; or echo "$SUDO_USER"); chown -R "$_uiux_ug" ${topDirs.map(fsq).join(' ')} 2>/dev/null; or true; end`;
+    return [mk, ...wr, chown].join('\n');
+  }
+  const mk = `mkdir -p ${dirs.map(sq).join(' ')}`;
+  const wr = files.map(f => {
+    const args = String(f.content).split('\n').map(sq).join(' ');
+    return `if [ ! -e ${sq(f.path)} ]; then printf '%s\\n' ${args} > ${sq(f.path)}; fi`;
+  });
+  const chown = `if [ -n "\${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then _uiux_ug="$SUDO_USER:\$(id -gn "$SUDO_USER" 2>/dev/null || printf '%s' "$SUDO_USER")"; chown -R "$_uiux_ug" ${topDirs.map(sq).join(' ')} 2>/dev/null || true; fi`;
+  return [mk, ...wr, chown].join('\n');
+}
 
 /** Human-readable instruction telling the user how to run the terminal / script as Administrator. */
 export function adminHintFor(shell = 'posix') {
@@ -306,8 +494,18 @@ export function buildClientSetup({
       break;
     }
   }
+  const scaffold = agenticScaffoldFor(info.id, { serverName: name, envVar: ev, projectKey, keyKind: perRepo ? 'project' : 'account', url });
+  if (anyShell) {
+    notes.push(`Select your terminal above (or download the setup script) to also pre-create the ${scaffold.rootLabel} agentic folder structure and bootstrap files automatically.`);
+  } else {
+    steps.push({
+      title: `${n()} Create ${scaffold.rootLabel} agentic folder structure and bootstrap files in this repository`,
+      lang,
+      text: scaffoldLines(shell, scaffold)
+    });
+  }
   const adminHint = adminHintFor(shell);
-  notes.unshift(`${adminHint} so the API key is copied into the system environment variable (${ev}). Downloaded setup scripts permanently remove themselves after all steps finish properly.`);
+  notes.unshift(`${adminHint} so the API key is copied into the system environment variable (${ev}). Downloaded setup scripts also create the ${scaffold.rootLabel} agentic structure and permanently remove themselves after all steps finish properly.`);
   if (steps.some(st => st.path === '.envrc') && info.group === 'IDE') {
     notes.push(`${info.label} sees .envrc only when started from the repository terminal (for example "cursor ." / "code .") or with a direnv extension.`);
   }
@@ -317,13 +515,14 @@ export function buildClientSetup({
   // steps are numbered while they are built and step 0 may be inserted first: number them 1..n once here
   steps.forEach((st, i) => { st.title = st.title.replace(/^\d+\.\s*/, `${i + 1}. `); });
   return {
-    client: info.id, label: info.label, keyMode: mode, keyKind: perRepo ? 'project' : 'account', shell,
+    client: info.id, label: info.label, platform: scaffold.platform, scaffold,
+    keyMode: mode, keyKind: perRepo ? 'project' : 'account', shell,
     envVar: ev, keyValue: value, hasKey, adminHint,
     prereq: prereqFor(info.id, shell), steps, notes,
     gitignore: [...new Set(steps.filter(st => st.secret && st.path).map(st => st.path))],
     prompt: perRepo
-      ? 'Run uiux_init for this project, then follow its steps.'
-      : 'Run uiux_init. It lists my projects with their versions: ask me whether to clone one into a new project or edit one of mine (and which version), then follow its steps.'
+      ? `Run uiux_init with platform "${scaffold.platform}" and client "${info.id}" for this project, then follow its steps.`
+      : `Run uiux_init with platform "${scaffold.platform}" and client "${info.id}". It lists my projects with their versions: ask me whether to clone one into a new project or edit one of mine (and which version), then follow its steps.`
   };
 }
 
@@ -403,7 +602,8 @@ export function setupAsFile(setup) {
     `IMPORTANT — ${f.adminRun}, then run in the repository root:  ${runCmd}`,
     `1. Verifies Administrator / root privileges.`,
     `2. Copies your API key into the system environment variable (${ev}).`,
-    `3. Runs all setup commands and permanently deletes ${filename} after everything finishes properly.`
+    `3. Creates the required ${setup.scaffold?.rootLabel || 'agentic'} folder structure and bootstrap files in this repository.`,
+    `4. Runs all setup commands and permanently deletes ${filename} after everything finishes properly.`
   ].map(l => `${cm}${l}`).join('\n');
 
   const core = setupAsText(setup, { file: true }).trimEnd();

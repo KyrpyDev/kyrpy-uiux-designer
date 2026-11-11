@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { DomainError } from '../../domain/errors.js';
 import { SCHEMA_VERSION } from '../application/design-query-service.js';
 import { GRAPHIC_OPERATIONS } from '../application/studio-tools-service.js';
+import { PLATFORMS } from '../domain/ai-pack-templates.js';
 import { REVERSE_PACK, REVERSE_AGENT_NAME, REVERSE_SKILL_NAME, REVERSE_WORKDIR } from '../domain/reverse-pack-templates.js';
 
 const ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
@@ -15,7 +16,7 @@ const typeProp = { type: 'string', enum: ITEM_TYPES, description: 'Item type.' }
 const typesProp = { type: 'array', items: { type: 'string', enum: ITEM_TYPES }, maxItems: 6, description: 'Limit to these item types (default: all).' };
 const styleProp = str('Style key (for example "liquid" or "liquid-light"); see uiux_get_schema → styles. Default: the designer\'s current style.', { maxLength: 80 });
 
-const PLATFORM_PROP = { type: 'string', enum: ['claude', 'antigravity', 'agents-md', 'cursor', 'generic'], description: 'Your client: claude (Claude Code), antigravity, agents-md (AGENTS.md section), cursor, generic (docs/uiux/*.md). Default claude.' };
+const PLATFORM_PROP = { type: 'string', enum: PLATFORMS, description: 'Target agentic layout: claude (.claude/), antigravity (.agents/), gemini (GEMINI.md + .agents/), cursor (.cursor/rules/), vscode (.github/ + .agents/), windsurf (.windsurf/), cline (.clinerules/), agents-md (AGENTS.md), generic (docs/uiux/). Auto-inferred from `client` when omitted (default claude).' };
 const PACKS_PROP = { type: 'array', items: { type: 'string', enum: [REVERSE_PACK] }, maxItems: 4, description: `Optional packs to install / keep up to date next to the designer pack (from .uiux/config.json → packs). "${REVERSE_PACK}": the ${REVERSE_AGENT_NAME} agent + skill that reverse-engineer a running app into the project (uiux_init mode "reverse" adds it itself).` };
 const CLIENT_IDS = ['claude-code', 'codex', 'gemini', 'antigravity', 'cursor', 'vscode', 'windsurf', 'cline', 'opencode', 'zed', 'claude-desktop', 'bridge', 'generic'];
 
@@ -155,13 +156,16 @@ function initSelection({ principal, accounts, versions }, args) {
 }
 
 function runInit({ principal, aiPack, bundles, limiter, baseUrl, versions }, args) {
-  versions?.ensureHead(principal.project.id);
+  const head = versions ? versions.ensureHead(principal.project.id) : null;
+  const tHash = toolsHash();
   const data = aiPack.init(principal, args, {
     baseUrl,
+    toolsHash: tHash,
+    headVersion: head?.number ?? null,
     createBundle: opts => { takeBundle(limiter, principal); return bundles.create(principal, opts, { baseUrl }); }
   });
-  if (versions && data.lockfile) data.lockfile.version = versions.ensureHead(principal.project.id).number;
-  if (data.lockfile) data.lockfile.toolsHash = toolsHash();
+  if (head && data.lockfile) data.lockfile.version = head.number;
+  if (data.lockfile) data.lockfile.toolsHash = tHash;
   return data;
 }
 
@@ -727,7 +731,7 @@ export const TOOLS = [
         manifestHash: str('manifestHash from the lockfile; skips the bundle when the design is unchanged.', { maxLength: 64 }),
         includeBundle: { type: 'boolean', description: 'Include a design bundle (default true).' },
         packs: PACKS_PROP,
-        client: { type: 'string', enum: CLIENT_IDS, description: 'Your MCP client, for mcpSetup (per-repository key storage + config). Default from platform: claude → claude-code, antigravity, cursor, agents-md → codex, generic.' },
+        client: { type: 'string', enum: CLIENT_IDS, description: 'Your coding agent / MCP client (for mcpSetup and automatic platform layout selection when `platform` is omitted: claude-code → .claude/, antigravity → .agents/, gemini → GEMINI.md + .agents/, cursor → .cursor/, vscode → .github/ + .agents/, windsurf → .windsurf/, cline → .clinerules/, codex / opencode / zed → AGENTS.md, generic → docs/uiux/).' },
         shell: { type: 'string', enum: ['posix', 'powershell', 'fish', 'cmd'], description: 'The human\'s shell for mcpSetup commands (default posix). On Windows pass powershell or cmd, and run bundle.installByShell.<shell> instead of bundle.install.' },
         serverName: str('MCP server name used in the client config (default "kyrpy-uiux"). Use one name per project when a client keeps several projects at user level.', { maxLength: 60 }),
         envVar: str('Environment variable holding the key (default KYRPY_UIUX_API_KEY).', { maxLength: 60 })
@@ -740,7 +744,7 @@ export const TOOLS = [
       const { principal } = ctx;
       const data = runInit(ctx, args);
       const s = data.summary;
-      return { summary: `Install plan for "${principal.project.key}" (${data.platform}, pack v${data.packVersion}): ${s.create} create, ${s.update} update, ${s.skip} unchanged, ${s.conflict} conflict; bundle: ${s.bundle}. Follow steps[] in order.`, data };
+      return { summary: `Install plan for "${principal.project.key}" (${data.platform} → ${data.agenticLayout?.rootDir || data.platform}, pack v${data.packVersion}, ${data.agentContext?.editWorkflow || 'read'}): ${s.create} create, ${s.update} update, ${s.skip} unchanged, ${s.conflict} conflict; bundle: ${s.bundle}. Follow steps[] in order.`, data };
     }
   },
   {
@@ -749,7 +753,12 @@ export const TOOLS = [
     description: 'Returns the rendered agent and skill files of this project for a client platform, with checksums. uiux_init already includes them; use this to compare or to install for a second platform.',
     inputSchema: {
       type: 'object',
-      properties: { platform: PLATFORM_PROP, framework: str('The app stack.', { maxLength: 40 }), uiuxRoot: { type: 'string', enum: ['uiux', 'themes'] } },
+      properties: {
+        platform: PLATFORM_PROP,
+        client: { type: 'string', enum: CLIENT_IDS, description: 'Optional MCP client id (auto-selects `platform` when `platform` is omitted).' },
+        framework: str('The app stack.', { maxLength: 40 }),
+        uiuxRoot: { type: 'string', enum: ['uiux', 'themes'] }
+      },
       additionalProperties: false
     },
     scope: 'read',
@@ -936,6 +945,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         platform: PLATFORM_PROP,
+        client: { type: 'string', enum: CLIENT_IDS, description: 'Optional MCP client id (auto-selects `platform` when `platform` is omitted).' },
         framework: str('The app stack.', { maxLength: 40 }),
         uiuxRoot: { type: 'string', enum: ['uiux', 'themes'] },
         styles: { type: 'array', items: { type: 'string', maxLength: 80 }, maxItems: 40 },

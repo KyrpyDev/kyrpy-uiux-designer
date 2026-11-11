@@ -12,8 +12,8 @@ export const REVERSE_SKILL_NAME = 'kyrpy-skill-uiux-reverse-engineer';
 /** Local working folder of a reverse-engineering run (inside the git-ignored .uiux/cache/). */
 export const REVERSE_WORKDIR = '.uiux/cache/reverse';
 
-export const REVERSE_AGENT_DESC = 'Reverse-engineers a running app (Android APK on an emulator, or a web app) into the Kyrpy UI/UX Designer: sets up the emulator, installs and signs in to the app, visits every screen, menu and popup, and pushes icons, buttons, elements, screens and workflows with full developer descriptions into the user\'s project.';
-export const REVERSE_SKILL_DESC = 'Reverse-engineer an existing app into a Kyrpy UI/UX Designer project over MCP (kyrpy-uiux): emulator setup, APK download and install, systematic UI crawl, mapping to items (name, label, key, actions, popups, screen names, descriptionDev) and the push order. Use when asked to reverse-engineer, capture or document an existing app.';
+export const REVERSE_AGENT_DESC = 'Reverse-engineers a running app (Android APK on an emulator, or a web app) into the Kyrpy UI/UX Designer: sets up the emulator, installs and signs in to the app, crawls every screen, menu and popup, reuses public library items where appropriate, and pushes icons, buttons, elements, screens and workflows with full developer descriptions into the user\'s project.';
+export const REVERSE_SKILL_DESC = 'Reverse-engineer an existing Android APK or web app into a Kyrpy UI/UX Designer project over MCP (kyrpy-uiux): emulator setup, APK download and install, systematic UI crawl, mapping to items (name, label, key, menu orientation/labels, actions, popups, sandboxed element scripts, screen names, descriptionDev) and ordered push. Activate when asked to reverse-engineer, crawl, capture or document an existing app.';
 
 export const REVERSE_AGENT = `# {{reverseAgentName}} — app reverse-engineering agent for "{{projectName}}"
 
@@ -120,8 +120,8 @@ Call \`uiux_get_schema\` once, then \`uiux_get_schema { table: "nodes" }\` for t
 | Seen in the app | Item type | Notes |
 |---|---|---|
 | Glyph used on controls (back arrow, search, more, tab icons) | \`icon\` | 24×24 grid; send \`svg\` (viewBox \`0 0 24 24\`) redrawn as simple strokes, or reuse a library icon |
-| One tappable control (primary / text / icon button, FAB, chip, switch, tab) | \`button\` | height ≥ 44; a control that opens choices carries them in \`menuItems\` |
-| A reusable block (app bar, bottom bar, list row, card, form field, empty state) | \`element\` | instance nodes reference its buttons and icons |
+| One tappable control (primary / text / icon button, FAB, chip, switch, tab, launcher menu) | \`button\` | height ≥ 44; a control that opens choices carries \`menu: { kind, orientation: "horizontal" \| "vertical", showLabels, labelPosition: "auto" \| "beside" \| "over" }\` + \`menuItems\` (use unified \`hub-menu\` via \`uiux_copy_item_to_project\` for expandable hub menus — never split horizontal/vertical into duplicate items) |
+| A reusable block (app bar, bottom bar, list row, card, form field, empty state) | \`element\` | instance nodes reference its buttons and icons; reuse/copy public elements via \`uiux_public_library\` / \`uiux_use_public_element\` when matching |
 | Dialog, bottom sheet, picker, snackbar, side drawer, context menu | \`element\` | opened by an action of the control that shows it (below) |
 | One distinct screen (signature) | \`screen\` | \`width\` / \`height\` = the device size in dp; instance nodes reference elements and buttons |
 | How screens connect (per feature area, and one overview) | \`workflow\` | \`screens[]\` + \`links[]\` |

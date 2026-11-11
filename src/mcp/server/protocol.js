@@ -13,7 +13,7 @@ export const SERVER_INFO = { name: 'kyrpy-uiux-mcp', title: 'Kyrpy UI/UX Designe
 
 export const INSTRUCTIONS = `Kyrpy UI/UX Designer — the design system of one project, for coding agents.
 00. EVERY session, first: if .uiux/uiux.lock.json exists call uiux_check_update (installed checksums, manifestHash, toolsHash from the lockfile); when updateAvailable, run uiux_init with the same installed list. If init-prompt.md exists in the repository root, follow it.
-0. In a repository without .uiux/uiux.lock.json, call uiux_init and follow its steps (installs the kyrpy-uiux-designer agent and skill).
+0. In a repository without .uiux/uiux.lock.json, call uiux_init with your platform / client (e.g. antigravity → .agents/, claude → .claude/, gemini → GEMINI.md + .agents/, cursor → .cursor/, vscode → .github/ + .agents/, windsurf → .windsurf/, cline → .clinerules/, agents-md → AGENTS.md) and follow its steps (installs the kyrpy-uiux-designer agent, skill, progressive-disclosure tool playbook, workspace rule, and sync workflow).
    ACCOUNT keys (one key for all of the user's projects): the first uiux_init returns the projects with their versions — ASK THE HUMAN to choose DOWNLOAD (read-only copy of any visible project), CLONE (new project of theirs from any visible design) or EDIT (one of their own projects at a version), then call uiux_init again with { mode, project, version }.
 1. Call uiux_get_schema once to learn the rules (hierarchy, naming, ratios, styles).
 2. Before creating any UI item, call uiux_search_items; reuse or clone what exists.
@@ -39,13 +39,13 @@ export const PROMPTS = [
     title: 'Install the UI/UX design pack',
     description: 'Installs or updates the kyrpy-uiux-designer agent, skill, config and design files in this repository.',
     arguments: [
-      { name: 'platform', description: 'claude | antigravity | agents-md | cursor | generic (default claude)', required: false },
+      { name: 'platform', description: 'claude | antigravity | gemini | cursor | vscode | windsurf | cline | agents-md | generic (default claude)', required: false },
       { name: 'framework', description: 'App stack, for example react or flutter', required: false }
     ],
     text: a => `Install or update the Kyrpy UI/UX design pack in this repository.
-1. If .uiux/uiux.lock.json exists, read it and compute the sha256 of each file listed in pack.files (for AGENTS.md: of the block between the kyrpy-uiux markers).
+1. If .uiux/uiux.lock.json exists, read it and compute the sha256 of each file listed in pack.files (for AGENTS.md or GEMINI.md: of the block between the kyrpy-uiux markers).
 2. Call the MCP tool uiux_init with platform "${a.platform || 'claude'}"${a.framework ? `, framework "${a.framework}"` : ''}, the installed files (path, recordedChecksum, currentChecksum) and the lockfile manifestHash.
-3. Follow the returned steps[] exactly and in order. Never write the API key into any file.
+3. Follow the returned steps[] exactly and in order (including creating the platform's agentic folders and loading the installed rule/skill files). Never write the API key into any file.
 4. Report what was installed or updated and any conflicts that need a manual merge.`
   },
   {
