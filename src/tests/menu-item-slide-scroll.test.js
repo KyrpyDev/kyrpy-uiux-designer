@@ -18,3 +18,15 @@ test('per item slide-scroll: only the switched-on item scrolls, with its own con
   assert.doesNotMatch(svg, /data-target-repeater="7"/);
   assert.match(svg, /class="rm-hit"[^>]*data-hub-center-scroll="0"/);
 });
+
+import { fitNodesToScreen } from '../domain/geometry.js';
+test('device preview: a card filling its repeater keeps the repeater margins on a wider screen', () => {
+  const nodes = [
+    { id: 1, kind: 'instance', tag: 'use', attrs: { x: 16, y: 96, width: 358, height: 648 } },
+    { id: 2, parentId: 1, kind: 'instance', tag: 'use', attrs: { x: 28, y: 108, width: 334, height: 94 } }
+  ];
+  const p = new Map(fitNodesToScreen(nodes, { w: 390, h: 844 }, { w: 412, h: 915 }).map(r => [r.id, r.attrs]));
+  const c = p.get(1), k = p.get(2);
+  assert.ok(Math.abs((Number(k.x) - Number(c.x)) - 12) < 0.5);
+  assert.ok(Math.abs((Number(c.x) + Number(c.width)) - (Number(k.x) + Number(k.width)) - 12) < 0.5);
+});

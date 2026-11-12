@@ -207,15 +207,31 @@ export function fitNodesToScreen(nodes, from, to, { span = 0.9 } = {}) {
   const sx = to.w / fw, sy = to.h / fh, s = Math.min(sx, sy);
   const byId = new Map(nodes.map(n => [n.id, n]));
   const inGroup = n => { for (let p = byId.get(n.parentId), i = 0; p && i < 64; p = byId.get(p.parentId), i++) if (p.tag === 'g') return true; return false; };
+  const boxes = new Map();                       // id -> [old box, new box]
+  const place = n => {
+    if (boxes.has(n.id)) return boxes.get(n.id);
+    const b = nodeBBox(n, nodes);
+    const fullW = b.w >= fw * span, fullH = b.h >= fh * span;
+    let w = b.w * (fullW ? sx : s), h = b.h * (fullH ? sy : s);
+    let x = fullW ? b.x * sx : (b.x + b.w / 2) * sx - w / 2;
+    let y = fullH ? b.y * sy : (b.y + b.h / 2) * sy - h / 2;
+    // a sub item filling (almost) the width / height of its container (e.g. a repeater's card template) keeps the container's
+    // margins: it grows / shrinks with the container instead of by the screen factor (no clipped cards on a wider device)
+    const par = n.parentId != null ? byId.get(n.parentId) : null;
+    if (par && par.tag !== 'g') {
+      const [pb, pn] = place(par);
+      if (pb.w > 0 && b.w >= pb.w * span) { w = Math.max(1, b.w + (pn.w - pb.w)); x = pn.x + (b.x - pb.x); }
+      if (pb.h > 0 && b.h >= pb.h * span) { h = Math.max(1, b.h + (pn.h - pb.h)); y = pn.y + (b.y - pb.y); }
+    }
+    const r = [b, { x, y, w, h }];
+    boxes.set(n.id, r);
+    return r;
+  };
   const out = [];
   for (const n of nodes) {
     if (inGroup(n)) continue;
-    const b = nodeBBox(n, nodes);
-    const fullW = b.w >= fw * span, fullH = b.h >= fh * span;
-    const w = b.w * (fullW ? sx : s), h = b.h * (fullH ? sy : s);
-    const x = fullW ? b.x * sx : (b.x + b.w / 2) * sx - w / 2;
-    const y = fullH ? b.y * sy : (b.y + b.h / 2) * sy - h / 2;
-    out.push({ id: n.id, attrs: resizeAttrs(n, b, { x, y, w, h }) });
+    const [b, nb] = place(n);
+    out.push({ id: n.id, attrs: resizeAttrs(n, b, nb) });
   }
   return out;
 }
