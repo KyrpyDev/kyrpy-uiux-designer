@@ -304,3 +304,23 @@ test('repeater fit: lists hold every copy, moving layouts fit the item across; c
   assert.match(des, /async fitRepeater\(repId/); assert.match(des, /if \(el\) \{\s*await this\.fitRepeater\(rep\.id\);/); assert.match(des, /if \(adopted\) await this\.fitRepeater\(adopted\.rep\.id\);/);
   assert.match(readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8'), /await d\.fitRepeater\(e\.id\);/);
 });
+
+test('repeater: supports multiple different sub-items and guarantees all appear >= 1 time', () => {
+  const { assignRepeaterItems } = import('../domain/repeater.js');
+  const nodes = [
+    { id: 1, parentId: null, ord: 0, tag: 'rect', kind: 'shape', role: 'repeater-container', name: 'rep', attrs: { x: 10, y: 10, width: 300, height: 200, ...repeaterDefaultAttrs({ itemCount: 7 }), 'data-repeater-multi': '1' } },
+    { id: 2, parentId: 1, ord: 0, tag: 'rect', kind: 'shape', name: 'red', attrs: { x: 22, y: 22, width: 60, height: 40, fill: '#f00' } },
+    { id: 3, parentId: 1, ord: 1, tag: 'circle', kind: 'shape', name: 'green', attrs: { cx: 40, cy: 40, r: 20, fill: '#0f0' } },
+    { id: 4, parentId: 1, ord: 2, tag: 'rect', kind: 'shape', name: 'blue', attrs: { x: 22, y: 22, width: 50, height: 30, fill: '#00f' } }
+  ];
+  const svg = render(nodes);
+  // Red, Green, and Blue templates must each be rendered at least once!
+  const redCount = count(svg, /fill="#f00"/g);
+  const greenCount = count(svg, /fill="#0f0"/g);
+  const blueCount = count(svg, /fill="#00f"/g);
+  assert.ok(redCount >= 1, 'red appears at least once');
+  assert.ok(greenCount >= 1, 'green appears at least once');
+  assert.ok(blueCount >= 1, 'blue appears at least once');
+  assert.equal(redCount + greenCount + blueCount, 7, 'total copies equals itemCount (7)');
+});
+

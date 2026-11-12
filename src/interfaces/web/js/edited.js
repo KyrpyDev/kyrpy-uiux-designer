@@ -50,6 +50,8 @@ export function markEdited(type, id) {
   list = [k, ...list.filter(x => x !== k)].slice(0, MAX);
   changed();
 }
+/** Takes an item out of this session's designer history (its red edit mark in the library stays). */
+export function forgetSessionEdited(type, id) { const k = `${type}:${id}`; if (session.keys.includes(k)) { session.keys = session.keys.filter(x => x !== k); saveSession(); } }
 export function unmarkEdited(type, id) { const k = `${type}:${id}`; if (session.keys.includes(k)) { session.keys = session.keys.filter(x => x !== k); saveSession(); } if (list.includes(k)) { list = list.filter(x => x !== k); changed(); } }
 export function clearEdited() { if (list.length) { list = []; changed(); } }
 export const editedKeys = () => list;

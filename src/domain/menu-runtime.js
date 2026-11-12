@@ -50,6 +50,14 @@ export function bindMenus(root, opts) {
     var box = screenBox(btn), svg = btn.ownerSVGElement;
     if (!box || !svg || !btn.getBoundingClientRect || btn.getBoundingClientRect().width >= svg.getBoundingClientRect().width * 0.8) return null;   // the button designer: no device screen
     var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), R = +level.getAttribute('data-fan-r');
+    if (m.getAttribute('data-hub-fixed') === '1') {
+      var key0 = level.getAttribute('data-level');
+      var parentItem0 = btn.querySelector('.rm-hub-item[data-item="' + key0 + '"]');
+      if (parentItem0) {
+        cx = parseFloat(parentItem0.style.getPropertyValue('--x')) || cx;
+        cy = parseFloat(parentItem0.style.getPropertyValue('--y')) || cy;
+      }
+    }
     var a0 = +level.getAttribute('data-fan-start') || 0, sw = Math.max(1, Math.min(360, Math.abs(+level.getAttribute('data-fan-sweep') || 0)));
     var r = 0, pad = 4; items.forEach(function (el) { r = Math.max(r, +el.getAttribute('data-r') || 0); });
     if (!(R > 0) || !(r > 0)) return null;
@@ -134,6 +142,13 @@ export function bindMenus(root, opts) {
       }
       if (n <= cap) { items.forEach(function (el) { if (el.removeAttribute) { el.removeAttribute('data-fan-hidden'); el.removeAttribute('data-fan-end'); } if (el.style) el.style.setProperty('--end', '1'); }); return; }
       var m = btn.querySelector('.ud-menu'), cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy');
+      if (m && m.getAttribute('data-hub-fixed') === '1') {
+        var parentItem = btn.querySelector('.rm-hub-item[data-item="' + key + '"]');
+        if (parentItem) {
+          cx = parseFloat(parentItem.style.getPropertyValue('--x')) || cx;
+          cy = parseFloat(parentItem.style.getPropertyValue('--y')) || cy;
+        }
+      }
       var a0 = +level.getAttribute('data-fan-start'), sw = +level.getAttribute('data-fan-sweep'), R = +level.getAttribute('data-fan-r');
       var off = ((st.fo && st.fo[key]) || 0) % n;
       items.forEach(function (el, i) {
@@ -161,6 +176,7 @@ export function bindMenus(root, opts) {
   }
   function layoutHub(btn, st) {
     var m = btn.querySelector('.ud-menu'), items = hubItems(btn), n = items.length, c = st.c || 0;
+    var fixed = m && m.getAttribute('data-hub-fixed') === '1';
     var cx = +m.getAttribute('data-cx'), cy = +m.getAttribute('data-cy'), small = +m.getAttribute('data-hub-small'), gap = +m.getAttribute('data-hub-gap');
     var big = +m.getAttribute('data-hub-big') || small * 2, hk = +m.getAttribute('data-hub-k') || 0.5;
     var vert = m.getAttribute('data-hub-vertical') === '1', fan = st.path.length > 0;
@@ -197,12 +213,12 @@ export function bindMenus(root, opts) {
       var d = (i - c + n) % n; if (d > n / 2) d -= n;          // signed ring distance from the current item
       if (!sl.odd && n > v && d > hi) d -= n; if (!sl.odd && n > v && d < lo) d += n;
       var slot = slots[d], dx = 0, k = 0, o = 0, pos = 'hidden';
-      if (fan) {                                                 // a fan is open: only the current item stays, in the middle
+      if (fan && !fixed) {                                       // a fan is open: only the current item stays, in the middle
         if (d === 0) { k = sizeOf(0) / big; o = st.path.length > 1 ? 0 : 1; pos = 'center'; }
       } else if (slot) {
         dx = slot.dx * f; k = (slot.s / big) * f; o = 1;
         pos = d === 0 ? 'center' : d < 0 ? (d === -1 ? 'prev' : 'prev' + (-d)) : (d === 1 ? 'next' : 'next' + d);
-        if (sl.more && (d === lo || d === hi)) el.setAttribute('data-hub-end', '1'); else if (el.removeAttribute) el.removeAttribute('data-hub-end');
+        if (!fixed && sl.more && (d === lo || d === hi)) el.setAttribute('data-hub-end', '1'); else if (el.removeAttribute) el.removeAttribute('data-hub-end');
       }
       el.style.setProperty('--x', (cx + (vert ? 0 : dx)) + 'px');
       el.style.setProperty('--y', (cy + (vert ? dx : 0)) + 'px');
@@ -357,9 +373,10 @@ export function bindMenus(root, opts) {
   }
   function hubStep(btn, t, st) {
     var items = hubItems(btn), n = items.length, c = st.c || 0, prev = st.prev == null ? c : st.prev;
+    var m = btn.querySelector('.ud-menu'), fixed = m && m.getAttribute('data-hub-fixed') === '1';
     if (t.getAttribute('data-rm') === 'center') {
       // second click on the centre: back one level (the centre icon turns back)
-      if (st.path.length) { var np = st.path.slice(0, -1); if (!np.length) spin(btn, items[c], false); return { open: true, path: np, c: c, prev: c }; }   // closes this level; the same item stays in the centre
+      if (st.path.length) { var np = st.path.slice(0, -1); if (!np.length && items[c]) spin(btn, items[c], false); return { open: true, path: np, c: c, prev: c }; }   // closes this level; the same item stays in the centre
       var cur = items[c];
       if (!cur) return st;
       if (opts.onItem) opts.onItem(btn, cur);
@@ -371,8 +388,30 @@ export function bindMenus(root, opts) {
       return st;
     }
     if (t.hasAttribute && t.hasAttribute('data-hub-index')) {
-      if (st.path.length) return st;
       var i = +t.getAttribute('data-hub-index');
+      if (fixed) {
+        if (opts.onItem) opts.onItem(btn, t);
+        var hasKids = t.getAttribute('data-children') === '1';
+        var itemPath = t.getAttribute('data-item') || '';
+        if (hasKids) {
+          var isOpen = st.path.length > 0 && st.path.join('/') === itemPath;
+          if (isOpen) {
+            spin(btn, t, false);
+            return { open: true, path: [], c: c, prev: prev };
+          } else {
+            if (st.path.length) {
+              var oldItem = items.find(function (it) { return it.getAttribute('data-item') === st.path.join('/'); });
+              if (oldItem) spin(btn, oldItem, false);
+            }
+            spin(btn, t, true);
+            return { open: true, path: itemPath.split('/'), c: c, prev: prev };
+          }
+        }
+        spin(btn, t);
+        fire(btn, t);
+        return { open: true, path: [], c: c, prev: prev };
+      }
+      if (st.path.length) return st;
       // an end item that marks more items (30 % smaller) scrolls the bar one step towards it instead of acting
       var dd = (i - c + n) % n, far = Math.min(dd, n - dd) > 1;
       if (t.getAttribute('data-hub-end') === '1' && far) { var nc = (c + (dd > n / 2 ? -1 : 1) + n) % n; return { open: true, path: [], c: nc, prev: nc }; }
@@ -408,7 +447,7 @@ export function bindMenus(root, opts) {
     if (!stage && root && root.querySelector) stage = root.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage');
     return stage;
   }
-  function moveRepeater(st, delta) {
+  function moveRepeater(st, delta, preserve) {
     if (!st) return false;
     var track = st.querySelector ? st.querySelector('.ud-rpt-track') : null;
     if (!track) return false;
@@ -441,26 +480,48 @@ export function bindMenus(root, opts) {
       track.style.animation = 'none';
       track.style.transform = (axis === 'x' ? 'translateX(' : 'translateY(') + (-Math.round(next * 100) / 100) + 'px)';
     }
-    if (st.__udT) clearTimeout(st.__udT);
-    var period = parseFloat(st.getAttribute('data-rpt-period')) || 0;
-    if (period) {
-      st.__udT = setTimeout(function () {
-        var slide = st.getAttribute('data-rpt-kind') === 'slide';
-        var step = parseFloat(st.getAttribute('data-rpt-step')) || 1;
-        var count = parseFloat(st.getAttribute('data-rpt-count')) || 1;
-        var part = slide ? Math.round(next / step) / Math.max(1, count) : (loop ? next / loop : 0);
-        if (track.style) {
-          track.style.transform = '';
-          track.style.animation = '';
-          track.style.animationDelay = Math.round(-part * period) + 'ms';
-        }
-        st.__udOff = null;
-      }, 1600);
+    if (st.__udT) { clearTimeout(st.__udT); st.__udT = null; }
+    if (!preserve) {
+      var period = parseFloat(st.getAttribute('data-rpt-period')) || 0;
+      if (period) {
+        st.__udT = setTimeout(function () {
+          var slide = st.getAttribute('data-rpt-kind') === 'slide';
+          var step = parseFloat(st.getAttribute('data-rpt-step')) || 1;
+          var count = parseFloat(st.getAttribute('data-rpt-count')) || 1;
+          var part = slide ? Math.round(next / step) / Math.max(1, count) : (loop ? next / loop : 0);
+          if (track.style) {
+            track.style.transform = '';
+            track.style.animation = '';
+            track.style.animationDelay = Math.round(-part * period) + 'ms';
+          }
+          st.__udOff = null;
+        }, 1600);
+      }
     }
     return true;
   }
   var rptDrag = null;
   var suppressClickUntil = 0;
+  function getBtnRadius(t, btn) {
+    var r = 32;
+    try {
+      var rect = (t.getBoundingClientRect && t.getBoundingClientRect()) || (btn.getBoundingClientRect && btn.getBoundingClientRect());
+      if (rect && rect.width && rect.height) {
+        r = Math.min(rect.width, rect.height) / 2;
+      }
+    } catch (e) {}
+    return Math.max(16, r);
+  }
+  function autoScrollTick() {
+    if (!rptDrag) return;
+    if (rptDrag.activeSpeed) {
+      moveRepeater(rptDrag.stage, rptDrag.activeSpeed / (rptDrag.scale || 1), true);
+    }
+    var view = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+    if (view && view.requestAnimationFrame) {
+      rptDrag.rafId = view.requestAnimationFrame(autoScrollTick);
+    }
+  }
   function onPointerDown(ev) {
     if (ev.button) return;
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-rm="center"], .rm-hub-item, .rm-item') : null;
@@ -487,15 +548,31 @@ export function bindMenus(root, opts) {
         }
       } catch (e) {}
     }
+    var radius = getBtnRadius(t, btn);
+    var originX = ev.clientX;
+    var originY = ev.clientY;
+    try {
+      var rect = t.getBoundingClientRect ? t.getBoundingClientRect() : (btn.getBoundingClientRect ? btn.getBoundingClientRect() : null);
+      if (rect && rect.width && rect.height) {
+        originX = rect.left + rect.width / 2;
+        originY = rect.top + rect.height / 2;
+      }
+    } catch (e) {}
+
     rptDrag = {
       btn: btn,
       target: t,
       stage: stage,
       scale: scale,
+      radius: radius,
+      originX: originX,
+      originY: originY,
       startX: ev.clientX,
       startY: ev.clientY,
       lastX: ev.clientX,
       lastY: ev.clientY,
+      activeSpeed: 0,
+      rafId: null,
       moved: false
     };
   }
@@ -503,6 +580,8 @@ export function bindMenus(root, opts) {
     if (!rptDrag) return;
     var dx = rptDrag.lastX - ev.clientX;
     var dy = rptDrag.lastY - ev.clientY;
+    var rawDx = ev.clientX - rptDrag.originX;
+    var rawDy = ev.clientY - rptDrag.originY;
     var totalX = Math.abs(ev.clientX - rptDrag.startX);
     var totalY = Math.abs(ev.clientY - rptDrag.startY);
     if (!rptDrag.moved && (totalY >= 4 || totalX >= 4)) {
@@ -511,16 +590,48 @@ export function bindMenus(root, opts) {
     if (!rptDrag.moved) return;
 
     var axis = rptDrag.stage.getAttribute('data-rpt-axis') || 'y';
-    var d = axis === 'x' ? (Math.abs(dx) >= Math.abs(dy) ? dx : dy) : (Math.abs(dy) >= Math.abs(dx) ? dy : dx);
+    var dStep = axis === 'x' ? (Math.abs(dx) >= Math.abs(dy) ? dx : dy) : (Math.abs(dy) >= Math.abs(dx) ? dy : dx);
+
+    // Auto-scroll continuous velocity:
+    // Distance from the center of the button up/downwards sets velocity.
+    // Limits are clamped to the button radius.
+    var dist = axis === 'x' ? rawDx : rawDy;
+    var R = rptDrag.radius || 32;
+    var clamped = Math.max(-R, Math.min(R, dist));
+    var deadZone = 3;
+    var MAX_SPEED = 14;
+
+    if (Math.abs(clamped) > deadZone) {
+      var ratio = (clamped - (clamped > 0 ? deadZone : -deadZone)) / (R - deadZone);
+      ratio = Math.max(-1, Math.min(1, ratio));
+      rptDrag.activeSpeed = -ratio * MAX_SPEED;
+    } else {
+      rptDrag.activeSpeed = 0;
+    }
+
+    var view = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+    var hasRAF = !!(view && view.requestAnimationFrame);
+    if (hasRAF) {
+      if (!rptDrag.rafId) {
+        rptDrag.rafId = view.requestAnimationFrame(autoScrollTick);
+      }
+    } else {
+      // In synchronous/mock environments without RAF (like node test runner),
+      // apply the direct step displacement preserving position on release.
+      moveRepeater(rptDrag.stage, dStep / (rptDrag.scale || 1), true);
+    }
     rptDrag.lastX = ev.clientX;
     rptDrag.lastY = ev.clientY;
-    if (moveRepeater(rptDrag.stage, d / (rptDrag.scale || 1))) {
-      if (ev.preventDefault) ev.preventDefault();
-      if (ev.stopPropagation) ev.stopPropagation();
-    }
+
+    if (ev.preventDefault) ev.preventDefault();
+    if (ev.stopPropagation) ev.stopPropagation();
   }
   function onPointerEnd(ev) {
     if (rptDrag) {
+      if (rptDrag.rafId) {
+        var view = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+        if (view && view.cancelAnimationFrame) view.cancelAnimationFrame(rptDrag.rafId);
+      }
       if (rptDrag.moved) {
         suppressClickUntil = Date.now() + 250;
       }
@@ -547,13 +658,23 @@ export function bindMenus(root, opts) {
       var st = states.get(btn);
       if (!st || !st.path || !st.path.length || !isHub(btn)) return;
       var inside = false; try { inside = btn.contains(ev.target); } catch (e) { inside = false; }
-      if (!inside) { spin(btn, hubItems(btn)[st.c || 0], false); set(btn, { open: true, path: [], c: st.prev == null ? st.c : st.prev, prev: st.prev }); }
+      if (!inside) {
+        var m = btn.querySelector('.ud-menu'), fixed = m && m.getAttribute('data-hub-fixed') === '1';
+        if (fixed) {
+          hubItems(btn).forEach(function (it) { spin(btn, it, false); });
+        } else {
+          spin(btn, hubItems(btn)[st.c || 0], false);
+        }
+        set(btn, { open: true, path: [], c: st.prev == null ? st.c : st.prev, prev: st.prev });
+      }
     });
   }
   if (doc && doc.addEventListener) doc.addEventListener('click', hubBack);
   root.addEventListener('wheel', function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest('.ud-btn') : null;
     if (!btn || !isHub(btn)) return;
+    var m = btn.querySelector('.ud-menu');
+    if (m && m.getAttribute('data-hub-fixed') === '1') return;
     var st = get(btn), n = hubItems(btn).length;
     if (st.path.length || n < 2) return;
     ev.preventDefault();

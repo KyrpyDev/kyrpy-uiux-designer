@@ -13,6 +13,7 @@ import { api } from '../api.js';
 import { state, findDesign } from '../state.js';
 import { nodeBBox, isCarouselContainerNode, getContainerConfig, fitNodesToScreen } from '/domain/geometry.js';
 import { DEVICES } from '/domain/entities.js';
+import { openQuickEdit, reapplyQuickEdit } from './live-quick-edit.js';
 
 const FORM_ELEMENT_KEYS = new Set([
   'html-input',
@@ -166,13 +167,16 @@ export function installTestActions(Designer) {
     else toast('Editing in a new tab: saved changes show up here at once', 'info', 2200);
   };
 
-  /** Small ✎ pills over every placed button / element / icon (and every menu) of the tested design: edit it in a new tab. */
+  /**
+   * Small ✎ pills over every placed button / element / icon (and every menu) of the tested design. A pill opens the quick
+   * edit box beside the item (basic values, applied to the running test at once); the box has ↗ for the full designer.
+   */
   proto.mountLiveEditPills = function () {
     const pill = (box, title, onClick) => {
       const b = h('button', { type: 'button', class: 'dz-live-edit', title, 'aria-label': title,
         style: { left: `${Math.round(box.x + box.w - 6)}px`, top: `${Math.round(box.y - 10)}px` } }, '✎');
       b.addEventListener('pointerdown', ev => ev.stopPropagation());
-      b.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); onClick(); });
+      b.addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); onClick(b.getBoundingClientRect()); });
       this.liveLayer.append(b);
     };
     const seen = new Set();
@@ -181,7 +185,7 @@ export function installTestActions(Designer) {
       const lib = findDesign(n.refType, n.refId);
       if (!lib) continue;
       seen.add(`${n.refType}:${n.refId}`);
-      pill(nodeBBox(n, this.nodes), `Edit ${n.refType} “${lib.label || lib.name}” in a new tab`, () => this.editInNewTab(n.refType, n.refId));
+      pill(nodeBBox(n, this.nodes), `Quick edit ${n.refType} “${lib.label || lib.name}”`, at => openQuickEdit(this, at, { kind: 'node', nodeId: n.id }));
     }
     // menu buttons nested inside placed elements: one pill per menu, at its place on the canvas
     const sr = this.stage.getBoundingClientRect(), k = sr.width / (this.doc.width || 1) || 1;
@@ -191,40 +195,68 @@ export function installTestActions(Designer) {
       seen.add(`button:${id}`);
       const r = (el.querySelector('.rm-hit') || el).getBoundingClientRect();
       const lib = findDesign('button', id);
-      pill({ x: (r.left - sr.left) / k, y: (r.top - sr.top) / k, w: r.width / k, h: r.height / k }, `Edit menu button “${lib?.label || lib?.name || el.getAttribute('data-menu')}” in a new tab`, () => this.editInNewTab('button', id));
+      pill({ x: (r.left - sr.left) / k, y: (r.top - sr.top) / k, w: r.width / k, h: r.height / k }, `Quick edit menu button “${lib?.label || lib?.name || el.getAttribute('data-menu')}”`, at => openQuickEdit(this, at, { kind: 'lib', type: 'button', id }));
     }
   };
 
-  /** While testing, hovering a menu item shows a ✎ pill that opens the item in its button's designer in a new tab. */
+  /**
+   * While testing, hovering a menu item shows a small toolbar: ✎ quick edit (label, icon, button, action …), 🖥 choose the
+   * screen / popup it opens, ↗ the item in its button's designer (new tab). This is how a workflow is edited while it runs.
+   */
   proto.installLiveItemPill = function () {
     if (this._liveItemPill) return;
-    const tip = h('button', { type: 'button', class: 'dz-live-edit dz-live-item-edit', hidden: true });
+    let hideT = null, cur = null;
+    const tool = (txt, title, act, fn) => h('button', { type: 'button', class: 'dz-live-edit', title, 'aria-label': title, dataset: { act },
+      onclick: ev => { ev.stopPropagation(); if (cur) fn(cur, tip.getBoundingClientRect()); tip.hidden = true; } }, txt);
+    const editBtn = tool('✎', 'Quick edit this menu item', 'item-quick', (c, at) => openQuickEdit(this, at, { kind: 'item', buttonId: c.btnId, itemId: c.itemId }));
+    const tip = h('div', { class: 'dz-live-item-edit', role: 'toolbar', 'aria-label': 'Menu item tools', hidden: true },
+      editBtn,
+      tool('🖥', 'Choose the screen or popup this item opens', 'item-target', (c, at) => openQuickEdit(this, at, { kind: 'item', buttonId: c.btnId, itemId: c.itemId }, { focus: 'target' })),
+      tool('↗', 'Edit this menu item in its button designer (new tab)', 'item-full', c => this.editInNewTab('button', c.btnId, { item: c.itemId })));
     document.body.append(tip);
     this._liveItemPill = tip;
-    let hideT = null, cur = null;
     const hide = () => { clearTimeout(hideT); hideT = setTimeout(() => { tip.hidden = true; cur = null; }, 700); };
     tip.addEventListener('mouseenter', () => clearTimeout(hideT));
     tip.addEventListener('mouseleave', hide);
-    tip.addEventListener('click', ev => { ev.stopPropagation(); if (cur) this.editInNewTab('button', cur.btnId, { item: cur.itemId }); tip.hidden = true; });
     this.stage.addEventListener('mouseleave', hide);
-    // the pill lives on <body>: it goes with this designer (e.g. a test window that closes)
+    // the toolbar lives on <body>: it goes with this designer (e.g. a test window that closes)
     if (this.opts.modal) {
       const gone = new MutationObserver(() => { if (!this.root.isConnected) { tip.remove(); gone.disconnect(); } });
       gone.observe(document.getElementById('modal-root') || document.body, { childList: true });
     }
-    this.stage.addEventListener('mouseover', ev => {
+    const showFor = target => {
       if (!this.actionsLive || !livePillsShown()) return hide();
-      const it = ev.target.closest?.('.rm-item[data-menu-id]');
+      const it = target?.closest?.('.rm-item[data-menu-id]');
       const btnEl = it?.closest('.ud-btn[data-btn-id]');
       if (!it || !btnEl || it.getAttribute('data-hub-pos') === 'hidden') return hide();
       clearTimeout(hideT);
       cur = { btnId: Number(btnEl.getAttribute('data-btn-id')), itemId: Number(it.getAttribute('data-menu-id')) };
       const r = it.getBoundingClientRect();
-      tip.textContent = `✎ ${it.querySelector('title')?.textContent || 'item'}`;
-      tip.title = 'Edit this menu item in its button designer (new tab)';
-      Object.assign(tip.style, { position: 'fixed', left: `${Math.round(r.right - 4)}px`, top: `${Math.round(r.top - 14)}px` });
+      editBtn.textContent = `✎ ${it.querySelector('title')?.textContent || 'item'}`;
+      Object.assign(tip.style, { left: `${Math.round(r.right - 4)}px`, top: `${Math.round(r.top - 14)}px` });
       tip.hidden = false;
+    };
+    this.stage.addEventListener('mouseover', ev => showFor(ev.target));
+    // a route / event hotspot often lies over a menu (a hub bar on a screen): the item under the pointer is looked up through it
+    let moveQueued = false;
+    this.liveLayer.addEventListener('mousemove', ev => {
+      if (moveQueued || !ev.target.closest?.('.dz-live-hotspot')) return;
+      moveQueued = true;
+      requestAnimationFrame(() => { moveQueued = false; showFor(this.menuUnder(ev)); });
     });
+    this.liveLayer.addEventListener('mouseleave', hide);
+  };
+
+  /** Mouse-over labels of placed items (the quick edit box sets them): shown as the native hover text in the test. */
+  proto.applyLiveHoverLabels = function () {
+    for (const n of this.nodes) {
+      const tipText = n.attrs?.['data-tip'];
+      const el = tipText ? this.stage.querySelector(`[data-el="${n.id}"]`) : null;
+      if (!el || el.querySelector(':scope > title')) continue;
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      t.textContent = String(tipText);
+      el.prepend(t);
+    }
   };
 
   /** Builds the floating Test Actions HUD and the interactive overlay layer (`this.liveLayer`) over `this.stage`. */
@@ -344,6 +376,7 @@ export function installTestActions(Designer) {
     // 5. Edit pills: every placed item / menu (and menu items on hover) open their designer in a new tab
     if (livePillsShown()) this.mountLiveEditPills();
     this.installLiveItemPill();
+    this.applyLiveHoverLabels();
   };
 
   /**

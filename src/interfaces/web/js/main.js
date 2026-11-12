@@ -2,14 +2,14 @@
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api, ApiError, setWriteGuard } from './api.js';
 import { state, on, emit, projectLabel, PLURAL, findDesign, isPublicLibraryItem, isSuperadminUser } from './state.js';
-import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, downloadProjectHtml, openGuide, downloadGuide, setActiveProject, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
+import { reloadLibrary, applyThemeChrome, setTheme, updateSettings, newDesign, importSvgDialog, importFolderOrFontDialog, downloadSvg, downloadProjectHtml, openGuide, downloadGuide, setActiveProject, ensureDesignDeps, createEmptyItem, DEFAULT_PROJECT_ID, ownProjects, needsFirstProject, pickStartupProject } from './actions.js';
 import { LibraryPanel } from './components/library-panel.js';
 import { lastEdited, setEditedSessionUser } from './edited.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
 import { WorkflowDesigner } from './components/workflow-designer.js';
 import { openExportDialog } from './components/export-dialog.js';
-import { openThemeEditor } from './components/theme-editor.js';
+import { openThemePicker } from './components/theme-picker.js';
 import { pairThemeKey } from '/domain/theme.js';
 import { iconEl, iconForLabel, ibtn } from './icons.js';
 import { healthIndicators } from './health-status.js';
@@ -84,7 +84,7 @@ const app = {
     if (!(await this.designer.confirmLeave())) return false;
     state.mode = 'screen'; renderMode();
     try {
-      await this.designer.load(type, id); this.current = { type, id };
+      await this.designer.load(type, id); this.current = { type, id }; lastOpened[type] = Number(id);
       const name = this.designer.doc.name;
       setStatus(`${type} "${name}" opened`);
       if (push) recordView(push === 'replace' ? 'replace' : 'push', { k: 'design', type, id: Number(id) }, `${type} "${name}"`);
@@ -396,6 +396,7 @@ function menuDef() {
       ['Save', () => app.activeDoc()?.save(), 'Ctrl+S'],
       ['Save as (Clone with Root Owner Lineage)…', () => app.activeDoc()?.saveAs()],
       ['Reset to the last saved version', () => app.activeDoc()?.reset()],
+      ['Close edited item', () => app.designer?.closeDoc?.()],
       ['Back to the previous page', () => app.back(), 'Alt+←']
     ]],
     ['Edit', [
@@ -537,15 +538,8 @@ function menuDef() {
       ['Toggle left panel', () => toggleLeft()],
       ['Toggle inspector', () => { const x = d(); x.inspectorOpen = !x.inspectorOpen; x.inspectorEl.classList.toggle('collapsed', !x.inspectorOpen); }]
     ]],
-    ['Theme', [
-      ['🌙 / ☀️ Toggle Dark & Light Mode of Active Design Style', () => {
-        const pairKey = pairThemeKey(state.themeKey, state.themes);
-        if (pairKey && pairKey !== state.themeKey) setTheme(pairKey);
-      }],
-      '-',
-      ...state.themes.map(t => [`${tick(t.key === state.themeKey)}|${t.name}`, () => setTheme(t.key)]), '-',
-      ['Edit themes…', () => openThemeEditor()]
-    ]],
+    // the head opens the design style window (previews of a sample design in every style) instead of a dropdown
+    ['Theme', () => openThemePicker({ current: app.current ? { type: app.current.type, id: app.current.id, name: app.designer?.doc?.name } : null })],
     ['Export', [
       ['Export open design as SVG (with animation)', () => app.current ? downloadSvg(app.current.type, app.current.id) : toast('Open a design first', 'error')],
       ['Export usage guide (usage-and-guide.html)', () => downloadGuide()],
@@ -721,6 +715,10 @@ function renderTopbar() {
   const bar = $('#topbar'); clear(bar);
   bar.append(h('div', { class: 'brand' }, h('span', { style: { color: '#2e9bff' } }, '◈'), 'UI/UX Designer'));
   for (const [title, items] of menuDef()) {
+    if (typeof items === 'function') {   // a head that opens a window
+      bar.append(h('div', { class: 'menu' }, h('button', { class: 'menu-head', 'aria-haspopup': 'dialog', 'aria-label': title, 'data-tip': title === 'Theme' ? 'Design style — choose with previews' : title, dataset: { act: `menu-${title.toLowerCase()}` }, onclick: e => { e.stopPropagation(); closeMenus(); try { items(); } catch (err) { toast(err.message, 'error'); } } }, iconEl(MENU_ICONS[title] || 'dot', { size: 18 }))));
+      continue;
+    }
     const panel = h('div', { class: 'menu-panel', role: 'menu' });
     const m = h('div', { class: 'menu' }, h('button', { class: 'menu-head', 'aria-haspopup': 'true', 'aria-label': title, 'data-tip': title, onclick: e => { e.stopPropagation(); const open = !m.classList.contains('open'); closeMenus(); if (open) { m.classList.add('open'); rebuildPanel(); } } }, iconEl(MENU_ICONS[title] || 'dot', { size: 18 })), panel);
     const rebuildPanel = () => {
@@ -779,18 +777,22 @@ const TYPE_NAV = [
   ['element', 'Element designer', 'rect', 'elements'],
   ['screen', 'Screen designer — device screens', 'monitor', 'screens']
 ];
+/** The item that was open last in each designer (this page load): its type tab comes back to it. */
+const lastOpened = {};
 function currentPageType() { return state.mode === 'workflow' ? 'workflow' : state.mode === 'screen' ? (app.current?.type || state.tab) : null; }
-async function openPageType(type) {
+async function openPageType(type, { quiet = false } = {}) {
   if (type === 'workflow') {
     const lastWf = lastEdited('workflow');
     const id = (lastWf != null && app.library.workflows.find(w => Number(w.id) === lastWf)?.id) || state.workflowId || app.library.workflows[0]?.id;
-    if (!id) { toast('Create a workflow first (+ New in this page)'); return; }
+    if (!id) { if (!quiet) toast('Create a workflow first (+ New in this page)'); return; }
     await app.openWorkflow(id);
   } else {
     state.mode = 'screen'; state.tab = type;
     const list = type === 'screen' ? await api.list('screen') : (state.library[TYPE_NAV.find(t => t[0] === type)[3]] || []);
     // the item of this type that was edited last, else the first one
-    const last = lastEdited(type), first = (last != null && list.find(d => Number(d.id) === last)) || list[0];
+    // the item of this type that was open last, else the one edited last, else the first one
+    const pick = id => (id != null ? list.find(d => Number(d.id) === Number(id)) : null);
+    const first = pick(lastOpened[type]) || pick(lastEdited(type)) || list[0];
     if (first) await app.openDesign(type, first.id);
     else { renderMode(); app.library.renderTabs(); app.library.renderBody(); }
   }
@@ -845,10 +847,17 @@ function buildTypeBar() {
     ...(inDesigner ? (designer.toolToggles || []) : []),
     h('span', { class: 'grow' }),
     h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
-    ...(inDesigner ? (designer.viewControls || []) : [])
+    // one unbreakable group: the last view buttons never drop alone onto a second row
+    inDesigner && designer.viewControls?.length ? h('div', { class: 'tb-view-group' }, designer.viewControls) : null
   ].filter(Boolean));
 }
-window.addEventListener('ud:open-page', e => { const t = e.detail; if (t) openPageType(t).catch(err => toast(err.message, 'error')); });
+window.addEventListener('ud:open-page', e => {
+  const t = typeof e.detail === 'string' ? e.detail : e.detail?.type;
+  if (!t) return;
+  // a library tab click: nothing to do when that designer is already on screen with an item
+  if (e.detail?.fromTab && currentPageType() === t && (t === 'workflow' ? app.workflow?.wf : app.designer?.doc && app.designer.type === t)) return;
+  openPageType(t, { quiet: !!e.detail?.fromTab }).catch(err => toast(err.message, 'error'));
+});
 const closeMenus = () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', e => {
@@ -948,7 +957,30 @@ async function boot() {
   );
   $('#statusbar').append(h('span', { id: 'status-msg' }, 'ready'), h('span', { id: 'statusbar-xy', class: 'dim' }), h('span', { class: 'grow' }), h('span', { id: 'status-counts', class: 'dim' }));
   await reloadLibrary({ silent: true });
-  app.designer = new Designer($('#dz-root'), { openPage: t => openPageType(t).catch(err => toast(err.message, 'error')), openDesign: (t, i) => app.openDesign(t, i), onBack: () => app.back(), canBack: app.canBack, backTarget: app.backTarget, openTest: (t, i) => openTestRunner(app, { type: t, id: i }) });
+  app.designer = new Designer($('#dz-root'), {
+    openPage: t => openPageType(t).catch(err => toast(err.message, 'error')),
+    openDesign: (t, i) => app.openDesign(t, i),
+    onBack: () => app.back(),
+    canBack: app.canBack,
+    backTarget: app.backTarget,
+    openTest: (t, i) => openTestRunner(app, { type: t, id: i }),
+    onClose: async () => {
+      if (app.designer?.dirty && !(await app.designer.confirmLeave())) return;
+      const d = app.designer;
+      if (app.current) delete lastOpened[app.current.type];   // its type tab does not bring the closed item back
+      app.current = null;
+      d.doc = null; d.baseline = null; d.dirty = false; d.undoStack = []; d.redoStack = [];
+      d.selected?.clear();
+      clear(d.stage); clear(d.overlay);
+      d.frame.style.display = 'none';
+      if (d.hoverBar) d.hoverBar.hidden = true;
+      d.renderOverlay();
+      d.emit('selection');          // empties the inspector
+      // the tool bars are built for an open item (name field, tools): with none they are just taken out of the page tool row
+      setStatus('ready');
+      buildTopbar();
+    }
+  });
   new Inspector(app.designer.inspectorEl, app.designer);
   app.workflow = new WorkflowDesigner($('#wf-root'), app);
   app.browser = new ItemBrowserView($('#browser-root'));
@@ -960,7 +992,11 @@ async function boot() {
     const pName = (state.projects || []).find(p => Number(p.id) === Number(state.activeProjectId))?.name || 'Default';
     $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'superadmin'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
   };
-  on('library:changed', () => { refreshCounts(); buildTopbar(); });
+  on('library:changed', () => {
+    refreshCounts(); buildTopbar();
+    // a reload (filter, project, sync) may drop items an open design places: fetch them again and redraw
+    for (const d of [app.designer, ...app.modals]) if (d?.doc) ensureDesignDeps(d.doc).then(n => { if (n && d.doc) d.renderStage(); }).catch(() => {});
+  });
   on('topbar:refresh', () => buildTopbar());
   on('trash:changed', () => { refreshCounts(); buildTopbar(); });
   on('project:list-changed', () => { refreshCounts(); buildTopbar(); });

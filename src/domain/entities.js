@@ -453,6 +453,7 @@ export const DEFAULT_MENU = {
   itemButtonId: null,   // button style applied to every menu item without a button of its own (null = the host button's own body)
   hubFit: false,        // hub: sub items that would leave the screen are scaled down (size and distance from the centre) until they fit
   hubCount: 3,          // hub: how many buttons the bar shows at once (1-6); the other items are reached by turning the ring
+  hubFixedPositions: false,// hub: menu items stay at fixed preset positions along the bar and do not move to the centre when clicked
   hubSubInside: true,   // hub: sub items stay inside the device screen around a centre that does not move; the ones without room are reached through the end items
   hubIconSize: 0,       // hub: icon size inside every hub button as a fraction of the button (0 = auto: follows the button's own icon, 1 = fills the button)
   hubSpin: 0,           // hub: degrees an item's icon turns each time it is clicked (0 = off, 360 = one full turn)

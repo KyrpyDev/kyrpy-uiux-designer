@@ -53,7 +53,12 @@ export class LibraryPanel {
     on('library:changed', () => { this.loadWorkflows(); this.softRefresh(); });
     on('project:changed', () => { this.screensList = null; this.loadWorkflows(); this.renderBody(); });
     on('theme:changed', () => this.renderBody());
-    on('screen:saved', () => this.renderBody());
+    on('screen:saved', () => { this.screensList = null; this.renderBody(); });
+    on('item:saved', ({ type, doc }) => {
+      if (type === 'screen') this.screensList = null;
+      this.refreshItemThumbnail(type, doc);
+      this.renderBody();
+    });
     on('workflows:changed', () => this.loadWorkflows());
     this.render();
     this.loadWorkflows();
@@ -81,9 +86,12 @@ export class LibraryPanel {
         role: 'tab',
         'aria-selected': state.tab === k,
         'aria-label': `${label} (${count})`,
-        'data-tip': `${label} (${count})\nClick: show the library · Double-click: open its designer`,
-        onclick: () => { state.tab = k; this.renderTabs(); this.renderBody(); },
-        ondblclick: () => window.dispatchEvent(new CustomEvent('ud:open-page', { detail: k }))
+        'data-tip': `${label} (${count})\nClick: show this library and open its designer (the item you edited last)\nCtrl+click: only show the library, the open item stays (drag items into it)`,
+        // the canvas follows the item type: its designer opens with the item of that type edited last (each type keeps its own history)
+        onclick: e => {
+          state.tab = k; this.renderTabs(); this.renderBody();
+          if (!(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
+        }
       }, iconEl(TAB_ICONS[k], { size: 18 }), h('span', { class: 'lib-tab-count' }, String(count))));
     }
   }
@@ -945,6 +953,30 @@ export class LibraryPanel {
       box
     );
     fill();
+  }
+
+  /** Refreshes cached thumbnail / sprite for an item when saved in designer. */
+  refreshItemThumbnail(type, doc) {
+    if (!doc) return;
+    const now = Date.now();
+    // Cache bust image in library panel DOM if present
+    const selector = `[data-${type}-id="${doc.id}"] img.thumb, .cell img.thumb[src*="/${type}/${doc.id}"]`;
+    const imgs = this.bodyEl.querySelectorAll(selector);
+    imgs.forEach(img => {
+      try {
+        const u = new URL(img.src, window.location.href);
+        u.searchParams.set('v', String(now));
+        img.src = u.toString();
+      } catch (e) {
+        img.src = `${api.svgUrl(type, doc.id, { theme: state.themeKey, animated: type === 'element' ? 1 : 0, size: 96 })}&v=${now}`;
+      }
+    });
+    // In state.library, bump item's updatedAt so subsequent re-renders also use the updated cache-buster
+    const rows = state.library?.[PLURAL[type]];
+    if (Array.isArray(rows)) {
+      const it = rows.find(r => Number(r.id) === Number(doc.id));
+      if (it) it.updatedAt = now;
+    }
   }
 
   /** Called by the app when a screen record changed (rename, thumbnails). */

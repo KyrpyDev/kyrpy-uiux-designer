@@ -76,7 +76,15 @@ export const ownerLabel = (username, id = null) => (username === 'public' || (id
 
 export const currentTheme = () => state.themes.find(t => t.key === state.themeKey) || state.themes[0];
 export const libOf = type => state.library[PLURAL[type]];
-export const findDesign = (type, id) => libOf(type)?.find(d => d.id === id);
+/*
+ * Items an open design refers to that are not in the loaded library (they belong to another project, or the library
+ * filter hides them). Without them a placed button / element / path draws as an empty placeholder and its menu is gone
+ * (seen in the workflow test window). `ensureDesignDeps` (actions.js) fills this store; renderContext and findDesign read it.
+ */
+const extraLib = { path: new Map(), button: new Map(), element: new Map() };
+export const extraDesign = (type, id) => extraLib[type]?.get(Number(id));
+export function addExtraDesign(type, rec) { if (extraLib[type] && rec?.id != null) extraLib[type].set(Number(rec.id), rec); }
+export const findDesign = (type, id) => libOf(type)?.find(d => d.id === id) || extraDesign(type, id);
 
 /**
  * Icon index of the render context. Library icons are summaries (no nodes) when the library is large: `get`
@@ -84,9 +92,16 @@ export const findDesign = (type, id) => libOf(type)?.find(d => d.id === id);
  * Rebuilt only when the icon list changes.
  */
 class LazyIconMap extends Map {
+  has(id) { return super.has(id) || this.get(id) !== undefined; }
   get(id) {
     const v = super.get(id);
-    if (v && !v.nodes) {
+    if (!v) {
+      // an icon outside the loaded library (another project / filtered out): served from the lazy cache
+      const c = id ? cachedIcon(id) : null;
+      if (!c && id) requestIconNodes([id]);
+      return c || undefined;
+    }
+    if (!v.nodes) {
       const c = cachedIcon(id);
       if (c) v.nodes = c.nodes;
       else requestIconNodes([id]);
@@ -106,12 +121,14 @@ function iconIndex() {
 /** Render context for the domain renderer built from the cached library. `animations` overrides the cached ones. */
 export function renderContext({ animations, ...extra } = {}) {
   const one = d => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes }];
+  const btn = d => ({ ...one(d)[1], menu: d.menuItems?.length ? { cfg: menuConfig(d.meta), items: d.menuItems.map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '', targetElementKey: findDesign('element', m.targetElementId)?.key || '' })) } : null });
   const lib = {
     path: new Map(state.library.paths.map(one)),
     icon: iconIndex(),
     element: new Map(state.library.elements.map(one)),
-    button: new Map(state.library.buttons.map(d => [d.id, { ...one(d)[1], menu: d.menuItems?.length ? { cfg: menuConfig(d.meta), items: d.menuItems.map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '', targetElementKey: findDesign('element', m.targetElementId)?.key || '' })) } : null }]))
+    button: new Map(state.library.buttons.map(d => [d.id, btn(d)]))
   };
+  for (const t of ['path', 'element', 'button']) for (const [id, d] of extraLib[t]) if (!lib[t].has(id)) lib[t].set(id, t === 'button' ? btn(d) : one(d)[1]);
   return createContext({ theme: currentTheme(), lib, animations: state.playAnimations ? (animations ?? state.library.animations) : [], ...extra });
 }
 
@@ -120,3 +137,6 @@ export const projectLabel = p => (p && (p.name || p.label)) || `Project #${p?.id
 
 /** Drops duplicate rows (same id), keeping the first occurrence. */
 export const uniqueById = rows => [...new Map((rows || []).filter(Boolean).map(r => [r.id, r])).values()];
+
+// a saved item that lives in the extra store keeps its copy current
+on('item:saved', ({ type, doc } = {}) => { if (doc && extraLib[type]?.has(Number(doc.id))) extraLib[type].set(Number(doc.id), doc); });

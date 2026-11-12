@@ -4,7 +4,7 @@ import { uniqueKey, slugify } from '../domain/naming.js';
 import { stripOwnership } from '../domain/system-users.js';
 import { assertItemAccess } from './access-policy.js';
 import { fallbackOwnerId } from './default-owner.js';
-import { collectScreenRoutes, crawlScreenRoutes } from '../domain/screen-routes.js';
+import { collectScreenRoutes, crawlScreenRoutes, distributeLevels } from '../domain/screen-routes.js';
 
 /** Workflows: screens placed on an infinite canvas plus named links between them (optionally from a specific element). */
 export class WorkflowService {
@@ -320,11 +320,13 @@ export class WorkflowService {
       const rowH = Math.max(...order.map(sid => rec(sid).height || 844)) + 150;
       // rows already taken in a column (by the screens of the workflow that sit in it) are skipped
       const taken = [...placed.values()].map(n => ({ col: Math.round((n.x - origin.x) / colW), y: n.y }));
+      // a route depth with many screens takes several columns, so the import is not one very tall strip
+      const { cells } = distributeLevels(order, level, { cellW: colW, cellH: rowH });
       const rows = new Map();
       let screens = 0, links = 0;
       for (const sid of order) {
         if (placed.has(sid)) continue;
-        const col = level.get(sid);
+        const col = cells.get(sid).col;
         let row = rows.get(col) ?? 0, py = origin.y + row * rowH;
         while (taken.some(t => t.col === col && Math.abs(t.y - py) < rowH - 1)) { row++; py = origin.y + row * rowH; }
         rows.set(col, row + 1);

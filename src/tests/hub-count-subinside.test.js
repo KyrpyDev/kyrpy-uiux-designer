@@ -127,10 +127,18 @@ test('designer switch + session history + sync lock: wired', async () => {
   ed.setEditedSessionUser(8);
   assert.deepEqual(ed.sessionEdited(), [], 'another user starts with an empty session history');
   assert.equal(ed.lastEdited('screen'), 12, 'the remembered (red edge) marks still say what was edited last');
+  // closing an item takes it out of the session history of its own type only; its red edit mark stays
+  ed.markEdited('screen', 21); ed.markEdited('element', 3);
+  ed.forgetSessionEdited('screen', 21);
+  assert.deepEqual(ed.sessionEdited('screen'), []); assert.deepEqual(ed.sessionEdited('element'), ['element:3']);
+  assert.ok(ed.editedKeys().includes('screen:21'));
   ed.clearEdited();
   const designer = read('../interfaces/web/js/components/designer.js'), main = read('../interfaces/web/js/main.js'), collab = read('../interfaces/web/js/components/collab-modals.js');
   assert.match(designer, /typeSwitch\(\) \{/); assert.match(designer, /for \(const k of sessionEdited\(this\.type\)\)/);
-  assert.match(main, /const last = lastEdited\(type\)/); assert.match(main, /openPage: t => openPageType\(t\)/);
+  // a type tab / the designer switch reopen the item that was open last in that designer, else the one edited last
+  assert.match(main, /pick\(lastOpened\[type\]\) \|\| pick\(lastEdited\(type\)\)/); assert.match(main, /openPage: t => openPageType\(t\)/);
+  // a library type tab opens its designer (Ctrl+click only shows the library)
+  assert.match(read('../interfaces/web/js/components/library-panel.js'), /new CustomEvent\('ud:open-page', \{ detail: \{ type: k, fromTab: true \} \}\)/);
   assert.equal((collab.match(/await withSyncProgress\(/g) || []).length, 3, 'the three sync buttons lock the page behind a progress bar');
   assert.match(read('../interfaces/web/css/app.css'), /\.sync-lock \{ position: fixed; inset: 0; z-index: 10000/);
 });
@@ -152,4 +160,115 @@ test('hub icon size: hubIconSize sets the icon inside every hub button, up to th
     assert.throws(() => c.menus.setConfig(b.id, { hubIconSize: 1.5 }), /hubIconSize/);
   } finally { c.close(); }
   assert.match(readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8'), /mc-\$\{bid\}-hubiconsize/);
+});
+
+test('hub menu extent grows with hubCount so designer fits the whole menu into screen', async () => {
+  const { menuExtent, hubBarReach } = await import('../domain/menu.js');
+  const items = Array.from({ length: 6 }, (_, i) => ({ id: i + 1, parentId: null, ord: i + 1, name: `i${i}`, label: `Item ${i}`, children: [] }));
+  const tree = buildMenuTree(items);
+  const btn = { width: 56, height: 56 };
+  const ext3 = menuExtent(btn, { ...DEFAULT_MENU, kind: 'hub', hubCount: 3, direction: 'horizontal', orientation: 'horizontal' }, tree);
+  const ext5 = menuExtent(btn, { ...DEFAULT_MENU, kind: 'hub', hubCount: 5, direction: 'horizontal', orientation: 'horizontal' }, tree);
+  const ext6 = menuExtent(btn, { ...DEFAULT_MENU, kind: 'hub', hubCount: 6, direction: 'horizontal', orientation: 'horizontal' }, tree);
+  assert.ok(ext5.w > ext3.w, '5 buttons wider than 3');
+  assert.ok(ext6.w > ext5.w, '6 buttons wider than 5');
+});
+
+test('hub fixed positions: option stored, rendered with data-hub-fixed, and runtime keeps items at preset positions without moving to centre', () => {
+  assert.equal(DEFAULT_MENU.hubFixedPositions, false);
+  const tree = buildMenuTree([{ id: 1, parentId: null, ord: 1, name: 'a', label: 'A' }, { id: 2, parentId: null, ord: 2, name: 'b', label: 'B' }, { id: 3, parentId: null, ord: 3, name: 'c', label: 'C' }]);
+  const draw = cfg => renderMenu({ button: { key: 'k', width: 56, height: 56 }, cfg: { ...DEFAULT_MENU, kind: 'hub', ...cfg }, tree, ctx: createContext({ theme: BUILTIN_THEMES[0] }), iconKey: () => null });
+  assert.match(draw({ hubFixedPositions: true }), /data-hub-fixed="1"/);
+  assert.match(draw({ hubFixedPositions: false }), /data-hub-fixed="0"/);
+  const c = buildContainer({ dbFile: ':memory:', syncEnabled: false });
+  try {
+    const pub = c.publicUserId();
+    const b = c.button.create({ name: 'hfx', key: 'hfx', width: 48, height: 48, projectId: 1, visibility: 'public', creatorId: pub, rootOwnerId: pub }, { nodes: [] });
+    assert.equal(c.menus.setConfig(b.id, { kind: 'hub', hubFixedPositions: true }).hubFixedPositions, true);
+    assert.equal(c.menus.setConfig(b.id, { kind: 'hub', hubFixedPositions: false }).hubFixedPositions, false);
+  } finally { c.close(); }
+  const insp = readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8');
+  assert.match(insp, /mc-\$\{bid\}-hubfixed/);
+
+  // Runtime verification: items stay at fixed preset positions
+  const w = world({ n: 5, subs: 3, menuAttrs: { 'data-hub-count': '5', 'data-hub-fixed': '1' } });
+  const initialPos = w.pos();
+  assert.deepEqual(initialPos, ['center', 'next', 'next2', 'prev2', 'prev']);
+
+  // Click side item (item 1): does NOT move to center! Position remains fixed!
+  w.click(w.items[1]);
+  assert.deepEqual(w.pos(), initialPos, 'positions remain fixed at preset positions, not moved to center');
+  assert.equal(w.actions.length, 1, 'item action fires immediately on click');
+  assert.equal(w.actions[0].action, 'a1');
+
+  // Click item with sub-items (item 0): fan opens while all items along the hub bar remain at their preset positions
+  w.click(w.items[0]);
+  assert.deepEqual(w.pos(), initialPos, 'hub items stay in place when sub items open');
+  assert.deepEqual(w.ctl.get(w.btn).path, ['i0'], 'sub items path open');
+
+  // Second click on item 0: toggles sub items closed, still in fixed positions
+  w.click(w.items[0]);
+  assert.deepEqual(w.ctl.get(w.btn).path, [], 'sub items path closed');
+  assert.deepEqual(w.pos(), initialPos, 'positions remain unchanged');
+});
+
+test('openMenuItemsModal: drag & drop reorder, toolbars (target, visible, up, down, center, edit, delete), and designer button integration', () => {
+  const read = p => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const menuEd = read('../interfaces/web/js/components/menu-editor.js');
+  const des = read('../interfaces/web/js/components/designer.js');
+  const css = read('../interfaces/web/css/app.css');
+
+  // Verify exported openMenuItemsModal exists in menu-editor.js
+  assert.match(menuEd, /export async function openMenuItemsModal\(/);
+  // Verify drag and drop attributes and event listeners
+  assert.match(menuEd, /class: `choice-item mi-row\$\{isHidden \? ' mi-hidden' : ''\}`/);
+  assert.match(menuEd, /draggable: 'true'/);
+  assert.match(menuEd, /ondragstart:/);
+  assert.match(menuEd, /ondragover:/);
+  assert.match(menuEd, /ondrop:/);
+  assert.match(menuEd, /menuActions\.moveTo\(d, id, it\.id, where, bid\)/);
+  // Verify toolbars and actions
+  assert.match(menuEd, /class: 'mi-toolbar'/);
+  assert.match(menuEd, /menuActions\.linkTarget\(d, it\.id, bid\)/);
+  assert.match(menuEd, /menuActions\.toggleVisible\(d, it\.id, bid\)/);
+  assert.match(menuEd, /menuActions\.move\(d, it\.id, -1, bid\)/);
+  assert.match(menuEd, /menuActions\.move\(d, it\.id, 1, bid\)/);
+  assert.match(menuEd, /menuActions\.config\(d, \{ hubCenterItemId: it\.id \}, bid\)/);
+  assert.match(menuEd, /menuActions\.edit\(d, it\.id, bid\)/);
+  assert.match(menuEd, /menuActions\.remove\(d, it\.id, bid\)/);
+  assert.match(menuEd, /menuActions\.add\(d, null, bid\)/);
+
+  // Verify designer.js integrates openMenuItemsModal
+  assert.match(des, /import \{[^}]*openMenuItemsModal[^}]*\} from '\.\/menu-editor\.js'/);
+  assert.match(des, /await openMenuItemsModal\(this, menuBtnId\);/);
+
+  // Verify CSS styles for drag and drop & toolbar
+  assert.match(css, /\.choice-item\.mi-row/);
+  assert.match(css, /\.mi-toolbar/);
+  assert.match(css, /\.choice-item\.mi-drop-before/);
+  assert.match(css, /\.choice-item\.mi-drop-after/);
+});
+
+test('designer toolbar: close edited item tool in docbar, viewControls, and main app', () => {
+  const read = p => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const des = read('../interfaces/web/js/components/designer.js');
+  const main = read('../interfaces/web/js/main.js');
+
+  // Verify closeDoc method in Designer
+  assert.match(des, /async closeDoc\(\)\s*\{/);
+  assert.match(des, /if \(!\(await this\.confirmLeave\(\)\)\) return false;/);
+  assert.match(des, /this\.doc = null;/);
+  assert.match(des, /this\.dirty = false;/);
+
+  // One Close button only, in the unbreakable view group at the right end of the tool row (two of them made the row wrap)
+  assert.equal(des.match(/ibtn\('close', 'Close item', \(\) => this\.closeDoc\(\)/g)?.length, 1);
+  assert.match(des, /act: 'close-designer'/);
+  assert.match(main, /class: 'tb-view-group'/);
+
+  // Closing takes the item out of this designer's history list
+  assert.match(des, /forgetSessionEdited\(this\.type, this\.doc\.id\)/);
+
+  // Verify onClose integration in main.js Designer instantiation
+  assert.match(main, /onClose: async \(\) => \{/);
+  assert.match(main, /app\.designer\?\.closeDoc\?\.\(\)/);
 });

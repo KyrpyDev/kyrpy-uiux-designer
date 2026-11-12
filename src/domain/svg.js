@@ -8,7 +8,7 @@ import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate } from './repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems } from './repeater.js';
 
 export const CAROUSEL_CSS = [
   '@keyframes ud-roll-2d-horizontal{0%,20%{transform:translateX(0)}33%,53%{transform:translateX(-18px)}66%,86%{transform:translateX(18px)}100%{transform:translateX(0)}}',
@@ -73,20 +73,37 @@ function commonAttrs(el, a, ctx, all) {
   return a;
 }
 
-/** Repeater container: its template child drawn itemCount times (copies exist only in the markup, never as nodes). */
+/** Repeater container: its template children drawn itemCount times (copies exist only in the markup, never as nodes). */
 function renderRepeater(el, ctx, idx, all) {
-  // only the first child by ord (ties: id) is the template; any extra children are deterministically ignored
-  const tplNode = repeaterTemplate(idx.get(el.id) || [], el.id);
-  if (!tplNode && (!ctx.editor || ctx.depth > 0)) return '';   // empty slots are an editing aid of the open design only
+  const allTpls = repeaterTemplates(idx.get(el.id) || [], el.id);
   const cfg = repeaterConfig(el);
+  const isMulti = cfg.multi === true || (allTpls.length > 1 && cfg.multi !== false && (el.attrs?.['data-repeater-multi'] === '1' || el.attrs?.['data-repeater-multi'] === 'true' || el.attrs?.['data-repeater-items'] || allTpls.some(t => t.role === 'repeater-template')));
+  const tplNodes = isMulti ? allTpls : (allTpls.length ? [allTpls[0]] : []);
+  const tplNode = tplNodes[0] || null;
+  if (!tplNode && (!ctx.editor || ctx.depth > 0)) return '';   // empty slots are an editing aid of the open design only
   const inner = containerInnerBox(el, all, ctx.lib.element);
+  let maxW = 0, maxH = 0;
+  for (const tn of tplNodes) {
+    const b = nodeBBox(tn, all);
+    if (b.w > maxW) maxW = b.w;
+    if (b.h > maxH) maxH = b.h;
+  }
   let tb = tplNode ? nodeBBox(tplNode, all) : null;
   if (tb && (!(tb.w > 0) || !(tb.h > 0))) tb = { x: tb.x, y: tb.y, w: tb.w > 0 ? tb.w : 24, h: tb.h > 0 ? tb.h : 24 };
-  const item = { w: cfg.itemWidth || tb?.w || 64, h: cfg.itemHeight || tb?.h || 64 };
+  const item = { w: cfg.itemWidth || maxW || tb?.w || 64, h: cfg.itemHeight || maxH || tb?.h || 64 };
+
+  const renderSingleTpl = tn => {
+    const b = nodeBBox(tn, all);
+    const bw = b.w > 0 ? b.w : 24, bh = b.h > 0 ? b.h : 24;
+    const s = cfg.itemWidth || cfg.itemHeight ? Math.min(item.w / bw, item.h / bh) : 1;
+    return `<g transform="translate(${round((item.w - bw * s) / 2)} ${round((item.h - bh * s) / 2)}) scale(${round(s * 1000) / 1000}) translate(${round(-b.x)} ${round(-b.y)})">${renderNode(tn, ctx, idx, all)}</g>`;
+  };
+
   let tpl;
-  if (tplNode) {
-    const s = cfg.itemWidth || cfg.itemHeight ? Math.min(item.w / tb.w, item.h / tb.h) : 1;
-    tpl = `<g transform="translate(${round((item.w - tb.w * s) / 2)} ${round((item.h - tb.h * s) / 2)}) scale(${round(s * 1000) / 1000}) translate(${round(-tb.x)} ${round(-tb.y)})">${renderNode(tplNode, ctx, idx, all)}</g>`;
+  if (tplNodes.length > 1) {
+    tpl = tplNodes.map(renderSingleTpl);
+  } else if (tplNode) {
+    tpl = renderSingleTpl(tplNode);
   } else {
     tpl = `<rect width="${round(item.w)}" height="${round(item.h)}" rx="10" fill="none" stroke="#10B981" stroke-dasharray="5 4" opacity="0.7"/>`;
   }
@@ -94,14 +111,19 @@ function renderRepeater(el, ctx, idx, all) {
   const clip = `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>`;
   const key = String(el.id).replace(/[^a-zA-Z0-9_-]/g, '');
   const box = { x: inner.x, y: inner.y, w: inner.w, h: inner.h };
+  const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key) : null;
+
   if (ctx.repeaterMode === 'runtime' && tplNode) {
     ctx.hasRepeaterRuntime = true;
     const first = repeaterPlan(cfg, box, item).copies[0];
-    const data = JSON.stringify({ id: key, cfg, inner: box, item });
+    const data = JSON.stringify({ id: key, cfg, inner: box, item, assignments });
+    const tplMarkup = Array.isArray(tpl)
+      ? tpl.map(t => `<g class="ud-rpt-tpl">${t}</g>`).join('')
+      : `<g class="ud-rpt-tpl">${tpl}</g>`;
     return clip + `<g${attrString({ class: 'ud-container-children ud-repeater', 'data-container-for': el.id, 'clip-path': `url(#${clipId})`, 'data-rpt': data })}>` +
-      `<g transform="translate(${first.x} ${first.y})"><g class="ud-rpt-tpl">${tpl}</g></g></g>`;
+      `<g transform="translate(${first.x} ${first.y})">${tplMarkup}</g></g>`;
   }
-  const out = repeaterMarkup(key, cfg, box, item, tpl, ctx.repeaterMode === 'static' ? 'static' : 'animate');
+  const out = repeaterMarkup(key, cfg, box, item, tpl, ctx.repeaterMode === 'static' ? 'static' : 'animate', assignments);
   if (out.css) ctx.repeaterCss.add(out.css);
   return clip + `<g class="ud-container-children ud-repeater" data-container-for="${el.id}" data-repeater-for="${el.id}" clip-path="url(#${clipId})">${out.markup}</g>`;
 }

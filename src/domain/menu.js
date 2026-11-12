@@ -182,6 +182,31 @@ export function hubCount(cfg) {
   return v >= 1 && v <= 6 ? v : 3;
 }
 
+/** Distance from the centre (px) along the bar reached by the outermost button on the hub bar. */
+export function hubBarReach(cfg, hubG, itemCount = null) {
+  const v = hubCount(cfg);
+  const n = itemCount != null && itemCount > 0 ? Math.min(itemCount, v) : v;
+  const odd = n % 2 === 1;
+  const fr = [cfg?.hubCenterSize ?? 1, cfg?.hubSideSize ?? 0.6, cfg?.hubEdgeSize ?? 0.4].map(Number);
+  const frac = dist => dist <= 0 ? (fr[0] || 1) : dist === 1 ? (fr[1] || 0.6) : (fr[2] || 0.4);
+  const sizeOf = d => hubG.big * frac(odd ? Math.abs(d) : (d <= 0 ? -d : d - 1));
+  let reach = 0;
+  if (odd) {
+    let edge = sizeOf(0) / 2;
+    for (let j = 1; j <= (n - 1) / 2; j++) {
+      const s = sizeOf(j);
+      edge += hubG.gap + s;
+    }
+    reach = edge;
+  } else {
+    const lo = -(n / 2 - 1), hi = n / 2;
+    let total = 0;
+    for (let d = lo; d <= hi; d++) total += sizeOf(d) + (d > lo ? hubG.gap : 0);
+    reach = total / 2;
+  }
+  return reach;
+}
+
 /** Hub icon size as a fraction of the button it sits in: 0 = automatic, else 0.1-1 (1 = the button's full extent). */
 export function hubIconSize(cfg) {
   const v = Number(cfg?.hubIconSize);
@@ -380,7 +405,8 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
-  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}" data-hub-count="${hubCount(cfg)}" data-sub-inside="${cfg.hubSubInside === false ? 0 : 1}" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget ? ` data-hub-repeater-target="${esc(cfg.hubRepeaterTargetId)}"` : ''}` : '';
+  const hubFixed = cfg.hubFixedPositions ? 1 : 0;
+  const hubAttrs = isHub ? ` data-cx="${round(cx)}" data-cy="${round(cy)}" data-hub-small="${round(hub.small)}" data-hub-big="${round(hub.big)}" data-hub-k="${round(hub.k)}" data-hub-gap="${round(hub.gap)}" data-hub-vertical="${hub.vertical ? 1 : 0}" data-hub-start="${Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)))}" data-hub-sizes="${[cfg.hubCenterSize ?? 1, cfg.hubSideSize ?? 0.6, cfg.hubEdgeSize ?? 0.4].map(Number).join(',')}" data-hub-count="${hubCount(cfg)}" data-sub-inside="${cfg.hubSubInside === false ? 0 : 1}" data-hub-fixed="${hubFixed}" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget ? ` data-hub-repeater-target="${esc(cfg.hubRepeaterTargetId)}"` : ''}` : '';
   const labelAttrs = labelsOn ? ` data-show-labels="1" data-label-pos="${esc(cfg.labelPosition || 'auto')}"` : '';
   return `<g class="ud-menu" data-kind="${esc(cfg.kind)}" data-layout="${esc(cfg.layout || 'list')}" data-orientation="${esc(menuOrientation(cfg))}" data-rotate="${Number(cfg.rotateOnOpen) || 0}" data-hub-spin="${Number(cfg.hubSpin) || 0}" data-hub-fit="${cfg.hubFit ? 1 : 0}" data-keep="${cfg.keepInside === false ? 0 : 1}"${labelAttrs}${hubAttrs}${showElAttr} style="--cx:${round(cx)}px;--cy:${round(cy)}px">${centers.join('')}${levels.join('')}${hit}${back}</g>`;
 }
@@ -423,12 +449,15 @@ export function menuExtent(button, cfg, tree) {
   const lsize = hubG ? hubG.big : size;
   const labelsOn = showLabelsEnabled(cfg);
   if (hubG) {
-    const along = hubG.big / 2 + hubG.gap + hubG.small, across = hubG.big / 2;
+    const reach = hubBarReach(cfg, hubG, tree?.length);
+    const along = Math.max(hubG.big / 2 + hubG.gap + hubG.small, reach);
+    const across = Math.max(hubG.big / 2, ((Number(cfg.hubCenterSize) || 1) * hubG.big) / 2);
     const hx = hubG.vertical ? across : along, hy = hubG.vertical ? along : across;
     x0 = Math.min(x0, cx - hx); x1 = Math.max(x1, cx + hx); y0 = Math.min(y0, cy - hy); y1 = Math.max(y1, cy + hy);
     // the "back" button at the lower right (same placement as renderMenu)
     const { bx, by, r } = hubBackSpot(hubG, cx, cy);
     x1 = Math.max(x1, bx + r); y1 = Math.max(y1, by + r);
+    x0 = Math.min(x0, bx - r); y0 = Math.min(y0, by - r);
     if (labelsOn && tree.length) {
       const pl = resolveMenuLabelPlacement(cfg, { isHubRoot: true, dx: 0, dy: 0 });
       for (const it of tree) {

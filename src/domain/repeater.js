@@ -24,7 +24,8 @@ export const REPEATER_MAX_ITEMS = 50;
 export const REPEATER_ATTR = {
   layout: 'data-repeater-layout', dimension: 'data-repeater-dim', itemCount: 'data-repeater-count', gap: 'data-repeater-gap',
   itemWidth: 'data-repeater-item-width', itemHeight: 'data-repeater-item-height', speed: 'data-repeater-speed',
-  autoplay: 'data-repeater-autoplay', perspective: 'data-repeater-perspective', direction: 'data-repeater-direction'
+  autoplay: 'data-repeater-autoplay', perspective: 'data-repeater-perspective', direction: 'data-repeater-direction',
+  multi: 'data-repeater-multi'
 };
 export const REPEATER_DEFAULTS = { layout: 'vertical', dimension: '2d', itemCount: 5, gap: 12, itemWidth: 0, itemHeight: 0, speed: 1800, autoplay: true, perspective: 800, direction: 'vertical' };
 
@@ -69,7 +70,8 @@ export function repeaterConfig(el) {
     speed: clampN(num(a[A.speed], D.speed), 200, 20000),
     autoplay: a[A.autoplay] !== 'false' && a[A.autoplay] !== false,
     perspective: clampN(num(a[A.perspective], D.perspective), 100, 5000),
-    direction: a[A.direction] === 'horizontal' ? 'horizontal' : 'vertical'
+    direction: a[A.direction] === 'horizontal' ? 'horizontal' : 'vertical',
+    multi: a[A.multi] === '1' || a[A.multi] === 'true' || a[A.multi] === true || !!a['data-repeater-items']
   };
 }
 
@@ -78,14 +80,58 @@ export function repeaterTemplate(nodes, repeaterId) {
   return (nodes || []).filter(n => n.parentId === repeaterId).sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id)[0] || null;
 }
 
+/** All template children of a repeater ordered by ord, then id. */
+export function repeaterTemplates(nodes, repeaterId) {
+  return (nodes || []).filter(n => n.parentId === repeaterId).sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
+}
+
 /**
- * The equivalent of dropping a library item onto a repeater: the new node becomes its template, replacing the old one(s).
- * `def` is the node to add (tag/kind/refType/refId/attrs...). `slot` ({x,y,w,h}, optional) places it on the first slot.
- * Returns { removeIds, node } for the caller to persist (delete removeIds, then add node).
+ * Assigns template index for each of the `itemCount` copies in a repeater.
+ * Each distinct template is assigned at least once (randomly/evenly distributed),
+ * filling up to total itemCount. Deterministic when seed string provided.
  */
-export function repeaterTemplateOps(nodes, repeater, def, slot = null) {
-  const removeIds = (nodes || []).filter(n => n.parentId === repeater.id).map(n => n.id);
-  const node = { ...def, parentId: repeater.id, ord: 0, attrs: { ...(def.attrs || {}) } };
+export function assignRepeaterItems(templateCount, itemCount, seed = '') {
+  const m = Math.max(1, templateCount);
+  const n = Math.max(1, Math.min(REPEATER_MAX_ITEMS, Math.round(itemCount) || 1));
+  if (m === 1) return new Array(n).fill(0);
+
+  // Simple pseudo-random hash generator based on seed
+  let s = 0;
+  for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) & 0xffffffff;
+  const rnd = () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 4294967296;
+  };
+
+  const pool = [];
+  // Ensure every distinct template item is included at least once
+  for (let i = 0; i < Math.min(m, n); i++) pool.push(i);
+
+  // Fill remaining slots randomly from templates
+  while (pool.length < n) {
+    const pick = Math.floor(rnd() * m);
+    pool.push(pick);
+  }
+
+  // Shuffle using Fisher-Yates so template positions are randomly assigned
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  return pool;
+}
+
+/**
+ * Adding a node to a repeater: adds as an additional template child (or replaces if replace: true).
+ * When replace is true, removes existing template children.
+ */
+export function repeaterTemplateOps(nodes, repeater, def, slot = null, { replace = true } = {}) {
+  const existing = (nodes || []).filter(n => n.parentId === repeater.id);
+  const removeIds = replace ? existing.map(n => n.id) : [];
+  const nextOrd = replace ? 0 : existing.reduce((m, n) => Math.max(m, (n.ord ?? 0) + 1), 0);
+  const node = { ...def, parentId: repeater.id, ord: nextOrd, attrs: { ...(def.attrs || {}) } };
   if (slot && ['use', 'rect', 'image'].includes(node.tag)) {
     node.attrs.x = slot.x; node.attrs.y = slot.y;
     if (!(Number(node.attrs.width) > 0)) node.attrs.width = slot.w;
@@ -95,13 +141,12 @@ export function repeaterTemplateOps(nodes, repeater, def, slot = null) {
 }
 
 /**
- * Moving an existing node onto a repeater: it becomes the template (fitted inside the content box `inner`, placed on
- * the first slot) and the previous template(s) are moved out next to the repeater (into the repeater's parent) instead
- * of being deleted. Returns { patches: [{ id, patch }] } in apply order: the parked old templates first, then the node.
+ * Moving an existing node onto a repeater: adopts it as a template child.
+ * When replace is true (default), parks the old templates beside it.
  */
-export function repeaterAdoptOps(nodes, repeater, moved, inner, { keepSize = false } = {}) {
+export function repeaterAdoptOps(nodes, repeater, moved, inner, { keepSize = false, replace = true } = {}) {
   const all = nodes || [];
-  const { removeIds } = repeaterTemplateOps(all.filter(n => n.id !== moved.id), repeater, moved);
+  const { removeIds } = repeaterTemplateOps(all.filter(n => n.id !== moved.id), repeater, moved, null, { replace });
   const patches = [];
   const rb = nodeBBox(repeater, all);
   let maxOrd = all.reduce((m, n) => Math.max(m, Number(n.ord) || 0), 0), px = rb.x + rb.w + 16;
@@ -112,11 +157,13 @@ export function repeaterAdoptOps(nodes, repeater, moved, inner, { keepSize = fal
   }
   const from = nodeBBox(moved, all);
   const fw = from.w > 0 ? from.w : 24, fh = from.h > 0 ? from.h : 24;
-  const k = keepSize ? 1 : Math.min(1, inner.w / fw, inner.h / fh);   // keepSize: the repeater grows around it instead (fitRepeater)
+  const k = keepSize ? 1 : Math.min(1, inner.w / fw, inner.h / fh);
   const w = Math.max(4, Math.round(fw * k)), h = Math.max(4, Math.round(fh * k));
   const cfg = repeaterConfig(repeater);
   const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || h }).copies[0];
-  patches.push({ id: moved.id, patch: { parentId: repeater.id, ord: 0, attrs: resizeAttrs(moved, { ...from, w: fw, h: fh }, { x: first.x, y: first.y, w, h }) } });
+  const existingKids = all.filter(n => n.parentId === repeater.id && n.id !== moved.id && !removeIds.includes(n.id));
+  const nextOrd = replace ? 0 : existingKids.reduce((m, n) => Math.max(m, (n.ord ?? 0) + 1), 0);
+  patches.push({ id: moved.id, patch: { parentId: repeater.id, ord: nextOrd, attrs: resizeAttrs(moved, { ...from, w: fw, h: fh }, { x: first.x, y: first.y, w, h }) } });
   return { patches, parkedIds: removeIds };
 }
 
@@ -180,19 +227,51 @@ export function repeaterPlan(cfg, inner, item) {
 
 /**
  * Markup of the repeated copies plus their CSS (self-contained apart from repeaterPlan).
- * id: unique key for class/keyframe names; tpl: the template markup (already normalized into a 0,0 → item.w,item.h slot);
+ * id: unique key for class/keyframe names; tpl: template markup string OR an array of template markup strings;
  * mode: 'animate' (keyframes) or 'static' (first frame only). Returns { markup, css }.
  */
-export function repeaterMarkup(id, cfg, inner, item, tpl, mode) {
+export function repeaterMarkup(id, cfg, inner, item, tpl, mode, assignments = null) {
+  function assignItems(templateCount, itemCount, seed) {
+    var m = Math.max(1, templateCount);
+    var n = Math.max(1, Math.min(50, Math.round(itemCount) || 1));
+    if (m === 1) {
+      var arr = []; for (var k = 0; k < n; k++) arr.push(0); return arr;
+    }
+    var s = 0;
+    var str = String(seed || '');
+    for (var i = 0; i < str.length; i++) s = (s * 31 + str.charCodeAt(i)) & 0xffffffff;
+    var rnd = function () {
+      s = (s * 1664525 + 1013904223) & 0xffffffff;
+      return (s >>> 0) / 4294967296;
+    };
+    var pool = [];
+    for (var p = 0; p < Math.min(m, n); p++) pool.push(p);
+    while (pool.length < n) pool.push(Math.floor(rnd() * m));
+    for (var j = pool.length - 1; j > 0; j--) {
+      var swapIdx = Math.floor(rnd() * (j + 1));
+      var tmp = pool[j];
+      pool[j] = pool[swapIdx];
+      pool[swapIdx] = tmp;
+    }
+    return pool;
+  }
   var plan = repeaterPlan(cfg, inner, item);
   var anim = mode === 'animate' && cfg.autoplay;
   var key = 'ud-rpt-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '');
   var css = '', body = '';
-  var noIds = String(tpl).replace(/\sid="[^"]*"/g, '');
+  var isMulti = Array.isArray(tpl);
+  var tplList = isMulti ? tpl : [tpl];
+  var mCount = Math.max(1, tplList.length);
+  var noIdsList = tplList.map(function (s) { return String(s).replace(/\sid="[^"]*"/g, ''); });
+  var chosenMap = assignments;
+  if (!chosenMap || chosenMap.length !== plan.n) {
+    chosenMap = assignItems(mCount, plan.n, String(id));
+  }
   var P = plan.ring ? plan.ring.perspective : cfg.perspective || 800;
   for (var c = 0; c < plan.copies.length; c++) {
     var cp = plan.copies[c];
-    var inner3 = (c === 0 ? tpl : noIds);
+    var tIdx = chosenMap[cp.i % chosenMap.length] % mCount;
+    var inner3 = (c === 0 ? tplList[tIdx] : noIdsList[tIdx]);
     var attrs = ' class="ud-rpt-copy' + (plan.ring && anim ? ' ' + key + '-ring' : '') + '" data-rpt-' + (cp.clone ? 'clone' : 'index') + '="' + cp.i + '"' +
       (cp.t ? ' transform="' + cp.t + '"' : '') + (cp.o !== 1 ? ' opacity="' + cp.o + '"' : '') +
       (c > 0 ? ' aria-hidden="true"' : '') +
@@ -250,9 +329,10 @@ export function bindRepeaters(root) {
   for (var i = 0; i < list.length; i++) {
     var g = list[i], data;
     try { data = JSON.parse(g.getAttribute('data-rpt')); } catch (e) { continue; }
-    var tpl = g.querySelector('.ud-rpt-tpl');
-    if (!tpl) continue;
-    var out = repeaterMarkup(data.id, data.cfg, data.inner, data.item, tpl.innerHTML, 'animate');
+    var tpls = g.querySelectorAll('.ud-rpt-tpl');
+    if (!tpls.length) continue;
+    var tplMarkup = tpls.length > 1 ? Array.prototype.map.call(tpls, function (t) { return t.innerHTML; }) : tpls[0].innerHTML;
+    var out = repeaterMarkup(data.id, data.cfg, data.inner, data.item, tplMarkup, 'animate', data.assignments);
     g.innerHTML = out.markup;
     if (style.textContent.indexOf('@keyframes ud-rpt-' + data.id + '-') < 0) style.textContent += out.css;
     g.removeAttribute('data-rpt');

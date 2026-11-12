@@ -9,6 +9,7 @@ import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprin
 import { api } from '../api.js';
 import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { nodeBBox } from '/domain/geometry.js';
+import { distributeLevels } from '/domain/screen-routes.js';
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
 import { openTestRunner } from './test-runner.js';
@@ -440,8 +441,8 @@ export class WorkflowDesigner {
     this.testBtn = h('button', {
       class: `btn small${this.testMode ? ' active' : ''}`,
       dataset: { act: 'test-actions' },
-      title: 'Run this workflow as a browsable app in a test window: every route, menu item and popup works; Back walks back. Edit items in a new tab while it runs.',
-      onclick: () => openTestRunner(this.app, { type: 'workflow', id: this.wf.id })
+      title: 'Run this workflow as a browsable app in a test window, starting on the selected screen (else its first screen): every route, menu item and popup works; Back walks back. The ✎ pills edit items while it runs.',
+      onclick: () => openTestRunner(this.app, { type: 'workflow', id: this.wf.id, startScreenId: this.testStartScreenId() })
     }, '▶ Test workflow');
     const nameIn = h('input', {
       class: 'wf-title-input', value: wf.name, spellcheck: 'false',
@@ -686,7 +687,7 @@ export class WorkflowDesigner {
   }
   fit() {
     const rects = this.wf.nodes.map(n => this.nodeRect(n.screenId)).filter(Boolean);
-    const r = this.viewport.getBoundingClientRect();
+    const r = this.viewport?.getBoundingClientRect() || {};
     if (!rects.length || !r.width) { this.view = { tx: 40, ty: 40, z: 0.35 }; return this.applyView(); }
     const x0 = Math.min(...rects.map(q => q.x)), y0 = Math.min(...rects.map(q => q.y)), x1 = Math.max(...rects.map(q => q.x + q.w)), y1 = Math.max(...rects.map(q => q.y + q.h));
     const z = Math.min(1, (r.width - 80) / (x1 - x0), (r.height - 80) / (y1 - y0));
@@ -877,6 +878,12 @@ export class WorkflowDesigner {
 
   async toggleCollapse(n) { n.collapsed = !n.collapsed; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed }); await this.refresh(); }
   async collapseAll(v) { await Promise.all(this.wf.nodes.map(n => api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: v }))); await this.refresh(); this.fit(); }
+  /** Where "Test workflow" starts: the screen selected on the canvas, when it is still part of the workflow. */
+  testStartScreenId() {
+    const id = this.sel?.kind === 'node' ? this.sel.id : null;
+    return id != null && (this.wf?.nodes || []).some(n => n.screenId === id) ? id : undefined;
+  }
+
   async addAll() {
     const have = new Set(this.wf.nodes.map(n => n.screenId)); let i = this.wf.nodes.length;
     for (const s of this.screens.values()) if (!have.has(s.id)) { await api.placeScreen(this.wf.id, { screenId: s.id, x: (i % 5) * 560, y: Math.floor(i / 5) * 980 }); i++; }
@@ -890,9 +897,14 @@ export class WorkflowDesigner {
     queue.forEach(id => level.set(id, 0));
     for (let i = 0; i < queue.length; i++) for (const l of this.wf.links.filter(x => x.fromScreenId === queue[i])) if (!level.has(l.toScreenId)) { level.set(l.toScreenId, level.get(queue[i]) + 1); queue.push(l.toScreenId); }
     let extra = Math.max(0, ...level.values()) + 1;
-    for (const id of nodes) if (!level.has(id)) level.set(id, extra);
-    const rows = new Map();
-    await Promise.all(nodes.map(id => { const lv = level.get(id), row = rows.get(lv) || 0; rows.set(lv, row + 1); const s = this.screens.get(id); return api.placeScreen(this.wf.id, { screenId: id, x: lv * (s.width + 170), y: row * (s.height + HEAD + 90) }); }));
+    for (const id of nodes) if (!level.has(id)) { level.set(id, extra); queue.push(id); }
+    if (!nodes.length) return;
+    // a level with many screens is spread over several columns (distributeLevels) so the map is not one tall strip
+    const dim = id => this.screens.get(id) || { width: 390, height: 844 };
+    const colW = Math.max(...nodes.map(id => dim(id).width || 390)) + 170, rowH = Math.max(...nodes.map(id => dim(id).height || 844)) + HEAD + 110;
+    const r = this.viewport?.getBoundingClientRect() || {};
+    const { cells } = distributeLevels(queue, level, { cellW: colW, cellH: rowH, aspect: r.width && r.height ? Math.max(1, r.width / r.height) : 1.7 });
+    await Promise.all(this.wf.nodes.map(n => { const c = cells.get(n.screenId); return api.placeScreen(this.wf.id, { screenId: n.screenId, x: Math.round(c.col * colW), y: Math.round(c.row * rowH), collapsed: n.collapsed, locked: n.locked }); }));
     await this.refresh(); this.fit();
   }
 

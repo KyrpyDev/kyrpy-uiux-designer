@@ -310,3 +310,44 @@ test('horizontal repeater: sliding scrolls along X axis with translateX', () => 
 
   assert.equal(w.repeaterTrack.style.transform, 'translateX(-50px)', 'track moved along X axis');
 });
+
+test('hub continuous auto-scroll: scales speed with displacement within button radius and preserves offset on release', () => {
+  const w = createScreenWorld({ repeaterAxis: 'y', repeaterLoop: 600 });
+  // Add requestAnimationFrame / cancelAnimationFrame mock to ownerDoc.defaultView
+  let frameCb = null, frameId = 0;
+  w.root.ownerDocument.defaultView.requestAnimationFrame = fn => {
+    frameCb = fn;
+    return ++frameId;
+  };
+  w.root.ownerDocument.defaultView.cancelAnimationFrame = id => {
+    frameCb = null;
+  };
+
+  bindMenus(w.root);
+
+  // 1. Pointerdown on center button at (100, 200)
+  w.fire('pointerdown', w.centerHit, { clientX: 100, clientY: 200 });
+
+  // 2. Pull down by 20px (clientY 200 -> 220, displacement inside 32px radius)
+  w.fire('pointermove', w.centerHit, { clientX: 100, clientY: 220 });
+
+  assert.ok(frameCb, 'requestAnimationFrame auto-scroll loop started');
+
+  // Trigger one frame tick
+  frameCb();
+  const tf1 = w.repeaterTrack.style.transform;
+  assert.ok(tf1 && tf1.startsWith('translateY('), 'repeater scrolled during RAF tick: ' + tf1);
+
+  // Trigger second frame tick
+  frameCb();
+  const tf2 = w.repeaterTrack.style.transform;
+  assert.notEqual(tf1, tf2, 'repeater moved further on next frame tick');
+
+  // 3. Pointerup stops scrolling loop and PRESERVES the position
+  w.fire('pointerup', w.centerHit, { clientX: 100, clientY: 220 });
+  assert.equal(frameCb, null, 'RAF loop cancelled on pointer release');
+
+  // Preserved position check
+  assert.equal(w.repeaterTrack.style.transform, tf2, 'repeater position preserved exactly as stopped');
+  assert.ok(!w.repeaterStage.__udT, 'no reset timeout set; offset preserved');
+});

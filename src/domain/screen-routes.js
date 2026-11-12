@@ -75,3 +75,28 @@ export function crawlScreenRoutes(startId, routesOf, { exists = () => true, max 
   }
   return { order, level, routes };
 }
+
+/**
+ * Grid cells for screens grouped by route depth (`level`). A level with many screens (a hub that leads to 15 screens)
+ * is spread over several neighbouring columns instead of one very tall one, so the whole map stays readable.
+ * @param {number[]} ids screens in placement order
+ * @param {Map<number, number>} level route depth of each screen
+ * @param {{ maxRows?: number, cellW?: number, cellH?: number, aspect?: number }} [o] maxRows wins; otherwise it is chosen so the
+ *   map comes out about `aspect` (width / height) wide for cells of cellW × cellH
+ * @returns {{ cells: Map<number, { col: number, row: number }>, cols: number, rows: number, maxRows: number }}
+ *   `row` may be fractional: a column with fewer screens than the tallest one is centred on it
+ */
+export function distributeLevels(ids, level, { maxRows = 0, cellW = 560, cellH = 1024, aspect = 1.7 } = {}) {
+  const byLevel = new Map();
+  for (const id of ids) { const lv = level.get(id) ?? 0; if (!byLevel.has(lv)) byLevel.set(lv, []); byLevel.get(lv).push(id); }
+  const cap = maxRows > 0 ? Math.floor(maxRows) : Math.min(6, Math.max(2, Math.ceil(Math.sqrt(ids.length * cellW / (cellH * aspect)))));
+  const columns = [];
+  for (const lv of [...byLevel.keys()].sort((a, b) => a - b)) {
+    const list = byLevel.get(lv), n = Math.ceil(list.length / cap), per = Math.ceil(list.length / n);   // even columns: 7 → 4 + 3, not 6 + 1
+    for (let i = 0; i < n; i++) columns.push(list.slice(i * per, (i + 1) * per));
+  }
+  const rows = Math.max(0, ...columns.map(c => c.length));
+  const cells = new Map();
+  columns.forEach((c, col) => c.forEach((id, i) => cells.set(id, { col, row: i + (rows - c.length) / 2 })));
+  return { cells, cols: columns.length, rows, maxRows: cap };
+}

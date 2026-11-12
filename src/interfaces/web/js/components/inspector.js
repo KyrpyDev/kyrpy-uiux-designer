@@ -13,7 +13,7 @@ import {
   clampNodeToContainer, fitContainerToScreenBox
 } from '/domain/geometry.js';
 import { ANIMATION_TYPES, TRIGGERS, EASINGS } from '/domain/animation.js';
-import { isRepeaterNode, repeaterConfig, repeaterTemplate, repeaterPlan, REPEATER_ATTR, REPEATER_MAX_ITEMS } from '/domain/repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterTemplate, repeaterTemplates, repeaterPlan, REPEATER_ATTR, REPEATER_MAX_ITEMS } from '/domain/repeater.js';
 import { SURFACE_ROLES } from '/domain/theme.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
@@ -348,9 +348,14 @@ export class Inspector {
         : null,
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
-            this.field('Buttons shown at once (the rest: turn the ring)', this.select(`mc-${bid}-hubcount`, hubCount(cfg), [1, 2, 3, 4, 5, 6].map(n => [n, String(n)]), v => set({ hubCount: Number(v) }))),
+            this.field('Buttons shown at once (the rest: turn the ring)', this.select(`mc-${bid}-hubcount`, hubCount(cfg), [1, 2, 3, 4, 5, 6].map(n => [n, String(n)]), async v => {
+              await set({ hubCount: Number(v) });
+              d.fit?.();
+            })),
             this.field('Icon size inside the buttons (0 = auto … 1 = fills the button)', this.num(`mc-${bid}-hubiconsize`, cfg.hubIconSize ?? 0, v => set({ hubIconSize: Math.max(0, Math.min(1, Number(v) || 0)) }), { step: 0.05, min: 0, max: 1 })),
             num('centerScale', 'Centre item size × button (0 = 2 × base small)'), num('hubCenterSize', 'Bar: centre size × centre (even bars: both middle ones)'), num('hubSideSize', 'Bar: side size × centre'), num('hubEdgeSize', 'Bar: edge size × centre'), num('hubScale', 'Base small size × button (gaps, back button)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),
+            h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'Menu items stay at their fixed preset positions along the bar and do not move to the center position when clicked' },
+              h('input', { type: 'checkbox', checked: !!cfg.hubFixedPositions, 'data-f': `mc-${bid}-hubfixed`, onchange: async e => { await set({ hubFixedPositions: e.target.checked }); d.fit?.(); } }), h('span', {}, 'Fix item positions (do not move to center)')),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The centre stays where it is and the sub items use only the part of the ring around it that is inside the device screen. Sub items without room are not drawn: the first and last (smaller) ones turn the ring to reach them.' },
               h('input', { type: 'checkbox', checked: cfg.hubSubInside !== false, 'data-f': `mc-${bid}-hubsubinside`, onchange: e => set({ hubSubInside: e.target.checked }) }), h('span', {}, 'Sub items stay inside the screen (centre fixed)')),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the sub items would not fit the screen they are scaled down (size and distance) until they do' },
@@ -720,26 +725,51 @@ export class Inspector {
     return secs;
   }
 
-  /** Repeater controls: layout, 2D/3D, item count, gap, slot size, speed, autoplay, perspective. Every change re-renders the canvas. */
+  /** Repeater controls: layout, 2D/3D, item count, gap, slot size, speed, autoplay, perspective. Shows all sub-items added into the repeater. */
   repeaterSection(e) {
     const d = this.d, cfg = repeaterConfig(e), A = REPEATER_ATTR;
-    const tpl = repeaterTemplate(d.nodes, e.id);
-    const extra = Math.max(0, d.nodes.filter(n => n.parentId === e.id).length - 1);   // children beyond the template are ignored by the renderer
+    const tpls = repeaterTemplates(d.nodes, e.id);
+    const topOutside = d.nodes.filter(n => n.id !== e.id && n.parentId == null && n.role !== 'bg' && n.role !== 'bg-glow');
     const set = async patchAttrs => {
       await d.patchNode(e.id, { attrs: { ...(e.attrs || {}), ...patchAttrs } });
-      // the repeater grows / shrinks around its copies and keeps the template on the first slot (count, layout, gap ... changed)
+      // the repeater grows / shrinks around its copies and keeps templates on slots (count, layout, gap ... changed)
       await d.fitRepeater(e.id);
     };
     const ring = (cfg.layout === 'carousel' || cfg.layout === 'roll') && cfg.dimension === '3d';
     const dimToggle = h('div', { class: 'row', role: 'group', 'aria-label': '2D or 3D' },
       ...['2d', '3d'].map(v => h('button', { type: 'button', class: `btn small${cfg.dimension === v ? ' primary' : ''}`, 'aria-pressed': String(cfg.dimension === v), 'data-f': `rp-dim-${v}`,
         onclick: () => set({ [A.dimension]: v }) }, v.toUpperCase())));
+
+    const adoptSel = h('select', { 'aria-label': 'Add existing element into repeater' },
+      h('option', { value: '' }, '＋ Add item into this repeater…'),
+      ...topOutside.map(n => h('option', { value: n.id }, `${n.name || n.tag} (#${n.id})`))
+    );
+    adoptSel.addEventListener('change', async () => {
+      const targetId = Number(adoptSel.value);
+      if (!targetId) return;
+      const ch = d.byId(targetId);
+      if (!ch) return;
+      const nextOrd = tpls.reduce((m, n) => Math.max(m, (n.ord ?? 0) + 1), 0);
+      await d.patchNode(ch.id, { parentId: e.id, ord: nextOrd });
+      await d.fitRepeater(e.id);
+      toast(`Added "${ch.name || ch.tag}" into repeater "${e.name || 'repeater'}"`, 'ok', 1500);
+    });
+
+    const childRows = tpls.map((ch, idx) => h('div', { class: 'el-row' },
+      h('span', { class: 't' }, `#${idx + 1} ${TAG_LABEL[ch.tag] || ch.tag}`),
+      h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name || ch.tag),
+      ibtn('pointer', 'Select sub-item', () => d.select([ch.id])),
+      ibtn('unlink', 'Detach sub-item', async () => {
+        await d.patchNode(ch.id, { parentId: null });
+        await d.fitRepeater(e.id);
+      })
+    ));
+
     return this.section(`Repeater · ${cfg.layout} · ${cfg.dimension.toUpperCase()} · ${cfg.itemCount}×`,
       h('div', { class: 'muted', style: { fontSize: '11px' } },
-        tpl ? `Template: ${tpl.name || tpl.refType || tpl.tag}. The canvas simulates ${cfg.itemCount} copies; drop another library item on the repeater to replace it.`
-          : 'Drop any icon, button or element onto this repeater: it becomes the template that is repeated.'),
-      extra > 0 ? h('div', { class: 'muted', role: 'note', 'data-f': `rp-extra-${e.id}`, style: { fontSize: '11px', color: 'var(--warn, #d97706)' } },
-        `This repeater holds ${extra + 1} children; only the first (by order) is repeated, the other ${extra} ${extra === 1 ? 'is' : 'are'} not drawn. Drag them out or delete them.`) : null,
+        tpls.length
+          ? `${tpls.length} item type(s) configured. Repeater randomly distributes all types (at least 1 copy each) across ${cfg.itemCount} slots.`
+          : 'Drop any icon, button or element onto this repeater to add template items.'),
       h('div', { class: 'grid2' },
         this.field('Layout', this.select(`rp-layout-${e.id}`, cfg.layout, [
           ['vertical', 'Vertical list'], ['horizontal', 'Horizontal row'], ['carousel', 'Carousel'], ['roll', 'Roll (ticker / wheel)'], ['slide', 'Slide (one at a time)'], ['scroll', 'Scroll (infinite loop)']
@@ -760,7 +790,16 @@ export class Inspector {
         ['slide', 'scroll'].includes(cfg.layout) ? this.field('Direction', this.select(`rp-dir-${e.id}`, cfg.direction, [['vertical', 'Vertical'], ['horizontal', 'Horizontal']], v => set({ [A.direction]: v }))) : null,
         cfg.dimension === '3d' ? this.field('Perspective (px)', this.num(`rp-persp-${e.id}`, cfg.perspective, v => set({ [A.perspective]: Math.max(100, v) }), { min: 100, step: 50 })) : null),
       ring ? h('div', { class: 'muted', style: { fontSize: '11px' } }, cfg.layout === 'carousel' ? '3D carousel: the copies turn on a ring around the vertical axis.' : '3D roll: the copies turn on a cylinder around the horizontal axis (picker wheel).') : null,
-      h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Animations follow the canvas "Animate" toggle; export emits the template once plus a small runtime that repeats it.'));
+      h('div', { style: { marginTop: '8px', borderTop: '1px solid var(--line)', paddingTop: '8px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' } },
+          h('b', { style: { fontSize: '11px' } }, `Sub-items in repeater (${tpls.length})`),
+          adoptSel
+        ),
+        h('div', { class: 'el-list' },
+          childRows.length ? childRows : h('div', { class: 'empty' }, 'No sub-items yet. Drop icons, buttons or elements onto this repeater.')
+        )
+      ),
+      h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '6px' } }, 'Animations follow the canvas "Animate" toggle; multiple item types are distributed across total item count bounded by the screen.'));
   }
 
   /** Container & Carousel Container Inspector Sections (inner/outer margins, fixed/responsive, fit to device screen, sub-elements, 2D/3D roll). */

@@ -9,6 +9,7 @@ import { api } from '../api.js';
 import { state, findDesign, isPublicLibraryItem } from '../state.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
+import { iconEl } from '../icons.js';
 
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
@@ -110,7 +111,8 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
     const group = s => (projectId != null && Number(s.projectId) === Number(projectId) && !isPublicLibraryItem(s) ? 'here' : isPublicLibraryItem(s) ? 'public' : 'other');
     const card = (type, s) => {
       const cur = type === 'screen' ? currentScreenId : currentElementId;
-      return h('button', { class: `cell${s.id === cur ? ' sel' : ''}`, type: 'button', [`data-${type}-id`]: String(s.id), title: `${s.label || s.name} (${s.key})`,
+      const isSetTarget = cur != null && Number(s.id) === Number(cur);
+      return h('button', { class: `cell${isSetTarget ? ' sel target-set' : ''}`, type: 'button', [`data-${type}-id`]: String(s.id), title: `${s.label || s.name} (${s.key})${isSetTarget ? ' — Currently set target' : ''}`,
         style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '6px', cursor: 'pointer' }, onclick: () => { fin({ [type]: s }); m.close(); } },
         h('img', { loading: 'lazy', alt: s.name, style: type === 'screen' ? { width: '96px', height: '160px', objectFit: 'contain' } : { width: '104px', height: '104px', objectFit: 'contain' }, src: api.svgUrl(type === 'repeater' ? 'element' : type, s.id, { theme: state.themeKey, animated: 0, v: s.updatedAt }) }),
         h('div', { style: { fontSize: '11px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.name),
@@ -135,8 +137,21 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
       const t = q.value.trim().toLowerCase();
       const hit = rows.filter(s => !t || `${s.key} ${s.name} ${s.label} ${s.category}`.toLowerCase().includes(t));
       const head = txt => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, txt);
+      const curTargetId = tab === 'screen' ? currentScreenId : currentElementId;
+      // the target that is set now comes first of the whole list (green edge), whatever group it belongs to
+      const curRow = curTargetId != null && tab !== 'repeater' ? hit.find(s => Number(s.id) === Number(curTargetId)) : null;
+      if (curRow) list.append(head('Set now'), card(tab, curRow));
       for (const [g, title] of [['here', 'This project'], ['other', 'My other projects (copied into this project)'], ['public', 'Public library (copied into this project)']]) {
-        const part = hit.filter(s => group(s) === g);
+        let part = hit.filter(s => group(s) === g && s !== curRow);
+        if (curTargetId != null) {
+          part = [...part].sort((a, b) => {
+            const aIsCur = Number(a.id) === Number(curTargetId);
+            const bIsCur = Number(b.id) === Number(curTargetId);
+            if (aIsCur && !bIsCur) return -1;
+            if (!aIsCur && bIsCur) return 1;
+            return 0;
+          });
+        }
         if (part.length) list.append(head(`${title} · ${part.length}`), ...part.slice(0, 120).map(s => card(tab, s)));
       }
       if (!hit.length && tab !== 'repeater') list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, rows.length ? `No ${tab}s match.` : `No ${tab}s yet.`));
@@ -474,6 +489,9 @@ export const menuActions = {
     if (!bid) return;
     await api.menuConfig(bid, patch);
     await this.refresh(d, bid);
+    if (patch && (patch.hubCount !== undefined || patch.kind !== undefined || patch.hubFixedPositions !== undefined)) {
+      d.fit?.();
+    }
   },
   pathOf(rows, id) {
     const parts = [];
@@ -481,6 +499,281 @@ export const menuActions = {
     return parts;
   }
 };
+
+/**
+ * Dedicated interactive modal for editing menu items:
+ * - Shows all items on the menu with icon, label and action/target summary
+ * - Right-side toolbar for each item: Target (🖥), Visibility (👁/—), Move Up (↑), Move Down (↓), Default Centre (◎ for hub), Edit (✎), Delete (🗑)
+ * - Drag-and-drop to reorder items inside the modal (with live indicator and moveTo)
+ * - "＋ Add new menu item" at the bottom
+ */
+export async function openMenuItemsModal(d, buttonId) {
+  const bid = resolveButtonId(d, buttonId);
+  if (!bid) return;
+
+  return new Promise(resolve => {
+    let m = null, dragId = null, screens = null;
+    // names of the target screens (the library lists hold no screens)
+    api.list('screen', '', { includePublic: true }).then(r => { screens = new Map(r.map(s => [Number(s.id), s])); if (m && dragId == null) paint(); }).catch(() => {});
+
+    const paint = () => {
+      const rows = getButtonRows(d, bid);
+      const host = d.type === 'button' && d.doc?.id === bid ? d.doc : findDesign('button', bid);
+      const cfg = menuConfig(host?.meta);
+      const isHub = cfg.kind === 'hub';
+
+      const itemsList = h('div', {
+        class: 'choice-list mi-modal-list',
+        ondragover: e => {
+          if (dragId != null) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }
+        },
+        ondrop: async e => {
+          e.preventDefault();
+          const id = dragId;
+          dragId = null;
+          document.querySelectorAll('.mi-drop-before, .mi-drop-after').forEach(el => el.classList.remove('mi-drop-before', 'mi-drop-after'));
+          if (id != null) {
+            await menuActions.moveTo(d, id, null, 'after', bid);
+            paint();
+          }
+        }
+      });
+
+      const rootRows = rows.filter(r => r.parentId == null);
+      const displayRows = rootRows.length ? rootRows : rows;
+      // every item of the menu, sub items under their parent (indented), each level in its own order
+      const ordered = [], listed = new Set();
+      const walk = (pid, depth) => {
+        for (const r of rows.filter(x => (x.parentId ?? null) === pid).sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id)) {
+          if (listed.has(r.id)) continue;
+          listed.add(r.id); ordered.push([r, depth]); walk(r.id, depth + 1);
+        }
+      };
+      walk(null, 0);
+      for (const r of rows) if (!listed.has(r.id)) ordered.push([r, 0]);   // a row whose parent is gone still shows
+
+      ordered.forEach(([it, depth]) => {
+        const isDefault = isHub && depth === 0 && (Number(cfg.hubCenterItemId) === Number(it.id) || (cfg.hubCenterItemId == null && displayRows.findIndex(r => r.visible !== false) === displayRows.indexOf(it)));
+        const isHidden = it.visible === false;
+
+        const row = h('div', {
+          class: `choice-item mi-row${isHidden ? ' mi-hidden' : ''}`,
+          draggable: 'true',
+          'data-menu-id': String(it.id),
+          ondragstart: e => {
+            e.stopPropagation();
+            dragId = it.id;
+            e.dataTransfer.setData('text/plain', String(it.id));
+            e.dataTransfer.effectAllowed = 'move';
+            row.classList.add('mi-dragging');
+          },
+          ondragend: () => {
+            dragId = null;
+            document.querySelectorAll('.mi-drop-before, .mi-drop-after, .mi-dragging').forEach(el => el.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-dragging'));
+          },
+          ondragover: e => {
+            if (dragId == null || dragId === it.id) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = row.getBoundingClientRect();
+            const y = (e.clientY - rect.top) / (rect.height || 1);
+            row.classList.remove('mi-drop-before', 'mi-drop-after');
+            row.classList.add(y < 0.5 ? 'mi-drop-before' : 'mi-drop-after');
+          },
+          ondragleave: () => {
+            row.classList.remove('mi-drop-before', 'mi-drop-after');
+          },
+          ondrop: async e => {
+            e.preventDefault();
+            e.stopPropagation();
+            const id = dragId;
+            const where = row.classList.contains('mi-drop-before') ? 'before' : 'after';
+            row.classList.remove('mi-drop-before', 'mi-drop-after');
+            dragId = null;
+            if (id != null && id !== it.id) {
+              await menuActions.moveTo(d, id, it.id, where, bid);
+              paint();
+            }
+          },
+          onclick: async e => {
+            if (e.target.closest('button, input, select, a, .mi-toolbar')) return;
+            await menuActions.edit(d, it.id, bid);
+            paint();
+          }
+        });
+
+        // Grip handle
+        const grip = h('span', { class: 'el-grip mi-drag-handle', title: 'Drag and drop to reorder' }, iconEl('grip', { size: 16 }));
+
+        // Lead icon: pencil
+        const leadIcon = h('span', { class: 'ico', title: 'Edit menu item' }, iconEl('pencil', { size: 16 }));
+
+        // Label and target/action summary
+        const labelText = `${it.label || it.name || `Item #${it.id}`}${isHidden ? '  · hidden' : ''}`;
+        const descText = targetSummary(it.targetScreenId, it.targetElementId, { screen: screens?.get(Number(it.targetScreenId)) }, it.action);
+        const textBlock = h('span', { class: 'choice-text grow', style: { minWidth: 0, overflow: 'hidden' } },
+          h('b', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, labelText),
+          h('small', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, descText)
+        );
+
+        // Right-aligned toolbar
+        const toolbar = h('div', { class: 'mi-toolbar', onclick: e => e.stopPropagation() });
+
+        // 1. Target picker button 🖥
+        toolbar.append(h('button', {
+          class: 'btn small ib',
+          type: 'button',
+          title: 'Choose target screen, popup element or repeater scroll',
+          'aria-label': 'Target picker',
+          onclick: async () => {
+            await menuActions.linkTarget(d, it.id, bid);
+            paint();
+          }
+        }, iconEl('monitor', { size: 14 })));
+
+        // 2. Visibility toggle button 👁 / —
+        toolbar.append(h('button', {
+          class: `btn small ib${isHidden ? ' dim' : ''}`,
+          type: 'button',
+          title: isHidden ? 'Show menu item' : 'Hide menu item',
+          'aria-label': 'Toggle visibility',
+          onclick: async () => {
+            await menuActions.toggleVisible(d, it.id, bid);
+            paint();
+          }
+        }, iconEl(isHidden ? 'close' : 'view', { size: 14 })));
+
+        // 3. Move up button ↑
+        toolbar.append(h('button', {
+          class: 'btn small ib',
+          type: 'button',
+          title: 'Move up (earlier)',
+          'aria-label': 'Move up',
+          onclick: async () => {
+            await menuActions.move(d, it.id, -1, bid);
+            paint();
+          }
+        }, iconEl('arrowUp', { size: 14 })));
+
+        // 4. Move down button ↓
+        toolbar.append(h('button', {
+          class: 'btn small ib',
+          type: 'button',
+          title: 'Move down (later)',
+          'aria-label': 'Move down',
+          onclick: async () => {
+            await menuActions.move(d, it.id, 1, bid);
+            paint();
+          }
+        }, iconEl('arrowDown', { size: 14 })));
+
+        // 4b. Add a sub item under this item
+        toolbar.append(h('button', {
+          class: 'btn small ib',
+          type: 'button',
+          title: `Add a sub item under “${it.label || it.name}”`,
+          'aria-label': 'Add sub item',
+          onclick: async () => {
+            await menuActions.add(d, it.id, bid);
+            paint();
+          }
+        }, iconEl('plus', { size: 14 })));
+
+        // 5. Default centre button ◎ (for hub menus: a top-level item)
+        if (isHub && depth === 0) {
+          toolbar.append(h('button', {
+            class: `btn small ib${isDefault ? ' active' : ''}`,
+            type: 'button',
+            title: isDefault ? 'Default centre button' : `Set "${it.label || it.name}" as default centre`,
+            'aria-label': 'Default centre',
+            onclick: async () => {
+              await menuActions.config(d, { hubCenterItemId: it.id }, bid);
+              toast('Default centre button set', 'ok', 1400);
+              paint();
+            }
+          }, iconEl('target', { size: 14 })));
+        }
+
+        // 6. Edit item button ✎
+        toolbar.append(h('button', {
+          class: 'btn small ib',
+          type: 'button',
+          title: 'Edit menu item',
+          'aria-label': 'Edit item',
+          onclick: async () => {
+            await menuActions.edit(d, it.id, bid);
+            paint();
+          }
+        }, iconEl('pencil', { size: 14 })));
+
+        // 7. Delete item button 🗑
+        toolbar.append(h('button', {
+          class: 'btn small ib danger',
+          type: 'button',
+          title: 'Delete this item',
+          'aria-label': 'Delete item',
+          onclick: async () => {
+            await menuActions.remove(d, it.id, bid);
+            paint();
+          }
+        }, iconEl('trash', { size: 14 })));
+
+        row.append(grip, leadIcon, textBlock, toolbar);
+        if (depth) { const ml = Math.min(depth, 4) * 22; row.style.marginLeft = `${ml}px`; row.style.width = `calc(100% - ${ml}px)`; row.classList.add('mi-sub'); }
+        itemsList.append(row);
+      });
+
+      // Bottom card: Add new menu item
+      const addRow = h('button', {
+        class: 'choice-item primary mi-add-row',
+        type: 'button',
+        onclick: async () => {
+          await menuActions.add(d, null, bid);
+          paint();
+        }
+      },
+        iconEl('plus', { size: 16 }),
+        h('span', { class: 'choice-text' },
+          h('b', {}, 'Add new menu item'),
+          h('small', {}, 'Create another entry in this menu')
+        )
+      );
+      itemsList.append(addRow);
+
+      const count = rows.length;
+      const subtitle = `${count} item(s) on this menu, sub items under their parent. Drag a row by ⠿ to change the order; the tools on the right set the target, hide, move, add a sub item, edit or delete.`;
+
+      const content = h('div', { class: 'choice-list' },
+        h('p', { class: 'muted' }, subtitle),
+        itemsList
+      );
+
+      if (!m) {
+        m = modal({
+          title: 'Edit menu items',
+          wide: true,
+          content,
+          onClose: () => resolve(),
+          actions: close => [
+            h('button', { class: 'btn', onclick: () => { close(); resolve(); } }, 'Cancel')
+          ]
+        });
+      } else {
+        const body = m.el.querySelector('.modal-body');
+        if (body) {
+          clear(body);
+          body.append(content);
+        }
+      }
+    };
+
+    paint();
+  });
+}
 
 /* ---------- the live menu on the canvas ---------- */
 export class MenuEditor {
@@ -694,11 +987,16 @@ export class MenuEditor {
     const parentPath = path.slice(0, -1);
     let st = { open: true, path: parentPath };
     if (isHub) {
-      // the top-level ancestor sits in the centre; its sub level is the one shown
-      const top = rows.find(r => r.name === path[0] && r.parentId == null);
-      const el = top && host.querySelector(`.rm-hub-item[data-menu-id="${top.id}"]`);
-      const c = el ? +el.getAttribute('data-hub-index') : (this.menuState.c || 0);
-      st = { open: true, path: parentPath, c, prev: this.menuState.c ?? c };
+      const fixed = host?.querySelector('.ud-menu[data-hub-fixed="1"]');
+      if (fixed) {
+        st = { open: true, path: parentPath, c: this.menuState.c || 0, prev: this.menuState.prev || 0 };
+      } else {
+        // the top-level ancestor sits in the centre; its sub level is the one shown
+        const top = rows.find(r => r.name === path[0] && r.parentId == null);
+        const el = top && host.querySelector(`.rm-hub-item[data-menu-id="${top.id}"]`);
+        const c = el ? +el.getAttribute('data-hub-index') : (this.menuState.c || 0);
+        st = { open: true, path: parentPath, c, prev: this.menuState.c ?? c };
+      }
     }
     this.menuState = st;
     if (host) this.ctl.set(host, st);

@@ -7,7 +7,7 @@
 import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
-import { markEdited, sessionEdited, lastEdited, rememberName, editedName } from '../edited.js';
+import { markEdited, sessionEdited, lastEdited, rememberName, editedName, forgetSessionEdited } from '../edited.js';
 import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
@@ -18,13 +18,13 @@ import {
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterFitBox, bindRepeaterScroll, REPEATER_KEY } from '/domain/repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterTemplates, repeaterFitBox, bindRepeaterScroll, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
-import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign } from '../actions.js';
+import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign, resetLibraryIconCache, ensureDesignDeps } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { openIconPicker } from './inspector.js';
-import { MenuEditor, menuActions } from './menu-editor.js';
+import { MenuEditor, menuActions, openMenuItemsModal } from './menu-editor.js';
 import { PenTool } from './pen-tool.js';
 import { installPathTools } from './designer-pathtools.js';
 import { installTestActions } from './designer-test-actions.js';
@@ -106,7 +106,8 @@ export class Designer {
     this.liveHud = h('div', { class: 'dz-live-hud', hidden: true });
     this.hoverBar = h('div', { class: 'el-hover-toolbar', hidden: true });
     this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Click element: open/close quick toolbar · Right-click: menu & events · Del: delete · Enter: edit vertices');
-    this.viewport.append(this.world, this.hoverBar, this.hint);
+    this.previewBanner = h('div', { class: 'dz-preview-banner', hidden: true, role: 'status' });
+    this.viewport.append(this.world, this.hoverBar, this.hint, this.previewBanner);
     this.inspectorEl = h('aside', { class: 'dz-inspector' });
     this.inspectorFitted = false;
     // drag handle on the inspector's left edge: drag to resize, the width is clamped
@@ -141,10 +142,14 @@ export class Designer {
       if (this._loadingTarget?.seq === seq) this._loadingTarget = null;
     }
     if (this._loadSeq !== seq) return;
+    // placed items that are not in the loaded library (another project, library filter) are fetched before the first draw
+    await ensureDesignDeps(rec).catch(e => console.warn('dependencies not loaded', e));
+    if (this._loadSeq !== seq) return;
     this.vtx?.exit();
     const keepLive = Boolean((this._keepActionsLive || this.actionsLive) && ['button', 'element', 'screen'].includes(type));
     this._keepActionsLive = false;
     this.type = type; this.doc = rec;
+    this.devicePreview = null; this.syncDevicePreviewUi();
     this.selected = new Set(); this.undoStack = []; this.redoStack = []; this.fitted = false;
     this.scaleContent = ['button', 'element'].includes(type);
     this.menuLive = false;
@@ -161,10 +166,63 @@ export class Designer {
 
   async reload(keepSelection = true) {
     const sel = keepSelection ? [...this.selected] : [];
-    this.doc = await api.getDesign(this.type, this.doc.id);
+    const rec = await api.getDesign(this.type, this.doc.id);
+    await ensureDesignDeps(rec).catch(e => console.warn('dependencies not loaded', e));
+    this.doc = rec;
+    if (this.devicePreview) this.layoutDevicePreview();   // a device preview stays on while the stored screen is re-read
     this.selected = new Set(sel.filter(i => this.doc.nodes.some(e => e.id === i)));
     this.renderAll();
     this.emit('doc', this.doc);
+  }
+
+  /* ================= device preview =================
+   * The device picker only PREVIEWS the open screen on another device: the frame takes that size and the contents are laid out
+   * for it in memory (fitNodesToScreen). Nothing is written, the screen keeps its own device and its saved / unsaved state.
+   * While a preview is on the canvas is view-only (an edit made in preview coordinates would be stored in the wrong place);
+   * "Apply to this screen" in the same menu is the explicit, undoable way to really change the screen's device. */
+  layoutDevicePreview() {
+    const dv = this.devicePreview, d = this.doc;
+    if (!dv || !d) return;
+    const attrs = new Map(fitNodesToScreen(d.nodes || [], { w: d.width || 1, h: d.height || 1 }, { w: dv.width, h: dv.height }).map(p => [p.id, p.attrs]));
+    this.doc = { ...d, nodes: (d.nodes || []).map(n => (attrs.has(n.id) ? { ...n, attrs: attrs.get(n.id) } : n)),
+      width: dv.width, height: dv.height, meta: { ...(d.meta || {}), device: dv.key } };
+  }
+
+  /** dv = null (or the screen's own device) goes back to the stored screen. Never writes anything. */
+  async setDevicePreview(dv) {
+    if (!this.doc || this.type !== 'screen') return;
+    const targetType = this.type, targetId = this.doc.id;
+    this.devicePreview = null;
+    const rec = await api.getDesign(targetType, targetId);
+    if (this.type !== targetType || this.doc?.id !== targetId) return;
+    this.doc = rec;
+    const own = dv && dv.key === rec.meta?.device && dv.width === rec.width && dv.height === rec.height;
+    if (dv && !own) { this.devicePreview = { key: dv.key, name: dv.name, width: dv.width, height: dv.height }; this.layoutDevicePreview(); }
+    this.selected = new Set(); this.toolbarNodeId = null; this.vtx?.exit();
+    this.syncDevicePreviewUi();
+    this.buildDocBar();
+    this.renderAll();
+    this.fitted = false; this.fit();
+  }
+
+  syncDevicePreviewUi() {
+    const dv = this.devicePreview;
+    this.root.classList.toggle('device-preview', !!dv);
+    if (!this.previewBanner) return;
+    this.previewBanner.hidden = !dv;
+    if (!dv) return;
+    clear(this.previewBanner);
+    this.previewBanner.append(
+      h('span', {}, `Preview on ${dv.name} (${dv.width}×${dv.height}) — view only, nothing is saved`),
+      h('button', { class: 'btn small', dataset: { act: 'device-preview-exit' }, onclick: () => this.setDevicePreview(null) }, 'Back to editing'));
+  }
+
+  /** True (with a hint) while a device preview is shown: the canvas is view-only then. */
+  previewLocked() {
+    if (!this.devicePreview) return false;
+    const now = Date.now();
+    if (now - (this._previewHintAt || 0) > 2500) { this._previewHintAt = now; toast('Device preview is view-only. Press "Back to editing" to change the screen.', 'info', 2600); }
+    return true;
   }
 
   /* ================= save / save as / reset =================
@@ -174,7 +232,7 @@ export class Designer {
   markBaseline() { this.baseline = deep(this.doc); this.baselineFp = designFingerprint(this.doc); this.dirty = false; this.updateDocBar(); }
 
   checkDirty() {
-    if (!this.doc || !this.baseline) return;
+    if (!this.doc || !this.baseline || this.devicePreview) return;
     const dirty = designFingerprint(this.doc) !== this.baselineFp;
     if (dirty === this.dirty) return;
     this.dirty = dirty; this.updateDocBar(); this.emit('dirty', dirty);
@@ -300,6 +358,7 @@ export class Designer {
    */
   async applyDevice(dv) {
     if (!this.doc) return;
+    if (this.devicePreview) await this.setDevicePreview(null);   // work on the stored screen, not on the preview copy
     const patches = fitNodesToScreen(this.nodes, { w: this.doc.width || 1, h: this.doc.height || 1 }, { w: dv.width, h: dv.height });
     await this.mutate(async () => {
       const saved = await api.updateDesign(this.type, this.doc.id, {
@@ -317,8 +376,13 @@ export class Designer {
     const list = () => state.templateDevices?.length
       ? state.templateDevices.map(dv => ({ key: dv.key, name: dv.name, width: dv.width, height: dv.height }))
       : Object.entries(DEVICES).map(([k, v]) => ({ key: k, name: v.name, width: v.width, height: v.height }));
+    const pv = this.devicePreview;
     const curKey = this.doc?.meta?.device;
     const curName = list().find(x => x.key === curKey)?.name || 'No device';
+    const item = (label, tip, fn, tick = '') => h('button', {
+      class: 'menu-item', role: 'menuitem', 'data-tip': tip,
+      onclick: async () => { document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open')); if (this.doc) await fn(); }
+    }, h('span', { class: 'tick' }, tick), h('span', { class: 'mi-label' }, label));
     const ddWrap = h('div', { class: 'menu device-menu' });
     const panel = h('div', {
       class: 'menu-panel device-menu-panel',
@@ -327,9 +391,9 @@ export class Designer {
       onclick: e => e.stopPropagation()
     });
     const trigger = h('button', {
-      class: 'btn small ib device-menu-trigger',
-      'aria-label': `Device — ${curName}`,
-      'data-tip': `Device — ${curName}\nChoose the screen's device frame size`,
+      class: `btn small ib device-menu-trigger${pv ? ' active' : ''}`,
+      'aria-label': `Device — ${curName}${pv ? ' (preview)' : ''}`,
+      'data-tip': `Device — ${curName}${pv ? ' (preview)' : ''}\nPreview the screen on another device (nothing is saved)`,
       'aria-haspopup': 'true',
       onclick: e => {
         e.stopPropagation();
@@ -338,6 +402,7 @@ export class Designer {
         if (!open) return;
         ddWrap.classList.add('open');
         clear(panel);
+        panel.append(h('div', { class: 'menu-note' }, 'Preview only: the screen is not changed or saved.'));
         for (const dv of list()) {
           const active = dv.key === curKey;
           panel.append(h('button', {
@@ -347,10 +412,15 @@ export class Designer {
             onclick: async () => {
               document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
               if (!this.doc) return;
-              await this.applyDevice(dv);
-              this.buildDocBar();
+              await this.setDevicePreview(dv);
             }
           }, h('span', { class: 'tick' }, active ? '✓' : ''), h('span', { class: 'mi-label' }, `${dv.name} (${dv.width}×${dv.height})`)));
+        }
+        if (pv) {
+          panel.append(h('div', { class: 'menu-sep' }),
+            item('Back to the screen\'s own device', 'Leave the preview and edit the screen again', () => this.setDevicePreview(null), '↩'),
+            item(`Apply ${pv.name} to this screen…`, 'Really change the screen to this device: its size and layout change (one undo step, saved like any other edit)',
+              async () => { await this.applyDevice(pv); this.buildDocBar(); }, '⤓'));
         }
       }
     }, iconEl('monitor', { size: 16 }));
@@ -551,6 +621,7 @@ export class Designer {
     }
     await this.settle();
     try {
+      if (this.devicePreview) await this.setDevicePreview(null);
       await this.reload();
       const had = designFingerprint(this.doc) !== this.baselineFp;
       this.markBaseline();
@@ -569,9 +640,12 @@ export class Designer {
           includeUserPrivate: includePriv
         });
       }
-      if (!(await revealInLibrary(this.doc))) await reloadLibrary({ silent: true });
+      if (this.type === 'icon') resetLibraryIconCache();
+      if (!(await revealInLibrary(this.doc))) await reloadLibrary({ silent: false });
       this.renderStage();
       this.emit('saved', this.doc);
+      if (this.type === 'screen') emit('screen:saved', this.doc);
+      emit('item:saved', { type: this.type, doc: this.doc });
       if (multiRes?.savedCount) {
         toast(`Saved "${this.doc.name}" + ${multiRes.savedCount} target copy(s) (+${multiRes.subItemsCount || 0} sub-items)`, 'ok', 2800);
       } else {
@@ -583,6 +657,7 @@ export class Designer {
 
   async reset({ confirm = true } = {}) {
     if (!this.doc || !this.baseline) return false;
+    if (this.devicePreview) await this.setDevicePreview(null);
     if (!this.dirty) { toast('Nothing to reset: no changes since the last save'); return false; }
     if (confirm && !(await confirmBox(`Throw away every change to "${this.doc.name}" since the last save?`, { okLabel: 'Reset' }))) return false;
     await this.settle();
@@ -601,6 +676,7 @@ export class Designer {
   /** The copy gets the current state (unsaved edits included); the original goes back to its last saved version. */
   async saveAs() {
     if (!this.doc) return false;
+    if (this.devicePreview) await this.setDevicePreview(null);
     const name = await promptBox('Save as', { value: `${this.doc.name} copy`, label: `Name of the new ${TYPES[this.type].label.toLowerCase()}`, okLabel: 'Save as' });
     if (!name?.trim()) return false;
     await this.settle();
@@ -637,6 +713,29 @@ export class Designer {
       if (!this.opts.modal && copy?.id) this.opts.openDesign?.(this.type, copy.id);
       return copy;
     } catch (e) { toast(e.message, 'error'); await this.reload(); return false; }
+  }
+
+  async closeDoc() {
+    if (!(await this.confirmLeave())) return false;
+    // closing takes the item off the canvas and out of this designer's history list (a dialog / test designer keeps it)
+    if (this.doc && !this.opts.modal) forgetSessionEdited(this.type, this.doc.id);
+    if (this.opts.onClose) {
+      this.opts.onClose();
+      return true;
+    }
+    this.doc = null;
+    this.baseline = null;
+    this.dirty = false;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.selected.clear();
+    clear(this.stage);
+    this.renderOverlay();
+    this.buildDocBar();
+    this.buildBar();
+    this.emit('doc:closed');
+    emit('topbar:refresh');
+    return true;
   }
 
   /** Called before the design is replaced or its dialog closes. Resolves true when it is fine to go on. */
@@ -750,7 +849,7 @@ export class Designer {
     }
     kids.push(h('span', { class: 'grow' }),
       ibtn('inspector', 'Inspector', () => { this.inspectorOpen = !this.inspectorOpen; this.inspectorEl.classList.toggle('collapsed', !this.inspectorOpen); this.fitted = false; }, { desc: 'Show / hide the inspector panel', active: this.inspectorOpen, dataset: { view: '1' } }),
-      ...(this.opts.onClose ? [ibtn('close', 'Close', () => this.opts.onClose(), { desc: 'Close this designer' })] : []));
+      ibtn('close', 'Close item', () => this.closeDoc(), { desc: 'Close this item: it leaves the canvas and this designer\'s history list', dataset: { view: '1', act: 'close-designer' } }));
     this.viewControls = kids.filter(k => k.dataset?.view === '1');
     this.toolToggles = kids.filter(k => k.dataset?.tools === '1');
     // the tools live in the top (page) toolbar: main.js moves them there; the emptied second bar is hidden
@@ -940,7 +1039,7 @@ export class Designer {
 
   /** Renders the floating quick toolbar above the clicked element on the canvas. */
   updateHoverToolbar() {
-    if (!this.hoverBar || !this.doc || this.dragging || this.vtx?.active || this.actionsLive) {
+    if (!this.hoverBar || !this.doc || this.dragging || this.vtx?.active || this.actionsLive || this.devicePreview) {
       if (this.hoverBar) this.hoverBar.hidden = true;
       return;
     }
@@ -981,27 +1080,7 @@ export class Designer {
             e.stopPropagation();
             this.select([target.id]);
             if (menuBtnId) {
-              if (menuBtnItems.length === 1) {
-                await menuActions.edit(this, menuBtnItems[0].id, menuBtnId);
-              } else if (menuBtnItems.length > 1) {
-                const picked = await choiceBox(
-                  'Edit menu items',
-                  `${menuBtnItems.length} item(s) on this menu. Pick one to edit, or add a new one.`,
-                  [
-                    ...menuBtnItems.map(mi => ({
-                      value: `edit:${mi.id}`, icon: 'pencil',
-                      label: `${mi.label || mi.name || `Item #${mi.id}`}${mi.visible === false ? '  · hidden' : ''}`,
-                      desc: mi.action || mi.targetId ? `→ ${mi.action || 'target'}${mi.targetId ? ` #${mi.targetId}` : ''}` : 'No action set yet'
-                    })),
-                    { value: 'add', icon: 'plus', label: 'Add new menu item', desc: 'Create another entry in this menu', kind: 'primary' }
-                  ],
-                  { list: true }
-                );
-                if (picked === 'add') await menuActions.add(this, null, menuBtnId);
-                else if (picked && picked.startsWith('edit:')) await menuActions.edit(this, Number(picked.slice(5)), menuBtnId);
-              } else {
-                await menuActions.add(this, null, menuBtnId);
-              }
+              await openMenuItemsModal(this, menuBtnId);
             } else {
               openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
             }
@@ -1212,6 +1291,7 @@ export class Designer {
       if (!raw) return;
       ev.preventDefault();
       const { type, id } = JSON.parse(raw);
+      if (this.previewLocked()) return;
       this.addInstance(type, id, this.worldPoint(ev));
     });
     vp.addEventListener('keydown', ev => this.onKey(ev));
@@ -1365,7 +1445,7 @@ export class Designer {
   closePreview() { this.pv?.remove(); this.pv = null; this.tbPv?.remove(); this.tbPv = null; }
 
   onPointerDown(ev) {
-    if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar')) return;
+    if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar, .dz-preview-banner')) return;
     this.viewport.focus({ preventScroll: true });
     this.tbClick = null;
     if (!this.doc) return;
@@ -1375,6 +1455,10 @@ export class Designer {
       capture(this.viewport, ev); ev.preventDefault(); return;
     }
     if (ev.button !== 0) return;
+    if (this.devicePreview) {      // view-only: a plain drag pans the canvas
+      this.pan = { x: ev.clientX, y: ev.clientY, tx: this.view.tx, ty: this.view.ty };
+      capture(this.viewport, ev); ev.preventDefault(); return;
+    }
     if (ev.target.closest?.('.rm-item, [data-rm="center"]')) return;   // radial/popup menu items handle their own clicks
     if (this.actionsLive) {        // test mode: events do what they do in the finished app
       const rawHit = this.hitNode(ev.target, true) || this.hitNode(ev.target);
@@ -1565,14 +1649,14 @@ export class Designer {
       const dropPt = ev ? this.worldPoint(ev) : null;
       this.pushUndo(op.snap);
       try {
-        // a node moved onto a repeater becomes its template (one per drop); the old template is parked beside it
+        // a node moved onto a repeater becomes a template child in the repeater
         let adopted = null;
         if (op.kind === 'move' && dropPt) {
           const cand = ids.map(id => this.byId(id)).find(n => n && n.parentId == null && !isContainerNode(n, state.library.elements));
           const hitCont = cand ? this.containerAtPoint(dropPt, cand.id) : null;
           const hb = hitCont ? nodeBBox(hitCont, this.nodes) : null;
           if (hitCont && isRepeaterNode(hitCont, state.library.elements) && dropPt.x >= hb.x && dropPt.x <= hb.x + hb.w && dropPt.y >= hb.y && dropPt.y <= hb.y + hb.h) {
-            const { patches, parkedIds } = repeaterAdoptOps(this.nodes, hitCont, cand, containerInnerBox(hitCont, this.nodes, state.library.elements), { keepSize: true });
+            const { patches, parkedIds } = repeaterAdoptOps(this.nodes, hitCont, cand, containerInnerBox(hitCont, this.nodes, state.library.elements), { keepSize: true, replace: false });
             for (const { id, patch } of patches) Object.assign(this.byId(id), await api.patchNode(this.type, this.doc.id, id, patch));
             adopted = { id: cand.id, rep: hitCont, parked: parkedIds.length };
           }
@@ -1582,8 +1666,14 @@ export class Designer {
           const patch = { attrs: node.attrs };
           if (op.kind === 'move' && node.parentId == null && !isContainerNode(node, state.library.elements) && dropPt) {
             const hitCont = this.containerAtPoint(dropPt, node.id);
-            if (hitCont && isRepeaterNode(hitCont, state.library.elements)) { /* only one template per repeater: stays top-level */ }
-            else if (hitCont) {
+            if (hitCont && isRepeaterNode(hitCont, state.library.elements)) {
+              // Add as additional template into repeater container
+              const { patches } = repeaterAdoptOps(this.nodes, hitCont, node, containerInnerBox(hitCont, this.nodes, state.library.elements), { keepSize: true, replace: false });
+              for (const { id: pid, patch: p } of patches) {
+                if (pid === node.id) Object.assign(patch, p);
+                else Object.assign(this.byId(pid), await api.patchNode(this.type, this.doc.id, pid, p));
+              }
+            } else if (hitCont) {
               node.parentId = hitCont.id;
               node.attrs = clampNodeToContainer(node, hitCont, this.nodes, state.library.elements);
               patch.parentId = hitCont.id;
@@ -1594,7 +1684,10 @@ export class Designer {
           Object.assign(node, saved);
         }));
         if (adopted) await this.fitRepeater(adopted.rep.id);
-        if (adopted) toast(`"${this.byId(adopted.id)?.name || 'node'}" is now the template of repeater "${adopted.rep.name || 'repeater'}"${adopted.parked ? ' (the previous template was moved out beside it)' : ''}`, 'ok', 2200);
+        if (adopted) {
+          const tpls = repeaterTemplates(this.nodes, adopted.rep.id);
+          toast(`Added "${this.byId(adopted.id)?.name || 'node'}" into repeater "${adopted.rep.name || 'repeater'}" (${tpls.length} item types)`, 'ok', 2200);
+        }
       }
       catch (e) { toast(e.message, 'error'); await this.reload(); return; }
       this.changed();
@@ -1637,6 +1730,14 @@ export class Designer {
     if (ctrl && k === 'g') { ev.preventDefault(); ev.shiftKey ? this.ungroupSelected() : this.groupSelected(); return; }
     if (ctrl && k === 'l') { ev.preventDefault(); this.toggleLockSelected?.(); return; }
     if (ev.code === 'Space') { this.spaceDown = true; ev.preventDefault(); return; }
+    if (this.devicePreview) {      // view-only: zoom, fit and Esc (leave the preview) still work
+      if (k === 'escape') return void this.setDevicePreview(null);
+      if (k === '+' || k === '=') return this.zoomBy(1.25);
+      if (k === '-') return this.zoomBy(1 / 1.25);
+      if (k === '0') return this.fit();
+      if (ctrl || ['delete', 'backspace', 'enter'].includes(k) || k.startsWith('arrow')) { ev.preventDefault(); this.previewLocked(); }
+      return;
+    }
     if (ctrl && k === 'z') { ev.preventDefault(); ev.shiftKey ? this.redo() : this.undo(); return; }
     if (ctrl && k === 'y') { ev.preventDefault(); this.redo(); return; }
     if (ctrl && k === 'd') { ev.preventDefault(); this.duplicateSelected(); return; }
@@ -1670,13 +1771,14 @@ export class Designer {
     await this.reload(false);
     this.changed();
   }
-  async undo() { const s = this.undoStack.pop(); if (!s) return toast('nothing to undo'); this.vtx.exit(); this.redoStack.push(this.snapshot()); await this.restore(s); }
-  async redo() { const s = this.redoStack.pop(); if (!s) return toast('nothing to redo'); this.vtx.exit(); this.undoStack.push(this.snapshot()); await this.restore(s); }
+  async undo() { if (this.previewLocked()) return; const s = this.undoStack.pop(); if (!s) return toast('nothing to undo'); this.vtx.exit(); this.redoStack.push(this.snapshot()); await this.restore(s); }
+  async redo() { if (this.previewLocked()) return; const s = this.redoStack.pop(); if (!s) return toast('nothing to redo'); this.vtx.exit(); this.undoStack.push(this.snapshot()); await this.restore(s); }
 
   changed() { this.emit('doc', this.doc); this.emit('changed', this.doc); }
 
   /* ================= edit operations ================= */
   async mutate(fn) {
+    if (this.previewLocked()) return null;
     const snap = this.snapshot(), targetType = this.type, targetId = this.doc?.id;
     try {
       const r = await fn();
@@ -1832,15 +1934,30 @@ export class Designer {
   }
 
   /**
-   * Resizes a repeater around its template: lists hold every copy (count × item + gaps), moving layouts fit the item
-   * across their viewport; the template moves to the first slot. Called after a drop, a move into it and any setting change.
+   * Resizes a repeater around its templates: lists hold every copy (count × item + gaps), moving layouts fit the item
+   * across their viewport; the template moves to the first slot.
+   * Clamps the repeater's total dimensions so it does not exceed the design screen bounding box.
    */
   async fitRepeater(repId, { quiet = true } = {}) {
-    const rep = this.byId(repId), tpl = rep && repeaterTemplate(this.nodes, rep.id);
+    const rep = this.byId(repId), tpls = rep && repeaterTemplates(this.nodes, rep.id);
+    const tpl = tpls?.[0] || null;
     if (!rep || !tpl) return;
     const cfg = repeaterConfig(rep), outer = nodeBBox(rep, this.nodes), inner = containerInnerBox(rep, this.nodes, state.library.elements);
-    const tb = nodeBBox(tpl, this.nodes), item = { w: cfg.itemWidth || tb.w || 64, h: cfg.itemHeight || tb.h || 64 };
-    const box = repeaterFitBox(cfg, outer, inner, item, { w: Math.max(outer.w, this.doc.width - outer.x), h: Math.max(outer.h, this.doc.height - outer.y) });
+    let maxW = 0, maxH = 0;
+    for (const tn of tpls) {
+      const b = nodeBBox(tn, this.nodes);
+      if (b.w > maxW) maxW = b.w;
+      if (b.h > maxH) maxH = b.h;
+    }
+    const tb = nodeBBox(tpl, this.nodes);
+    const item = { w: cfg.itemWidth || maxW || tb.w || 64, h: cfg.itemHeight || maxH || tb.h || 64 };
+
+    // Limit repeater container so it does not exceed the design screen's bounding box
+    const maxScreenBox = {
+      w: Math.max(32, this.doc.width - outer.x),
+      h: Math.max(32, this.doc.height - outer.y)
+    };
+    const box = repeaterFitBox(cfg, outer, inner, item, maxScreenBox);
     if (Math.abs(box.w - outer.w) > 0.5 || Math.abs(box.h - outer.h) > 0.5) await this.patchNode(rep.id, { attrs: resizeAttrs(rep, outer, box) }, { quiet });
     const cur = this.byId(rep.id), t2 = repeaterTemplate(this.nodes, rep.id);
     if (!cur || !t2 || !['use', 'rect', 'image'].includes(t2.tag)) return;
@@ -1848,7 +1965,7 @@ export class Designer {
     if (Math.abs(first.x - b.x) > 0.5 || Math.abs(first.y - b.y) > 0.5) await this.patchNode(t2.id, { attrs: { ...t2.attrs, x: first.x, y: first.y } }, { quiet });
   }
 
-  /** The library item becomes the repeater's template (replacing the previous one) at its own size; the repeater grows to hold the copies. */
+  /** The library item is added as a template child into the repeater at its own size; the repeater grows to hold copies without exceeding screen bounds. */
   async setRepeaterTemplate(rep, refType, refId, lib, pl) {
     const inner = containerInnerBox(rep, this.nodes, state.library.elements);
     const k = Math.min(1, (this.doc.width - 32) / Math.max(1, pl.w));   // only a template wider than the design shrinks
@@ -1856,7 +1973,7 @@ export class Designer {
     const cfg = repeaterConfig(rep);
     const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || hh }).copies[0];
     const def = { tag: 'use', kind: 'instance', refType, refId, role: null, name: this.uniqueName(lib.key), attrs: { x: first.x, y: first.y, width: w, height: hh } };
-    const { removeIds, node } = repeaterTemplateOps(this.nodes, rep, def);
+    const { removeIds, node } = repeaterTemplateOps(this.nodes, rep, def, null, { replace: false });
     const el = await this.mutate(async () => {
       for (const rid of removeIds) await api.deleteNode(this.type, this.doc.id, rid);
       const made = await api.addNode(this.type, this.doc.id, node);
@@ -1867,7 +1984,8 @@ export class Designer {
     if (el) {
       await this.fitRepeater(rep.id);
       this.emit('selection', this.selectedNodes());
-      toast(`${removeIds.length ? 'Replaced' : 'Set'} the template of repeater "${rep.name || 'repeater'}": ${lib.key} × ${cfg.itemCount}`, 'ok', 1800);
+      const allTpls = repeaterTemplates(this.nodes, rep.id);
+      toast(`Added "${lib.key}" to repeater (${allTpls.length} item types · ${cfg.itemCount} copies)`, 'ok', 1800);
     }
     return el;
   }

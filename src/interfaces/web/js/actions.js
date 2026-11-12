@@ -1,11 +1,45 @@
 /** App-level actions shared by menus, panels and the designers. Components call these instead of each other. */
 import { api } from './api.js';
-import { state, emit, on, isSuperadminUser, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign } from './state.js';
-import { syncIconVersion, cachedIcon, resetSprite, appendSymbols, markSymbols } from './icon-store.js';
+import { state, emit, on, isSuperadminUser, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign, addExtraDesign } from './state.js';
+import { syncIconVersion, cachedIcon, resetSprite, appendSymbols, markSymbols, loadIcons } from './icon-store.js';
 import { expandIconSummary } from '/domain/icon-summary.js';
 import { renderSprite } from '/domain/svg.js';
 import { h, toast, confirmBox, promptBox, modal } from './dom.js';
 import { DEVICES, TYPES } from '/domain/entities.js';
+
+/**
+ * Loads the buttons / elements / paths a design places (and what those place, and the buttons of their menu items) when
+ * they are missing from the loaded library: items of another project, or hidden by the library filter. They go to the
+ * extra store of state.js, so the canvas and the test window draw them instead of empty placeholders.
+ * Resolves to the number of items it added. Items the user may not read are skipped (asked once).
+ */
+const depsFailed = new Set();
+export async function ensureDesignDeps(rec) {
+  const seen = new Set();
+  let added = 0;
+  const refsOf = d => {
+    const out = [];
+    for (const n of d?.nodes || []) if (n.kind === 'instance' && ['path', 'icon', 'button', 'element'].includes(n.refType) && n.refId) out.push([n.refType, Number(n.refId)]);
+    for (const m of d?.menuItems || []) { if (m.refButtonId) out.push(['button', Number(m.refButtonId)]); if (m.iconId) out.push(['icon', Number(m.iconId)]); }
+    return out;
+  };
+  let todo = refsOf(rec);
+  for (let depth = 0; depth < 6 && todo.length; depth++) {
+    const fetchNow = [];
+    for (const [type, id] of todo) {
+      const k = `${type}:${id}`;
+      if (seen.has(k) || depsFailed.has(k) || findDesign(type, id)) continue;
+      seen.add(k); fetchNow.push([type, id]);
+    }
+    // icons outside the library come from the lazy icon cache (one batched request); their geometry may place paths of that project
+    const iconIds = fetchNow.filter(([type]) => type === 'icon').map(([, id]) => id);
+    const icons = iconIds.length ? await loadIcons(iconIds).catch(() => []) : [];
+    const got = await Promise.all(fetchNow.filter(([type]) => type !== 'icon').map(([type, id]) => api.getDesign(type, id).then(d => { addExtraDesign(type, d); added++; return d; }).catch(() => { depsFailed.add(`${type}:${id}`); return null; })));
+    added += icons.length;
+    todo = [...got, ...icons].flatMap(refsOf);
+  }
+  return added;
+}
 
 export const LABEL = Object.fromEntries(TYPE_LIST.map(t => [t, TYPES[t].label.toLowerCase()]));
 let lastIconKey = '', lastPathsSig = '', spriteBuilt = false;
