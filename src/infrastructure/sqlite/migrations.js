@@ -484,5 +484,15 @@ CREATE TABLE IF NOT EXISTS login_failures (
   count      INTEGER NOT NULL DEFAULT 0,
   started_at INTEGER NOT NULL
 );
+`,
+
+  /* 13: the start (master) screen of a workflow: the screen it was generated from; the test starts there. Workflows generated
+     before this column get it back from their generated description when it still names a screen of the workflow. */ `
+ALTER TABLE workflows ADD COLUMN start_screen_id INTEGER;
+UPDATE workflows SET start_screen_id = (
+  SELECT s.id FROM workflow_screens ws JOIN screens s ON s.id = ws.screen_id
+  WHERE ws.workflow_id = workflows.id AND workflows.description_dev = 'Generated from the routes of screen "' || s.name || '".'
+  ORDER BY s.id LIMIT 1)
+WHERE start_screen_id IS NULL;
 `
 ];

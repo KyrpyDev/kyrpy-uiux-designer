@@ -3,8 +3,8 @@
  *  - button (menu):  the button with its menu effects; items without a target screen say so; popups open inside.
  *  - screen:         the screen with every menu / button / event working; routes only announce their target
  *                    ("would go to <screen>" or "no target screen") and never leave the screen.
- *  - workflow:       a browsable app: starts on the screen selected on the workflow canvas (else the workflow's first
- *                    screen) and follows its links; Back walks back.
+ *  - workflow:       a browsable app: starts on the screen selected on the workflow canvas, else on the workflow's
+ *                    start (master) screen (the one it was generated from), and follows its links; Back walks back.
  * The live HUD is the toolbar (back, animations, edit pills, edit in a new tab, restart, close). Edits made in another tab
  * (the ✎ pills) show up at once through the sync event, so the design can be changed while it runs.
  */
@@ -12,13 +12,10 @@ import { h, modal, toast } from '../dom.js';
 import { api } from '../api.js';
 import { Designer } from './designer.js';
 import { reapplyQuickEdit } from './live-quick-edit.js';
+import { workflowStartScreen } from '/domain/screen-routes.js';
 
-/** First screen of a workflow: a node no link points to (the entry), else the first node. */
-export function workflowStart(wf) {
-  const ids = (wf?.nodes || []).map(n => n.screenId);
-  const targets = new Set((wf?.links || []).filter(l => l.fromScreenId !== l.toScreenId).map(l => l.toScreenId));
-  return ids.find(id => !targets.has(id)) ?? ids[0] ?? null;
-}
+/** Start screen of a workflow test: its stored start (master) screen, else its entry screen. See workflowStartScreen. */
+export function workflowStart(wf) { return workflowStartScreen(wf); }
 
 /**
  * Opens the test runner. `target` = { type: 'button' | 'screen' | 'element', id } or { type: 'workflow', id }.

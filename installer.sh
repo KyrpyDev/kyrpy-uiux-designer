@@ -1,216 +1,182 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Kyrpy UI/UX Designer — One-Click Local Installer (Linux & macOS)
+# Kyrpy UI/UX Designer — Installer (Linux & macOS)
 # ==============================================================================
-# - Checks Node.js >= 22 (built-in node:sqlite, zero external runtime deps)
-# - Prompts for Dev Mode (bypass login/register) vs Release Mode (protected by login/register)
-# - Prompts for optional PostgreSQL .env credentials (falls back to Local-Only SQLite)
-# - Seeds default startup installer account: username `admin` / password `admin`
-# - Runs verification test suite & launches the studio via ./runner.sh
+# Optional: ./runner.sh alone prepares and starts a fresh clone with the defaults.
+# The installer asks a few questions, writes .env, prepares the environment
+# (packages, local database), runs the tests and starts the server.
+#
+#   ./installer.sh                      Ask the questions
+#   ./installer.sh --non-interactive    No questions: keep an existing .env, else write the defaults  (also: -y)
+#   ./installer.sh --no-start           Do not start the server at the end
+#   ./installer.sh --skip-tests         Do not run the test suite
+#   ./installer.sh --reconfigure        Ask again although .env exists (the old file is kept as .env.bak)
+#
+# Database: the server always works on its local SQLite file. PostgreSQL is an optional
+# sync target of the superadmin's "Database sync" tool; it is off unless you enter a host here.
 # ==============================================================================
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
+ENV_FILE="$ROOT_DIR/.env"
 
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+if [ -t 1 ]; then GREEN=$'\033[0;32m'; BLUE=$'\033[0;34m'; YELLOW=$'\033[1;33m'; RED=$'\033[0;31m'; NC=$'\033[0m'; else GREEN=''; BLUE=''; YELLOW=''; RED=''; NC=''; fi
+info() { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$*"; }
+ok()   { printf '%s[OK]%s   %s\n' "$GREEN" "$NC" "$*"; }
+warn() { printf '%s[WARN]%s %s\n' "$YELLOW" "$NC" "$*"; }
+err()  { printf '%s[ERR]%s  %s\n' "$RED" "$NC" "$*" >&2; }
 
-info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-err()   { echo -e "${RED}[ERR]${NC}  $*" >&2; }
-
-NON_INTERACTIVE=0
-START_SERVER=1
-
+NON_INTERACTIVE=0; START_SERVER=1; RUN_TESTS=1; RECONFIGURE=0
 for arg in "$@"; do
   case "$arg" in
     --non-interactive|-y) NON_INTERACTIVE=1 ;;
-    --no-start) START_SERVER=0 ;;
+    --no-start)           START_SERVER=0 ;;
+    --skip-tests)         RUN_TESTS=0 ;;
+    --reconfigure)        RECONFIGURE=1 ;;
+    -h|--help)            sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)                    err "Unknown option \"$arg\" (see --help)."; exit 2 ;;
   esac
 done
+# no terminal to ask on (a pipe, CI): behave as --non-interactive
+[ -t 0 ] || NON_INTERACTIVE=1
+
+[ -x "$ROOT_DIR/runner.sh" ] || chmod +x "$ROOT_DIR/runner.sh" 2>/dev/null || true
+[ -f "$ROOT_DIR/runner.sh" ] || { err "runner.sh is missing next to installer.sh."; exit 1; }
 
 echo ""
 echo "======================================================================"
-echo "  🎨 Kyrpy UI/UX App Designer — One-Click Local Installer"
+echo "  Kyrpy UI/UX App Designer — Installer"
 echo "======================================================================"
 echo ""
 
-# 1. Verify Node.js >= 22
-if ! command -v node >/dev/null 2>&1; then
-  err "Node.js is not installed. Please install Node.js v22 or newer (https://nodejs.org)."
-  exit 1
-fi
+command -v node >/dev/null 2>&1 || { err "Node.js is not installed. Install Node.js 22.13 or newer (https://nodejs.org)."; exit 1; }
+ok "Detected Node.js $(node -v)"
 
-NODE_VER="$(node -v | sed 's/^v//')"
-NODE_MAJOR="${NODE_VER%%.*}"
-if [ "$NODE_MAJOR" -lt 22 ]; then
-  err "Node.js v22+ is required (found v${NODE_VER}) because Kyrpy UI/UX Designer uses built-in node:sqlite."
-  exit 1
-fi
-ok "Detected Node.js v${NODE_VER}"
+# ---------- 1. settings (.env) ------------------------------------------------
+PORT_VAL="${PORT:-5180}"; APP_MODE_VAL="${APP_MODE:-release}"; BYPASS_VAL="${BYPASS_AUTH:-false}"
+[ "$APP_MODE_VAL" = "dev" ] && BYPASS_VAL="true"
+PG_SYNC="false"; LOCAL_ONLY_VAL="true"
+PG_HOST_VAL=""; PG_PORT_VAL="5432"; PG_USER_VAL="postgres"; PG_PASSWORD_VAL=""; PG_DATABASE_VAL="kyrpy-uiux-designer-db"; PG_ADMIN_DB_VAL="postgres"
 
-# 2. Configure .env (Dev vs Release Mode + Optional PostgreSQL Connection)
-ENV_FILE="$ROOT_DIR/.env"
-PORT="${PORT:-5180}"
-HOST="${HOST:-127.0.0.1}"
-APP_MODE="dev"
-BYPASS_AUTH="true"
-PG_SYNC_ENABLED="false"
-LOCAL_ONLY="true"
-PG_HOST=""
-PG_PORT="5432"
-PG_USER="postgres"
-PG_PASSWORD=""
-PG_DATABASE="kyrpy-uiux-designer-db"
-PG_ADMIN_DB="postgres"
-PG_SCHEMA="public"
-PG_SSL="false"
+ask() {   # ask "question" "default" -> answer in REPLY_VAL
+  local a
+  read -r -p "$1" a || a=""
+  REPLY_VAL="${a:-$2}"
+}
 
-if [ -f "$ENV_FILE" ] && [ "$NON_INTERACTIVE" -eq 1 ]; then
-  info "Existing .env found; keeping current configuration."
+pg_reachable() {   # host port
+  node -e "
+    const s = require('node:net').connect({ host: process.argv[1], port: Number(process.argv[2]) });
+    s.setTimeout(4000);
+    s.on('connect', () => { s.destroy(); process.exit(0); });
+    s.on('error', () => process.exit(1));
+    s.on('timeout', () => { s.destroy(); process.exit(1); });
+  " "$1" "$2" >/dev/null 2>&1
+}
+
+write_env() {
+  local tmp="$ENV_FILE.tmp.$$"
+  ( umask 077
+    {
+      printf '%s\n' "# Kyrpy UI/UX Designer — settings (generated by installer.sh; edit freely)"
+      printf 'PORT=%s\n' "$PORT_VAL"
+      printf '%s\n' "# release = sign-in required | dev = no sign-in, every visitor acts as the superadmin"
+      printf 'APP_MODE=%s\n' "$APP_MODE_VAL"
+      printf 'BYPASS_AUTH=%s\n' "$BYPASS_VAL"
+      printf '%s\n' "# The server always works on its local SQLite database. PostgreSQL is an optional sync target" \
+                    "# (superadmin \"Database sync\" tool): PG_SYNC_ENABLED=true plus the PG* values switch it on."
+      printf 'PG_SYNC_ENABLED=%s\n' "$PG_SYNC"
+      printf 'LOCAL_ONLY=%s\n' "$LOCAL_ONLY_VAL"
+      printf 'PGHOST=%s\n' "$PG_HOST_VAL"
+      printf 'PGPORT=%s\n' "$PG_PORT_VAL"
+      printf 'PGUSER=%s\n' "$PG_USER_VAL"
+      printf 'PGPASSWORD=%s\n' "$PG_PASSWORD_VAL"
+      printf 'PGDATABASE=%s\n' "$PG_DATABASE_VAL"
+      printf 'PGADMINDB=%s\n' "$PG_ADMIN_DB_VAL"
+    } > "$tmp" )
+  mv "$tmp" "$ENV_FILE"
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
+}
+
+if [ -f "$ENV_FILE" ] && [ "$RECONFIGURE" -eq 0 ]; then
+  info "Keeping the existing .env (use --reconfigure to answer the questions again)."
+elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+  if [ -f "$ENV_FILE" ]; then cp -p "$ENV_FILE" "$ENV_FILE.bak"; info "Old settings kept as .env.bak"; fi
+  write_env
+  ok "Wrote .env with the defaults (release mode, port 5180, local SQLite only)."
 else
-  if [ "$NON_INTERACTIVE" -eq 0 ] && [ -t 0 ]; then
-    echo "----------------------------------------------------------------------"
-    echo "  🔐 Runtime Mode (Dev vs Release)"
-    echo "     - dev     : Bypasses Login/Register page for instant local design"
-    echo "     - release : Protects studio with Login/Register page (admin / admin)"
-    echo "----------------------------------------------------------------------"
-    read -r -p "Select runtime mode [dev/release] (default: dev): " INPUT_MODE
-    INPUT_MODE="$(echo "${INPUT_MODE:-dev}" | tr '[:upper:]' '[:lower:]')"
-    if [ "$INPUT_MODE" = "release" ]; then
-      APP_MODE="release"
-      BYPASS_AUTH="false"
-    else
-      APP_MODE="dev"
-      BYPASS_AUTH="true"
-    fi
+  if [ -f "$ENV_FILE" ]; then cp -p "$ENV_FILE" "$ENV_FILE.bak"; info "Old settings kept as .env.bak"; fi
+  echo "----------------------------------------------------------------------"
+  echo "  Runtime mode"
+  echo "    release : sign-in required (default accounts are listed at the end)"
+  echo "    dev     : no sign-in, every visitor acts as the superadmin (local use only)"
+  echo "----------------------------------------------------------------------"
+  ask "Runtime mode [release/dev] (default: release): " "release"
+  if [ "$(printf '%s' "$REPLY_VAL" | tr '[:upper:]' '[:lower:]')" = "dev" ]; then APP_MODE_VAL="dev"; BYPASS_VAL="true"; fi
 
-    echo ""
-    echo "----------------------------------------------------------------------"
-    echo "  🗄️  Database & Server-Side PostgreSQL Setup (.env)"
-    echo "  By default, Kyrpy UI/UX Designer works 100% locally with the bundled"
-    echo "  SQLite sample database (src/data/designer.db)."
-    echo "  Enter server-side PostgreSQL credentials below, or press Enter to"
-    echo "  run strictly on your local machine (Local-Only SQLite mode)."
-    echo "----------------------------------------------------------------------"
-    read -r -p "Local HTTP port [5180]: " INPUT_PORT
-    PORT="${INPUT_PORT:-5180}"
+  while :; do
+    ask "Local HTTP port [5180]: " "5180"
+    if [[ "$REPLY_VAL" =~ ^[0-9]+$ ]] && (( REPLY_VAL >= 1 && REPLY_VAL <= 65535 )); then PORT_VAL="$REPLY_VAL"; break; fi
+    warn "Enter a port number between 1 and 65535."
+  done
 
-    read -r -p "Configure server-side PostgreSQL connection? [y/N]: " WANT_PG
-    if [[ "${WANT_PG:-N}" =~ ^[Yy]$ ]]; then
-      read -r -p "  PGHOST (leave empty for local-only mode): " PG_HOST
-      if [ -n "$PG_HOST" ]; then
-        read -r -p "  PGPORT [5432]: " INPUT_PG_PORT
-        PG_PORT="${INPUT_PG_PORT:-5432}"
-        read -r -p "  PGUSER [postgres]: " INPUT_PG_USER
-        PG_USER="${INPUT_PG_USER:-postgres}"
-        read -r -s -p "  PGPASSWORD: " PG_PASSWORD
-        echo ""
-        read -r -p "  PGDATABASE [kyrpy-uiux-designer-db]: " INPUT_PG_DB
-        PG_DATABASE="${INPUT_PG_DB:-kyrpy-uiux-designer-db}"
-        read -r -p "  PGADMINDB [postgres]: " INPUT_PG_ADMIN
-        PG_ADMIN_DB="${INPUT_PG_ADMIN:-postgres}"
-        read -r -p "  Enable SSL (PG_SSL)? [y/N]: " INPUT_PG_SSL
-        if [[ "${INPUT_PG_SSL:-N}" =~ ^[Yy]$ ]]; then PG_SSL="true"; fi
-
-        info "Testing connectivity to PostgreSQL at ${PG_HOST}:${PG_PORT}..."
-        PG_REACHABLE=0
-        if command -v psql >/dev/null 2>&1; then
-          if PGPASSWORD="$PG_PASSWORD" PGCONNECT_TIMEOUT=4 psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_ADMIN_DB" -c "SELECT 1;" >/dev/null 2>&1 || \
-             PGPASSWORD="$PG_PASSWORD" PGCONNECT_TIMEOUT=4 psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DATABASE" -c "SELECT 1;" >/dev/null 2>&1; then
-            PG_REACHABLE=1
-          fi
-        elif node -e "
-          const net = require('node:net');
-          const s = net.connect({ host: process.argv[1], port: Number(process.argv[2]), timeout: 3000 });
-          s.on('connect', () => { s.destroy(); process.exit(0); });
-          s.on('error', () => process.exit(1));
-          s.on('timeout', () => { s.destroy(); process.exit(1); });
-        " "$PG_HOST" "$PG_PORT" 2>/dev/null; then
-          PG_REACHABLE=1
-        fi
-
-        if [ "$PG_REACHABLE" -eq 1 ]; then
-          PG_SYNC_ENABLED="true"
-          LOCAL_ONLY="false"
-          ok "PostgreSQL server reachable! Bi-directional cloud sync enabled."
-        else
-          warn "Could not connect to PostgreSQL at ${PG_HOST}:${PG_PORT}. Falling back to Local-Only SQLite mode (PG_SYNC_ENABLED=false, LOCAL_ONLY=true)."
-          PG_SYNC_ENABLED="false"
-          LOCAL_ONLY="true"
-        fi
+  echo ""
+  echo "----------------------------------------------------------------------"
+  echo "  Database"
+  echo "  The server works on its local SQLite database. A PostgreSQL server is"
+  echo "  only needed if the superadmin wants to copy the whole database to it"
+  echo "  (or back) with the \"Database sync\" tool. Press Enter to skip."
+  echo "----------------------------------------------------------------------"
+  ask "Set up a PostgreSQL sync target? [y/N]: " "N"
+  if [[ "$REPLY_VAL" =~ ^[Yy] ]]; then
+    ask "  PGHOST (empty = skip): " ""
+    PG_HOST_VAL="$REPLY_VAL"
+    if [ -n "$PG_HOST_VAL" ]; then
+      ask "  PGPORT [5432]: " "5432";                               PG_PORT_VAL="$REPLY_VAL"
+      ask "  PGUSER [postgres]: " "postgres";                       PG_USER_VAL="$REPLY_VAL"
+      read -r -s -p "  PGPASSWORD: " PG_PASSWORD_VAL || PG_PASSWORD_VAL=""; echo ""
+      ask "  PGDATABASE [kyrpy-uiux-designer-db]: " "kyrpy-uiux-designer-db"; PG_DATABASE_VAL="$REPLY_VAL"
+      ask "  PGADMINDB [postgres]: " "postgres";                    PG_ADMIN_DB_VAL="$REPLY_VAL"
+      info "Checking that ${PG_HOST_VAL}:${PG_PORT_VAL} answers ..."
+      if [[ "$PG_PORT_VAL" =~ ^[0-9]+$ ]] && pg_reachable "$PG_HOST_VAL" "$PG_PORT_VAL"; then
+        PG_SYNC="true"; LOCAL_ONLY_VAL="false"
+        ok "PostgreSQL answers: the superadmin's Database sync tool is switched on."
       else
-        info "No PGHOST entered. Using Local-Only SQLite mode."
+        warn "No answer from ${PG_HOST_VAL}:${PG_PORT_VAL}. The values are saved, but sync stays off (PG_SYNC_ENABLED=false). Set it to true in .env once the server is reachable."
       fi
     else
-      info "Using Local-Only SQLite mode (src/data/designer.db)."
+      info "No host entered: local SQLite only."
     fi
+  else
+    info "Local SQLite only."
   fi
-
-  cat > "$ENV_FILE" <<EOF
-# Generated by Kyrpy UI/UX Designer installer.sh
-PORT=${PORT}
-HOST=${HOST}
-APP_MODE=${APP_MODE}
-BYPASS_AUTH=${BYPASS_AUTH}
-DEFAULT_ADMIN_USER=admin
-DEFAULT_ADMIN_PASS=admin
-PG_SYNC_ENABLED=${PG_SYNC_ENABLED}
-LOCAL_ONLY=${LOCAL_ONLY}
-PGHOST=${PG_HOST}
-PGPORT=${PG_PORT}
-PGUSER=${PG_USER}
-PGPASSWORD=${PG_PASSWORD}
-PGDATABASE=${PG_DATABASE}
-PGADMINDB=${PG_ADMIN_DB}
-PG_HOST=${PG_HOST}
-PG_PORT=${PG_PORT}
-PG_USER=${PG_USER}
-PG_PASSWORD=${PG_PASSWORD}
-PG_DATABASE=${PG_DATABASE}
-PG_SCHEMA=${PG_SCHEMA}
-PG_SSL=${PG_SSL}
-EOF
-  chmod 600 "$ENV_FILE" 2>/dev/null || true
-  ok "Wrote configuration to .env (APP_MODE=${APP_MODE}, PG_SYNC_ENABLED=${PG_SYNC_ENABLED}, LOCAL_ONLY=${LOCAL_ONLY})"
+  write_env
+  ok "Wrote .env (APP_MODE=${APP_MODE_VAL}, PORT=${PORT_VAL}, PG_SYNC_ENABLED=${PG_SYNC})."
 fi
 
-# 3. Ensure sample SQLite database & default `admin` / `admin` account exist
-if [ ! -f "$ROOT_DIR/src/data/designer.db" ] && [ -f "$ROOT_DIR/sql/sample_data_sqlite.sql" ]; then
-  info "Initializing local SQLite database from sql/sample_data_sqlite.sql..."
-  mkdir -p "$ROOT_DIR/src/data"
-  node --input-type=module -e "
-    import { readFileSync } from 'node:fs';
-    import { DatabaseSync } from 'node:sqlite';
-    const db = new DatabaseSync('./src/data/designer.db');
-    db.exec(readFileSync('./sql/sample_data_sqlite.sql', 'utf8'));
-    db.close();
-  "
-  ok "Sample SQLite database initialized at src/data/designer.db"
+# ---------- 2. environment (Node version, packages, local database) -----------
+info "Preparing the environment ..."
+"$ROOT_DIR/runner.sh" setup >/dev/null || { err "Environment setup failed. Run ./runner.sh setup to see why."; exit 1; }
+ok "Environment ready (Node.js checked, packages and local database in place)."
+
+# ---------- 3. tests ----------------------------------------------------------
+if [ "$RUN_TESTS" -eq 1 ]; then
+  info "Running the test suite (about a minute; skip with --skip-tests) ..."
+  if (cd "$ROOT_DIR/src" && PG_SYNC_ENABLED=false LOCAL_ONLY=true npm test > "$ROOT_DIR/installer-tests.log" 2>&1); then
+    ok "All tests passed."
+    rm -f "$ROOT_DIR/installer-tests.log"
+  else
+    warn "Some tests failed (details: installer-tests.log). The server can still be started; please report the failures."
+  fi
 fi
 
-info "Ensuring default startup account (username: admin / password: admin)..."
-(cd "$ROOT_DIR/src" && node --disable-warning=ExperimentalWarning --input-type=module -e "
-  import { buildContainer } from './composition-root.js';
-  const c = buildContainer({ dbFile: './data/designer.db', syncEnabled: false });
-  c.auth.ensureDefaultAdmin();
-  c.db.close();
-")
-ok "Default startup account ready -> Username: admin | Password: admin"
-
-# 4. Run verification test suite
-info "Running verification test suite..."
-(cd "$ROOT_DIR/src" && npm test)
-ok "All automated tests passed!"
-
-# 5. Start the studio server via runner.sh if requested
+# ---------- 4. start ----------------------------------------------------------
 if [ "$START_SERVER" -eq 1 ]; then
   echo ""
   "$ROOT_DIR/runner.sh" start
+else
+  echo ""
+  ok "Done. Start the server with: ./runner.sh start"
 fi

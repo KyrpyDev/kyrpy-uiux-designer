@@ -315,6 +315,7 @@ CREATE TABLE IF NOT EXISTS workflows (
   created_at TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS start_screen_id INTEGER;
 
 CREATE TABLE IF NOT EXISTS workflow_screens (
   workflow_id INTEGER NOT NULL,
@@ -479,7 +480,7 @@ const ITEM_REFS = {
   icons: [['menu_items', 'icon_id']],
   buttons: [['menu_items', 'button_id'], ['menu_items', 'ref_button_id']],
   elements: [['menu_items', 'target_element_id']],
-  screens: [['menu_items', 'target_screen_id'], ['workflow_screens', 'screen_id'], ['workflow_links', 'from_screen_id'], ['workflow_links', 'to_screen_id']],
+  screens: [['menu_items', 'target_screen_id'], ['workflow_screens', 'screen_id'], ['workflow_links', 'from_screen_id'], ['workflow_links', 'to_screen_id'], ['workflows', 'start_screen_id']],
   workflows: [['workflow_screens', 'workflow_id'], ['workflow_links', 'workflow_id']]
 };
 /** Columns that hold an id of `target`: `[table, column, typeColumn?, typeValue?]` (declared and undeclared references). */
@@ -524,11 +525,11 @@ export class PostgresSyncService {
     const envLocalOnly = String(process.env.LOCAL_ONLY ?? creds.LOCAL_ONLY ?? '').toLowerCase();
     const placeholderHosts = new Set(['', 'none', 'disabled', 'local', 'your-postgres-host.example.com', '<your-postgres-host>']);
     const hasConfiguredHost = !placeholderHosts.has(String(this.config.host || '').trim().toLowerCase());
-    if (envLocalOnly === 'true' || envLocalOnly === '1' || envSyncFlag === 'false' || envSyncFlag === '0' || !hasConfiguredHost) {
-      this.enabled = false;
-    } else {
-      this.enabled = Boolean(enabled);
-    }
+    // Opt-in: the server works on its local SQLite database unless PostgreSQL sync is switched on explicitly
+    // (PG_SYNC_ENABLED=true with a real PGHOST, and LOCAL_ONLY not set). A host alone does not turn it on.
+    const optedIn = envSyncFlag === 'true' || envSyncFlag === '1' || config.optIn === true;
+    const localOnly = envLocalOnly === 'true' || envLocalOnly === '1';
+    this.enabled = optedIn && !localOnly && hasConfiguredHost ? Boolean(enabled) : false;
     this.schemaInitialized = false;
     this.lastSyncAt = null;
     this.lastError = null;

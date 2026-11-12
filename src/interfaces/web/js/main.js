@@ -368,7 +368,7 @@ function menuDef() {
       }],
       ['View Item Lineage & Root Owner…', () => curDoc ? openLineageModal(d().type, curDoc.id) : toast('Open a design first', 'error')],
       '-',
-      ['Offline-First & PostgreSQL Sync…', () => openSyncModal('sync')],
+      ...(isSuperadminUser() ? [['Database Sync: SQLite ↔ PostgreSQL (superadmin)…', () => openSyncModal('sync')]] : []),
       ['Multi-Language Translations (i18n)…', () => openSyncModal('i18n')]
     ]],
     ['Design', [
@@ -525,7 +525,7 @@ function menuDef() {
       ['AI Access Keys (MCP)…', () => openAiKeys()],
       '-',
       ['Editable Button & Device Templates…', () => openTemplatesModal('buttons')],
-      ['Offline-First & PostgreSQL Sync…', () => openSyncModal('sync')],
+      ...(isSuperadminUser() ? [['Database Sync: SQLite ↔ PostgreSQL (superadmin)…', () => openSyncModal('sync')]] : []),
       ['Multi-Language Translations (i18n)…', () => openSyncModal('i18n')]
     ]],
     ['View', [
@@ -746,9 +746,10 @@ function renderTopbar() {
     () => openChangesModal(), state.pendingChangesCount || 0, state.pendingChangesCount > 0);
 
   // PostgreSQL Sync button
-  const syncBtn = tbIcon('', 'sync',
-    'PG Sync — offline-first local SQLite ↔ PostgreSQL (kyrpy-uiux-designer-db)',
-    () => openSyncModal('sync'));
+  // the database sync tool (this server's SQLite ↔ a PostgreSQL server) is the superadmin's: nobody else sees it
+  const syncBtn = isSuperadminUser() ? tbIcon('', 'sync',
+    'Database sync (superadmin) — this server\'s SQLite ↔ PostgreSQL, either way',
+    () => openSyncModal('sync')) : null;
 
   // User / Admin button
   const curUser = state.user || { username: 'superadmin', role: 'admin' };
@@ -937,6 +938,21 @@ async function boot() {
   if (!state.themes.find(t => t.key === state.themeKey)) state.themeKey = state.themes[0].key;
   applyThemeChrome();
   await ensureAuthGate({ authConfig: state.authConfig, authenticated: Boolean(b.authenticated) });
+  // Changes made while the server could not be reached wait in this browser's queue and are sent again by themselves:
+  // at start, when the connection comes back, and every 30 s while something waits. Nobody has to press a sync button.
+  let replaying = false;
+  const replayOutbox = async () => {
+    if (replaying || !api.outbox().length || navigator.onLine === false) return;
+    replaying = true;
+    try {
+      const r = await api.flushOutbox();
+      if (r.dropped.length) toast(`${r.dropped.length} queued offline change(s) were refused by the server and removed (first: ${r.dropped[0].message}).`, 'error', 8000);
+      if (r.flushed) { toast(`${r.flushed} change(s) made offline were saved to the server`, 'ok', 2600); await reloadLibrary({ silent: true }).catch(() => {}); }
+    } catch { /* still offline: the next round tries again */ } finally { replaying = false; }
+  };
+  window.addEventListener('online', replayOutbox);
+  setInterval(replayOutbox, 30000);
+  setTimeout(replayOutbox, 3000);
   window.addEventListener('ud-outbox-overflow', e => toast(`The offline queue is full: ${e.detail?.lost ?? 'some'} of the oldest unsent change(s) were dropped.`, 'error', 7000));
   // a session that ends while the page is open: show the sign-in page once, then reload with the new session
   let expiredShown = false;

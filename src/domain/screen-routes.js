@@ -100,3 +100,23 @@ export function distributeLevels(ids, level, { maxRows = 0, cellW = 560, cellH =
   columns.forEach((c, col) => c.forEach((id, i) => cells.set(id, { col, row: i + (rows - c.length) / 2 })));
   return { cells, cols: columns.length, rows, maxRows: cap };
 }
+
+/**
+ * The start (master) screen of a workflow: where its test begins when no screen is selected.
+ *  1. the stored start screen (the screen the workflow was generated from), while it is still part of the workflow
+ *  2. else an entry screen: one no link points to (the left-most, then top-most of them)
+ *  3. else (every screen is reachable from another, e.g. all link back to a home hub) the left-most, top-most screen:
+ *     a generated workflow lays its start screen out there
+ * @param {{ startScreenId?: number|null, nodes?: Array<{ screenId, x?, y? }>, links?: Array<{ fromScreenId, toScreenId }> }} wf
+ * @returns {number|null}
+ */
+export function workflowStartScreen(wf) {
+  const nodes = wf?.nodes || [];
+  if (!nodes.length) return null;
+  const stored = wf.startScreenId == null ? null : Number(wf.startScreenId);
+  if (stored != null && nodes.some(n => Number(n.screenId) === stored)) return stored;
+  const targets = new Set((wf.links || []).filter(l => l.fromScreenId !== l.toScreenId).map(l => Number(l.toScreenId)));
+  const first = list => [...list].sort((a, b) => (a.x ?? 0) - (b.x ?? 0) || (a.y ?? 0) - (b.y ?? 0))[0];
+  const entries = nodes.filter(n => !targets.has(Number(n.screenId)));
+  return Number(first(entries.length ? entries : nodes).screenId);
+}

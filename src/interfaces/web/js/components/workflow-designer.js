@@ -9,7 +9,7 @@ import { workflowFingerprint, workflowRestoreBody } from '/domain/doc-fingerprin
 import { api } from '../api.js';
 import { state, emit, projectLabel, canEditOwned, ownerLabel } from '../state.js';
 import { nodeBBox } from '/domain/geometry.js';
-import { distributeLevels } from '/domain/screen-routes.js';
+import { distributeLevels, workflowStartScreen } from '/domain/screen-routes.js';
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
 import { openTestRunner } from './test-runner.js';
@@ -504,13 +504,17 @@ export class WorkflowDesigner {
 
   buildNodes() {
     this.nodeEls.clear();
+    const startId = workflowStartScreen(this.wf);   // the start (master) screen: the test begins here when nothing is selected
     for (const n of this.wf.nodes) {
       const s = this.screens.get(n.screenId);
       if (!s) continue;
       const isActiveRoute = this.testMode && this.activeTestScreenId === s.id;
-      const el = h('div', { class: `wf-node${n.collapsed ? ' collapsed' : ''}${n.locked ? ' locked' : ''}${isActiveRoute ? ' active-route' : ''}`, style: { left: `${n.x}px`, top: `${n.y}px`, width: `${s.width}px` }, dataset: { screen: s.id } },
+      const isStart = startId === s.id;
+      const el = h('div', { class: `wf-node${n.collapsed ? ' collapsed' : ''}${n.locked ? ' locked' : ''}${isActiveRoute ? ' active-route' : ''}${isStart ? ' start' : ''}`, style: { left: `${n.x}px`, top: `${n.y}px`, width: `${s.width}px` }, dataset: { screen: s.id } },
         h('header', { dataset: { drag: s.id } },
+          isStart ? h('span', { class: 'wf-start-badge', title: this.wf.startScreenId === s.id ? 'Start screen of this workflow: the test begins here when no screen is selected' : 'Entry screen (no start screen is set): the test begins here when no screen is selected' }, '⚑ Start') : null,
           h('b', { title: s.key }, s.name),
+          this.wf.startScreenId === s.id ? null : h('button', { dataset: { act: 'wf-set-start' }, title: 'Make this the start screen of the workflow (the test begins here when no screen is selected)', onclick: e => { e.stopPropagation(); this.setStartScreen(s.id); } }, '⚑'),
           h('button', { title: 'Test the workflow from this screen (routes are followed)', onclick: e => { e.stopPropagation(); openTestRunner(this.app, { type: 'workflow', id: this.wf.id, startScreenId: s.id }); } }, '▶'),
           h('button', { title: n.locked ? 'Unlock position' : 'Lock position', onclick: async e => { e.stopPropagation(); n.locked = !n.locked; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed, locked: n.locked }); await this.refresh(); } }, n.locked ? '🔒' : '🔓'),
           h('button', { title: n.collapsed ? 'Expand' : 'Collapse', onclick: e => { e.stopPropagation(); this.toggleCollapse(n); } }, n.collapsed ? '▸' : '▾'),
@@ -529,11 +533,7 @@ export class WorkflowDesigner {
     if (this.testMode) {
       this.linkTool = false;
       this.linkBtn?.classList.remove('active');
-      const incoming = new Set((this.wf?.links || []).map(l => l.toScreenId));
-      const startNode = (this.sel?.kind === 'node' && this.sel.id)
-        || this.wf?.nodes?.find(n => !incoming.has(n.screenId))?.screenId
-        || this.wf?.nodes?.[0]?.screenId
-        || null;
+      const startNode = (this.sel?.kind === 'node' && this.sel.id) || workflowStartScreen(this.wf);
       this.testHistory = [];
       this.setActiveTestScreen(startNode, false);
       toast('Test actions ON — click any route pill, link arrow, or screen element to test workflow routing', 'ok', 2800);
@@ -878,7 +878,16 @@ export class WorkflowDesigner {
 
   async toggleCollapse(n) { n.collapsed = !n.collapsed; await api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed }); await this.refresh(); }
   async collapseAll(v) { await Promise.all(this.wf.nodes.map(n => api.placeScreen(this.wf.id, { screenId: n.screenId, x: n.x, y: n.y, collapsed: v }))); await this.refresh(); this.fit(); }
-  /** Where "Test workflow" starts: the screen selected on the canvas, when it is still part of the workflow. */
+  /** Stores the start (master) screen of the workflow. */
+  async setStartScreen(screenId) {
+    try {
+      await api.updateWorkflow(this.wf.id, { startScreenId: screenId });
+      await this.refresh();
+      toast(`“${this.screens.get(screenId)?.name || `#${screenId}`}” is the start screen: the test begins there`, 'ok', 2200);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  /** Where "Test workflow" starts: the screen selected on the canvas (else the runner uses the workflow's start screen). */
   testStartScreenId() {
     const id = this.sel?.kind === 'node' ? this.sel.id : null;
     return id != null && (this.wf?.nodes || []).some(n => n.screenId === id) ? id : undefined;
@@ -893,7 +902,10 @@ export class WorkflowDesigner {
   async autoLayout() {
     const nodes = this.wf.nodes.map(n => n.screenId), level = new Map();
     const incoming = new Set(this.wf.links.map(l => l.toScreenId));
-    const queue = nodes.filter(id => !incoming.has(id)); if (!queue.length && nodes.length) queue.push(nodes[0]);
+    // the stored start screen is the one root (its sub screens follow to the right); without one, every entry screen is
+    const stored = this.wf.startScreenId != null && nodes.includes(this.wf.startScreenId) ? this.wf.startScreenId : null;
+    const queue = stored != null ? [stored] : nodes.filter(id => !incoming.has(id));
+    if (!queue.length && nodes.length) queue.push(workflowStartScreen(this.wf) ?? nodes[0]);
     queue.forEach(id => level.set(id, 0));
     for (let i = 0; i < queue.length; i++) for (const l of this.wf.links.filter(x => x.fromScreenId === queue[i])) if (!level.has(l.toScreenId)) { level.set(l.toScreenId, level.get(queue[i]) + 1); queue.push(l.toScreenId); }
     let extra = Math.max(0, ...level.values()) + 1;

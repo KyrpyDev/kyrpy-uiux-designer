@@ -150,7 +150,7 @@ function renderContainerChildren(el, ctx, idx, all) {
     const inner = containerInnerBox(el, all, ctx.lib.element);
     const clipId = `ud-clip-cont-${el.id}`;
     return `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>` +
-      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}">${renderedKids}</g>`;
+      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}" data-scroll-x="${el.attrs?.['data-scroll-x'] === 'false' ? 0 : 1}" data-scroll-y="${el.attrs?.['data-scroll-y'] === 'false' ? 0 : 1}">${renderedKids}</g>`;
   }
   return renderedKids;
 }

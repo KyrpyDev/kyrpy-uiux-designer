@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS workflows (
   created_at TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS start_screen_id INTEGER;
 
 CREATE TABLE IF NOT EXISTS workflow_screens (
   workflow_id INTEGER NOT NULL,
@@ -364,6 +365,8 @@ CREATE TABLE IF NOT EXISTS trash_items (
   deleted_at TEXT NOT NULL DEFAULT '',
   snapshot TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 
 -- ===== kyrpy-uiux-mcp (M0): schema_registry, mcp_context on every table, uid + content_hash =====
 CREATE TABLE IF NOT EXISTS schema_registry (
@@ -620,6 +623,29 @@ CREATE TABLE IF NOT EXISTS version_items (
   PRIMARY KEY (item_uid, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_version_items_project ON version_items(project_id);
+
+CREATE TABLE IF NOT EXISTS element_scripts (
+  id                INTEGER PRIMARY KEY,
+  uid               TEXT NOT NULL UNIQUE,
+  element_id        INTEGER NOT NULL UNIQUE,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  runtime           TEXT NOT NULL DEFAULT 'esm',
+  entry_export      TEXT NOT NULL DEFAULT 'mount',
+  module_code       TEXT NOT NULL DEFAULT '',
+  imports_json      TEXT NOT NULL DEFAULT '[]',
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
+  props_schema_json TEXT NOT NULL DEFAULT '{}',
+  emits_json        TEXT NOT NULL DEFAULT '[]',
+  code_hash         TEXT NOT NULL DEFAULT '',
+  sri_verified      INTEGER NOT NULL DEFAULT 1,
+  review_status     TEXT NOT NULL DEFAULT 'verified',
+  created_by        INTEGER,
+  updated_by        INTEGER,
+  created_at        TEXT NOT NULL DEFAULT '',
+  updated_at        TEXT NOT NULL DEFAULT '',
+  mcp_context       TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_element_scripts_element ON element_scripts(element_id);
 -- ===== account (user-wide) API keys (m11): kind + project_id nullable for kind = 'account' =====
 ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'project';
 ALTER TABLE IF EXISTS api_keys ALTER COLUMN project_id DROP NOT NULL;

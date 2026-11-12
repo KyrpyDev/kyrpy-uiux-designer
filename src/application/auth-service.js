@@ -173,6 +173,11 @@ export class AuthService {
     if (!this.isAdmin(user)) throw new ForbiddenError('Administrator privileges required');
   }
 
+  /** The database sync tool (local SQLite <-> PostgreSQL, whole databases) belongs to the single superadmin. */
+  assertSuperadmin(user) {
+    if (!this.isSuperadmin(user)) throw new ForbiddenError('Only the superadmin can do this');
+  }
+
   /** Creates an account and signs it in. Self-registration passes `designer` / `viewer`; other roles come from createUserByAdmin. */
   register({ username, email, password, displayName = '', role = 'designer' }, { hashed = null } = {}) {
     const uname = String(username || '').trim().toLowerCase().replace(/[^a-z0-9_.-]/g, '');

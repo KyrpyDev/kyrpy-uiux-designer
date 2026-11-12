@@ -1000,3 +1000,7 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .qe-foot .grow { flex: 1; }
 .qe-status { color: #4ade80; }
 .qe-status.dirty { color: #fbbf24; }
+
+/* workflow: the start (master) screen */
+.wf-node.start { box-shadow: 0 0 0 3px rgba(34, 197, 94, .75); }
+.wf-start-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: 999px; background: #16a34a; color: #fff; font-size: .7em; font-weight: 600; white-space: nowrap; }

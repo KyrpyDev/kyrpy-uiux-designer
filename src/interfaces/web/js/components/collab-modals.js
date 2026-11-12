@@ -10,7 +10,7 @@
  *  - Offline-First PostgreSQL Sync & Translations (`openSyncModal`)
  */
 import { api } from '../api.js';
-import { state, emit, projectLabel, ownerLabel } from '../state.js';
+import { state, emit, projectLabel, ownerLabel, isSuperadminUser } from '../state.js';
 import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
@@ -1627,14 +1627,16 @@ export async function withSyncProgress(label, job, { startPending = 0 } = {}) {
 }
 
 export async function openSyncModal(initialTab = 'sync') {
-  let tab = initialTab;
+  // the database sync tab is the superadmin's tool; everyone else gets the translations only
+  const canSync = isSuperadminUser();
+  let tab = canSync ? initialTab : 'i18n';
   const host = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', minHeight: '360px' } });
 
   const refresh = async () => {
     host.replaceChildren();
     host.append(
       h('div', { class: 'row' },
-        h('button', { class: `btn sm${tab === 'sync' ? ' primary' : ''}`, onclick: () => { tab = 'sync'; refresh(); } }, 'Offline-First & PostgreSQL Sync'),
+        canSync ? h('button', { class: `btn sm${tab === 'sync' ? ' primary' : ''}`, onclick: () => { tab = 'sync'; refresh(); } }, 'Database Sync: SQLite ↔ PostgreSQL') : null,
         h('button', { class: `btn sm${tab === 'i18n' ? ' primary' : ''}`, onclick: () => { tab = 'i18n'; refresh(); } }, 'Multi-Language Translations (i18n)')
       )
     );
@@ -1650,6 +1652,9 @@ export async function openSyncModal(initialTab = 'sync') {
           h('div', { class: 'muted', style: { marginTop: '4px' } }, `Local SQLite Outbox Pending: ${st.pendingCount} · Synced Total: ${st.syncedCount} · Browser Offline Outbox: ${browserOutbox.length}`),
           h('div', { class: 'muted' }, `Last Push: ${st.state?.last_push_at || 'never'} · Last Pull: ${st.state?.last_pull_at || 'never'} · Status: ${st.state?.last_sync_status || 'ready'}`)
         ),
+        h('p', { class: 'muted' }, st.syncEnabled === false
+          ? 'This server runs on its local SQLite database only. To use this tool, set PG_SYNC_ENABLED=true and the PostgreSQL connection (PGHOST …) in .env, then restart the server.'
+          : 'Copies whole databases between this server\'s SQLite file and the PostgreSQL server, either way. It is not needed for everyday work: what users change is stored in this server\'s database at once.'),
         h('div', { class: 'row wrap' },
           h('button', {
             class: 'btn primary',
@@ -1751,7 +1756,7 @@ export async function openSyncModal(initialTab = 'sync') {
 
   await refresh();
   modal({
-    title: 'Offline-First PostgreSQL Sync & Translations',
+    title: canSync ? 'Database Sync (superadmin) & Translations' : 'Multi-Language Translations',
     wide: true,
     content: host,
     actions: close => [h('button', { class: 'btn primary', onclick: close }, 'Done')]

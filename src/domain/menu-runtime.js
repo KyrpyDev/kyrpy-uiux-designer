@@ -431,24 +431,61 @@ export function bindMenus(root, opts) {
   }
   var doc = root.ownerDocument || (typeof document !== 'undefined' ? document : null);
   function findRepeaterStage(btn, itemEl) {
-    var targetId = (itemEl && (itemEl.getAttribute('data-target-repeater') || itemEl.getAttribute('data-popup-element-id') || itemEl.getAttribute('data-popup-element') || (itemEl.getAttribute('data-action') === 'scroll-repeater' ? itemEl.getAttribute('data-target') : null))) ||
-                   (btn && (btn.getAttribute('data-target-repeater') || btn.getAttribute('data-hub-repeater-target')));
+    var perIt = itemEl && itemEl.getAttribute && itemEl.getAttribute('data-item-scroll') === '1';
+    var menuEl = btn && btn.querySelector ? btn.querySelector('.ud-menu') : null;
+    var targetId = perIt ? (itemEl.getAttribute('data-target-repeater') || null)
+      : ((itemEl && (itemEl.getAttribute('data-target-repeater') || itemEl.getAttribute('data-popup-element-id') || itemEl.getAttribute('data-popup-element') || (itemEl.getAttribute('data-action') === 'scroll-repeater' ? itemEl.getAttribute('data-target') : null))) ||
+         (btn && (btn.getAttribute('data-target-repeater') || btn.getAttribute('data-hub-repeater-target'))) ||
+         (menuEl && menuEl.getAttribute('data-hub-repeater-target')) || null);
     var d = doc;
     var screen = (btn && btn.closest && (btn.closest('.ud-screen') || btn.closest('svg'))) || root;
     if (targetId) {
-      var sel = '[data-repeater-for="' + targetId + '"], [data-container-for="' + targetId + '"], [data-el="' + targetId + '"], #' + targetId;
-      var found = (screen && screen.querySelector && screen.querySelector(sel)) || (root && root.querySelector && root.querySelector(sel)) || (d && d.querySelector && d.querySelector(sel));
+      var tid = String(targetId).replace(/["\\]/g, '');
+      var sel = '[data-repeater-for="' + tid + '"], [data-container-for="' + tid + '"], [data-el="' + tid + '"]' + (/^[A-Za-z_][\w-]*$/.test(tid) ? ', #' + tid : '');
+      var q = function (n) { try { return n && n.querySelector ? n.querySelector(sel) : null; } catch (e) { return null; } };
+      var found = q(screen) || q(root) || q(d);
       if (found) {
         var st = (found.getAttribute && found.getAttribute('data-rpt-axis')) ? found : (found.querySelector ? found.querySelector('.ud-rpt-stage') : null);
         if (st) return st;
+        // any other container chosen on the screen: its children group scrolls inside the container's clip
+        var g = (found.getAttribute && found.getAttribute('data-container-for') != null) ? found : (found.querySelector ? found.querySelector('[data-container-for]') : null);
+        if (g) { g.setAttribute('data-scroll-generic', '1'); if (!g.getAttribute('data-rpt-axis')) g.setAttribute('data-rpt-axis', g.getAttribute('data-scroll-y') === '0' && g.getAttribute('data-scroll-x') !== '0' ? 'x' : 'y'); return g; }
       }
+      // a chosen target that is not on this screen scrolls nothing (it never falls back to another container)
+      if (itemEl && itemEl.getAttribute && itemEl.getAttribute('data-item-scroll') === '1') return null;
     }
     var stage = (screen && screen.querySelector) ? screen.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage') : null;
     if (!stage && root && root.querySelector) stage = root.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage');
     return stage;
   }
+  function genericMax(g) {
+    var clipH = 0, clipW = 0, ch = 0, cw = 0;
+    try {
+      var cp = (g.getAttribute('clip-path') || '').match(/#([^)"']+)/);
+      var cr = cp && g.ownerDocument ? g.ownerDocument.getElementById(cp[1]) : null;
+      var rect = cr && cr.querySelector ? cr.querySelector('rect') : null;
+      if (rect) { clipH = parseFloat(rect.getAttribute('height')) || 0; clipW = parseFloat(rect.getAttribute('width')) || 0; }
+      var prev = g.getAttribute('transform'); if (prev) g.removeAttribute('transform');
+      var bb = g.getBBox ? g.getBBox() : null;
+      if (prev) g.setAttribute('transform', prev);
+      if (bb) { ch = bb.height; cw = bb.width; }
+    } catch (e) {}
+    var ax = g.getAttribute('data-scroll-x') !== '0', ay = g.getAttribute('data-scroll-y') !== '0';
+    return { y: ay ? Math.max(0, ch - clipH) : 0, x: ax ? Math.max(0, cw - clipW) : 0 };
+  }
   function moveRepeater(st, delta, preserve) {
     if (!st) return false;
+    if (st.getAttribute && st.getAttribute('data-scroll-generic') === '1') {
+      var gm = st.__udMax || (st.__udMax = genericMax(st));
+      var gx = st.getAttribute('data-rpt-axis') === 'x' || (gm.y <= 0 && gm.x > 0);
+      var lim = gx ? gm.x : gm.y;
+      if (!lim) return false;
+      var go = st.__udOff || 0, gn = Math.max(0, Math.min(lim, go + delta));
+      if (gn === go) return false;
+      st.__udOff = gn;
+      st.setAttribute('transform', (gx ? 'translate(' + (-gn) + ' 0)' : 'translate(0 ' + (-gn) + ')'));
+      return true;
+    }
     var track = st.querySelector ? st.querySelector('.ud-rpt-track') : null;
     if (!track) return false;
     var axis = st.getAttribute('data-rpt-axis') || 'y';
@@ -529,12 +566,21 @@ export function bindMenus(root, opts) {
     var btn = t.closest ? t.closest('.ud-btn') : null;
     if (!btn) return;
     var isCenter = t.getAttribute('data-rm') === 'center' || t.getAttribute('data-hub-pos') === 'center';
-    var isRptAction = t.getAttribute('data-action') === 'scroll-repeater' || !!t.getAttribute('data-target-repeater');
     var m = btn.querySelector ? btn.querySelector('.ud-menu') : null;
-    var centerScrollAllowed = isHub(btn) ? (t.getAttribute('data-hub-center-scroll') !== '0' && (!m || m.getAttribute('data-hub-center-scroll') !== '0')) : isRptAction;
+    // hub: the item sitting in the centre decides (per item slide-scroll setting); the centre hit area stands for it
+    var src = t;
+    if (isHub(btn) && t.getAttribute('data-rm') === 'center' && btn.querySelector) {
+      var ci = btn.querySelector('.rm-hub-item[data-hub-pos="center"]');
+      if (ci) src = ci;
+    }
+    var perItem = src.getAttribute('data-item-scroll');
+    if (perItem === '0') return;
+    var isRptAction = perItem === '1' || src.getAttribute('data-action') === 'scroll-repeater' || !!src.getAttribute('data-target-repeater');
+    var centerScrollAllowed = isHub(btn) ? (perItem === '1' || (t.getAttribute('data-hub-center-scroll') !== '0' && (!m || m.getAttribute('data-hub-center-scroll') !== '0'))) : isRptAction;
     if (!isRptAction && (!isCenter || !centerScrollAllowed)) return;
+    if (perItem !== '1' && isHub(btn) && m && m.getAttribute('data-item-scroll-mode') === '1' && !isRptAction) return;
 
-    var stage = findRepeaterStage(btn, t);
+    var stage = findRepeaterStage(btn, src !== t ? src : t);
     if (!stage) return;
 
     var scale = 1;

@@ -159,17 +159,20 @@ export function collabRoutes(router, c) {
   router.get('/api/translations/languages', () => c.translations.languages());
 
   // ---- Offline-First PostgreSQL Sync (kyrpy-uiux-designer-db) ----
-  // connection details (host, database, last error text) are for admins; everyone else gets the state only
+  // The sync tool copies whole databases between this server's SQLite file and a PostgreSQL server (either way):
+  // a server-to-server job of the single superadmin. Clients never need it: what a browser changes is stored in this
+  // server's database at once (its own offline outbox replays automatically).
+  // Connection details (host, database, last error text) are for the superadmin; everyone else gets the state only.
   router.get('/api/sync/status', ({ actor }) => {
     const st = c.pgSync.status();
-    if (c.auth.isAdmin(actor)) return st;
+    if (c.auth.isSuperadmin(actor)) return { ...st, canSync: true };
     const { host, port, database, postgresHost, postgresDatabase, lastError, ...rest } = st;
-    return { ...rest, lastError: lastError ? 'sync error (ask an administrator)' : null };
+    return { ...rest, canSync: false, lastError: lastError ? 'sync error (ask the superadmin)' : null };
   });
-  // push / pull replace a whole database: admins only
-  router.post('/api/sync/now', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.syncNowAsync({ force: body?.force === true }); });
-  router.post('/api/sync/push', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.pushAllAsync({ force: body?.force === true }); });
-  router.post('/api/sync/pull', ({ body, actor }) => { c.auth.assertAdmin(actor); return c.pgSync.pullFromPostgresAsync({ force: body?.force === true }); });
+  // push / pull replace a whole database: superadmin only
+  router.post('/api/sync/now', ({ body, actor }) => { c.auth.assertSuperadmin(actor); return c.pgSync.syncNowAsync({ force: body?.force === true }); });
+  router.post('/api/sync/push', ({ body, actor }) => { c.auth.assertSuperadmin(actor); return c.pgSync.pushAllAsync({ force: body?.force === true }); });
+  router.post('/api/sync/pull', ({ body, actor }) => { c.auth.assertSuperadmin(actor); return c.pgSync.pullFromPostgresAsync({ force: body?.force === true }); });
 
   // ---- Trash Management (Restore, Purge, Empty) ----
   router.get('/api/trash', ({ query, actor }) =>

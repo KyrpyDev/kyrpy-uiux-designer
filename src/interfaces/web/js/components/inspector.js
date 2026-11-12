@@ -360,12 +360,7 @@ export class Inspector {
               h('input', { type: 'checkbox', checked: cfg.hubSubInside !== false, 'data-f': `mc-${bid}-hubsubinside`, onchange: e => set({ hubSubInside: e.target.checked }) }), h('span', {}, 'Sub items stay inside the screen (centre fixed)')),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the sub items would not fit the screen they are scaled down (size and distance) until they do' },
               h('input', { type: 'checkbox', checked: !!cfg.hubFit, 'data-f': `mc-${bid}-hubfit`, onchange: e => set({ hubFit: e.target.checked }) }), h('span', {}, 'Auto downsize sub items to fit the screen')),
-            h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'Press down on the centered button and slide up or down to scroll items within the repeater container' },
-              h('input', { type: 'checkbox', checked: cfg.hubCenterScrollRepeater !== false, 'data-f': `mc-${bid}-hubscroll`, onchange: e => set({ hubCenterScrollRepeater: e.target.checked }) }), h('span', {}, 'Slide centered button to scroll repeater')),
-            this.field('Repeater Container (for slide scroll)', this.select(`mc-${bid}-hubrpt`, cfg.hubRepeaterTargetId || '', [
-              ['', '(Auto: Repeater container on screen)'],
-              ...els.filter(e => isRepeaterNode(e, state.library.elements) || e.key === 'html-repeater' || e.meta?.containerType === 'repeater').map(e => [e.id, `${e.name} (${e.key})`])
-            ], v => set({ hubRepeaterTargetId: v ? Number(v) : null }))),
+            h('div', { class: 'muted', 'data-f': `mc-${bid}-hubscroll-note`, style: { gridColumn: '1 / -1' } }, 'Slide-to-scroll is set per menu item: edit an item (✎) and tick “Slide this item to scroll a container”, then choose the container on the screen.'),
             this.field('When clicked rotate (° per click, 0 = off, 360 = full turn)', this.num(`mc-${bid}-hubspin`, cfg.hubSpin, v => set({ hubSpin: v }), { step: 45 })))
         : (cfg.layout === 'fan' || cfg.layout === 'radial' || cfg.kind === 'radial')
         ? h('div', { class: 'grid2' }, num('radius', 'Distance from parent (radius) × button'), num('itemScale', 'Item size × button'), num('startAngle', 'Start angle °', 5), num('sweep', 'Sweep °', 5))
@@ -849,6 +844,9 @@ export class Inspector {
       this.section(`Container Shell · ${cfg.sizeMode.toUpperCase()}`,
         h('div', { class: 'muted', style: { fontSize: '11px' } },
           `Outer shell box that limits child max size to ${Math.round(ib.w)}×${Math.round(ib.h)}px. Drop any element inside this container on the canvas.`),
+        h('div', { class: 'row wrap', style: { gap: '14px' }, title: 'Content larger than the container scrolls (by drag / wheel, or by a menu item set to slide-scroll this container). On by default.' },
+          ...[['data-scroll-y', 'Scroll vertical'], ['data-scroll-x', 'Scroll horizontal']].map(([k, l]) => h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+            h('input', { type: 'checkbox', 'data-f': `ct-${k}-${e.id}`, checked: e.attrs?.[k] !== 'false', onchange: ev => setContainerAttrs({ [k]: ev.target.checked ? 'true' : 'false' }) }), h('span', {}, l)))),
         h('div', { class: 'grid2' },
           this.field('Container mode', this.select(`ct-kind-${e.id}`, isCarousel ? 'carousel' : 'container', [
             ['container', '▣ Standard Container'],

@@ -157,7 +157,8 @@ export const SCHEMA_REGISTRY_SEED = {
       id: C.id, key: C.key, name: C.name, label: C.label, description_dev: C.description_dev,
       created_at: C.created_at, updated_at: C.updated_at, project_id: C.project_id, visibility: C.visibility,
       creator_id: C.creator_id, cloned_from_id: C.cloned_from_id, root_item_id: C.root_item_id,
-      root_owner_id: C.root_owner_id, locked: C.locked, uid: C.uid, content_hash: C.content_hash, mcp_context: C.mcp_context
+      root_owner_id: C.root_owner_id, locked: C.locked, uid: C.uid, content_hash: C.content_hash, mcp_context: C.mcp_context,
+      start_screen_id: 'Start (master) screen (`screens.id`): the screen the workflow was generated from; its test starts there. NULL = the entry screen is derived from the links.'
     }
   },
   workflow_screens: {

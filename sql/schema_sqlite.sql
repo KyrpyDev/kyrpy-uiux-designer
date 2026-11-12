@@ -165,6 +165,28 @@ CREATE TABLE design_focus (
   mcp_context TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE element_scripts (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid               TEXT NOT NULL UNIQUE,
+  element_id        INTEGER NOT NULL UNIQUE REFERENCES elements(id) ON DELETE CASCADE,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  runtime           TEXT NOT NULL DEFAULT 'esm',
+  entry_export      TEXT NOT NULL DEFAULT 'mount',
+  module_code       TEXT NOT NULL DEFAULT '',
+  imports_json      TEXT NOT NULL DEFAULT '[]',
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
+  props_schema_json TEXT NOT NULL DEFAULT '{}',
+  emits_json        TEXT NOT NULL DEFAULT '[]',
+  code_hash         TEXT NOT NULL DEFAULT '',
+  sri_verified      INTEGER NOT NULL DEFAULT 1,
+  review_status     TEXT NOT NULL DEFAULT 'verified',
+  created_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  mcp_context       TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE "elements" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   key             TEXT NOT NULL,          -- variable name used in code (dashed words)
@@ -223,6 +245,12 @@ CREATE TABLE item_requests (
   resolved_at         TEXT,
   mcp_context         TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE login_failures (
+  bucket     TEXT PRIMARY KEY,
+  count      INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL
+, mcp_context TEXT NOT NULL DEFAULT '{}');
 
 CREATE TABLE mcp_audit_log (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -530,7 +558,7 @@ CREATE TABLE "workflows" (
   description_dev TEXT NOT NULL DEFAULT '',
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-, project_id INTEGER NOT NULL DEFAULT 1, visibility TEXT NOT NULL DEFAULT 'public', creator_id INTEGER NOT NULL DEFAULT 1, cloned_from_id INTEGER, root_item_id INTEGER, root_owner_id INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, mcp_context TEXT NOT NULL DEFAULT '{}', uid TEXT, content_hash TEXT);
+, project_id INTEGER NOT NULL DEFAULT 1, visibility TEXT NOT NULL DEFAULT 'public', creator_id INTEGER NOT NULL DEFAULT 1, cloned_from_id INTEGER, root_item_id INTEGER, root_owner_id INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, start_screen_id INTEGER, mcp_context TEXT NOT NULL DEFAULT '{}', uid TEXT, content_hash TEXT);
 
 CREATE INDEX idx_animations_node ON animations(node_id);
 
@@ -541,6 +569,14 @@ CREATE INDEX idx_api_keys_project ON api_keys(project_id, revoked_at);
 CREATE INDEX idx_api_keys_user ON api_keys(user_id, revoked_at);
 
 CREATE INDEX idx_buttons_category ON buttons(category);
+
+CREATE INDEX idx_buttons_creator ON buttons(creator_id);
+
+CREATE INDEX idx_buttons_order ON buttons(position, name);
+
+CREATE INDEX idx_buttons_scope ON buttons(visibility, project_id);
+
+CREATE INDEX idx_changes_author ON change_requests(author_id, target_type, target_id, status);
 
 CREATE INDEX idx_changes_owner ON change_requests(owner_id, status);
 
@@ -554,7 +590,21 @@ CREATE INDEX idx_changesets_project ON changesets(project_id, status);
 
 CREATE INDEX idx_code_bindings_file ON code_bindings(project_id, file_path);
 
+CREATE INDEX idx_element_scripts_element ON element_scripts(element_id);
+
+CREATE INDEX idx_elements_creator ON elements(creator_id);
+
+CREATE INDEX idx_elements_order ON elements(position, name);
+
+CREATE INDEX idx_elements_scope ON elements(visibility, project_id);
+
 CREATE INDEX idx_icons_category ON icons(category);
+
+CREATE INDEX idx_icons_creator ON icons(creator_id);
+
+CREATE INDEX idx_icons_order ON icons(position, name);
+
+CREATE INDEX idx_icons_scope ON icons(visibility, project_id);
 
 CREATE INDEX idx_item_requests_project ON item_requests(project_id, status);
 
@@ -574,21 +624,43 @@ CREATE INDEX idx_nodes_ref ON nodes(ref_type, ref_id);
 
 CREATE INDEX idx_paths_category ON paths(category);
 
+CREATE INDEX idx_paths_creator ON paths(creator_id);
+
+CREATE INDEX idx_paths_order ON paths(position, name);
+
+CREATE INDEX idx_paths_scope ON paths(visibility, project_id);
+
 CREATE INDEX idx_project_members_proj ON project_members(project_id, status);
 
 CREATE INDEX idx_project_members_user ON project_members(user_id, status);
 
 CREATE INDEX idx_screens_category ON screens(category);
 
+CREATE INDEX idx_screens_creator ON screens(creator_id);
+
+CREATE INDEX idx_screens_order ON screens(position, name);
+
+CREATE INDEX idx_screens_scope ON screens(visibility, project_id);
+
 CREATE INDEX idx_sessions_user ON sessions(user_id);
 
 CREATE INDEX idx_sync_outbox_pending ON sync_outbox(synced, id);
+
+CREATE INDEX idx_sync_outbox_record ON sync_outbox(table_name, record_id, operation, synced);
 
 CREATE INDEX idx_translations_lookup ON translations(table_name, record_id, lang_code);
 
 CREATE INDEX idx_trash_type_proj ON trash_items(item_type, project_id, visibility);
 
+CREATE INDEX idx_users_lower_email ON users(LOWER(email));
+
+CREATE INDEX idx_users_lower_username ON users(LOWER(username));
+
 CREATE INDEX idx_version_items_project ON version_items(project_id);
+
+CREATE INDEX idx_workflows_creator ON workflows(creator_id);
+
+CREATE INDEX idx_workflows_scope ON workflows(visibility, project_id);
 
 CREATE UNIQUE INDEX ux_buttons_project_key ON "buttons"(project_id, key);
 
@@ -667,6 +739,12 @@ BEGIN UPDATE "buttons" SET uid = lower(
 CREATE TRIGGER trg_mcp_buttons_uid_keep AFTER UPDATE OF uid ON "buttons"
 WHEN (NEW.uid IS NULL OR NEW.uid = '') AND OLD.uid IS NOT NULL AND OLD.uid <> ''
 BEGIN UPDATE "buttons" SET uid = OLD.uid WHERE rowid = NEW.rowid; END;
+
+CREATE TRIGGER trg_mcp_element_scripts_hash_del AFTER DELETE ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id = OLD.element_id; END;
+
+CREATE TRIGGER trg_mcp_element_scripts_hash_ins AFTER INSERT ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id = NEW.element_id; END;
+
+CREATE TRIGGER trg_mcp_element_scripts_hash_upd AFTER UPDATE ON element_scripts BEGIN UPDATE elements SET content_hash = NULL WHERE id IN (OLD.element_id, NEW.element_id); END;
 
 CREATE TRIGGER trg_mcp_elements_hash_row AFTER UPDATE ON "elements"
 WHEN NEW.content_hash IS NOT NULL AND NEW.content_hash IS OLD.content_hash

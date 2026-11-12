@@ -90,6 +90,24 @@ export function menuOrientationPatch(cfg = {}, orientation) {
   };
 }
 
+/** True when the menu uses per item slide-to-scroll settings (cfg.itemScroll) instead of the old menu-wide switch. */
+export function hasItemScroll(cfg = {}) {
+  return !!(cfg.itemScroll && typeof cfg.itemScroll === 'object' && Object.keys(cfg.itemScroll).length);
+}
+
+/** Normalises cfg.itemScroll: { [menuItemId]: { on: boolean, targetId: element id | null } }. */
+export function normalizeItemScroll(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [k, s] of Object.entries(v)) {
+    if (!/^\d+$/.test(k) || !s || typeof s !== 'object') continue;
+    const on = s.on === true || s.on === 1 || s.on === '1' || s.on === 'true';
+    const t = s.targetId == null ? '' : String(s.targetId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    out[k] = { on, targetId: t || null };
+  }
+  return out;
+}
+
 export function menuConfig(buttonMeta) {
   const raw = buttonMeta?.menu || {};
   const merged = { ...DEFAULT_MENU, ...raw };
@@ -310,6 +328,18 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   // hub glyphs follow the button's own icon: an icon as big as the button draws the usual 62% glyph, a bigger icon scales it
   // up until it fills the centre circle (its container), a smaller one scales it down
   const hubIcon = hubFrac ? hub.big * hubFrac : Math.min(hub.big, hub.big * 0.62 * (Number(iconFrac) > 0 ? Number(iconFrac) : 1));
+  // slide-to-scroll is a per item setting (cfg.itemScroll[itemId] = { on, targetId }): only the items switched on scroll,
+  // each one the container chosen for it (none chosen = the repeater on the screen). Menus saved before keep the old rule.
+  const perItemScroll = hasItemScroll(cfg);
+  const scrollAttr = it => {
+    if (perItemScroll) {
+      const s = cfg.itemScroll[String(it.id)];
+      if (!s || !s.on) return ' data-item-scroll="0"';
+      return ` data-item-scroll="1"${s.targetId != null && s.targetId !== '' ? ` data-target-repeater="${esc(s.targetId)}"` : ''}`;
+    }
+    return (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
+      ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"` : '';
+  };
   const isCarousel = cfg.layout === 'carousel' || cfg.kind === 'carousel';
   if (isCarousel) ctx.hasCarousel = true;
   const carDim = cfg.dimension === '2d' ? '2d' : '3d';
@@ -356,9 +386,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
         const popupAttr = (it.targetElementKey || it.targetElementId)
           ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
           : '';
-        const rptAttr = (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
-          ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"`
-          : '';
+        const rptAttr = scrollAttr(it);
         return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
           + `<title>${esc(it.label || it.name)}</title>${ctx.editor ? `<g class="rm-item-body">${itemBody(it, r, hubIcon)}</g>` : itemBody(it, r, hubIcon)}${lbl.svg}</g>`;
       }
@@ -367,9 +395,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
       const popupAttr = (it.targetElementKey || it.targetElementId)
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
         : '';
-      const rptAttr = (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
-        ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"`
-        : '';
+      const rptAttr = scrollAttr(it);
       return `<g class="rm-item" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
         + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, iconSize)}${lbl.svg}</g>`;
     });
@@ -395,8 +421,8 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   };
   walk(tree, '', null);
   const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
-  const hubScrollOn = cfg.hubCenterScrollRepeater === false ? '0' : '1';
-  const hubScrollTarget = cfg.hubRepeaterTargetId ? ` data-target-repeater="${esc(cfg.hubRepeaterTargetId)}"` : '';
+  const hubScrollOn = perItemScroll || cfg.hubCenterScrollRepeater === false ? '0' : '1';
+  const hubScrollTarget = !perItemScroll && cfg.hubRepeaterTargetId ? ` data-target-repeater="${esc(cfg.hubRepeaterTargetId)}"` : '';
   const hit = `<circle class="rm-hit" data-rm="center" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget} cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;
   // hub menus: a small "up one level" button at the lower right of the centre, shown only inside sub items (the runtime sets data-hubdepth)
   let back = '';

@@ -14,6 +14,7 @@ import { iconEl } from '../icons.js';
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
 import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
+import { isContainerNode } from '/domain/geometry.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
@@ -224,8 +225,8 @@ export function targetSummary(screenId, elementId, recs = {}, action = '') {
   return 'Choose screen, popup element or repeater…';
 }
 
-export async function menuItemDialog({ buttonId, item = null, parentId = null }) {
-  const menuNow = item ? await api.menu(buttonId).catch(() => null) : null;
+export async function menuItemDialog({ buttonId, item = null, parentId = null, d = null }) {
+  const menuNow = await api.menu(buttonId).catch(() => null);
   const host = findDesign('button', buttonId);
   const projectId = host?.projectId ?? state.activeProjectId;
   return new Promise(resolve => {
@@ -295,6 +296,22 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
       };
       paintTree();
     }
+    // slide-to-scroll (per item): pressing this item when it is centred and sliding scrolls the chosen container of the screen
+    const scrollCfg = (menuNow?.config?.itemScroll && item) ? menuNow.config.itemScroll[String(item.id)] : null;
+    const slideCheck = h('input', { type: 'checkbox', 'data-f': 'mi-slide', checked: !!scrollCfg?.on });
+    const scrNodes = (d?.type === 'screen' ? (d.nodes || []) : []).filter(n => n.kind !== 'instance' || n.refType !== 'button');
+    const scrLabel = n => `${isContainerNode(n, state.library?.elements) ? '▣ ' : ''}${n.name || n.label || n.key || n.kind} · ${n.id}`;
+    const scrollSel = h('select', { 'data-f': 'mi-scroll-target', style: { width: '100%' } },
+      h('option', { value: '' }, '(Auto: the repeater container on the screen)'),
+      ...[...scrNodes].sort((a, b) => Number(isContainerNode(b, state.library?.elements)) - Number(isContainerNode(a, state.library?.elements)))
+        .map(n => h('option', { value: String(n.id), selected: scrollCfg?.targetId != null && String(scrollCfg.targetId) === String(n.id) }, scrLabel(n))),
+      ...(scrollCfg?.targetId != null && !scrNodes.some(n => String(n.id) === String(scrollCfg.targetId)) ? [h('option', { value: String(scrollCfg.targetId), selected: true }, `element ${scrollCfg.targetId} (not on this screen)`)] : []));
+    const paintSlide = () => { scrollSel.disabled = !slideCheck.checked; };
+    slideCheck.addEventListener('change', paintSlide); paintSlide();
+    const slideBox = h('div', { class: 'field', title: 'Only this item scrolls: press it while it is the centred hub button and slide up / down (or left / right).' },
+      h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } }, slideCheck, h('span', {}, 'Slide this item (when centred) to scroll a container')),
+      h('span', { class: 'muted' }, d?.type === 'screen' ? 'Scrollable container on this screen' : 'Scrollable container (open the item from a screen to list its elements)'),
+      scrollSel);
     let m;
     const save = async () => {
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
@@ -312,6 +329,14 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
       try {
         let saved = item ? await api.updateMenuItem(buttonId, item.id, body) : await api.addMenuItem(buttonId, { ...body, parentId });
         if (item && (parentId ?? null) !== (item.parentId ?? null)) { await api.moveMenuItem(buttonId, item.id, { parentId }); saved = { ...saved, parentId }; }
+        const sid = saved?.id ?? item?.id;
+        const prevMap = menuNow?.config?.itemScroll || {};
+        const wantOn = slideCheck.checked, wantT = scrollSel.value || null;
+        const had = prevMap[String(sid)];
+        if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? ''))) {
+          // the first per item setting switches the menu from the old menu-wide rule to per item rules
+          await api.menuConfig(buttonId, { itemScroll: { ...prevMap, [String(sid)]: { on: wantOn, targetId: wantT } } });
+        }
         fin(saved); m.close();
       } catch (e) { toast(e.message, 'error'); }
     };
@@ -328,6 +353,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null })
           h('label', { class: 'field grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, 'Action (event name)'), actionPreset), action),
           h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked or slid (screen, popup or repeater)'), targetBtn)
         ),
+        slideBox,
         h('label', { class: 'field' }, h('span', {}, 'description-dev'), dev)),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')] });
     setTimeout(() => label.focus(), 30);
@@ -402,7 +428,7 @@ export const menuActions = {
   async add(d, parentId = null, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);
     if (!bid) return null;
-    const saved = await menuItemDialog({ buttonId: bid, parentId });
+    const saved = await menuItemDialog({ buttonId: bid, parentId, d });
     if (saved) {
       await this.refresh(d, bid);
       const rows = getButtonRows(d, bid);
@@ -415,7 +441,7 @@ export const menuActions = {
     if (!bid) return;
     const rows = getButtonRows(d, bid);
     const item = rows.find(i => i.id === itemId);
-    if (item && await menuItemDialog({ buttonId: bid, item })) await this.refresh(d, bid);
+    if (item && await menuItemDialog({ buttonId: bid, item, d })) await this.refresh(d, bid);
   },
   async remove(d, itemId, buttonId = null) {
     const bid = resolveButtonId(d, buttonId);

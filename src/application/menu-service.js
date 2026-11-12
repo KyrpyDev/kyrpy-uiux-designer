@@ -1,7 +1,7 @@
 import { NotFoundError, ValidationError } from '../domain/errors.js';
 import { normalizeMenuItem, MENU_LAYOUTS, MENU_KINDS, MENU_FAN_CORNERS, MENU_ORIENTATIONS, MENU_LABEL_POSITIONS } from '../domain/entities.js';
 import { uniqueKey, slugify } from '../domain/naming.js';
-import { buildMenuTree, menuConfig, menuOrientation, menuOrientationPatch } from '../domain/menu.js';
+import { buildMenuTree, menuConfig, menuOrientation, menuOrientationPatch, normalizeItemScroll } from '../domain/menu.js';
 
 const MAX_DEPTH = 6;
 
@@ -136,6 +136,7 @@ export class MenuService {
       if (!Number.isInteger(v) || v < 1 || v > 6) throw new ValidationError('hubCount must be a whole number from 1 to 6 (buttons the hub bar shows at once)');
       cfg = { ...cfg, hubCount: v };
     }
+    if (cfg.itemScroll !== undefined) cfg = { ...cfg, itemScroll: normalizeItemScroll(cfg.itemScroll) };
     if (cfg.hubFixedPositions !== undefined) cfg = { ...cfg, hubFixedPositions: cfg.hubFixedPositions !== false && cfg.hubFixedPositions !== 0 && cfg.hubFixedPositions !== '0' };
     if (cfg.hubSubInside !== undefined) cfg = { ...cfg, hubSubInside: cfg.hubSubInside !== false && cfg.hubSubInside !== 0 && cfg.hubSubInside !== '0' };
     if (cfg.hubCenterItemId != null) {

@@ -581,6 +581,8 @@ export function normalizeWorkflow(input, { partial = false } = {}) {
   if (has('rootItemId')) out.rootItemId = input.rootItemId == null ? null : Number(input.rootItemId);
   if (!partial || has('rootOwnerId')) out.rootOwnerId = posNum(input.rootOwnerId, out.creatorId ?? 1);
   if (!partial || has('locked')) out.locked = !!input.locked;
+  // the start (master) screen: where the workflow was generated from and where its test starts; null = not set
+  if (has('startScreenId')) out.startScreenId = input.startScreenId == null || input.startScreenId === '' ? null : posNum(input.startScreenId, null);
   const errors = [];
   if ((!partial || has('name')) && !out.name) errors.push('name is required');
   if ((!partial || has('key')) && !isValidKey(out.key)) errors.push(`key "${out.key}" must be dashed lowercase words`);

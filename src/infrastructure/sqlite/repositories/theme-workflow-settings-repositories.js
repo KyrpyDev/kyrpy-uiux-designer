@@ -37,7 +37,7 @@ const toWorkflow = r => r && ({
   id: r.id, key: r.key, name: r.name, label: r.label, descriptionDev: r.description_dev,
   projectId: r.project_id ?? 1, visibility: r.visibility || 'public', creatorId: r.creator_id ?? 1,
   clonedFromId: r.cloned_from_id ?? null, rootItemId: r.root_item_id ?? r.id, rootOwnerId: r.root_owner_id ?? r.creator_id ?? 1,
-  locked: !!r.locked, createdAt: r.created_at, updatedAt: r.updated_at
+  locked: !!r.locked, startScreenId: r.start_screen_id ?? null, createdAt: r.created_at, updatedAt: r.updated_at
 });
 const toNode = r => ({ workflowId: r.workflow_id, screenId: r.screen_id, x: r.x, y: r.y, collapsed: !!r.collapsed, locked: !!r.locked });
 const toLink = r => r && ({ id: r.id, workflowId: r.workflow_id, fromScreenId: r.from_screen_id, fromNodeId: r.from_node_id, toScreenId: r.to_screen_id,
@@ -130,10 +130,10 @@ export class WorkflowRepository {
     const creatorId = w.creatorId ?? defaultOwnerId(this.db);
     const rootOwnerId = w.rootOwnerId ?? creatorId;
     const useId = explicitId && !this.get(explicitId) ? Number(explicitId) : null;
-    const cols = ['key','name','label','description_dev','project_id','visibility','creator_id','cloned_from_id','root_item_id','root_owner_id','locked'];
+    const cols = ['key','name','label','description_dev','project_id','visibility','creator_id','cloned_from_id','root_item_id','root_owner_id','locked','start_screen_id'];
     const vals = [
       w.key, w.name, w.label ?? '', w.descriptionDev ?? '', w.projectId ?? 1, w.visibility ?? 'public',
-      creatorId, w.clonedFromId ?? null, w.rootItemId ?? null, rootOwnerId, w.locked ? 1 : 0
+      creatorId, w.clonedFromId ?? null, w.rootItemId ?? null, rootOwnerId, w.locked ? 1 : 0, w.startScreenId ?? null
     ];
     if (useId) { cols.unshift('id'); vals.unshift(useId); }
     const r = this.db.prepare(`INSERT INTO workflows (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
@@ -148,7 +148,7 @@ export class WorkflowRepository {
   update(id, patch) {
     const map = { key: 'key', name: 'name', label: 'label', descriptionDev: 'description_dev',
       projectId: 'project_id', visibility: 'visibility', creatorId: 'creator_id', clonedFromId: 'cloned_from_id',
-      rootItemId: 'root_item_id', rootOwnerId: 'root_owner_id' };
+      rootItemId: 'root_item_id', rootOwnerId: 'root_owner_id', startScreenId: 'start_screen_id' };
     const sets = [], args = [];
     for (const [k, c] of Object.entries(map)) if (patch[k] !== undefined) { sets.push(`${c} = ?`); args.push(patch[k]); }
     if (patch.locked !== undefined) { sets.push('locked = ?'); args.push(patch.locked ? 1 : 0); }

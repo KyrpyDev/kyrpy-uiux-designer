@@ -21,7 +21,7 @@ export function designFingerprint(d) {
 export function workflowFingerprint(w) {
   if (!w) return '';
   return JSON.stringify({
-    r: [w.name, w.key, w.label, w.descriptionDev, w.visibility || 'public', !!w.locked],
+    r: [w.name, w.key, w.label, w.descriptionDev, w.visibility || 'public', !!w.locked, w.startScreenId ?? null],
     n: [...(w.nodes || [])].sort((a, b) => a.screenId - b.screenId).map(n => [n.screenId, n.x, n.y, !!n.collapsed, !!n.locked]),
     l: [...(w.links || [])].sort(byId).map(l => [l.fromScreenId, l.fromNodeId ?? null, l.toScreenId, l.name, l.descriptionDev, l.style, l.trigger])
   });
@@ -46,7 +46,7 @@ export function restoreBody(base) {
 /** Payload for POST /api/workflows/:id/restore. */
 export function workflowRestoreBody(base) {
   return clone({
-    record: { name: base.name, key: base.key, label: base.label, descriptionDev: base.descriptionDev, visibility: base.visibility || 'public', locked: !!base.locked, projectId: base.projectId ?? 1 },
+    record: { name: base.name, key: base.key, label: base.label, descriptionDev: base.descriptionDev, visibility: base.visibility || 'public', locked: !!base.locked, projectId: base.projectId ?? 1, startScreenId: base.startScreenId ?? null },
     nodes: base.nodes || [],
     links: base.links || []
   });

@@ -135,6 +135,7 @@ export class WorkflowService {
       if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     }
     if (data.key && data.key !== w.key && this.workflows.keyExists(data.key, data.projectId ?? w.projectId)) throw new ConflictError(`workflow key "${data.key}" exists`);
+    if (data.startScreenId != null && !this.workflows.nodes(w.id).some(n => n.screenId === data.startScreenId)) throw new ValidationError('the start screen must be a screen of this workflow');
     this.workflows.update(w.id, data);
     const afterDoc = this.get(w.id);
     let review = null;
@@ -236,13 +237,15 @@ export class WorkflowService {
     this.#assertStaysPublic(w, rec.visibility, rec.projectId);
     if (rec.key && rec.key !== w.key && this.workflows.keyExists(rec.key, w.projectId)) throw new ConflictError(`workflow key "${rec.key}" exists`);
     return this.transaction(() => {
-      this.workflows.update(w.id, rec);
+      const { startScreenId: _start, ...recNoStart } = rec;      // set below, once the screens are placed again
+      this.workflows.update(w.id, recNoStart);
       this.workflows.clearContent(w.id);
       const placed = new Set();
       for (const n of snap.nodes || []) if (this.screens.get(n.screenId)) {
         this.workflows.upsertNode({ workflowId: w.id, screenId: n.screenId, x: n.x, y: n.y, collapsed: n.collapsed, locked: !!n.locked });
         placed.add(n.screenId);
       }
+      if (rec.startScreenId !== undefined) this.workflows.update(w.id, { startScreenId: rec.startScreenId != null && placed.has(rec.startScreenId) ? rec.startScreenId : null });
       for (const l of snap.links || []) {
         if (!placed.has(l.fromScreenId) || !placed.has(l.toScreenId)) continue;
         this.workflows.createLink(w.id, { ...l, fromNodeId: l.fromNodeId != null && this.nodes.get(l.fromNodeId) ? l.fromNodeId : null });
@@ -258,7 +261,12 @@ export class WorkflowService {
     return this.workflows.upsertNode({ workflowId: w.id, screenId: Number(screenId), x, y, collapsed, locked: !!locked });
   }
 
-  removeScreen(id, screenId, { actor = null } = {}) { const w = this.assertCanEdit(this.#require(id), actor); this.workflows.removeNode(w.id, Number(screenId)); return { deleted: true }; }
+  removeScreen(id, screenId, { actor = null } = {}) {
+    const w = this.assertCanEdit(this.#require(id), actor);
+    this.workflows.removeNode(w.id, Number(screenId));
+    if (w.startScreenId != null && Number(w.startScreenId) === Number(screenId)) this.workflows.update(w.id, { startScreenId: null });   // the start screen left the workflow
+    return { deleted: true };
+  }
 
   addLink(id, input, { actor = null } = {}) {
     const w = this.assertCanEdit(this.#require(id), actor);
@@ -346,14 +354,19 @@ export class WorkflowService {
     });
   }
 
-  /** New workflow holding the screen and every screen its routes reach (see importRoutes): the app flow from that screen on. */
+  /**
+   * New workflow holding the screen and every screen its routes reach (see importRoutes): the app flow from that screen
+   * on. The screen is stored as the workflow's start (master) screen: its test starts there unless another one is selected.
+   */
   generateFromScreen({ screenId, name, ...rest } = {}, { actor = null, actorId = null } = {}) {
     const s = this.screens.get(Number(screenId));
     if (!s) throw new NotFoundError('screen', screenId);
     if (!this.screenRoutes(s.id).length) throw new ValidationError(`screen "${s.name}" has no menu item or click action that goes to another screen yet`);
     return this.transaction(() => {
       const wf = this.create({ ...rest, name: String(name || '').trim() || `${s.name} workflow`, descriptionDev: rest.descriptionDev ?? `Generated from the routes of screen "${s.name}".` }, { actor, actorId });
-      return this.importRoutes(wf.id, { screenId: s.id, x: 0, y: 0 });
+      const out = this.importRoutes(wf.id, { screenId: s.id, x: 0, y: 0 });
+      this.workflows.update(wf.id, { startScreenId: s.id });
+      return { ...out, startScreenId: s.id };
     });
   }
 
