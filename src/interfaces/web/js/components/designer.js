@@ -920,9 +920,11 @@ export class Designer {
     this.renderLiveTestLayer?.();
   }
 
+  /** In-place editing of a stretched element: the canvas is stretched vertically by the element's placement aspect (1 otherwise). */
+  ay() { const ip = this.inPlace; return ip && this.type === 'element' && ip.sx > 0 && ip.sy > 0 ? ip.sy / ip.sx : 1; }
   worldPoint(ev) {
     const r = this.viewport.getBoundingClientRect();
-    return { x: (ev.clientX - r.left - this.view.tx) / this.view.z, y: (ev.clientY - r.top - this.view.ty) / this.view.z };
+    return { x: (ev.clientX - r.left - this.view.tx) / this.view.z, y: (ev.clientY - r.top - this.view.ty) / (this.view.z * this.ay()) };
   }
 
   selectedNodes() { return this.nodes.filter(e => this.selected.has(e.id)); }
@@ -998,7 +1000,7 @@ export class Designer {
     if (box && sel.length === 1 && !sel[0].rotation && !sel[0].locked && !this.vtx.active) {
       const s = 8 / z, pts = [['nw', box.x, box.y], ['n', box.x + box.w / 2, box.y], ['ne', box.x + box.w, box.y], ['e', box.x + box.w, box.y + box.h / 2],
         ['se', box.x + box.w, box.y + box.h], ['s', box.x + box.w / 2, box.y + box.h], ['sw', box.x, box.y + box.h], ['w', box.x, box.y + box.h / 2]];
-      for (const [k, x, y] of pts) mk('rect', { x: x - s / 2, y: y - s / 2, width: s, height: s, class: 'handle', 'data-h': k }).style.cursor = `${k}-resize`;
+      for (const [k, x, y] of pts) mk('rect', { x: x - s / 2, y: y - s / 2 / this.ay(), width: s, height: s / this.ay(), class: 'handle', 'data-h': k }).style.cursor = `${k}-resize`;
     } else if (!sel.length && this.boxResizable) {
       // no selection: the handles resize the bounding box and scale the contents with it
       const s = 9 / z;
@@ -1057,7 +1059,7 @@ export class Designer {
     const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
     // sit above the bounding box with a 20px gap so the top-edge vertices stay clickable
     const barH = this.hoverBar.offsetHeight || 34;
-    const sy = Math.max(4, this.view.ty + b.y * this.view.z - barH - 20);
+    const sy = Math.max(4, this.view.ty + b.y * this.view.z * this.ay() - barH - 20);
     this.hoverBar.style.left = `${Math.round(sx)}px`;
     this.hoverBar.style.top = `${Math.round(sy)}px`;
 
@@ -1159,7 +1161,7 @@ export class Designer {
     this.hoverBar.hidden = false;
     // measure after the content is built and shown, then sit 20px above the bounding box
     this.hoverBar.style.left = `${Math.round(sx)}px`;
-    this.hoverBar.style.top = `${Math.max(4, Math.round(this.view.ty + b.y * this.view.z - this.hoverBar.offsetHeight - 20))}px`;
+    this.hoverBar.style.top = `${Math.max(4, Math.round(this.view.ty + b.y * this.view.z * this.ay() - this.hoverBar.offsetHeight - 20))}px`;
   }
 
   drawGhost(mk) {
@@ -1179,7 +1181,7 @@ export class Designer {
   /* ================= view ================= */
   applyView() {
     const { tx, ty, z } = this.view;
-    this.world.style.transform = `translate(${tx}px, ${ty}px) scale(${z})`;
+    this.world.style.transform = `translate(${tx}px, ${ty}px) scale(${z}, ${z * this.ay()})`;
     if (this.zoomLabel) this.zoomLabel.textContent = `${Math.round(z * 100)}%`;
   }
   /** Area to bring into view: the box, plus the menu ring of a button. */
@@ -1192,9 +1194,9 @@ export class Designer {
     if (!this.doc) return;
     const r = this.viewport.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const f = this.focusRect(), pad = this.isGlyph ? 40 : 56;
-    const z = Math.min((r.width - pad * 2) / f.w, (r.height - pad * 2) / f.h, 40);
-    this.view = { z: Math.max(MIN_Z, z), tx: (r.width - f.w * z) / 2 - f.x * z, ty: (r.height - f.h * z) / 2 - f.y * z };
+    const f = this.focusRect(), pad = this.isGlyph ? 40 : 56, ay = this.ay();
+    const z = Math.min((r.width - pad * 2) / f.w, (r.height - pad * 2) / (f.h * ay), 40);
+    this.view = { z: Math.max(MIN_Z, z), tx: (r.width - f.w * z) / 2 - f.x * z, ty: (r.height - f.h * z * ay) / 2 - f.y * z * ay };
     this.applyView(); this.renderOverlay();
   }
   setZoom(z, cx, cy) {
@@ -1496,8 +1498,8 @@ export class Designer {
     const pos = evBinding?.position || 'top';
     const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
     const sy = pos === 'bottom'
-      ? this.view.ty + (b.y + b.h) * this.view.z + 10
-      : this.view.ty + b.y * this.view.z - 54;
+      ? this.view.ty + (b.y + b.h) * this.view.z * this.ay() + 10
+      : this.view.ty + b.y * this.view.z * this.ay() - 54;
 
     const content = h('div', { class: 'dz-mini-toolbar-inner' });
     if (el) {
