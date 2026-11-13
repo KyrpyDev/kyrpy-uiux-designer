@@ -102,12 +102,14 @@ export class Designer {
     this.liveLayer = h('div', { class: 'dz-live-layer', hidden: true });
     this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.overlay.setAttribute('class', 'dz-overlay');
-    this.world.append(this.frame, this.stage, this.liveLayer, this.overlay);
+    this.inPlaceBackdrop = h('div', { class: 'dz-inplace-backdrop', hidden: true, 'aria-hidden': 'true' });
+    this.world.append(this.frame, this.inPlaceBackdrop, this.stage, this.liveLayer, this.overlay);
     this.liveHud = h('div', { class: 'dz-live-hud', hidden: true });
     this.hoverBar = h('div', { class: 'el-hover-toolbar', hidden: true });
     this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Click element: open/close quick toolbar · Right-click: menu & events · Del: delete · Enter: edit vertices');
     this.previewBanner = h('div', { class: 'dz-preview-banner', hidden: true, role: 'status' });
-    this.viewport.append(this.world, this.hoverBar, this.hint, this.previewBanner);
+    this.inPlaceBanner = h('div', { class: 'dz-preview-banner dz-inplace-banner', hidden: true, role: 'status' });
+    this.viewport.append(this.world, this.hoverBar, this.hint, this.previewBanner, this.inPlaceBanner);
     this.inspectorEl = h('aside', { class: 'dz-inspector' });
     this.inspectorFitted = false;
     // drag handle on the inspector's left edge: drag to resize, the width is clamped
@@ -149,6 +151,8 @@ export class Designer {
     const keepLive = Boolean((this._keepActionsLive || this.actionsLive) && ['button', 'element', 'screen'].includes(type));
     this._keepActionsLive = false;
     this.type = type; this.doc = rec;
+    if (!(this._enteringInPlace && type === 'element' && Number(id) === this.inPlace?.elementId)) this.inPlace = null;
+    this.syncInPlaceUi();
     this.devicePreview = null; this.syncDevicePreviewUi();
     this.selected = new Set(); this.undoStack = []; this.redoStack = []; this.fitted = false;
     this.scaleContent = ['button', 'element'].includes(type);
@@ -910,6 +914,7 @@ export class Designer {
     Object.assign(this.frame.style, { left: '-14px', top: '-14px', width: `${d.width + 28}px`, height: `${d.height + 28}px`, borderRadius: `${radius + 14}px`,
       background: '#000', display: this.type === 'screen' ? 'block' : 'none' });
     this.stage.style.borderRadius = `${radius}px`; this.stage.style.overflow = this.type === 'button' ? 'visible' : 'hidden';
+    this.renderInPlaceBackdrop();
     this.stage.classList.toggle('menu-live', !!(this.menuLive || this.actionsLive));
     this.menu.afterRender();
     this.renderLiveTestLayer?.();
@@ -1233,6 +1238,60 @@ export class Designer {
     return null;
   }
 
+  /* ================= in-place element editing =================
+   * Double-click a part of a placed element on a screen: the library element loads into this canvas where it sits on the
+   * screen, the rest of the screen shows dimmed behind it, and the part under the cursor is selected. Edits are the library
+   * element's own (every screen using it updates). Done (or a double-click outside) reloads the screen with it selected. */
+  async enterInPlace(inst, chain) {
+    const lib = findDesign('element', inst.refId);
+    if (!lib || (this.confirmLeave && !(await this.confirmLeave()))) return;
+    const screen = this.doc, a = inst.attrs || {};
+    const ew = Number(lib.width) || 1, eh = Number(lib.height) || 1;
+    this.inPlace = { elementId: Number(inst.refId), elementName: lib.label || lib.key, screenId: screen.id, screenName: screen.name, instId: inst.id,
+      screen: { ...screen, nodes: (screen.nodes || []).filter(n => n.id !== inst.id) },
+      x: Number(a.x) || 0, y: Number(a.y) || 0, sx: (Number(a.width) || ew) / ew, sy: (Number(a.height) || eh) / eh };
+    this._enteringInPlace = true;
+    try { await this.load('element', inst.refId); } finally { this._enteringInPlace = false; }
+    if (!this.inPlace) return;
+    const hit = chain.map(id => this.byId(id)).find(Boolean);
+    if (hit) { if (hit.parentId != null) this.enteredGroupId = hit.parentId; this.select([hit.id]); }
+  }
+
+  async exitInPlace() {
+    const ip = this.inPlace;
+    if (!ip || (this.confirmLeave && !(await this.confirmLeave()))) return;
+    this.inPlace = null;
+    await this.load('screen', ip.screenId);
+    if (this.byId(ip.instId)) this.select([ip.instId]);
+  }
+
+  syncInPlaceUi() {
+    const ip = this.inPlace;
+    if (!this.inPlaceBanner) return;
+    this.inPlaceBanner.hidden = !ip;
+    if (this.frame) this.frame.style.visibility = ip ? 'hidden' : '';
+    if (!ip) return;
+    clear(this.inPlaceBanner);
+    this.inPlaceBanner.append(
+      h('span', {}, `Editing "${ip.elementName}" in place on "${ip.screenName}": changes apply to every screen that uses it`),
+      h('button', { class: 'btn small primary', onclick: () => this.exitInPlace() }, 'Done'));
+  }
+
+  /** The screen around the element being edited in place, in the element's coordinates (placement inverted), dimmed and not clickable. */
+  renderInPlaceBackdrop() {
+    const ip = this.inPlace, bd = this.inPlaceBackdrop;
+    if (!bd) return;
+    if (!ip || this.type !== 'element') { bd.hidden = true; bd.innerHTML = ''; return; }
+    if (bd.dataset.key !== `${ip.screenId}-${ip.instId}`) {
+      const ctx = renderContext({ editor: false, animations: [], repeaterMode: 'static' });
+      bd.innerHTML = renderDocument({ owner: ip.screen, nodes: ip.screen.nodes, ctx, background: true });
+      bd.dataset.key = `${ip.screenId}-${ip.instId}`;
+    }
+    Object.assign(bd.style, { position: 'absolute', left: '0', top: '0', width: `${ip.screen.width}px`, height: `${ip.screen.height}px`,
+      transformOrigin: '0 0', transform: `scale(${1 / ip.sx}, ${1 / ip.sy}) translate(${-ip.x}px, ${-ip.y}px)`, opacity: '0.4', pointerEvents: 'none' });
+    bd.hidden = false;
+  }
+
   /** The sub item of a selected (or entered) group under `target`: hovering outlines it, a click without a drag selects it. */
   groupSubHit(target) {
     const top = this.hitNode(target);
@@ -1322,24 +1381,18 @@ export class Designer {
       let c = exact; while (c.parentId != null && c.parentId !== top.id && this.byId(c.parentId)) c = this.byId(c.parentId);
       this.enteredGroupId = top.id; this.select([c.id]); return;
     }
-    // double-click inside a placed library element: open that element with the part under the cursor selected (edits save to the library element)
-    if (top && top.kind === 'instance' && top.refType === 'element' && this.opts.openDesign && findDesign('element', top.refId)) {
+    // double-click inside a placed library element: edit its parts in place, on top of the screen (edits save to the library element)
+    if (top && top.kind === 'instance' && top.refType === 'element' && this.type === 'screen' && findDesign('element', top.refId)) {
       const chain = [];
       for (let n = tgt; n && n !== this.stage; n = n.parentNode) {
         const id = n.dataset?.el ? Number(n.dataset.el) : null;
         if (id === top.id) break;
         if (id != null) chain.push(id);
       }
-      if (chain.length) {
-        const name = findDesign('element', top.refId)?.label || 'element';
-        await this.opts.openDesign('element', top.refId);
-        const d = (typeof window !== 'undefined' && window.__app?.designer?.doc?.id === top.refId) ? window.__app.designer : this;
-        const hit = chain.map(id => d.byId?.(id)).find(Boolean);
-        if (hit) { if (hit.parentId != null) d.enteredGroupId = hit.parentId; d.select([hit.id]); }
-        toast(`Editing the library element "${name}": changes apply to every screen that uses it`);
-        return;
-      }
+      if (chain.length) return this.enterInPlace(top, chain);
     }
+    // in-place editing: a double-click outside the element goes back to the screen
+    if (this.inPlace && !exact && !top) return this.exitInPlace();
     const e = exact || top;
     if (!e) return;
     this.select([e.id]);
