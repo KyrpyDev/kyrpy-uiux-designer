@@ -374,6 +374,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     if (btn) return `${btn}<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
     return `<circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
   };
+  // static picture (previews, thumbnails, exports without the runtime): the default centre item sits on the button, the others are hidden;
+  // the runtime's CSS transform / opacity override these presentation attributes as soon as it runs
+  const hubStartIdx = Math.max(0, tree.findIndex(it => it.id != null && Number(it.id) === Number(cfg.hubCenterItemId)));
+  const hubStaticAttrs = i => i === hubStartIdx ? `transform="translate(${round(cx)} ${round(cy)})"` : `transform="translate(${round(cx)} ${round(cy)}) scale(0)" opacity="0"`;
   const levels = [], centers = [];
   const walk = (items, parentPath, parentNode) => {
     const pos = layoutItems(cfg, items.length, lsize);
@@ -387,7 +391,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
           ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
           : '';
         const rptAttr = scrollAttr(it);
-        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0">`
+        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0" ${hubStaticAttrs(i)}>`
           + `<title>${esc(it.label || it.name)}</title>${ctx.editor ? `<g class="rm-item-body">${itemBody(it, r, hubIcon)}</g>` : itemBody(it, r, hubIcon)}${lbl.svg}</g>`;
       }
       const p = pos[i], r = p.s / 2;
@@ -428,7 +432,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   let back = '';
   if (isHub) {
     const { bx, by, r } = hubBackSpot(hub, cx, cy);
-    back = `<g class="rm-back" data-rm="center" data-back="1"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
+    back = `<g class="rm-back" data-rm="center" data-back="1" visibility="hidden"><title>Back to the menu level above</title><circle cx="${round(bx)}" cy="${round(by)}" r="${round(r)}"${itemAttrs({})}/>`
       + `<path d="M${round(bx + r * 0.42)} ${round(by)}H${round(bx - r * 0.42)}M${round(bx - r * 0.05)} ${round(by - r * 0.4)}L${round(bx - r * 0.42)} ${round(by)}L${round(bx - r * 0.05)} ${round(by + r * 0.4)}" fill="none" stroke="url(#lgS)" stroke-width="${round(Math.max(1, r * 0.14))}" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   }
   const hubFixed = cfg.hubFixedPositions ? 1 : 0;

@@ -30,3 +30,10 @@ test('device preview: a card filling its repeater keeps the repeater margins on 
   assert.ok(Math.abs((Number(k.x) - Number(c.x)) - 12) < 0.5);
   assert.ok(Math.abs((Number(c.x) + Number(c.width)) - (Number(k.x) + Number(k.width)) - 12) < 0.5);
 });
+
+test('static hub picture: the default centre item sits on the button, the others and the back arrow are hidden', () => {
+  const svg = render({ hubCenterItemId: 2 });
+  assert.match(svg, /data-item="search"[^>]*transform="translate\(50 50\)"(?! scale)/);
+  assert.match(svg, /data-item="scan"[^>]*transform="translate\(50 50\) scale\(0\)" opacity="0"/);
+  assert.match(svg, /class="rm-back"[^>]*visibility="hidden"/);
+});

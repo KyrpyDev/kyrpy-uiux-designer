@@ -187,6 +187,8 @@ function renderInstance(el, a, ctx, all) {
     const attrs = commonAttrs(el, { ...resolvedIconDefaults(ctx), ...a, href: `#i-${target.key}`, x, y, width: w || 24, height: h || 24 }, ctx, all);
     if (ctx.inHub) {
       attrs.class = [attrs.class, 'rm-hub-icon'].filter(Boolean).join(' ');
+      // a hub with items shows its default centre item over the button: the button's own icon stays hidden (no double icon)
+      if (ctx.hubHasItems) attrs.opacity = 0;
       // turns about its own centre (transform-box: view-box + an explicit origin; fill-box is unreliable on <use>)
       attrs.style = [attrs.style, `transform-origin:${round(x + (w || 24) / 2)}px ${round(y + (h || 24) / 2)}px`].filter(Boolean).join(';');
     }
@@ -203,9 +205,9 @@ function renderInstance(el, a, ctx, all) {
   if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs['data-btn-id'] = el.refId; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
   ctx.depth++;
   ctx.activeInstances?.add(instKey);
-  const wasHub = ctx.inHub; ctx.inHub = !!menu;   // the button's own icons turn while open and are hidden while a sub level shows its icon
+  const wasHub = ctx.inHub, wasHubItems = ctx.hubHasItems; ctx.inHub = !!menu; ctx.hubHasItems = !!(menu && menu.cfg?.kind === 'hub' && (menu.items || []).some(m => m.parentId == null && m.visible !== false));   // the button's own icons turn while open and are hidden while a sub level shows its icon
   const inner = renderTree(target.nodes, ctx);
-  ctx.inHub = wasHub;
+  ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems;
   let menuMarkup = '';
   if (menu) {
     ctx.hasMenu = true;
