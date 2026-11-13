@@ -4,7 +4,8 @@
  * Interactions: infinite pan/zoom, drag from the library (hierarchy rules apply), move/resize with grid + 9-point snapping,
  * bounding box that scales its contents, marquee select, vertex editing of paths, live button menus, undo/redo.
  */
-import { h, clear, toast, promptBox, confirmBox, choiceBox } from '../dom.js';
+import { clickTargetOf, withClickTarget } from '/domain/quick-edit.js';
+import { h, clear, toast, promptBox, confirmBox, choiceBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
 import { markEdited, sessionEdited, lastEdited, rememberName, editedName, forgetSessionEdited } from '../edited.js';
@@ -24,7 +25,7 @@ import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign, resetLibraryIconCache, ensureDesignDeps } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { openIconPicker } from './inspector.js';
-import { MenuEditor, menuActions, openMenuItemsModal } from './menu-editor.js';
+import { MenuEditor, menuActions, openMenuItemsModal, pickTarget, targetPatch } from './menu-editor.js';
 import { PenTool } from './pen-tool.js';
 import { installPathTools } from './designer-pathtools.js';
 import { installTestActions } from './designer-test-actions.js';
@@ -1077,6 +1078,11 @@ export class Designer {
       this.hoverBar.append(...[
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
         ibtn('pencil', 'Open Editor (Double-click)', e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
+        this.type === 'screen' || this.type === 'element' ? (() => {
+          const ct = clickTargetOf(target), on = ct.screenId != null || ct.elementId != null;
+          const what = ct.screenId != null ? `go to “${findDesign('screen', ct.screenId)?.label || 'screen ' + ct.screenId}”` : ct.elementId != null ? `show “${findDesign('element', ct.elementId)?.label || 'element ' + ct.elementId}” as popup` : 'nothing set';
+          return ibtn('monitor', `When clicked: go to a screen or show a popup (now: ${what})`, e => { e.stopPropagation(); this.select([target.id]); this.pickClickTarget(target); }, { cls: `hb-btn${on ? ' active' : ''}` });
+        })() : null,
         this.type === 'button' ? ibtn('search', 'Change the icon of this button', e => { e.stopPropagation(); this.changeButtonIcon(target); }, { cls: 'hb-btn' }) : null,
         isMenuItemRole ? h('button', {
           class: `hb-btn${menuBtnItems.length ? ' active' : ''}`,
@@ -1238,6 +1244,74 @@ export class Designer {
       n = n.parentNode;
     }
     return null;
+  }
+
+  /** One-step click action of a placed item: pick a screen to go to or an element to show as a popup (or none). */
+  async pickClickTarget(node) {
+    if (!node) return;
+    const cur = clickTargetOf(node), projectId = this.doc?.projectId ?? state.project?.id ?? null;
+    const r = await pickTarget({ currentScreenId: cur.screenId, currentElementId: cur.elementId, projectId, allowCreate: false });
+    if (!r) return;
+    const p = await targetPatch(r, projectId);
+    if (!p) return;
+    if (p.action === 'scroll-repeater') return toast('Scrolling a container is a menu item action; pick a screen or a popup here', 'error');
+    await this.patchNode(node.id, { events: withClickTarget(node.events, { screenId: p.targetScreenId, elementId: p.targetElementId }), onClick: null });
+    toast(p.targetScreenId ? `Click goes to “${p.target?.name || 'screen'}”` : p.targetElementId ? `Click shows “${p.target?.name || 'element'}” as popup` : 'Click action removed', 'ok', 1800);
+  }
+
+  /**
+   * Bulk "go to screen": pick a screen once and make it the click target of the selected buttons on this screen (all of
+   * its buttons when none is selected). Their other events stay; buttons with another click action are only changed when
+   * asked. One undo step.
+   */
+  async setButtonsGoToScreen() {
+    if (this.type !== 'screen' || !this.doc) return;
+    const isBtn = n => n.kind === 'instance' && n.refType === 'button';
+    const picked = this.selectedNodes().filter(isBtn), all = this.nodes.filter(isBtn);
+    if (!all.length) return toast('This screen has no buttons', 'error');
+    const screens = await api.list('screen').catch(() => []);
+    const choices = screens.filter(s => s.id !== this.doc.id).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const scrSel = h('select', { 'data-f': 'bulk-goto-screen', style: { width: '100%' } }, h('option', { value: '' }, '(choose a screen…)'), ...choices.map(s => h('option', { value: String(s.id) }, s.name)));
+    const scope = h('select', { 'data-f': 'bulk-goto-scope', style: { width: '100%' } },
+      h('option', { value: 'selected', disabled: !picked.length, selected: !!picked.length }, `The selected buttons (${picked.length})`),
+      h('option', { value: 'all', selected: !picked.length }, `All buttons on this screen (${all.length})`));
+    const replace = h('input', { type: 'checkbox', 'data-f': 'bulk-goto-replace' });
+    const busy = { v: false };
+    await new Promise(resolve => {
+      let m;
+      const apply = async () => {
+        if (busy.v) return;
+        const sid = Number(scrSel.value);
+        if (!sid) return toast('Choose a screen', 'error');
+        busy.v = true;
+        const targets = (scope.value === 'selected' ? picked : all).filter(n => {
+          const c = clickTargetOf(n);
+          return replace.checked || (!c.elementId && !c.other) || c.screenId != null;
+        });
+        const snap = this.snapshot();
+        let n = 0;
+        try {
+          for (const node of targets) {
+            const saved = await api.patchNode(this.type, this.doc.id, node.id, { events: withClickTarget(node.events, { screenId: sid }), onClick: null });
+            Object.assign(node, saved); n++;
+          }
+        } catch (err) { toast(err.message, 'error'); }
+        if (n) { this.pushUndo(snap); this.renderStage(); this.renderOverlay(); this.emit('selection', this.selectedNodes()); this.changed(); }
+        const skipped = (scope.value === 'selected' ? picked : all).length - targets.length;
+        toast(`${n} button(s) now go to "${choices.find(s => s.id === sid)?.name}"${skipped ? ` · ${skipped} kept their own click action` : ''}`);
+        m.close();
+      };
+      m = modal({ title: 'Go to screen: set on buttons', onClose: resolve,
+        content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', minWidth: '360px' } },
+          h('label', { class: 'field' }, h('span', {}, 'When clicked, go to'), scrSel),
+          h('label', { class: 'field' }, h('span', {}, 'Buttons'), scope),
+          h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, replace, h('span', {}, 'Also replace other click actions (popup, menu, animation …)')),
+          h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Other events (mouseover, double click …) are kept. Undo reverts all of them at once.'),
+          h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } },
+            h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'),
+            h('button', { class: 'btn primary', 'data-f': 'bulk-goto-apply', onclick: apply }, 'Apply')))
+      });
+    });
   }
 
   /* ================= in-place element editing =================

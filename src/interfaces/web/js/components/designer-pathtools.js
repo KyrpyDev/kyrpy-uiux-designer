@@ -439,6 +439,17 @@ const methods = {
         }
       },
       {
+        label: '🎯 When clicked: go to screen / show popup…',
+        disabled: !one || !(this.type === 'screen' || this.type === 'element'),
+        fn: () => this.pickClickTarget(one)
+      },
+      {
+        label: '🔗 Go to screen: set on buttons…',
+        kbd: this.type === 'screen' ? `${sel.filter(n => n.kind === 'instance' && n.refType === 'button').length || 'all'}` : '',
+        disabled: this.type !== 'screen' || !this.nodes.some(n => n.kind === 'instance' && n.refType === 'button'),
+        fn: () => this.setButtonsGoToScreen()
+      },
+      {
         label: '✨ Add Animation (3D Flip / Pulse)',
         disabled: !one,
         fn: () => this.addAnimation(one.id, 'flip')
