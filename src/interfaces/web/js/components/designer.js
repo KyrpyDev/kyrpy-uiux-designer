@@ -1233,6 +1233,16 @@ export class Designer {
     return null;
   }
 
+  /** The sub item of a selected (or entered) group under `target`: hovering outlines it, a click without a drag selects it. */
+  groupSubHit(target) {
+    const top = this.hitNode(target);
+    if (!top || top.tag !== 'g' || !(this.selected.has(top.id) || this.enteredGroupId === top.id)) return null;
+    let c = this.hitNode(target, true);
+    if (!c || c.id === top.id) return null;
+    while (c.parentId != null && c.parentId !== top.id && this.byId(c.parentId)) c = this.byId(c.parentId);
+    return c.parentId === top.id ? { group: top, sub: c } : null;
+  }
+
   /** Finds the top-most visible Container node containing world point `p` (or the selected Container if `p` is null). */
   containerAtPoint(p, excludeId = null) {
     if (!this.doc) return null;
@@ -1311,6 +1321,24 @@ export class Designer {
     if (top && exact && top.id !== exact.id && top.tag === 'g') {
       let c = exact; while (c.parentId != null && c.parentId !== top.id && this.byId(c.parentId)) c = this.byId(c.parentId);
       this.enteredGroupId = top.id; this.select([c.id]); return;
+    }
+    // double-click inside a placed library element: open that element with the part under the cursor selected (edits save to the library element)
+    if (top && top.kind === 'instance' && top.refType === 'element' && this.opts.openDesign && findDesign('element', top.refId)) {
+      const chain = [];
+      for (let n = tgt; n && n !== this.stage; n = n.parentNode) {
+        const id = n.dataset?.el ? Number(n.dataset.el) : null;
+        if (id === top.id) break;
+        if (id != null) chain.push(id);
+      }
+      if (chain.length) {
+        const name = findDesign('element', top.refId)?.label || 'element';
+        await this.opts.openDesign('element', top.refId);
+        const d = (typeof window !== 'undefined' && window.__app?.designer?.doc?.id === top.refId) ? window.__app.designer : this;
+        const hit = chain.map(id => d.byId?.(id)).find(Boolean);
+        if (hit) { if (hit.parentId != null) d.enteredGroupId = hit.parentId; d.select([hit.id]); }
+        toast(`Editing the library element "${name}": changes apply to every screen that uses it`);
+        return;
+      }
     }
     const e = exact || top;
     if (!e) return;
@@ -1511,7 +1539,8 @@ export class Designer {
     const hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
     const isBg = hit && (hit.role === 'bg' || hit.role === 'bg-glow');
     if (hit && !isBg) {
-      this.tbClick = { id: hit.id, shift: ev.shiftKey, wasOpen: this.toolbarTarget()?.id === hit.id };   // resolved on pointer-up: a click without a drag toggles the quick toolbar
+      const gs = !ev.shiftKey && !ev.altKey ? this.groupSubHit(ev.target) : null;
+      this.tbClick = { id: hit.id, shift: ev.shiftKey, wasOpen: this.toolbarTarget()?.id === hit.id, sub: gs && gs.group.id === hit.id ? gs : null };   // resolved on pointer-up: a click without a drag toggles the quick toolbar
       if (ev.shiftKey) { this.selected.has(hit.id) ? this.selected.delete(hit.id) : this.selected.add(hit.id); this.select([...this.selected]); }
       else if (!this.selected.has(hit.id)) this.select([hit.id]);
       if (this.doc.locked) return;
@@ -1558,7 +1587,7 @@ export class Designer {
       // Track hovered node & boundary lines for mouse-over floating toolbar, move cursor, and live mouseover events
       if (!ev.target.closest?.('.el-hover-toolbar, .dz-mini-toolbar, .dz-pv')) {
         const bHit = (this.tool === 'select' && !this.actionsLive) ? this.hitBoundaryNode(p) : null;
-        const hNode = this.hitNode(ev.target) || bHit;
+        const hNode = (!this.actionsLive && this.groupSubHit(ev.target)?.sub) || this.hitNode(ev.target) || bHit;   // inside a selected group the hover outlines the sub item
         const hId = hNode && hNode.role !== 'bg' && hNode.role !== 'bg-glow' ? hNode.id : null;
         if (this.tool === 'select' && !this.actionsLive && !ev.target.dataset?.h && !ev.target.dataset?.b) {
           this.viewport.style.cursor = (bHit || hId) ? 'move' : 'default';
@@ -1648,6 +1677,7 @@ export class Designer {
     const tbClick = this.tbClick; this.tbClick = null;
     if (!op) { if (tbClick) this.toggleToolbarFor(tbClick.id, tbClick); return; }   // locked element / design: still a click
     const wasDragging = this.dragging; this.dragging = false;
+    if (op.kind === 'move' && !op.moved && tbClick?.sub) { this.enteredGroupId = tbClick.sub.group.id; this.select([tbClick.sub.sub.id]); return; }   // a second click on a selected group picks the sub item under the cursor
     if (op.kind === 'move' && !op.moved) { if (tbClick) this.toggleToolbarFor(tbClick.id, tbClick); this.renderOverlay(); return; }
     if (op.kind === 'box') {
       const w = this.doc.width, hh = this.doc.height;
