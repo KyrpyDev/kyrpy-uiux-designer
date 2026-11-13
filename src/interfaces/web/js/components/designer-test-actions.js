@@ -764,9 +764,14 @@ export function installTestActions(Designer) {
     }
 
     // 2. Workflow links with `fromNodeId != null`
+    const routedNodes = new Set();
     for (const l of links.filter(x => x.fromNodeId != null)) {
       const n = this.byId(l.fromNodeId);
       if (!n || n.visible === false) continue;
+      // a menu button's routes belong to its menu items (the menu runs them): a box over it would hide and block the menu
+      if (n.kind === 'instance' && n.refType === 'button' && findDesign('button', n.refId)?.menuItems?.length) continue;
+      if (routedNodes.has(n.id)) continue;     // one box per node (more links from it are listed in the Routes bar)
+      routedNodes.add(n.id);
       const rawBox = nodeBBox(n, this.nodes);
       const box = this.expandToButtonBox(n, rawBox);
       addHotspot({
