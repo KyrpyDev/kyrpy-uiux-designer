@@ -774,6 +774,8 @@ export class Inspector {
         tpls.length
           ? `${tpls.length} item type(s) configured. Repeater randomly distributes all types (at least 1 copy each) across ${cfg.itemCount} slots.`
           : 'Drop any icon, button or element onto this repeater to add template items.'),
+      h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The item last selected in the list (tapped, or reached by a menu item that slides this repeater in focus mode) gets a red edge.' },
+        h('input', { type: 'checkbox', 'data-f': `rp-focus-ring-${e.id}`, checked: e.attrs?.['data-focus-ring'] === 'true', onchange: ev => set({ 'data-focus-ring': ev.target.checked ? 'true' : 'false' }) }), h('span', {}, 'Red edge on the focused (last selected) item')),
       h('div', { class: 'grid2' },
         this.field('Layout', this.select(`rp-layout-${e.id}`, cfg.layout, [
           ['vertical', 'Vertical list'], ['horizontal', 'Horizontal row'], ['carousel', 'Carousel'], ['roll', 'Roll (ticker / wheel)'], ['slide', 'Slide (one at a time)'], ['scroll', 'Scroll (infinite loop)']
@@ -855,7 +857,9 @@ export class Inspector {
           `Outer shell box that limits child max size to ${Math.round(ib.w)}×${Math.round(ib.h)}px. Drop any element inside this container on the canvas.`),
         h('div', { class: 'row wrap', style: { gap: '14px' }, title: 'Content larger than the container scrolls (by drag / wheel, or by a menu item set to slide-scroll this container). On by default.' },
           ...[['data-scroll-y', 'Scroll vertical'], ['data-scroll-x', 'Scroll horizontal']].map(([k, l]) => h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
-            h('input', { type: 'checkbox', 'data-f': `ct-${k}-${e.id}`, checked: e.attrs?.[k] !== 'false', onchange: ev => setContainerAttrs({ [k]: ev.target.checked ? 'true' : 'false' }) }), h('span', {}, l)))),
+            h('input', { type: 'checkbox', 'data-f': `ct-${k}-${e.id}`, checked: e.attrs?.[k] !== 'false', onchange: ev => setContainerAttrs({ [k]: ev.target.checked ? 'true' : 'false' }) }), h('span', {}, l))),
+          h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The item last selected in this list (tapped, or reached by a menu item that slides this container in focus mode) gets a red edge.' },
+            h('input', { type: 'checkbox', 'data-f': `ct-focus-ring-${e.id}`, checked: e.attrs?.['data-focus-ring'] === 'true', onchange: ev => setContainerAttrs({ 'data-focus-ring': ev.target.checked ? 'true' : 'false' }) }), h('span', {}, 'Red edge on the focused item'))),
         h('div', { class: 'grid2' },
           this.field('Container mode', this.select(`ct-kind-${e.id}`, isCarousel ? 'carousel' : 'container', [
             ['container', '▣ Standard Container'],

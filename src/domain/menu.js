@@ -103,7 +103,30 @@ export function normalizeItemScroll(v) {
     if (!/^\d+$/.test(k) || !s || typeof s !== 'object') continue;
     const on = s.on === true || s.on === 1 || s.on === '1' || s.on === 'true';
     const t = s.targetId == null ? '' : String(s.targetId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
-    out[k] = { on, targetId: t || null };
+    out[k] = { on, targetId: t || null, mode: s.mode === 'focus' ? 'focus' : 'scroll' };
+  }
+  return out;
+}
+
+/** Gesture actions a menu item can have besides its click: long press and double click / tap. */
+export const ITEM_GESTURE_TYPES = ['none', 'click', 'screen', 'popup', 'focused'];
+/**
+ * Normalises cfg.itemGestures: { [menuItemId]: { long: { type, target }, dbl: { type, target } } }.
+ * type: none · click (same as a click) · screen (go to screen `target`) · popup (show element `target`) ·
+ * focused (open the focused item of the list the item slides: its own screen / popup, as if it was clicked)
+ */
+export function normalizeItemGestures(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  const one = g => {
+    const type = g && ITEM_GESTURE_TYPES.includes(g.type) ? g.type : 'none';
+    const t = g?.target == null ? '' : String(g.target).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    return { type, target: (type === 'screen' || type === 'popup') && t ? t : null };
+  };
+  for (const [k, g] of Object.entries(v)) {
+    if (!/^\d+$/.test(k) || !g || typeof g !== 'object') continue;
+    const r = { long: one(g.long), dbl: one(g.dbl) };
+    if (r.long.type !== 'none' || r.dbl.type !== 'none') out[k] = r;
   }
   return out;
 }
@@ -331,14 +354,22 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   // slide-to-scroll is a per item setting (cfg.itemScroll[itemId] = { on, targetId }): only the items switched on scroll,
   // each one the container chosen for it (none chosen = the repeater on the screen). Menus saved before keep the old rule.
   const perItemScroll = hasItemScroll(cfg);
+  // long press / double click actions: data-gest-long / data-gest-dbl = "type" or "type:target"
+  const gestureAttr = it => {
+    const g = cfg.itemGestures && cfg.itemGestures[String(it.id)];
+    if (!g) return '';
+    const v = x => x && x.type && x.type !== 'none' ? esc(x.target ? `${x.type}:${x.target}` : x.type) : '';
+    const l = v(g.long), d = v(g.dbl);
+    return (l ? ` data-gest-long="${l}"` : '') + (d ? ` data-gest-dbl="${d}"` : '');
+  };
   const scrollAttr = it => {
     if (perItemScroll) {
       const s = cfg.itemScroll[String(it.id)];
-      if (!s || !s.on) return ' data-item-scroll="0"';
-      return ` data-item-scroll="1"${s.targetId != null && s.targetId !== '' ? ` data-target-repeater="${esc(s.targetId)}"` : ''}`;
+      if (!s || !s.on) return ' data-item-scroll="0"' + gestureAttr(it);
+      return ` data-item-scroll="1"${s.mode === 'focus' ? ' data-item-scroll-mode="focus"' : ''}${s.targetId != null && s.targetId !== '' ? ` data-target-repeater="${esc(s.targetId)}"` : ''}` + gestureAttr(it);
     }
-    return (it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
-      ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"` : '';
+    return ((it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)
+      ? ` data-target-repeater="${esc(it.targetElementKey || it.targetElementId || '')}"` : '') + gestureAttr(it);
   };
   const isCarousel = cfg.layout === 'carousel' || cfg.kind === 'carousel';
   if (isCarousel) ctx.hasCarousel = true;

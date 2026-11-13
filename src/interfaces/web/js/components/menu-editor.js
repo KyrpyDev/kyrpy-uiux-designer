@@ -6,7 +6,7 @@
  */
 import { h, modal, toast, confirmBox, clear, promptBox } from '../dom.js';
 import { api } from '../api.js';
-import { state, findDesign, isPublicLibraryItem } from '../state.js';
+import { state, findDesign, libOf, isPublicLibraryItem } from '../state.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
 import { iconEl } from '../icons.js';
@@ -309,12 +309,39 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
       ...[...scrNodes].sort((a, b) => Number(isContainerNode(b, state.library?.elements)) - Number(isContainerNode(a, state.library?.elements)))
         .map(n => h('option', { value: String(n.id), selected: scrollCfg?.targetId != null && String(scrollCfg.targetId) === String(n.id) }, scrLabel(n))),
       ...(scrollCfg?.targetId != null && !scrNodes.some(n => String(n.id) === String(scrollCfg.targetId)) ? [h('option', { value: String(scrollCfg.targetId), selected: true }, `element ${scrollCfg.targetId} (not on this screen)`)] : []));
-    const paintSlide = () => { scrollSel.disabled = !slideCheck.checked; };
+    // slide mode: free scrolling, or stepping the focus through the list's items (the focused item is centred)
+    const modeSel = h('select', { 'data-f': 'mi-scroll-mode', style: { width: '100%' } },
+      h('option', { value: 'scroll', selected: scrollCfg?.mode !== 'focus' }, 'Scroll: the container scrolls freely while sliding'),
+      h('option', { value: 'focus', selected: scrollCfg?.mode === 'focus' }, 'Focus: each slide step moves the focus to the next / previous item, kept in the centre'));
+    const paintSlide = () => { scrollSel.disabled = !slideCheck.checked; modeSel.disabled = !slideCheck.checked; };
     slideCheck.addEventListener('change', paintSlide); paintSlide();
     const slideBox = h('div', { class: 'field', title: 'Only this item scrolls: press it while it is the centred hub button and slide up / down (or left / right).' },
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } }, slideCheck, h('span', {}, 'Slide this item (when centred) to scroll a container')),
       h('span', { class: 'muted' }, d?.type === 'screen' ? 'Scrollable container on this screen' : 'Scrollable container (open the item from a screen to list its elements)'),
-      scrollSel);
+      scrollSel, modeSel);
+    // gestures besides the click: long press and double click / tap
+    const gestNow = (menuNow?.config?.itemGestures && item) ? menuNow.config.itemGestures[String(item.id)] || {} : {};
+    const screensL = [...(libOf('screen') || [])].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    const elementsL = [...(libOf('element') || [])].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    const gestureRow = (key, title) => {
+      const cur = gestNow[key] || { type: 'none', target: null };
+      const typeSel = h('select', { 'data-f': `mi-gest-${key}` },
+        ...[['none', 'Nothing'], ['click', 'Same as a click'], ['screen', 'Go to screen…'], ['popup', 'Show element as popup…'], ['focused', 'Open the focused item of the list (its own screen / popup)']]
+          .map(([v, l]) => h('option', { value: v, selected: cur.type === v }, l)));
+      const tgtSel = h('select', { 'data-f': `mi-gest-${key}-target`, style: { width: '100%' } });
+      const paint = () => {
+        clear(tgtSel);
+        const list = typeSel.value === 'screen' ? screensL : typeSel.value === 'popup' ? elementsL : [];
+        tgtSel.hidden = !list.length;
+        for (const r of list) tgtSel.append(h('option', { value: String(r.id), selected: String(cur.target) === String(r.id) }, `${r.label || r.name} · ${r.key}`));
+      };
+      typeSel.addEventListener('change', paint); paint();
+      return { el: h('label', { class: 'field' }, h('span', {}, title), typeSel, tgtSel), value: () => ({ type: typeSel.value, target: tgtSel.hidden ? null : tgtSel.value || null }) };
+    };
+    const gLong = gestureRow('long', 'When long pressed'), gDbl = gestureRow('dbl', 'When double clicked / tapped');
+    const gestBox = h('div', { class: 'field' },
+      h('span', { class: 'muted' }, 'The click action is set above. "Open the focused item" uses the list this item slides (Slide option below): the item with the red edge.'),
+      h('div', { class: 'row wrap', style: { gap: '10px' } }, gLong.el, gDbl.el));
     let m;
     const save = async () => {
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
@@ -334,12 +361,18 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
         if (item && (parentId ?? null) !== (item.parentId ?? null)) { await api.moveMenuItem(buttonId, item.id, { parentId }); saved = { ...saved, parentId }; }
         const sid = saved?.id ?? item?.id;
         const prevMap = menuNow?.config?.itemScroll || {};
-        const wantOn = slideCheck.checked, wantT = scrollSel.value || null;
+        const wantOn = slideCheck.checked, wantT = scrollSel.value || null, wantMode = modeSel.value;
         const had = prevMap[String(sid)];
-        if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? ''))) {
+        const patch = {};
+        if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? '') || (had.mode || 'scroll') !== wantMode)) {
           // the first per item setting switches the menu from the old menu-wide rule to per item rules
-          await api.menuConfig(buttonId, { itemScroll: { ...prevMap, [String(sid)]: { on: wantOn, targetId: wantT } } });
+          patch.itemScroll = { ...prevMap, [String(sid)]: { on: wantOn, targetId: wantT, mode: wantMode } };
         }
+        const gPrev = menuNow?.config?.itemGestures || {}, gWant = { long: gLong.value(), dbl: gDbl.value() };
+        if (sid != null && JSON.stringify(gPrev[String(sid)] || { long: { type: 'none', target: null }, dbl: { type: 'none', target: null } }) !== JSON.stringify(gWant)) {
+          patch.itemGestures = { ...gPrev, [String(sid)]: gWant };
+        }
+        if (Object.keys(patch).length) await api.menuConfig(buttonId, patch);
         fin(saved); m.close();
       } catch (e) { toast(e.message, 'error'); }
     };
@@ -356,6 +389,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
           h('label', { class: 'field grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, 'Action (event name)'), actionPreset), action),
           h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked or slid (screen, popup or repeater)'), targetBtn)
         ),
+        gestBox,
         slideBox,
         h('label', { class: 'field' }, h('span', {}, 'description-dev'), dev)),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')] });

@@ -52,6 +52,9 @@ function childrenIndex(nodes) {
   return m;
 }
 
+/** Container option: the focused (last selected) item of its list shows a red edge. */
+const focusRingOn = el => el?.attrs?.['data-focus-ring'] === 'true' || el?.attrs?.['data-focus-ring'] === true;
+
 function resolvedAttrs(el, ctx) {
   const tokens = ctx.theme.tokens;
   const merged = { ...roleAttrs(ctx.theme, el.role) };
@@ -120,12 +123,12 @@ function renderRepeater(el, ctx, idx, all) {
     const tplMarkup = Array.isArray(tpl)
       ? tpl.map(t => `<g class="ud-rpt-tpl">${t}</g>`).join('')
       : `<g class="ud-rpt-tpl">${tpl}</g>`;
-    return clip + `<g${attrString({ class: 'ud-container-children ud-repeater', 'data-container-for': el.id, 'clip-path': `url(#${clipId})`, 'data-rpt': data })}>` +
+    return clip + `<g${attrString({ class: 'ud-container-children ud-repeater', 'data-container-for': el.id, 'clip-path': `url(#${clipId})`, 'data-rpt': data, 'data-focus-ring': focusRingOn(el) ? '1' : null })}>` +
       `<g transform="translate(${first.x} ${first.y})">${tplMarkup}</g></g>`;
   }
   const out = repeaterMarkup(key, cfg, box, item, tpl, ctx.repeaterMode === 'static' ? 'static' : 'animate', assignments);
   if (out.css) ctx.repeaterCss.add(out.css);
-  return clip + `<g class="ud-container-children ud-repeater" data-container-for="${el.id}" data-repeater-for="${el.id}" clip-path="url(#${clipId})">${out.markup}</g>`;
+  return clip + `<g class="ud-container-children ud-repeater" data-container-for="${el.id}" data-repeater-for="${el.id}" clip-path="url(#${clipId})"${focusRingOn(el) ? ' data-focus-ring="1"' : ''}>${out.markup}</g>`;
 }
 
 function renderContainerChildren(el, ctx, idx, all) {
@@ -150,7 +153,7 @@ function renderContainerChildren(el, ctx, idx, all) {
     const inner = containerInnerBox(el, all, ctx.lib.element);
     const clipId = `ud-clip-cont-${el.id}`;
     return `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>` +
-      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}" data-scroll-x="${el.attrs?.['data-scroll-x'] === 'false' ? 0 : 1}" data-scroll-y="${el.attrs?.['data-scroll-y'] === 'false' ? 0 : 1}">${renderedKids}</g>`;
+      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}" data-scroll-x="${el.attrs?.['data-scroll-x'] === 'false' ? 0 : 1}" data-scroll-y="${el.attrs?.['data-scroll-y'] === 'false' ? 0 : 1}"${focusRingOn(el) ? ' data-focus-ring="1"' : ''}>${renderedKids}</g>`;
   }
   return renderedKids;
 }

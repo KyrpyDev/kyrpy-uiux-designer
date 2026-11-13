@@ -625,6 +625,8 @@ export function bindMenus(root, opts) {
     } catch (e) {}
 
     rptDrag = {
+      focus: src.getAttribute('data-item-scroll-mode') === 'focus',
+      acc: 0,
       btn: btn,
       target: t,
       stage: stage,
@@ -653,6 +655,16 @@ export function bindMenus(root, opts) {
       rptDrag.moved = true;
     }
     if (!rptDrag.moved) return;
+    if (rptDrag.focus) {
+      // focus mode: every 28px of sliding moves the focus one item (up / left = next), kept in the centre
+      var fx = rptDrag.stage.getAttribute('data-rpt-axis') === 'x';
+      rptDrag.acc += fx ? (Math.abs(dx) >= Math.abs(dy) ? dx : dy) : (Math.abs(dy) >= Math.abs(dx) ? dy : dx);
+      while (Math.abs(rptDrag.acc) >= 28) { var dir = rptDrag.acc > 0 ? 1 : -1; rptDrag.acc -= dir * 28; stepFocus(rptDrag.stage, dir); }
+      rptDrag.lastX = ev.clientX; rptDrag.lastY = ev.clientY;
+      if (ev.preventDefault) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+      return;
+    }
 
     var axis = rptDrag.stage.getAttribute('data-rpt-axis') || 'y';
     var dStep = axis === 'x' ? (Math.abs(dx) >= Math.abs(dy) ? dx : dy) : (Math.abs(dy) >= Math.abs(dx) ? dy : dx);
@@ -716,6 +728,7 @@ export function bindMenus(root, opts) {
     doc.addEventListener('pointermove', onPointerMove);
     doc.addEventListener('pointerup', onPointerEnd);
     doc.addEventListener('pointercancel', onPointerEnd);
+    doc.addEventListener('pointermove', cancelLong); doc.addEventListener('pointerup', cancelLong); doc.addEventListener('pointercancel', cancelLong);
   }
   function hubBack(ev) {
     if (!root.querySelectorAll) return;
@@ -746,7 +759,7 @@ export function bindMenus(root, opts) {
     var c = ((st.c || 0) + (ev.deltaY > 0 ? 1 : -1) + n) % n;
     set(btn, { open: true, path: [], c: c, prev: c });
   }, { passive: false });
-  root.addEventListener('click', function (ev) {
+  function handleClick(ev) {
     if (suppressClickUntil && Date.now() < suppressClickUntil) {
       if (ev.stopPropagation) ev.stopPropagation();
       if (ev.preventDefault) ev.preventDefault();
@@ -793,6 +806,137 @@ export function bindMenus(root, opts) {
     }
     ev.stopPropagation();
     set(btn, next);
+  }
+  /* ---- gestures of a menu item besides its click: double click / tap (data-gest-dbl) and long press (data-gest-long) ---- */
+  var pendingTap = null, longPress = null;
+  function gestureSource(t) {
+    var btn = t && t.closest ? t.closest('.ud-btn') : null;
+    if (!btn) return null;
+    var src = t;
+    if (isHub(btn) && t.getAttribute('data-rm') === 'center') { var ci = btn.querySelector('.rm-hub-item[data-hub-pos="center"]'); if (ci) src = ci; }
+    return { btn: btn, src: src };
+  }
+  root.addEventListener('pointerdown', function (ev) {
+    if (ev.button) return;
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-rm="center"], .rm-item') : null;
+    var g = t ? gestureSource(t) : null;
+    if (!g || !g.src.getAttribute('data-gest-long')) return;
+    if (longPress) clearTimeout(longPress.timer);
+    longPress = { x: ev.clientX, y: ev.clientY, timer: setTimeout(function () {
+      longPress = null;
+      suppressClickUntil = Date.now() + 500;   // the release after a long press is not a click
+      if (rptDrag) { if (rptDrag.rafId) { try { cancelAnimationFrame(rptDrag.rafId); } catch (e) {} } rptDrag = null; }
+      runGesture(g.btn, g.src, g.src.getAttribute('data-gest-long'));
+    }, 550) };
+  });
+  function cancelLong(ev) {
+    if (!longPress) return;
+    if (ev && ev.type && ev.type.indexOf('move') >= 0 && Math.abs(ev.clientX - longPress.x) < 8 && Math.abs(ev.clientY - longPress.y) < 8) return;
+    clearTimeout(longPress.timer); longPress = null;
+  }
+  function runGesture(btn, src, spec) {
+    var i = String(spec || '').indexOf(':'), type = i < 0 ? spec : spec.slice(0, i), target = i < 0 ? '' : spec.slice(i + 1);
+    var base = { menu: btn.getAttribute('data-menu'), item: src.getAttribute('data-item'), id: src.getAttribute('data-menu-id') };
+    if (type === 'click') { fire(btn, src); return; }
+    if (type === 'screen' && opts.onAction) { base.action = ''; base.target = target; opts.onAction(base); return; }
+    if (type === 'popup' && opts.onAction) { base.action = ''; base.target = ''; base.targetElement = target; base.targetElementId = target; opts.onAction(base); return; }
+    if (type === 'focused') {
+      var st = findRepeaterStage(btn, src), cont = st ? listOf(st) : null;
+      var el = cont ? focusedItem(cont, true) : null;
+      if (!el || !el.getBoundingClientRect || !doc || !doc.elementFromPoint) return;
+      var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      var hit = doc.elementFromPoint(x, y) || el;
+      var view = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+      var E = view && view.MouseEvent;
+      if (E) hit.dispatchEvent(new E('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: view }));
+    }
+  }
+  /* ---- focus in a list (repeater copies, or the items of a scrollable container): red edge + slide-to-step ---- */
+  function listOf(stage) {
+    return (stage.closest && stage.closest('.ud-container-children')) || stage;
+  }
+  function listItems(cont) {
+    var copies = cont.querySelectorAll ? cont.querySelectorAll('.ud-rpt-copy[data-rpt-index]') : [];
+    if (copies.length) return Array.prototype.slice.call(copies);
+    var box = cont, f = cont.firstElementChild;
+    if (f && f.getAttribute('data-scroll-inner') === '1' && cont.childElementCount === 1) box = f;
+    return Array.prototype.filter.call(box.children || [], function (c) { return c.tagName && c.tagName.toLowerCase() !== 'title' && !c.classList.contains('ud-focus-ring'); });
+  }
+  function clipRect(cont) {
+    try {
+      var cp = (cont.getAttribute('clip-path') || '').match(/#([^)"']+)/);
+      var rect = cp && doc ? doc.getElementById(cp[1]) : null; rect = rect && rect.querySelector ? rect.querySelector('rect') : null;
+      var m = cont.getScreenCTM && cont.getScreenCTM();
+      if (rect && m) {
+        var x = parseFloat(rect.getAttribute('x')) || 0, y = parseFloat(rect.getAttribute('y')) || 0, w = parseFloat(rect.getAttribute('width')) || 0, h = parseFloat(rect.getAttribute('height')) || 0;
+        return { left: m.a * x + m.c * y + m.e, top: m.b * x + m.d * y + m.f, width: w * m.a, height: h * m.d, sx: m.a || 1, sy: m.d || 1 };
+      }
+    } catch (e) {}
+    var b = cont.getBoundingClientRect(); return { left: b.left, top: b.top, width: b.width, height: b.height, sx: 1, sy: 1 };
+  }
+  function nearestToCentre(cont, items) {
+    var c = clipRect(cont), cx = c.left + c.width / 2, cy = c.top + c.height / 2, best = 0, bd = Infinity;
+    items.forEach(function (it, i) { var r = it.getBoundingClientRect(), d = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy); if (d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  function focusedItem(cont, pickCentre) {
+    var items = listItems(cont);
+    if (!items.length) return null;
+    if (cont.__udFocus == null) { if (!pickCentre) return null; setFocus(cont, nearestToCentre(cont, items), false); }
+    return items[Math.max(0, Math.min(items.length - 1, cont.__udFocus))];
+  }
+  function setFocus(cont, idx, ring) {
+    var items = listItems(cont);
+    if (!items.length) return;
+    idx = Math.max(0, Math.min(items.length - 1, idx));
+    cont.__udFocus = idx;
+    Array.prototype.forEach.call(cont.querySelectorAll('.ud-focus-ring'), function (r) { r.parentNode.removeChild(r); });
+    if (!(ring || cont.getAttribute('data-focus-ring') === '1')) return;
+    var it = items[idx], bb = null;
+    try { bb = it.getBBox(); } catch (e) {}
+    if (!bb || !doc) return;
+    var r = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('class', 'ud-focus-ring');
+    r.setAttribute('x', bb.x - 2); r.setAttribute('y', bb.y - 2); r.setAttribute('width', bb.width + 4); r.setAttribute('height', bb.height + 4);
+    r.setAttribute('rx', 10); r.setAttribute('fill', 'none'); r.setAttribute('stroke', '#EF4444'); r.setAttribute('stroke-width', 2.5); r.setAttribute('pointer-events', 'none');
+    // a group holds the ring (it moves with the item); a single shape gets it right after itself, in the same coordinates
+    if (it.tagName && it.tagName.toLowerCase() === 'g') it.appendChild(r); else it.parentNode.insertBefore(r, it.nextSibling);
+  }
+  /** One slide step in focus mode: the focus moves to the next / previous item, which is scrolled to the centre. */
+  function stepFocus(stage, dir) {
+    var cont = listOf(stage), items = listItems(cont);
+    if (!items.length) return;
+    if (cont.__udFocus == null) cont.__udFocus = nearestToCentre(cont, items);
+    else cont.__udFocus = Math.max(0, Math.min(items.length - 1, cont.__udFocus + dir));
+    setFocus(cont, cont.__udFocus, true);
+    var it = items[cont.__udFocus], c = clipRect(cont), r = it.getBoundingClientRect();
+    var axisX = stage.getAttribute('data-rpt-axis') === 'x';
+    var delta = axisX ? (r.left + r.width / 2 - (c.left + c.width / 2)) / c.sx : (r.top + r.height / 2 - (c.top + c.height / 2)) / c.sy;
+    if (Math.abs(delta) > 0.5) moveRepeater(stage, delta, true);
+  }
+  /** A tap on an item of a list with the red edge option marks it as the focused (last selected) item. */
+  function focusTap(ev) {
+    var t = ev.target;
+    var cont = t && t.closest ? t.closest('[data-focus-ring="1"]') : null;
+    if (!cont) return;
+    var items = listItems(cont);
+    for (var i = 0; i < items.length; i++) if (items[i] === t || items[i].contains(t)) { setFocus(cont, i, true); return; }
+  }
+  root.addEventListener('click', function (ev) {
+    if (suppressClickUntil && Date.now() < suppressClickUntil) return handleClick(ev);
+    var t = ev.target && ev.target.closest ? ev.target.closest('[data-rm="center"], .rm-item') : null;
+    var g = t ? gestureSource(t) : null;
+    if (!g || !g.src.getAttribute('data-gest-dbl')) { focusTap(ev); return handleClick(ev); }
+    // an item with a double click action: the first click waits briefly for a second one
+    if (ev.stopPropagation) ev.stopPropagation();
+    if (pendingTap && pendingTap.src === g.src) {
+      clearTimeout(pendingTap.timer); pendingTap = null;
+      runGesture(g.btn, g.src, g.src.getAttribute('data-gest-dbl'));
+      return;
+    }
+    if (pendingTap) { clearTimeout(pendingTap.timer); pendingTap = null; }
+    var saved = { target: ev.target, clientX: ev.clientX, clientY: ev.clientY, stopPropagation: function () {}, preventDefault: function () {} };
+    pendingTap = { src: g.src, timer: setTimeout(function () { pendingTap = null; handleClick(saved); }, 280) };
   });
   if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll('.ud-btn'), function (btn) { if (isHub(btn)) apply(btn, get(btn)); });
   return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater };

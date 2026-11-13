@@ -7,7 +7,7 @@ const rows = [{ id: 1, name: 'scan', ord: 0, targetElementId: 7 }, { id: 2, name
 const render = cfg => renderMenu({ button: { width: 100, height: 100 }, cfg: menuConfig({ menu: { kind: 'hub', ...cfg } }), tree: buildMenuTree(rows), ctx, iconKey: null });
 
 test('normalizeItemScroll keeps only numeric item ids and sanitises the target', () => {
-  assert.deepEqual(normalizeItemScroll({ 1: { on: '1', targetId: 'n-5"x' }, bad: { on: true }, 2: { on: false } }), { 1: { on: true, targetId: 'n-5x' }, 2: { on: false, targetId: null } });
+  assert.deepEqual(normalizeItemScroll({ 1: { on: '1', targetId: 'n-5"x' }, bad: { on: true }, 2: { on: false } }), { 1: { on: true, targetId: 'n-5x', mode: 'scroll' }, 2: { on: false, targetId: null, mode: 'scroll' } });
   assert.equal(hasItemScroll({}), false);
 });
 
@@ -36,4 +36,13 @@ test('static hub picture: the default centre item sits on the button, the others
   assert.match(svg, /data-item="search"[^>]*transform="translate\(50 50\)"(?! scale)/);
   assert.match(svg, /data-item="scan"[^>]*transform="translate\(50 50\) scale\(0\)" opacity="0"/);
   assert.match(svg, /class="rm-back"[^>]*visibility="hidden"/);
+});
+
+import { normalizeItemGestures } from '../domain/menu.js';
+test('menu item gestures: long press / double tap actions are normalised and rendered on the item, slide focus mode too', () => {
+  assert.deepEqual(normalizeItemGestures({ 1: { long: { type: 'popup', target: '7"x' }, dbl: { type: 'focused', target: 'zz' } }, 2: { long: { type: 'bogus' } }, x: {} }),
+    { 1: { long: { type: 'popup', target: '7x' }, dbl: { type: 'focused', target: null } } });
+  assert.equal(normalizeItemScroll({ 1: { on: true, mode: 'focus' } })[1].mode, 'focus');
+  const svg = render({ itemScroll: { 1: { on: true, targetId: 'c9', mode: 'focus' } }, itemGestures: { 1: { long: { type: 'screen', target: '5' }, dbl: { type: 'focused', target: null } } } });
+  assert.match(svg, /data-item="scan"[^>]*data-item-scroll="1" data-item-scroll-mode="focus" data-target-repeater="c9" data-gest-long="screen:5" data-gest-dbl="focused"/);
 });
