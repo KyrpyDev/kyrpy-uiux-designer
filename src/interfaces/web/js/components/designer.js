@@ -1222,7 +1222,7 @@ export class Designer {
       if (id && this.byId(id)) {
         let e = this.byId(id);
         if (!exact) {
-          while (e.parentId != null && this.byId(e.parentId) && !isContainerNode(this.byId(e.parentId), state.library.elements)) {
+          while (e.parentId != null && e.parentId !== this.enteredGroupId && this.byId(e.parentId) && !isContainerNode(this.byId(e.parentId), state.library.elements)) {
             e = this.byId(e.parentId);
           }
         }
@@ -1303,7 +1303,16 @@ export class Designer {
   async onDblClick(ev) {
     if (this.tool === 'pen') { if (this.pen.pts.length) await this.pen.finish(false); return; }
     if (this.vtx.active) { await this.vtx.insertAt(this.worldPoint(ev)); return; }
-    const e = this.hitNode(ev.target, true) || this.hitNode(ev.target);
+    // double-click on a group: enter it and select the sub item under the cursor (clicks then pick sub items until you click outside)
+    // the first click may have opened an overlay (quick toolbar, selection box) over the point: use the drawing underneath
+    let tgt = ev.target;
+    if (!this.stage.contains(tgt) && typeof document !== 'undefined' && document.elementsFromPoint) tgt = document.elementsFromPoint(ev.clientX, ev.clientY).find(x => this.stage.contains(x) && x.closest?.('[data-el]')) || tgt;
+    const top = this.hitNode(tgt), exact = this.hitNode(tgt, true);
+    if (top && exact && top.id !== exact.id && top.tag === 'g') {
+      let c = exact; while (c.parentId != null && c.parentId !== top.id && this.byId(c.parentId)) c = this.byId(c.parentId);
+      this.enteredGroupId = top.id; this.select([c.id]); return;
+    }
+    const e = exact || top;
     if (!e) return;
     this.select([e.id]);
     return this.openEditor(e);
@@ -1320,7 +1329,7 @@ export class Designer {
       const lib = findDesign(e.refType, e.refId), what = (TYPES[e.refType]?.label || e.refType).toLowerCase();
       return { label: `Open ${what} designer`, hint: lib ? `${lib.label} (${lib.key}) in its own designer` : 'this design no longer exists', disabled: !lib || !this.opts.openDesign, run: () => this.opts.openDesign(e.refType, e.refId) };
     }
-    if (e.tag === 'g') return { label: 'Enter group', hint: 'select the items inside the group', run: () => { const kids = this.nodes.filter(n => n.parentId === e.id); if (kids.length) this.select(kids.map(k => k.id)); else toast('This group is empty'); } };
+    if (e.tag === 'g') return { label: 'Enter group', hint: 'select the items inside the group', run: () => { const kids = this.nodes.filter(n => n.parentId === e.id); if (kids.length) { this.enteredGroupId = e.id; this.select(kids.map(k => k.id)); } else toast('This group is empty'); } };
     if (this.vtx.canEdit(e)) return { label: 'Edit vertices', hint: 'drag the points and bezier handles (Enter)', run: () => this.vtx.enter(e) };
     return { label: 'Open editor', hint: 'this element has no editor', disabled: true, run: () => {} };
   }
@@ -1497,6 +1506,8 @@ export class Designer {
       else if (this.tool === 'path') { this.ghost = null; this.createPath(q); }
       return;
     }
+    // leave an entered group when the click lands outside it
+    if (this.enteredGroupId != null) { let c = this.hitNode(ev.target, true); while (c && c.id !== this.enteredGroupId) c = c.parentId != null ? this.byId(c.parentId) : null; if (!c) this.enteredGroupId = null; }
     const hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
     const isBg = hit && (hit.role === 'bg' || hit.role === 'bg-glow');
     if (hit && !isBg) {

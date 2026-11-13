@@ -462,13 +462,22 @@ export class Inspector {
 
   nodesList() {
     const d = this.d;
-    const rows = [...d.nodes].sort((a, b) => b.ord - a.ord || b.id - a.id).map(e => {
+    // tree order: groups (anything with sub items) first among their siblings, each followed by its sub items, indented
+    const ids = new Set(d.nodes.map(n => n.id));
+    const kidsOf = new Map();
+    for (const n of d.nodes) { const p = n.parentId != null && ids.has(n.parentId) ? n.parentId : null; if (!kidsOf.has(p)) kidsOf.set(p, []); kidsOf.get(p).push(n); }
+    const isGroup = n => n.tag === 'g' || kidsOf.has(n.id);
+    const depthOf = new Map(), ordered = [];
+    const walk = (p, depth) => (kidsOf.get(p) || []).sort((a, b) => isGroup(b) - isGroup(a) || b.ord - a.ord || b.id - a.id)
+      .forEach(n => { depthOf.set(n.id, depth); ordered.push(n); walk(n.id, depth + 1); });
+    walk(null, 0);
+    const rows = ordered.map(e => {
       const label = e.kind === 'instance' ? `${e.refType}: ${findDesign(e.refType, e.refId)?.key ?? '?'}` : e.tag === 'text' ? `"${e.text}"` : (e.name || e.tag);
       return h('div', {
         class: `el-row${d.selected.has(e.id) ? ' on' : ''}`, tabindex: '0', dataset: { layer: String(e.id) },
         title: 'Drag (or Alt+↑/↓) to change the stacking order',
-        style: { paddingLeft: `${3 + (e.parentId ? 12 : 0)}px`, opacity: e.visible ? 1 : 0.45 },
-        onclick: ev => { if (this.layerDragEnded) { this.layerDragEnded = false; return; } d.select([e.id], { add: ev.shiftKey }); },
+        style: { paddingLeft: `${3 + 12 * (depthOf.get(e.id) || 0)}px`, opacity: e.visible ? 1 : 0.45 },
+        onclick: ev => { if (this.layerDragEnded) { this.layerDragEnded = false; return; } if (e.parentId != null) d.enteredGroupId = e.parentId; d.select([e.id], { add: ev.shiftKey }); },
         onkeydown: async ev => {
           if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
           ev.preventDefault(); ev.stopPropagation();
