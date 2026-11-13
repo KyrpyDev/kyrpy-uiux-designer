@@ -466,17 +466,28 @@ export function bindMenus(root, opts) {
     if (!stage && root && root.querySelector) stage = root.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage');
     return stage;
   }
+  // the clip-path sits on the container group, so the scroll offset goes on an inner wrapper (moving the clipped group would move its clip too)
+  function genericInner(g) {
+    var f = g.firstElementChild;
+    if (f && f.getAttribute('data-scroll-inner') === '1' && g.childElementCount === 1) return f;
+    var w = g.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
+    w.setAttribute('data-scroll-inner', '1');
+    while (g.firstChild) w.appendChild(g.firstChild);
+    g.appendChild(w);
+    return w;
+  }
   function genericMax(g) {
-    var clipH = 0, clipW = 0, ch = 0, cw = 0;
+    var clipH = 0, clipW = 0, ch = 0, cw = 0, cy = 0, cx = 0;
     try {
       var cp = (g.getAttribute('clip-path') || '').match(/#([^)"']+)/);
       var cr = cp && g.ownerDocument ? g.ownerDocument.getElementById(cp[1]) : null;
       var rect = cr && cr.querySelector ? cr.querySelector('rect') : null;
-      if (rect) { clipH = parseFloat(rect.getAttribute('height')) || 0; clipW = parseFloat(rect.getAttribute('width')) || 0; }
-      var prev = g.getAttribute('transform'); if (prev) g.removeAttribute('transform');
-      var bb = g.getBBox ? g.getBBox() : null;
-      if (prev) g.setAttribute('transform', prev);
-      if (bb) { ch = bb.height; cw = bb.width; }
+      if (rect) { clipH = parseFloat(rect.getAttribute('height')) || 0; clipW = parseFloat(rect.getAttribute('width')) || 0; cy = parseFloat(rect.getAttribute('y')) || 0; cx = parseFloat(rect.getAttribute('x')) || 0; }
+      var inner = genericInner(g);
+      var prev = inner.getAttribute('transform'); if (prev) inner.removeAttribute('transform');
+      var bb = inner.getBBox ? inner.getBBox() : null;
+      if (prev) inner.setAttribute('transform', prev);
+      if (bb) { ch = bb.y + bb.height - cy; cw = bb.x + bb.width - cx; }
     } catch (e) {}
     var ax = g.getAttribute('data-scroll-x') !== '0', ay = g.getAttribute('data-scroll-y') !== '0';
     return { y: ay ? Math.max(0, ch - clipH) : 0, x: ax ? Math.max(0, cw - clipW) : 0 };
@@ -491,7 +502,7 @@ export function bindMenus(root, opts) {
       var go = st.__udOff || 0, gn = Math.max(0, Math.min(lim, go + delta));
       if (gn === go) return false;
       st.__udOff = gn;
-      st.setAttribute('transform', (gx ? 'translate(' + (-gn) + ' 0)' : 'translate(0 ' + (-gn) + ')'));
+      genericInner(st).setAttribute('transform', (gx ? 'translate(' + (-gn) + ' 0)' : 'translate(0 ' + (-gn) + ')'));
       return true;
     }
     var track = st.querySelector ? st.querySelector('.ud-rpt-track') : null;
