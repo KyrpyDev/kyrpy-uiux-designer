@@ -4,7 +4,8 @@
  * Interactions: infinite pan/zoom, drag from the library (hierarchy rules apply), move/resize with grid + 9-point snapping,
  * bounding box that scales its contents, marquee select, vertex editing of paths, live button menus, undo/redo.
  */
-import { clickTargetOf, withClickTarget } from '/domain/quick-edit.js';
+import { clickTargetOf, withClickTarget, isBackOrCancel, withBackAction } from '/domain/quick-edit.js';
+import { popupAutoCloseSecs } from '/domain/theme.js';
 import { h, clear, toast, promptBox, confirmBox, choiceBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
@@ -1314,6 +1315,71 @@ export class Designer {
     });
   }
 
+  /** Back / cancel / close buttons among `nodes`: { matches, already (go back now), busy (another click action) }. */
+  backCancelButtons(nodes) {
+    const matches = (nodes || []).filter(n => n.kind === 'instance' && n.refType === 'button').filter(n => {
+      const b = findDesign('button', n.refId) || {};
+      return isBackOrCancel(n.name, n.label, n.attrs?.label, n.attrs?.text, b.name, b.label, b.key, b.icon, b.iconKey);
+    });
+    const already = matches.filter(n => clickTargetOf(n).other === 'back');
+    const busy = matches.filter(n => { const c = clickTargetOf(n); return c.other !== 'back' && (c.screenId != null || c.elementId != null || !!c.other); });
+    return { matches, already, busy };
+  }
+
+  /**
+   * Bulk "go back": every button whose name, label, key or icon says back, cancel or close gets the click action
+   * "Go back" — on this screen / element, or on every screen of the project. Buttons that already go somewhere else are
+   * kept unless asked. This screen is one undo step; other screens are saved directly.
+   */
+  async setBackCancelButtons() {
+    if (!this.doc || (this.type !== 'screen' && this.type !== 'element')) return;
+    let scope = 'this';
+    const projectId = this.doc?.projectId ?? state.project?.id ?? null;
+    if (this.type === 'screen') {
+      scope = await choiceBox('Back / Cancel buttons', 'Set "Go back" on the back, cancel and close buttons of:', [
+        { value: 'this', label: 'This screen' }, { value: 'project', label: 'All screens of the project', kind: 'primary' }]);
+      if (!scope) return;
+      if (scope === 'project' && !projectId) return toast('This screen belongs to no project', 'error');
+    }
+    // collect the docs to change: [{ id, nodes, current }]
+    const docs = [{ id: this.doc.id, nodes: this.nodes, current: true }];
+    if (scope === 'project') {
+      const list = await api.list('screen', '', projectId ? { projectId, includePublic: false } : {}).catch(() => []);
+      for (const sc of list) {
+        if (sc.id === this.doc.id || (projectId && sc.projectId != null && sc.projectId !== projectId)) continue;
+        const full = await api.getDesign('screen', sc.id).catch(() => null);
+        if (full?.nodes) docs.push({ id: sc.id, nodes: full.nodes, current: false });
+      }
+    }
+    const found = docs.map(d => ({ ...d, ...this.backCancelButtons(d.nodes) }));
+    const total = found.reduce((t, d) => t + d.matches.length, 0);
+    if (!total) return toast('No back / cancel / close buttons found', 'error');
+    const busyN = found.reduce((t, d) => t + d.busy.length, 0), alreadyN = found.reduce((t, d) => t + d.already.length, 0);
+    let replace = false;
+    if (busyN) {
+      const ch = await choiceBox('Back / Cancel buttons', `${busyN} of the ${total} back / cancel buttons already have another click action.`, [
+        { value: 'keep', label: 'Keep those' }, { value: 'replace', label: 'Replace them with Go back', kind: 'primary' }]);
+      if (!ch) return;
+      replace = ch === 'replace';
+    }
+    const snap = this.snapshot();
+    let n = 0, screens = 0, curChanged = false;
+    try {
+      for (const d of found) {
+        const targets = d.matches.filter(x => !d.already.includes(x) && (replace || !d.busy.includes(x)));
+        for (const node of targets) {
+          const saved = await api.patchNode(this.type === 'element' && d.current ? 'element' : 'screen', d.id, node.id, { events: withBackAction(node.events), onClick: null });
+          if (d.current) { Object.assign(node, saved); curChanged = true; }
+          n++;
+        }
+        if (targets.length) screens++;
+      }
+    } catch (err) { toast(err.message, 'error'); }
+    if (curChanged) { this.pushUndo(snap); this.renderStage(); this.renderOverlay(); this.emit('selection', this.selectedNodes()); this.changed(); }
+    if (!n) return toast(`All ${total} back / cancel buttons already go back`, 'ok');
+    toast(`${n} back / cancel button(s) on ${screens} ${this.type === 'element' ? 'element' : 'screen(s)'} now go back${alreadyN ? ` · ${alreadyN} already did` : ''}${!replace && busyN ? ` · ${busyN} kept their own action` : ''}`);
+  }
+
   /* ================= in-place element editing =================
    * Double-click a part of a placed element on a screen: the library element loads into this canvas where it sits on the
    * screen, the rest of the screen shows dimmed behind it, and the part under the cursor is selected. Edits are the library
@@ -1606,9 +1672,11 @@ export class Designer {
     const box = h('div', { class: 'dz-pv-box', style: { width: `${w}px` } }, h('button', { class: 'icon-btn dz-pv-x', title: 'Close (Esc)', onclick: () => this.closePreview() }, '✕'), panel);
     this.pv = h('div', { class: `dz-pv ${kind}${kind === 'drawer' ? ` from-${side || 'right'}` : ''}` }, h('div', { class: 'dz-pv-scrim', onclick: () => this.closePreview() }), box);
     this.viewport.append(this.pv);
+    const secs = popupAutoCloseSecs(el.nodes);
+    if (secs > 0) { const pv = this.pv; this.pvTimer = setTimeout(() => { if (this.pv === pv) this.closePreview(); }, secs * 1000); }
   }
 
-  closePreview() { this.pv?.remove(); this.pv = null; this.tbPv?.remove(); this.tbPv = null; }
+  closePreview() { clearTimeout(this.pvTimer); this.pvTimer = null; this.pv?.remove(); this.pv = null; this.tbPv?.remove(); this.tbPv = null; }
 
   onPointerDown(ev) {
     if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar, .dz-preview-banner')) return;

@@ -650,6 +650,7 @@ export class Inspector {
       h('div', { class: 'grid2' },
         this.field('Surface role', this.select('el-role', e.role || '', [['', '(none)'], ...SURFACE_ROLES], v => patch({ role: v || null }))),
         this.field('Rotation °', this.num('el-rot', e.rotation, v => patch({ rotation: v })))),
+      e.role === 'popup' ? this.field('Auto close after (sec, 0 = never)', this.num('el-autoclose', Number(e.attrs?.['data-autoclose']) || 0, v => patch({ attrs: { ...(e.attrs || {}), 'data-autoclose': v > 0 ? String(v) : null } }))) : null,
       e.role ? h('div', { class: 'muted', style: { fontSize: '11px' } }, 'The theme draws this element (fill, border, shadow). Setting colours below overrides the theme.') : null,
       (() => { const t = h('textarea', { rows: 3, placeholder: 'description-dev for this element…', 'data-f': 'el-dev' }); t.value = e.descriptionDev || ''; t.addEventListener('change', () => patch({ descriptionDev: t.value })); return this.field('description-dev', t); })()));
 

@@ -62,3 +62,24 @@ test('Test workflow starts on the screen selected on the workflow canvas', () =>
   assert.match(tr, /startId = target\.startScreenId \?\? workflowStart\(wf\)/);
   assert.match(tr, /reapplyQuickEdit\(d\)/, 'a live re-read keeps the values being edited');
 });
+
+test('isBackOrCancel / withBackAction: back, cancel and close buttons get the Go back click', async () => {
+  const { isBackOrCancel, withBackAction } = await import('../domain/quick-edit.js');
+  for (const t of ['Back', 'btn-cancel', 'Close', 'go_back', 'arrow-left', 'İptal', 'Geri']) assert.equal(isBackOrCancel(t), true, t);
+  for (const t of ['Background', 'Feedback', 'Save', 'Closet', '', undefined]) assert.equal(isBackOrCancel(t), false, String(t));
+  const ev = withBackAction([{ trigger: 'click', type: 'screen', targetId: 3 }, { trigger: 'dblclick', type: 'animate' }]);
+  assert.deepEqual(ev, [{ trigger: 'dblclick', type: 'animate' }, { trigger: 'click', type: 'back' }]);
+});
+
+test('popup surface role: auto close after x seconds in the preview and the exported pages', async () => {
+  const { SURFACE_ROLES, popupAutoCloseSecs, roleAttrs } = await import('../domain/theme.js');
+  assert.ok(SURFACE_ROLES.includes('popup'));
+  assert.equal(popupAutoCloseSecs([{ role: 'popup', attrs: { 'data-autoclose': '3' } }, { role: 'card', attrs: { 'data-autoclose': '9' } }]), 3);
+  assert.equal(popupAutoCloseSecs([{ role: 'popup', attrs: {} }]), 0);
+  const th = { tokens: {}, surfaces: { card: { fill: '#fff' } } };
+  assert.deepEqual(roleAttrs(th, 'popup'), { fill: '#fff' });
+  const { screenParts } = await import('../application/export/templates.js');
+  const parts = screenParts({ screen: { key: 's', name: 's', width: 10, height: 10 }, inlineSvgs: [], links: [], components: [], overlays: [{ id: 'ov1', kind: 'popup', label: 'p', svgs: [], width: 10, height: 10, autoClose: 4 }] });
+  assert.match(parts.overlays, /data-ud-autoclose="4"/);
+  assert.match(web('components/designer.js'), /popupAutoCloseSecs\(el\.nodes\)/);
+});

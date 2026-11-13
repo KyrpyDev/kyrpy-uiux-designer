@@ -128,7 +128,7 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     for (var i = 0; i < all.length; i++) { var id = all[i].id.toLowerCase(); if (id === k || id.slice(-(k.length + 1)) === '-' + k) return all[i]; }
     return null;
   }
-  function openOv(o, from) { if (!o) return false; closeOverlay(); o.hidden = false; openOverlay = o; returnTo = from || null; var c = o.querySelector('.ud-close'); if (c) c.focus(); return true; }
+  function openOv(o, from) { if (!o) return false; closeOverlay(); o.hidden = false; openOverlay = o; returnTo = from || null; var ac = Number(o.getAttribute('data-ud-autoclose')) || 0; if (ac > 0) autoTimer = setTimeout(function () { if (openOverlay === o) closeOverlay(); }, ac * 1000); var c = o.querySelector('.ud-close'); if (c) c.focus(); return true; }
   var menus = bindMenus(stage, { onAction: function (a) {
     var act = a.action || '';
     if (a.target && byKey[a.target]) { go(a.target); return; }
@@ -232,8 +232,8 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   document.getElementById('pv-info-toggle').addEventListener('click', function () { info.classList.toggle('open'); fit(); });
 
   // popups, drawers, inline elements and toolbars of the screen
-  var openOverlay = null, returnTo = null;
-  function closeOverlay() { if (!openOverlay) return false; openOverlay.hidden = true; openOverlay = null; if (returnTo && returnTo.focus) returnTo.focus(); returnTo = null; return true; }
+  var openOverlay = null, returnTo = null, autoTimer = null;
+  function closeOverlay() { clearTimeout(autoTimer); autoTimer = null; if (!openOverlay) return false; openOverlay.hidden = true; openOverlay = null; if (returnTo && returnTo.focus) returnTo.focus(); returnTo = null; return true; }
   function trigger(t) {
     if (!t) return;
     if (t.hasAttribute('data-ud-close')) { closeOverlay(); return; }

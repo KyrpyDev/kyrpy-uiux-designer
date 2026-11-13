@@ -40,6 +40,20 @@ export function withClickTarget(events, { screenId = null, elementId = null } = 
   return rest;
 }
 
+/** Words that mark a button as "go back / cancel" (name, label, key or icon of the button). */
+const BACK_RE = /(^|[^a-z])(back|go[-_ ]?back|cancel|close|dismiss|geri|iptal|kapat|vazge[cç])([^a-z]|$)|arrow[-_ ]?left|chevron[-_ ]?left/i;
+
+/** True when any of the texts names a back / cancel / close button. */
+export function isBackOrCancel(...texts) {
+  return texts.some(t => typeof t === 'string' && t && (BACK_RE.test(t) || BACK_RE.test(t.toLocaleLowerCase('tr'))));
+}
+
+/** The events of a node with its click action set to "go back"; every other trigger is kept. */
+export function withBackAction(events) {
+  const rest = (Array.isArray(events) ? events : []).filter(e => e?.trigger !== 'click');
+  return [...rest, { trigger: 'click', type: 'back' }];
+}
+
 /** Keys whose value differs between two flat drafts (objects are compared by JSON). */
 export function changedKeys(before, after) {
   const same = (a, b) => a === b || JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

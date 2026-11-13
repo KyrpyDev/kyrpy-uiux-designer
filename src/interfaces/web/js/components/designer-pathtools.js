@@ -450,6 +450,11 @@ const methods = {
         fn: () => this.setButtonsGoToScreen()
       },
       {
+        label: '↩ Back / Cancel buttons: set "Go back" (this screen or all screens)…',
+        disabled: (this.type !== 'screen' && this.type !== 'element') || !this.nodes.some(n => n.kind === 'instance' && n.refType === 'button'),
+        fn: () => this.setBackCancelButtons()
+      },
+      {
         label: '✨ Add Animation (3D Flip / Pulse)',
         disabled: !one,
         fn: () => this.addAnimation(one.id, 'flip')

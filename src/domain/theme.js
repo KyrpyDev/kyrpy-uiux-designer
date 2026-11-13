@@ -44,7 +44,21 @@ export const THEME_KIND_LABELS = {
   retro: 'Pop & Neon Retro UI'
 };
 
-export const SURFACE_ROLES = ['bg', 'bg-glow', 'card', 'container', 'carousel-container', 'repeater-container', 'button', 'field', 'shine'];
+export const SURFACE_ROLES = ['bg', 'bg-glow', 'card', 'container', 'carousel-container', 'repeater-container', 'button', 'field', 'shine', 'popup'];
+
+/**
+ * Seconds after which an element shown as a popup closes by itself: the largest `data-autoclose` of its nodes with the
+ * surface role "popup" (0 = stays open).
+ */
+export function popupAutoCloseSecs(nodes) {
+  let s = 0;
+  for (const n of Array.isArray(nodes) ? nodes : []) {
+    if (n?.role !== 'popup') continue;
+    const v = Number(n.attrs?.['data-autoclose']);
+    if (Number.isFinite(v) && v > s) s = v;
+  }
+  return s;
+}
 
 const SEMANTIC = {
   success: '#22C55E',
@@ -653,7 +667,7 @@ export function resolveTokens(value, tokens) {
 
 /** Attributes contributed by the theme for a surface role (already token-resolved). */
 export function roleAttrs(theme, role) {
-  const effectiveRole = (role === 'container' || role === 'carousel-container' || role === 'repeater-container') ? 'card' : role;
+  const effectiveRole = (role === 'container' || role === 'carousel-container' || role === 'repeater-container' || role === 'popup') ? 'card' : role;
   const s = effectiveRole && theme?.surfaces?.[effectiveRole];
   if (!s) return {};
   const out = {};

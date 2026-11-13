@@ -86,8 +86,9 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
   });
 
   // popups, drawers, inline elements and toolbars: hotspots carry data-ud-open="<overlay id>" and optional data-trigger
-  var openOverlay = null, returnTo = null;
+  var openOverlay = null, returnTo = null, autoTimer = null;
   function closeOverlay() {
+    clearTimeout(autoTimer); autoTimer = null;
     if (!openOverlay) return false;
     openOverlay.hidden = true; openOverlay = null;
     if (returnTo && returnTo.focus) returnTo.focus();
@@ -103,6 +104,8 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
     var o = document.getElementById(t.getAttribute('data-ud-open'));
     if (!o) return;
     closeOverlay(); o.hidden = false; openOverlay = o; returnTo = t;
+    var ac = Number(o.getAttribute('data-ud-autoclose')) || 0;
+    if (ac > 0) autoTimer = setTimeout(function () { if (openOverlay === o) closeOverlay(); }, ac * 1000);
     var c = o.querySelector('.ud-close'); if (c) c.focus();
   }
   document.addEventListener('click', function (ev) {
@@ -310,7 +313,7 @@ export function screenParts({ screen, inlineSvgs, links, components, actions = [
     if (a.type === 'animate' || a.type === 'toggle') return `<button type="button" class="ud-hotspot" data-ud-toggle ${common}></button>`;
     return `<button type="button" class="ud-hotspot" data-ud-back ${common}></button>`;
   }).join('\n      ');
-  const ov = overlays.map(o => `<div class="ud-overlay ud-${o.kind}${o.side ? ` ud-from-${o.side}` : ''}" id="${esc(o.id)}" role="dialog" aria-modal="true" aria-label="${esc(o.label)}" hidden>
+  const ov = overlays.map(o => `<div class="ud-overlay ud-${o.kind}${o.side ? ` ud-from-${o.side}` : ''}" id="${esc(o.id)}"${o.autoClose > 0 ? ` data-ud-autoclose="${Number(o.autoClose)}"` : ''} role="dialog" aria-modal="true" aria-label="${esc(o.label)}" hidden>
   <div class="ud-scrim" data-ud-close></div>
   <div class="ud-panel" style="--ud-panel-w:${o.width}px">
     <button type="button" class="ud-close" data-ud-close aria-label="Close">✕</button>

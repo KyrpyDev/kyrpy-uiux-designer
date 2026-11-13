@@ -1,6 +1,7 @@
 import { ValidationError } from '../../domain/errors.js';
 import { nodeBBox } from '../../domain/geometry.js';
 import { suffixIds } from '../../domain/svg.js';
+import { popupAutoCloseSecs } from '../../domain/theme.js';
 import { TYPES } from '../../domain/entities.js';
 import { bindMenus } from '../../domain/menu-runtime.js';
 import { isMenuItemShown } from '../../domain/menu.js';
@@ -122,7 +123,7 @@ export class ExportService {
                 this.render.context(primary, full.nodes).lib.icon.forEach((_, i) => used.icon.add(i));
                 for (const t of ['button', 'element']) this.render.context(primary, full.nodes).lib[t].forEach((_, i) => used[t].add(i));
                 used.element.add(el.id);
-                overlays.set(id, { id, kind: c.type, side, key: el.key, label: el.label || el.name, width: el.width, height: el.height,
+                overlays.set(id, { id, kind: c.type, side, key: el.key, label: el.label || el.name, width: el.width, height: el.height, autoClose: popupAutoCloseSecs(full.nodes),
                   svgs: themes.map(th => suffixIds(this.render.boxSvg('element', el.id, th.key, { emitIds: true, standalone: false, repeaterMode: 'runtime' }), `${th.key}-${id}`).replace('<svg', `<svg data-theme="${th.key}"`)) });
               }
               actions.push({ ...base, element: el.key, ...(side ? { side } : {}), overlay: id });
