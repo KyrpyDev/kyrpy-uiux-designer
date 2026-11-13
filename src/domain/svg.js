@@ -63,7 +63,7 @@ function commonAttrs(el, a, ctx, all) {
   const cls = [a.class, ctx.anims.has(el.id) ? nodeClass(el.id) : ''].filter(Boolean).join(' ');
   if (ctx.anims.has(el.id)) ctx.usedAnimNodes.add(el.id);
   a.class = cls || null;
-  if (ctx.editor) { a['data-el'] = el.id; if (el.name) a['data-name'] = el.name; }
+  if (ctx.editor) { a['data-el'] = el.id; if (el.name) a['data-name'] = el.name; if (el.kind === 'instance' && el.refType === 'element' && el.refId != null) a['data-ref-el'] = el.refId; }
   if (ctx.emitIds && el.name && !ctx.seenIds.has(el.name)) { a.id = el.name; ctx.seenIds.add(el.name); }
   if (el.rotation) {
     const b = nodeBBox(el, all);
@@ -283,7 +283,23 @@ function assemble(ctx, { width, height, viewBox, body, standalone = true, fontFa
     viewBox: viewBox || `0 0 ${width} ${height}`, width, height, role: 'img', 'aria-label': label || null,
     'font-family': fontFamily === null ? null : (fontFamily || DEFAULT_FONT), class: 'ud-doc'
   };
-  return `<svg${attrString(attrs)}><defs>${buildThemeDefs(ctx.theme)}${symbols}</defs>${css || reduced ? `<style>${css}${reduced}</style>` : ''}${background || ''}${body}</svg>`;
+  return scopeThemeIds(`<svg${attrString(attrs)}><defs>${buildThemeDefs(ctx.theme)}${symbols}</defs>${css || reduced ? `<style>${css}${reduced}</style>` : ''}${background || ''}${body}</svg>`, ctx.theme);
+}
+
+/* In the browser many svgs share one page: url(#lgS) resolves to the FIRST #lgS in the document, which may belong to another
+ * theme or sit in a hidden panel (display:none gradients paint nothing: cards, bars and buttons went blank in the test window).
+ * Each svg drawn in the browser gets its own theme gradient / filter ids. Server output (exports, tests) stays unchanged. */
+let scopeSeq = 0;
+function scopeThemeIds(svg, theme) {
+  if (typeof document === 'undefined') return svg;
+  const ids = [...buildThemeDefs(theme).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  if (!ids.length) return svg;
+  const sfx = `-s${(++scopeSeq).toString(36)}`;
+  const set = new Set(ids);
+  return svg
+    .replace(/\bid="([^"]+)"/g, (m, id) => (set.has(id) ? `id="${id}${sfx}"` : m))
+    .replace(/url\(#([^)\s"']+)\)/g, (m, id) => (set.has(id) ? `url(#${id}${sfx})` : m))
+    .replace(/(href=")#([^"]+)"/g, (m, a, id) => (set.has(id) ? `${a}#${id}${sfx}"` : m));
 }
 
 /** Full svg for a button, element or screen. */

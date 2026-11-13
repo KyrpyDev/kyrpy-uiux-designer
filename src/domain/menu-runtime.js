@@ -444,6 +444,14 @@ export function bindMenus(root, opts) {
       var sel = '[data-repeater-for="' + tid + '"], [data-container-for="' + tid + '"], [data-el="' + tid + '"]' + (/^[A-Za-z_][\w-]*$/.test(tid) ? ', #' + tid : '');
       var q = function (n) { try { return n && n.querySelector ? n.querySelector(sel) : null; } catch (e) { return null; } };
       var found = q(screen) || q(root) || q(d);
+      // a library element picked as the target: the placed instance of it on this screen, then that node's container
+      if (!found) {
+        var sel0 = sel; sel = '[data-ref-el="' + tid + '"]';
+        var inst = q(screen) || q(root);
+        sel = sel0;
+        var nid = inst && inst.getAttribute('data-el');
+        if (nid) { var s2 = sel; sel = '[data-repeater-for="' + nid + '"], [data-container-for="' + nid + '"]'; found = q(screen) || q(root) || inst; sel = s2; }
+      }
       if (found) {
         var st = (found.getAttribute && found.getAttribute('data-rpt-axis')) ? found : (found.querySelector ? found.querySelector('.ud-rpt-stage') : null);
         if (st) return st;

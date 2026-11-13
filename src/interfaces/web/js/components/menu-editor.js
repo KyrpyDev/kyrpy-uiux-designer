@@ -159,15 +159,15 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
     };
     const newBtn = allowCreate ? h('button', { class: 'btn primary', 'data-f': 'pick-screen-new', onclick: () => { fin({ create: true }); m.close(); } }, '＋ New screen (new tab)') : null;
     const paint = () => {
-      clear(tabs); tabs.append(tabBtn('screen', '🖥 Go to screen'), tabBtn('element', '▣ Show element as popup'), tabBtn('repeater', '⟳ Scroll repeater'));
-      q.placeholder = tab === 'screen' ? 'Search screens of this project, my projects and the public library…' : tab === 'repeater' ? 'Search repeater elements or pick auto-bind…' : 'Search elements of this project, my projects and the public library…';
+      clear(tabs); tabs.append(tabBtn('screen', '🖥 Go to screen'), tabBtn('element', '▣ Show element as popup'), tabBtn('repeater', '⟳ Scroll container'));
+      q.placeholder = tab === 'screen' ? 'Search screens of this project, my projects and the public library…' : tab === 'repeater' ? 'Search repeaters and scrollable containers, or pick auto-bind…' : 'Search elements of this project, my projects and the public library…';
       if (newBtn) newBtn.hidden = tab !== 'screen';
       fill();
     };
     q.addEventListener('input', fill);
     m = modal({ title: 'When clicked: go to a screen, show element or scroll repeater', wide: true, onClose: () => fin(null),
       content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater container when slid.'), q, list),
+        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater or any scrollable container when slid.'), q, list),
       actions: close => [newBtn,
         h('button', { class: 'btn', 'data-f': 'pick-target-none', onclick: () => { fin({ none: true }); close(); } }, 'Nothing (no screen, no popup)'),
         h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')].filter(Boolean) });
@@ -175,7 +175,10 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
     for (const type of ['screen', 'element']) api.list(type, '', { includePublic: true }).then(rows => {
       all[type] = rows;
       if (type === 'element') {
-        all.repeater = rows.filter(e => e.key === 'html-repeater' || e.meta?.containerType === 'repeater' || e.role === 'repeater-container' || (e.attrs && e.attrs['data-container'] === 'repeater'));
+        // repeaters first, then every other scrollable container (container, carousel container, container category / meta)
+        const isRpt = e => e.key === 'html-repeater' || e.meta?.containerType === 'repeater' || e.role === 'repeater-container' || (e.attrs && e.attrs['data-container'] === 'repeater');
+        const isCont = e => isRpt(e) || /^html-(carousel-)?container$/.test(e.key || '') || e.category === 'containers' || !!e.meta?.isContainer || !!e.meta?.containerType || /container/i.test(e.key || '');
+        all.repeater = [...rows.filter(isRpt), ...rows.filter(e => !isRpt(e) && isCont(e))];
         if (!all.repeater.length) all.repeater = rows;
       }
       if (tab === type || (tab === 'repeater' && type === 'element')) fill();
