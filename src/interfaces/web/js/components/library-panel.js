@@ -86,11 +86,13 @@ export class LibraryPanel {
         role: 'tab',
         'aria-selected': state.tab === k,
         'aria-label': `${label} (${count})`,
-        'data-tip': `${label} (${count})\nClick: show this library and open its designer (the item you edited last)\nCtrl+click: only show the library, the open item stays (drag items into it)`,
+        'data-tip': `${label} (${count})\nClick: show this library; the open item stays (drag items into it)\nCtrl+click: also open its designer (the item you edited last)`,
         // the canvas follows the item type: its designer opens with the item of that type edited last (each type keeps its own history)
         onclick: e => {
           state.tab = k; this.renderTabs(); this.renderBody();
-          if (!(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
+          // the open item stays (drag library items into it); the designer only follows the tab when nothing is open yet, or with Ctrl/⌘+click
+          const open = window.__app?.current || window.__app?.designer?.doc;
+          if (!open || e.ctrlKey || e.metaKey) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
         }
       }, iconEl(TAB_ICONS[k], { size: 18 }), h('span', { class: 'lib-tab-count' }, String(count))));
     }
