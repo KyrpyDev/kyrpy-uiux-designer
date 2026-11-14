@@ -200,6 +200,24 @@ export function designRoutes(router, c) {
   });
   router.get('/api/sprite', ({ query }) => ({ raw: c.render.sprite(query.get('theme') || c.settings.get().theme), contentType: 'image/svg+xml' }));
   // online icon sources (Iconify API): browse sets, search, preview, import one / many / a whole set (<= 10 000)
+  // the image library: pictures for image nodes (PNG / JPEG / GIF / WebP), free stock photo search and import
+  if (c.images) {
+    const imgQuery = query => ({
+      q: query.get('q') || '', projectId: query.get('projectId') ? Number(query.get('projectId')) : null, visibility: query.get('visibility') || '',
+      category: query.get('category') || '', source: query.get('source') || '', limit: Number(query.get('limit')) || 200, offset: Number(query.get('offset')) || 0
+    });
+    router.get('/api/images', ({ query, actor }) => c.images.list(imgQuery(query), { actor }));
+    router.get('/api/images/categories', () => c.images.categories());
+    router.post('/api/images', ({ body, actor, projectId }) => c.images.create({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor }));
+    router.get('/api/images/:id', ({ params, actor }) => c.images.get(intId(params.id), { actor }));
+    router.get('/api/images/:id/file', ({ params, actor }) => c.images.file(intId(params.id), { actor }));
+    router.patch('/api/images/:id', ({ params, body, actor }) => c.images.update(intId(params.id), body || {}, { actor }));
+    router.put('/api/images/:id', ({ params, body, actor }) => c.images.update(intId(params.id), body || {}, { actor }));
+    router.delete('/api/images/:id', ({ params, actor }) => c.images.remove(intId(params.id), { actor }));
+    router.get('/api/stock-images/sources', () => ({ sources: c.stockImages.sources() }));
+    router.get('/api/stock-images/search', ({ query }) => c.stockImages.search({ provider: query.get('provider') || 'openverse', q: query.get('q') || '', page: query.get('page'), perPage: query.get('perPage') }));
+    router.post('/api/stock-images/import', ({ body, actor, projectId }) => c.stockImages.importImages({ ...body, projectId: body?.projectId ?? projectId ?? 1 }, { actor }));
+  }
   router.get('/api/online/sources', () => ({ sources: c.onlineIcons.sources() }));
   router.get('/api/online/collections', async () => ({ collections: await c.onlineIcons.collections() }));
   router.get('/api/online/search', ({ query }) => c.onlineIcons.search({ q: query.get('q') || '', prefix: query.get('prefix') || '', start: query.get('start'), limit: query.get('limit') }));

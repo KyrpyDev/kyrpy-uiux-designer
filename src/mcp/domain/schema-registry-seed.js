@@ -302,6 +302,20 @@ export const SCHEMA_REGISTRY_SEED = {
       snapshot: 'JSON snapshot used for restore.', mcp_context: C.mcp_context
     }
   },
+  images: {
+    purpose: 'The image library: raster pictures (PNG, JPEG, GIF, WebP; no SVG) shown by image nodes (nodes.tag = image, attrs.imageId).',
+    usage: 'Upload with POST /api/images { data: "data:image/png;base64,…" } or import free stock photos (POST /api/stock-images/import). Place one with an image node { tag: "image", attrs: { x, y, width, height, imageId, preserveAspectRatio, "data-clip": "circle" | "rounded", "data-radius" } }. Never put remote URLs in nodes.',
+    columns: {
+      id: C.id, key: 'Variable name of the picture, unique in its project (project prefix + image + name).', name: 'Display name.', label: C.label,
+      category: C.category, tags: 'JSON array of search tags.', description_dev: 'description-dev: what the picture shows and where it is used.',
+      mime: 'image/png, image/jpeg, image/gif or image/webp.', width: 'Width in pixels (read from the file header).', height: 'Height in pixels.',
+      bytes: 'File size in bytes (max 6 MB).', sha256: 'Content hash of the file; the same picture is stored once per project.',
+      data: 'The file as base64 text (never listed; read it with GET /api/images/:id/file).',
+      source: 'upload, svg-import, openverse, pexels or pixabay.', source_id: 'Photo id at the stock provider.', source_url: 'Source page of a stock photo.',
+      author: 'Photographer / creator.', author_url: 'Author page.', license: 'License name (CC BY 4.0, Pexels License, …).', license_url: 'License text.',
+      project_id: C.project_id, visibility: C.visibility, creator_id: C.creator_id, created_at: C.created_at, updated_at: C.updated_at, mcp_context: C.mcp_context
+    }
+  },
   translations: {
     purpose: 'Translations of any text field of any table (table_name + record_id + field_name + lang_code).',
     usage: 'Base language is English (the column value itself). Use for label and other user-facing text.',

@@ -255,6 +255,15 @@ export const api = {
     return api.get(`/api/${PLURAL[type]}${s ? `?${s}` : ''}`);
   },
   getDesign: (type, id) => api.get(`/api/${PLURAL[type]}/${id}`),
+  // image library (pictures shown by image nodes) and free stock photos
+  images: (q = {}) => api.get(`/api/images?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)]))}`),
+  image: id => api.get(`/api/images/${id}`),
+  createImage: body => api.post('/api/images', body),
+  updateImage: (id, patch) => api.patch(`/api/images/${id}`, patch),
+  deleteImage: id => api.del(`/api/images/${id}`),
+  stockImageSources: () => api.get('/api/stock-images/sources'),
+  stockImageSearch: (provider, q, page = 1) => api.get(`/api/stock-images/search?${new URLSearchParams({ provider, q, page: String(page) })}`),
+  stockImageImport: body => api.post('/api/stock-images/import', body),
   getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
   createDesign: (type, body) => api.post(`/api/${PLURAL[type]}`, body),
   updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body).then(r => { markEdited(type, id); return r; }),

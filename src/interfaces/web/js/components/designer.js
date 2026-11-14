@@ -2204,9 +2204,28 @@ export class Designer {
     } catch (e) { toast(e.message, 'error'); }
   }
 
+  /**
+   * Places a picture of the image library as an image node (a raster picture, not a library instance): its own size scaled
+   * to fit 60 % of the design, centred on the drop point (or the design). Paths and icons draw vectors only.
+   */
+  async addImage(imageId, at) {
+    if (this.previewLocked?.()) return;
+    if (this.type === 'path' || this.type === 'icon') return toast('Images go on buttons, elements and screens (paths and icons are vector only)', 'error');
+    let img;
+    try { img = await api.image(imageId); } catch (e) { return toast(e.message, 'error'); }
+    const W = Number(this.doc.width) || 390, H = Number(this.doc.height) || 844;
+    const iw = img.width || 400, ih = img.height || 300, k = Math.min(1, (W * 0.6) / iw, (H * 0.6) / ih);
+    const w = Math.max(8, Math.round(iw * k)), hgt = Math.max(8, Math.round(ih * k));
+    const cx = at?.x ?? W / 2, cy = at?.y ?? H / 2;
+    await this.addNode({ tag: 'image', kind: 'shape', name: img.key, descriptionDev: img.descriptionDev || '',
+      attrs: { x: Math.round(cx - w / 2), y: Math.round(cy - hgt / 2), width: w, height: hgt, imageId: img.id, preserveAspectRatio: 'xMidYMid slice' } });
+    toast(`Image “${img.label || img.name}” added`, 'ok', 1200);
+  }
+
   async addInstance(refType, id, at) {
     if (this._loadingTarget && this._loadingTarget.type === refType && this._loadingTarget.id === Number(id)) return;
     if (!this.doc) return toast('Open a design first', 'error');
+    if (refType === 'image') return this.addImage(id, at);
     if (refType === this.type && Number(id) === Number(this.doc.id)) return;
     if (!canContain(this.type, refType)) {
       const ok = TYPES[this.type].accepts.join(', ') || 'only its own vector shapes';

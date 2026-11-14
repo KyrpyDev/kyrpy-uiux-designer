@@ -189,6 +189,10 @@ PGUSER=postgres
 PGPASSWORD=your-postgres-password-placeholder
 PGDATABASE=kyrpy-uiux-designer-db
 PGADMINDB=postgres
+
+# Optional free stock photo providers for the Images library (Openverse works without a key)
+PEXELS_API_KEY=your-pexels-api-key          # https://www.pexels.com/api/
+PIXABAY_API_KEY=your-pixabay-api-key        # https://pixabay.com/api/docs/
 ```
 
 ### Default Local Accounts
@@ -230,6 +234,9 @@ Export and import **Paths**, **Icons**, **Buttons**, **Elements**, **Screens**, 
 - **`JSON` (`.json`)**: Structured `kyrpy-uiux-library-v2` bundle with cascading sub-items (`screen → element → button → icon → path` + menu items + workflow screen bindings).
 - **`SVG` (`.svg`)**: Standalone vector artwork or multi-item SVG sheet with embedded lossless library metadata (`<!-- KYRPY_UIUX_LIBRARY_PAYLOAD:... -->`) and raw `<svg>` shape parser fallback.
 - **`HTML` (`.html`)**: Self-contained interactive HTML catalog previewing every exported item with inline SVGs plus an embedded `#ud-library-payload` script for lossless round-trip re-import.
+
+### 6b. Image Library & Free Stock Photos
+The **Images** tab of the library holds raster pictures (PNG, JPEG, GIF, WebP; max 6 MB, large uploads are downsized to 2048 px in the browser). Search by every word of the name, tags, description-dev or author; upload (button or drop files); or search **free stock photos** from **Openverse** (no key), **Pexels** and **Pixabay** (with `PEXELS_API_KEY` / `PIXABAY_API_KEY`) and import them with their author, source page and license. Drag a picture onto a design to place an **image node** (`{ tag: 'image', attrs: { x, y, width, height, imageId, preserveAspectRatio, 'data-clip': 'circle' | 'rounded', 'data-radius' } }`): the inspector changes the picture, the fit (cover / contain / stretch) and the shape (rectangle, rounded, circle). SVG imports keep embedded `<image>` pictures (moved into the library); exports embed pictures as data URIs. API: `/api/images`, `/api/stock-images/*` (also over MCP `uiux_api_call`).
 
 ### 7. Production Bundle Exporter, Native Adapters & Standalone Prototype Shell
 - Export any project into a clean, self-contained **HTML + CSS + TypeScript + JavaScript + SVG Sprite** bundle (`DEV-NOTES.md`, `manifest.json`, `screens/*.html`, `svg/sprite.svg`, `ts/app.ts`, `app/interactions.json`), plus deterministic adapters for **Web**, **React TSX (`<Icon name="…"/>`)**, **Flutter (Dart)**, **Jetpack Compose (Kotlin)**, and **SwiftUI (Swift)**.

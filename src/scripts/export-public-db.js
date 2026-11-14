@@ -209,6 +209,10 @@ try {
     DELETE FROM workflow_screens WHERE workflow_id NOT IN (SELECT id FROM workflows) OR screen_id NOT IN (SELECT id FROM screens);
     DELETE FROM workflow_links WHERE workflow_id NOT IN (SELECT id FROM workflows) OR from_screen_id NOT IN (SELECT id FROM screens) OR to_screen_id NOT IN (SELECT id FROM screens);
   `);
+  // the image library: only the public user's public images of the shared default project are published
+  if (hasTable('images')) {
+    db.prepare(`DELETE FROM images WHERE visibility IS NOT 'public' OR COALESCE(project_id, 1) != 1 OR creator_id IS NOT ?`).run(PUB);
+  }
   if (hasTable('element_scripts')) {
     db.exec('DELETE FROM element_scripts WHERE element_id NOT IN (SELECT id FROM elements);');
     db.prepare('UPDATE element_scripts SET created_by = ?, updated_by = ?').run(PUB, PUB);

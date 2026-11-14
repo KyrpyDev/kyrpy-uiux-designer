@@ -15,7 +15,7 @@ export function foldSearchText(v) {
     .replace(/ı/g, 'i');
 }
 
-const SEPARATORS = /[\s\-_.,/\\|:;]+/g;
+const SEPARATORS = /[\s\-_.,/\\|:;"'`()[\]{}]+/g;
 
 /** The words of a query (folded; separators dropped). Empty query → []. */
 export function searchTerms(q) {

@@ -1,4 +1,5 @@
 import { parseXml } from './xml-parser.js';
+import { parseImageDataUri, IMAGE_FITS } from '../../domain/image.js';
 
 const SHAPES = new Set(['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon']);
 const SKIP = new Set(['defs', 'style', 'title', 'desc', 'metadata', 'script', 'symbol', 'filter', 'linearGradient', 'radialGradient', 'clipPath', 'mask', 'marker', 'pattern']);
@@ -61,6 +62,20 @@ export function xmlToNodes(nodes, { mapAttrs, resolveUse } = {}) {
         const id = temp++;
         out.push({ id, parentId: parentTemp, tag: 'g', kind: 'group', attrs: mapped.attrs, role: mapped.role ?? null, name: mapped.name ?? '', ...(mapped.animation ? { animations: [mapped.animation] } : {}) });
         walk(node.children, id);
+        continue;
+      }
+      // <image>: an embedded picture (base64 PNG / JPEG / GIF / WebP data URI) is kept; the importer moves it into the image
+      // library. A remote picture is not downloaded: it becomes a grey placeholder of the same box, named after its address.
+      if (node.tag === 'image') {
+        const raw = String(node.attrs.href || node.attrs['xlink:href'] || '').trim();
+        const attrs = {};
+        for (const k of ['x', 'y', 'width', 'height', 'transform', 'opacity']) if (node.attrs[k] !== undefined) attrs[k] = node.attrs[k];
+        if (IMAGE_FITS.includes(node.attrs.preserveAspectRatio)) attrs.preserveAspectRatio = node.attrs.preserveAspectRatio;
+        const embedded = parseImageDataUri(raw);
+        if (embedded) attrs.href = raw.replace(/\s+/g, '');
+        const mapped = mapAttrs ? mapAttrs('image', attrs, node) : { attrs };
+        out.push({ id: temp++, parentId: parentTemp, tag: 'image', kind: 'shape', attrs: { ...mapped.attrs, ...(embedded ? { href: attrs.href } : {}) }, role: mapped.role ?? null,
+          name: mapped.name || (embedded ? 'image' : `image (not imported: ${raw.slice(0, 80)})`) });
         continue;
       }
       if (SHAPES.has(node.tag)) {

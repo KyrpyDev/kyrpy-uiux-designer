@@ -662,6 +662,31 @@ export class Inspector {
           }), { cls: 'primary', desc: 'Search the library and pick another icon' }))));
     }
 
+    // image node: the picture (from the image library), how it fills its box and its shape (round avatar, rounded corners)
+    if (e.tag === 'image') {
+      const imgId = e.attrs?.imageId ? Number(e.attrs.imageId) : null;
+      const nameEl = h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, imgId ? `image #${imgId}` : e.attrs?.href ? 'Embedded picture' : 'No picture');
+      const subEl = h('div', { class: 'muted', style: { fontSize: '11px' } });
+      if (imgId) api.image(imgId).then(r => { nameEl.textContent = r.label || r.name; subEl.textContent = [r.key, r.width && r.height ? `${r.width}×${r.height}` : '', r.author ? `by ${r.author}` : '', r.license || ''].filter(Boolean).join(' · '); }).catch(() => { nameEl.textContent = 'Missing image (deleted)'; });
+      const clip = e.attrs?.['data-clip'] || '';
+      secs.push(this.section('Image',
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+          imgId ? h('img', { src: `/api/images/${imgId}/file`, alt: '', style: { width: '44px', height: '44px', objectFit: 'cover', borderRadius: clip === 'circle' ? '50%' : '6px' } }) : null,
+          h('div', { class: 'grow', style: { minWidth: 0 } }, nameEl, subEl),
+          ibtn('image', 'Change image…', async () => {
+            const { pickImage } = await import('./image-library.js');
+            const img = await pickImage();
+            if (!img) return;
+            const { href, ...rest } = e.attrs || {};
+            await patch({ attrs: { ...rest, imageId: img.id } });
+            toast(`Image changed to “${img.label || img.name}”`, 'ok', 1400);
+          }, { cls: 'primary', desc: 'Pick another picture of the image library (upload or free stock photos there)', dataset: { act: 'img-change' } })),
+        h('div', { class: 'grid2' },
+          this.field('Fit', this.select('img-fit', e.attrs?.preserveAspectRatio || 'xMidYMid slice', [['xMidYMid slice', 'Cover (crop)'], ['xMidYMid meet', 'Contain'], ['none', 'Stretch']], v => setAttr('preserveAspectRatio', v))),
+          this.field('Shape', this.select('img-clip', clip, [['', 'Rectangle'], ['rounded', 'Rounded corners'], ['circle', 'Circle (avatar)']], v => setAttr('data-clip', v || null)))),
+        clip === 'rounded' ? this.field('Corner radius (px)', this.num('img-radius', Number(e.attrs?.['data-radius']) || 12, v => setAttr('data-radius', Math.max(0, v)))) : null));
+    }
+
     // identity (placed at the very top of the inspector panel when any element is selected, with dynamic element type title)
     const ed = d.editorFor(e);
     secs.push(this.section(elementTypeTitle(e),

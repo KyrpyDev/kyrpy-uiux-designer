@@ -372,7 +372,20 @@ export class SvgImportService {
     if (!IMPORT_TARGETS.includes(as)) throw new ValidationError('import as path, icon, button or element');
     let parsed;
     try { parsed = this.parseSvg(svg, {}); } catch (e) { throw new ValidationError(`cannot read svg: ${e.message}`); }
-    if (!parsed.nodes.length) throw new ValidationError('the svg contains no supported shapes (rect, circle, ellipse, path, line, polyline, polygon, text, g)');
+    if (!parsed.nodes.length) throw new ValidationError('the svg contains no supported shapes (rect, circle, ellipse, path, line, polyline, polygon, text, g, image)');
+    // embedded pictures go into the image library; the image node then points at it (attrs.imageId) instead of carrying the data
+    if (this.images) {
+      let n = 0;
+      for (const node of parsed.nodes) {
+        if (node.tag !== 'image' || !node.attrs?.href) continue;
+        try {
+          const img = this.images.create({ data: node.attrs.href, name: `${name || 'Imported'} image ${++n}`, projectId: Number(projectId) || 1,
+            visibility: visibility === 'public' ? 'public' : visibility === 'private' ? 'private' : 'project', source: 'svg-import' }, { actor });
+          const { href, ...rest } = node.attrs;
+          node.attrs = { ...rest, imageId: img.id };
+        } catch { /* kept inline: an image node may carry a safe data URI */ }
+      }
+    }
     const label = name || labelFromKey(slugify(`imported ${as}`));
     const baseMeta = {
       projectId: Number(projectId) || 1,

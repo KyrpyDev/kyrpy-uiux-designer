@@ -15,6 +15,7 @@
  * Every node supports multi-events (`events`: click, mouseover, release, drag, drop, dblclick, longpress, focus)
  * that can open an element, a popup, a small element toolbar, a drawer, route to a screen, go back, or trigger animations.
  */
+import { normalizeImageAttrs } from './image.js';
 import { ValidationError } from './errors.js';
 import { isValidKey, slugify, labelFromKey } from './naming.js';
 
@@ -27,7 +28,7 @@ export const TYPES = {
 };
 export const OWNER_TYPES = Object.keys(TYPES);
 export const PLURAL_TO_TYPE = Object.fromEntries(Object.entries(TYPES).map(([k, v]) => [v.plural, k]));
-export const NODE_TAGS = ['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon', 'text', 'g', 'use'];
+export const NODE_TAGS = ['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon', 'text', 'g', 'use', 'image'];   // image: a raster picture of the image library (domain/image.js)
 export const NODE_KINDS = ['shape', 'text', 'group', 'instance'];
 
 export const VISIBILITY_LEVELS = ['public', 'private', 'project'];
@@ -560,6 +561,8 @@ export function normalizeNode(input, { partial = false } = {}) {
   if (!partial || has('onClick')) out.onClick = normalizeClickAction(input.onClick);
   if (!partial || has('events')) out.events = normalizeEvents(input.events);
   if (!partial || has('attrs')) out.attrs = input.attrs && typeof input.attrs === 'object' ? { ...input.attrs } : {};
+  // an image keeps only a library image id or a safe data URI (no remote or script URLs)
+  if (out.attrs && (out.tag === 'image' || (partial && !has('tag') && (out.attrs.imageId !== undefined || out.attrs.href !== undefined)))) out.attrs = normalizeImageAttrs(out.attrs);
   if (out.kind === 'instance' && (!out.refType || out.refId == null) && !partial) throw new ValidationError('instance nodes need refType and refId');
   return out;
 }

@@ -7,6 +7,7 @@ import { resolveTokens, roleAttrs, buildThemeDefs } from './theme.js';
 import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
+import { imageMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems } from './repeater.js';
 
@@ -32,7 +33,7 @@ const round = v => Math.round(v * 100) / 100;
  * Fresh render context.
  * @param lib  { path, icon, button, element }: Maps id -> { key, width, height, nodes, menu? } (menu: {cfg, items})
  */
-export function createContext({ theme, lib = {}, animations = [], editor = false, emitIds = false, repeaterMode = 'animate' } = {}) {
+export function createContext({ theme, lib = {}, animations = [], editor = false, emitIds = false, repeaterMode = 'animate', imageHref = null } = {}) {
   const anims = new Map();
   for (const a of animations) {
     if (a.nodeId == null) continue;
@@ -40,7 +41,8 @@ export function createContext({ theme, lib = {}, animations = [], editor = false
     anims.get(a.nodeId).push(a);
   }
   const L = { path: new Map(), icon: new Map(), button: new Map(), element: new Map(), ...lib };
-  return { theme, lib: L, anims, editor, emitIds, depth: 0, activeInstances: new Set(), usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
+  // imageHref(id): the URL / data URI of a library image (default: its file URL on this server; exports pass data URIs)
+  return { theme, lib: L, anims, editor, emitIds, imageHref, depth: 0, activeInstances: new Set(), usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
     // repeaters: 'animate' (canvas preview), 'static' (first frame, svg export) or 'runtime' (template once + data for the html runtime)
     repeaterMode: ['animate', 'static', 'runtime'].includes(repeaterMode) ? repeaterMode : 'animate', repeaterCss: new Set(), hasRepeaterRuntime: false };
 }
@@ -173,6 +175,7 @@ function renderNode(el, ctx, idx, all) {
   if (el.tag === 'use') return '';   // a bare <use> is only valid as a library instance
   a = commonAttrs(el, a, ctx, all);
   if (el.tag === 'text') return `<text${attrString(a)}>${esc(el.text)}</text>`;
+  if (el.tag === 'image') return imageMarkup(el, a, { attrString, imageHref: ctx.imageHref }) + renderContainerChildren(el, ctx, idx, all);
   if (el.tag === 'g') {
     const kids = renderContainerChildren(el, ctx, idx, all);
     return `<g${attrString(a)}>${kids}</g>`;

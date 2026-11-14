@@ -2,6 +2,7 @@
  * Left panel: the libraries along the hierarchy  Paths → Icons → Buttons → Elements,  the Screens catalog and the Workflows.
  * Items are dragged onto the open designer (the hierarchy rules decide where they may go).
  */
+import { imageBrowser } from './image-library.js';
 import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
@@ -35,8 +36,8 @@ import { libraryMenuTools } from './menu-editor.js';
 const LARGE_ICON_LIBRARY = 1500;
 /** Known icon packs (scripts/import-icon-packs.js) in chip order; any other pack gets a chip after them. */
 const ICON_PACKS = [['lucide', 'Lucide'], ['tabler', 'Tabler'], ['heroicons', 'Heroicons'], ['phosphor', 'Phosphor'], ['bootstrap', 'Bootstrap']];
-const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows']];
-const TAB_ICONS = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow' };
+const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows'], ['image', 'Images']];
+const TAB_ICONS = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow', image: 'image' };
 const TOOLS_COLLAPSED_KEY = 'ud_lib_tools_collapsed';
 const HINT = {
   path: 'Reusable vector path groups. Drag into an icon.',
@@ -77,7 +78,9 @@ export class LibraryPanel {
   renderTabs() {
     clear(this.tabsEl);
     for (const [k, label] of TABS) {
-      const count = k === 'workflow'
+      const count = k === 'image'
+        ? (this.imageCount ?? '')
+        : k === 'workflow'
         ? this.workflows.length
         : k === 'screen'
           ? (this.screensList?.length ?? state.counts?.screens ?? '')
@@ -93,7 +96,7 @@ export class LibraryPanel {
           state.tab = k; this.renderTabs(); this.renderBody();
           // the open item stays (drag library items into it); the designer only follows the tab when nothing is open yet, or with Ctrl/⌘+click
           const open = window.__app?.current || window.__app?.designer?.doc;
-          if (!open || e.ctrlKey || e.metaKey) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
+          if (k !== 'image' && (!open || e.ctrlKey || e.metaKey)) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
         }
       }, iconEl(TAB_ICONS[k], { size: 18 }), h('span', { class: 'lib-tab-count' }, String(count))));
     }
@@ -101,6 +104,7 @@ export class LibraryPanel {
 
   async loadWorkflows() {
     try { this.workflows = await api.workflows({ includePublic: true }); } catch { this.workflows = []; }
+    try { this.imageCount = (await api.images({ limit: 1 })).total; } catch { /* the tab shows no count */ }
     this.renderTabs();
     if (state.tab === 'workflow') this.renderBody();
   }
@@ -108,6 +112,7 @@ export class LibraryPanel {
   /** What the open tab shows (rows + edit marks + filters): equal signatures mean the list on screen is still right. */
   bodySig() {
     const tab = state.tab;
+    if (tab === 'image') return `image#${state.activeProjectId}`;   // the image browser loads and refreshes itself
     const rows = tab === 'screen' ? this.screensList : tab === 'workflow' ? this.workflows : state.library?.[PLURAL[tab]];
     if (!rows) return null;
     const rowSig = tab === 'icon' ? `${rows.length}:${state.library?.iconsVersion || ''}` : rows.map(r => `${r.id}:${r.updatedAt || ''}:${r.name}:${r.visibility || ''}`).join('|');
@@ -129,6 +134,7 @@ export class LibraryPanel {
     const keepScroll = this.bodyEl.querySelector('.lib-scroll')?.scrollTop || 0;
     clear(this.bodyEl);
     if (state.tab === 'screen') this.screensTab();
+    else if (state.tab === 'image') this.imagesTab();
     else if (state.tab === 'workflow') this.workflowsTab();
     else if (state.tab === 'icon') this.iconsTab();
     else this.thumbTab(state.tab);
@@ -828,6 +834,13 @@ export class LibraryPanel {
   }
 
   /* ---------- workflows ---------- */
+  /** The image library: search, upload, free stock photos; drag a picture onto a design (it becomes an image node). */
+  imagesTab() {
+    const refreshCount = () => api.images({ limit: 1 }).then(r => { this.imageCount = r.total; this.renderTabs(); }).catch(() => {});
+    this.bodyEl.append(imageBrowser({ mode: 'library', onChange: refreshCount }));
+    refreshCount();
+  }
+
   workflowsTab() {
     const box = h('div', { class: 'lib-scroll' });
     const selSet = state.libSel.workflow;

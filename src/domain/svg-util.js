@@ -4,7 +4,7 @@ const escAttr = s => esc(s).replace(/"/g, '&quot;');
 
 /* No event handlers (on*), no odd characters in names; href only to local ids. */
 const SAFE_ATTR = /^[a-zA-Z_][-a-zA-Z0-9_:.]*$/;
-export const SAFE_TAGS = new Set(['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon', 'text', 'g', 'use']);
+export const SAFE_TAGS = new Set(['rect', 'circle', 'ellipse', 'path', 'line', 'polyline', 'polygon', 'text', 'g', 'use', 'image']);
 
 export const attrString = a => Object.entries(a)
   .filter(([k, v]) => v !== null && v !== undefined && v !== '' && SAFE_ATTR.test(k) && !/^on/i.test(k) && !(/^(xlink:)?href$/.test(k) && !String(v).startsWith('#')))

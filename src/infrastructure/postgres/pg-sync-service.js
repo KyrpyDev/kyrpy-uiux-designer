@@ -430,6 +430,34 @@ CREATE TABLE IF NOT EXISTS trash_items (
   deleted_at TEXT NOT NULL DEFAULT '',
   snapshot TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS images (
+  id INTEGER PRIMARY KEY,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'images',
+  tags TEXT NOT NULL DEFAULT '[]',
+  description_dev TEXT NOT NULL DEFAULT '',
+  mime TEXT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT NOT NULL,
+  data TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'upload',
+  source_id TEXT,
+  source_url TEXT,
+  author TEXT,
+  author_url TEXT,
+  license TEXT,
+  license_url TEXT,
+  project_id INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'project',
+  creator_id INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, key)
+);
 `;
 
 /** Core DDL + the MCP layer's additions (mcp_context, uid, content_hash, schema_registry). */
@@ -461,19 +489,21 @@ export const SYNC_TABLES = [
   { name: 'translations', pk: ['id'], conflict: 'id', uniqueTuple: ['table_name', 'record_id', 'field_name', 'lang_code'] },
   { name: 'settings', pk: ['key'], conflict: 'key' },
   { name: 'trash_items', pk: ['id'], conflict: 'id' },
+  { name: 'images', pk: ['id'], conflict: 'id', uniqueTuple: ['project_id', 'key'] },
   { name: 'schema_registry', pk: ['id'], conflict: 'id', uniqueTuple: ['table_name', 'column_name'] },
   ...MCP_SYNC_TABLES
 ];
 
 const USER_REFS = [
   ...['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'trash_items'].flatMap(t => [[t, 'creator_id'], [t, 'root_owner_id']]),
+  ['images', 'creator_id'],
   ['trash_items', 'deleted_by'], ['projects', 'owner_id'], ['project_members', 'user_id'], ['project_members', 'invited_by'],
   ['change_requests', 'author_id'], ['change_requests', 'owner_id'], ['change_requests', 'reviewer_id'],
   ['template_devices', 'created_by'], ['template_buttons', 'created_by'], ['sessions', 'user_id'],
   ['api_keys', 'user_id'], ['api_keys', 'revoked_by'], ['changesets', 'user_id'], ['changesets', 'reviewed_by'],
   ['mcp_audit_log', 'user_id'], ['ai_artifacts', 'updated_by'], ['project_versions', 'approved_by']
 ];
-const PROJECT_REF_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'project_members', 'change_requests',
+const PROJECT_REF_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'images', 'project_members', 'change_requests',
   'trash_items', 'mcp_audit_log', 'ai_artifacts', 'project_versions', 'changesets', 'item_requests', 'code_bindings',
   'version_items', 'api_keys', 'design_focus'];
 const ITEM_REFS = {

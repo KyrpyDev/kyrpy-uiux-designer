@@ -41,6 +41,9 @@ import {
 import { ExportService } from './application/export/export-service.js';
 import { SvgImportService } from './application/svg-import-service.js';
 import { OnlineIconService } from './application/online-icon-service.js';
+import { ImageService } from './application/image-service.js';
+import { StockImageService } from './application/stock-image-service.js';
+import { ImageRepository } from './infrastructure/sqlite/repositories/image-repository.js';
 import { svgTextToNodes } from './infrastructure/import/svg-to-nodes.js';
 import { FsBundleWriter } from './infrastructure/export/fs-bundle-writer.js';
 import { LegacyImporter } from './infrastructure/import/legacy-importer.js';
@@ -204,6 +207,11 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   });
   const svgImport = new SvgImportService({ services, parseSvg: svgTextToNodes, transaction });
   const onlineIcons = new OnlineIconService({ services, transaction });
+  // the image library (pictures shown by image nodes) and free stock photo search / import into it
+  const images = new ImageService({ images: new ImageRepository(db), projects, auth, projectPrefix });
+  const stockImages = new StockImageService({ images });
+  render.imageHref = id => images.dataUri(id);
+  svgImport.images = images;   // SVG import moves embedded pictures into the image library
   // built-in items are public-library items: owned by the immutable `public` system user (created by applyMcpSchema)
   const importer = new LegacyImporter({ db, themes, services, menus: menuService, workflows, log, publicOwnerId: () => publicUserId(db) });
   if (seed) seedNewPresets(db, services, importer);
@@ -250,6 +258,8 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     exporter,
     svgImport,
     onlineIcons,
+    images,
+    stockImages,
     importer,
     mcp,
     /** Id of the immutable `public` system user that owns the public library. */

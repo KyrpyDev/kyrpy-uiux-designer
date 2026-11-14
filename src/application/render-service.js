@@ -47,7 +47,8 @@ export class RenderService {
       const n = queue.pop();
       if (n.kind === 'instance' && n.refType) need(n.refType, n.refId);
     }
-    return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds, repeaterMode });
+    // image nodes: server-side SVG (exports, <img> previews) cannot load files, so pictures are embedded as data URIs
+    return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds, repeaterMode, imageHref: this.imageHref || null });
   }
 
   /** repeaterMode: 'animate' (default), 'static' (first frame) or 'runtime' (template once, expanded by the html runtime). */

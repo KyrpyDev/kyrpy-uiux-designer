@@ -92,6 +92,7 @@ export function checkPublicDb(file) {
     const designs = DESIGN_TABLES.filter(t => hasTable(db, t)).map(t => `SELECT creator_id, root_owner_id, visibility, project_id FROM ${t}`).join(' UNION ALL ');
     if (n(`SELECT COUNT(*) AS n FROM (${designs}) d WHERE d.visibility IS NOT 'public' OR d.project_id != 1 OR d.creator_id IS NOT ${pubId} OR d.root_owner_id IS NOT ${pubId}`)) problems.push('design rows not owned by public / not public');
     for (const t of PRIVATE_TABLES) if (hasTable(db, t) && n(`SELECT COUNT(*) AS n FROM ${t}`)) problems.push(`rows left in ${t}`);
+    if (hasTable(db, 'images') && n(`SELECT COUNT(*) AS n FROM images WHERE visibility IS NOT 'public' OR project_id != 1 OR creator_id IS NOT ${pubId}`)) problems.push('image rows not owned by public / not public');
     // the public library is generic: app-specific (Untrap) names must live in the owner's own projects
     for (const t of DESIGN_TABLES) if (hasTable(db, t) && n(`SELECT COUNT(*) AS n FROM ${t} WHERE key LIKE '%untrap%' OR name LIKE '%untrap%' OR label LIKE '%untrap%' OR description_dev LIKE '%untrap%'`)) problems.push(`app-specific "untrap" content in public ${t}`);
     if (n('SELECT COUNT(*) AS n FROM themes WHERE builtin IS NOT 1')) problems.push('custom themes');

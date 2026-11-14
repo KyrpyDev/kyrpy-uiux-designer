@@ -350,6 +350,67 @@ export const API_OPERATIONS = [
     summary: 'Imports an online icon collection (or subset) into the active project.',
     body: { prefix: 'Collection prefix (required)', limit: 'Max icons to import', category: 'Target category', visibility: 'project | private' }
   },
+  // ---- Image library (pictures for image nodes) and free stock photos ----
+  {
+    action: 'images', group: 'images', method: 'GET', pattern: '/api/images',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Lists / searches the image library (every word of q in name, label, key, tags, description-dev, author). No file data; each item has fileUrl.',
+    query: { q: 'Search words', projectId: 'This project\'s images plus the public ones', visibility: 'public | project | private', category: 'Category', source: 'upload | openverse | pexels | pixabay', limit: 'Max items (500)', offset: 'Offset' }
+  },
+  {
+    action: 'imageCategories', group: 'images', method: 'GET', pattern: '/api/images/categories',
+    scope: 'read', mcpAllowed: true, needsProject: false,
+    summary: 'Categories used in the image library.'
+  },
+  {
+    action: 'createImage', group: 'images', method: 'POST', pattern: '/api/images',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Adds a picture to the image library. Place it with an image node: { tag: "image", attrs: { x, y, width, height, imageId, preserveAspectRatio?: "xMidYMid slice" | "xMidYMid meet" | "none", "data-clip"?: "circle" | "rounded", "data-radius"? } }.',
+    body: { data: 'Base64 data URI of a PNG, JPEG, GIF or WebP picture (max 6 MB; no SVG)', name: 'Name', label: 'Label', tags: 'Array of tags', descriptionDev: 'description-dev', category: 'Category', visibility: 'public | project | private' }
+  },
+  {
+    action: 'image', group: 'images', method: 'GET', pattern: '/api/images/:id',
+    scope: 'read', mcpAllowed: true,
+    summary: 'One image record (size, type, source, author, license, fileUrl).'
+  },
+  {
+    action: 'imageFile', group: 'images', method: 'GET', pattern: '/api/images/:id/file',
+    scope: 'read', mcpAllowed: false,
+    summary: 'The picture file itself (binary; sent with its own content type). Image nodes in the app load it from here.'
+  },
+  {
+    action: 'updateImage', group: 'images', method: 'PATCH', pattern: '/api/images/:id',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Renames, re-tags, re-describes or re-categorises an image, or changes its visibility (the picture itself stays).',
+    body: { name: 'Name', label: 'Label', tags: 'Array of tags', descriptionDev: 'description-dev', category: 'Category', visibility: 'public | project | private' }
+  },
+  {
+    action: 'replaceImageMeta', group: 'images', method: 'PUT', pattern: '/api/images/:id',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Same as PATCH /api/images/:id.'
+  },
+  {
+    action: 'deleteImage', group: 'images', method: 'DELETE', pattern: '/api/images/:id',
+    scope: 'propose', mcpAllowed: true, destructive: true,
+    summary: 'Deletes an image from the library (image nodes that show it fall back to a grey placeholder).'
+  },
+  {
+    action: 'stockImageSources', group: 'images', method: 'GET', pattern: '/api/stock-images/sources',
+    scope: 'read', mcpAllowed: true, needsProject: false,
+    summary: 'Free stock photo providers: openverse (no key), pexels (PEXELS_API_KEY), pixabay (PIXABAY_API_KEY), and which are ready.'
+  },
+  {
+    action: 'stockImageSearch', group: 'images', method: 'GET', pattern: '/api/stock-images/search',
+    scope: 'read', mcpAllowed: true, needsProject: false,
+    summary: 'Searches free stock photos of one provider; results carry id, title, thumbUrl, size, author and license.',
+    query: { provider: 'openverse | pexels | pixabay', q: 'Search words', page: 'Page (1-50)', perPage: 'Results per page (max 40)' }
+  },
+  {
+    action: 'stockImageImport', group: 'images', method: 'POST', pattern: '/api/stock-images/import',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Downloads stock photos into the image library (author, source page and license are kept).',
+    body: { items: 'Array of { provider, id, name?, tags?, descriptionDev? } (max 20)', visibility: 'public | project | private', category: 'Category (default stock)' }
+  },
   {
     action: 'importFolders', group: 'import', method: 'GET', pattern: '/api/import/folders',
     scope: 'read', mcpAllowed: false,

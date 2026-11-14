@@ -494,5 +494,39 @@ UPDATE workflows SET start_screen_id = (
   WHERE ws.workflow_id = workflows.id AND workflows.description_dev = 'Generated from the routes of screen "' || s.name || '".'
   ORDER BY s.id LIMIT 1)
 WHERE start_screen_id IS NULL;
+`,
+
+  /* 14: the image library: raster pictures (PNG, JPEG, GIF, WebP) shown by image nodes. The file is kept as base64 text so the
+     PostgreSQL sync (psql text) carries it unchanged; stock photos remember their source, author and license. */ `
+CREATE TABLE IF NOT EXISTS images (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  key            TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  label          TEXT NOT NULL DEFAULT '',
+  category       TEXT NOT NULL DEFAULT 'images',
+  tags           TEXT NOT NULL DEFAULT '[]',
+  description_dev TEXT NOT NULL DEFAULT '',
+  mime           TEXT NOT NULL,
+  width          INTEGER,
+  height         INTEGER,
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  sha256         TEXT NOT NULL,
+  data           TEXT NOT NULL,
+  source         TEXT NOT NULL DEFAULT 'upload',
+  source_id      TEXT,
+  source_url     TEXT,
+  author         TEXT,
+  author_url     TEXT,
+  license        TEXT,
+  license_url    TEXT,
+  project_id     INTEGER NOT NULL DEFAULT 1 REFERENCES projects(id) ON DELETE CASCADE,
+  visibility     TEXT NOT NULL DEFAULT 'project',
+  creator_id     INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id, visibility);
+CREATE INDEX IF NOT EXISTS idx_images_sha ON images(sha256);
 `
 ];
