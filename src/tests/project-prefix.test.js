@@ -63,3 +63,24 @@ test('project prefix: unique across all projects (public and private), immutable
     assert.throws(() => P.clone(a.id, { name: 'Dup', prefix: 'alpha' }), /already used/);
   } finally { c.close(); }
 });
+
+test('new items of a project with a prefix are named prefix-[itemtype]-name; explicit keys, the shared default project and other projects are untouched', () => {
+  const c = buildContainer({ dbFile: ':memory:' });
+  try {
+    const proj = c.projects.create({ name: 'Untrap', prefix: 'untrap', visibility: 'private' });
+    const other = c.projects.create({ name: 'Plain', visibility: 'private' });          // no prefix set (legacy / internal)
+    const made = (type, name, extra = {}) => c.services[type].create({ name, projectId: proj.id, visibility: 'private', ...extra }).key;
+    assert.equal(made('element', 'Scan Button'), 'untrap-element-scan-button');
+    assert.equal(made('screen', 'Home Screen'), 'untrap-screen-home-screen');
+    assert.equal(made('button', 'Go'), 'untrap-button-go');
+    assert.equal(made('icon', 'Arrow'), 'untrap-icon-arrow');
+    assert.equal(made('path', 'Curve'), 'untrap-path-curve');
+    assert.equal(made('element', 'Scan Button'), 'untrap-element-scan-button-2', 'unique within the project');
+    assert.equal(made('element', 'untrap-element-already'), 'untrap-element-already', 'a name that already carries the prefix is not doubled');
+    assert.equal(made('element', 'Imported', { key: 'my-own-key' }), 'my-own-key', 'an explicit key stays as given');
+    assert.equal(c.services.element.create({ name: 'Plain Item', projectId: other.id, visibility: 'private' }).key, 'plain-item');
+    assert.equal(c.services.element.create({ name: 'Shared Item', projectId: 1 }).key, 'shared-item', 'the shared default project has no prefix scope');
+    const wf = c.workflows.create({ name: 'Onboarding', projectId: proj.id, visibility: 'private' });
+    assert.equal(wf.key, 'untrap-workflow-onboarding');
+  } finally { c.close(); }
+});

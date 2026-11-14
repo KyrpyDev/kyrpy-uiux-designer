@@ -110,6 +110,13 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const q = h('input', { type: 'search', 'data-f': 'pick-target-q' });
     const list = h('div', { 'data-f': 'pick-target-list', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: '10px', maxHeight: '440px', overflow: 'auto' } });
+    // the project's prefix: its prefixed items come first (option on by default)
+    const prefix = (state.projects || []).find(p => Number(p.id) === Number(projectId ?? state.activeProjectId))?.settings?.prefix || '';
+    let prefixFirst = !!prefix;
+    const pfxBox = prefix ? h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', whiteSpace: 'nowrap' }, title: `Show the items named ${prefix}-… of this project at the top` },
+      h('input', { type: 'checkbox', checked: true, 'data-f': 'pick-target-prefix-first', onchange: e => { prefixFirst = e.target.checked; fill(); } }),
+      h('span', {}, `${prefix}- items first`)) : null;
+    q.style.flex = '1';
     const group = s => (projectId != null && Number(s.projectId) === Number(projectId) && !isPublicLibraryItem(s) ? 'here' : isPublicLibraryItem(s) ? 'public' : 'other');
     const card = (type, s) => {
       const cur = type === 'screen' ? currentScreenId : currentElementId;
@@ -143,8 +150,12 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
       // the target that is set now comes first of the whole list (green edge), whatever group it belongs to
       const curRow = curTargetId != null && tab !== 'repeater' ? hit.find(s => Number(s.id) === Number(curTargetId)) : null;
       if (curRow) list.append(head('Set now'), card(tab, curRow));
+      // the project's prefixed items (prefix-[itemtype]-name) in their own section at the top
+      const pre = prefixFirst ? hit.filter(s => s !== curRow && group(s) === 'here' && String(s.key || '').startsWith(`${prefix}-`)) : [];   // this project's own items only (another project's keys may start alike)
+      const preSet = new Set(pre);
+      if (pre.length) list.append(head(`${prefix}- · ${pre.length}`), ...pre.slice(0, 120).map(s => card(tab, s)));
       for (const [g, title] of [['here', 'This project'], ['other', 'My other projects (copied into this project)'], ['public', 'Public library (copied into this project)']]) {
-        let part = hit.filter(s => group(s) === g && s !== curRow);
+        let part = hit.filter(s => group(s) === g && s !== curRow && !preSet.has(s));
         if (curTargetId != null) {
           part = [...part].sort((a, b) => {
             const aIsCur = Number(a.id) === Number(curTargetId);
@@ -168,7 +179,7 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
     q.addEventListener('input', fill);
     m = modal({ title: 'When clicked: go to a screen, show element or scroll repeater', wide: true, onClose: () => fin(null),
       content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater or any scrollable container when slid.'), q, list),
+        tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater or any scrollable container when slid.'), h('div', { class: 'row', style: { gap: '12px', alignItems: 'center' } }, q, pfxBox), list),
       actions: close => [newBtn,
         h('button', { class: 'btn', 'data-f': 'pick-target-none', onclick: () => { fin({ none: true }); close(); } }, 'Nothing (no screen, no popup)'),
         h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel')].filter(Boolean) });
@@ -245,7 +256,7 @@ export function targetSummary(screenId, elementId, recs = {}, action = '') {
   return 'Choose screen, popup element or repeater…';
 }
 
-export async function menuItemDialog({ buttonId, item = null, parentId = null, d = null }) {
+export async function menuItemDialog({ buttonId, item = null, parentId: initialParentId = null, d = null }) {
   const menuNow = await api.menu(buttonId).catch(() => null);
   const host = findDesign('button', buttonId);
   const projectId = host?.projectId ?? state.activeProjectId;
@@ -295,7 +306,10 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
     const lookup = async (type, id) => { if (id == null) return null; const hit = findDesign(type, id) || known[type].get(id); if (hit) return hit; try { const rec = await api.getDesign(type, id); known[type].set(id, rec); return rec; } catch { return null; } };
     const paintIcon = () => { const ic = findDesign('icon', iconId) || known.icon.get(iconId); iconBtn.textContent = ic ? `Icon: ${ic.label}` : 'Choose icon…'; iconLabel.textContent = ic ? ic.key : 'no icon'; };
     iconBtn.addEventListener('click', async () => { const r = await pickIcon(iconId); if (r !== null) { iconId = r || null; await lookup('icon', iconId); paintIcon(); } });
-    label.addEventListener('input', () => { if (!nameTouched) name.value = slugify(label.value, 'item'); });
+    // the variable name follows the label, with the project's prefix in front (not in the shared default project)
+    const projPrefix = projectId != null && Number(projectId) !== 1 ? ((state.projects || []).find(p => Number(p.id) === Number(projectId))?.settings?.prefix || '') : '';
+    const autoName = () => { const base = slugify(label.value || 'item', 'item'); return projPrefix && !base.startsWith(`${projPrefix}-`) ? `${projPrefix}-${base}` : base; };
+    label.addEventListener('input', () => { if (!nameTouched) name.value = autoName(); });
     name.addEventListener('input', () => { nameTouched = true; });
     const btnBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-button' }), btnLabel = h('span', { class: 'muted' });
     const paintButton = () => { const b = findDesign('button', refButtonId) || known.button.get(refButtonId); btnBtn.textContent = b ? `Button: ${b.label || b.name}` : 'Choose button…'; btnLabel.textContent = b ? b.key : 'plain circle'; };
@@ -303,7 +317,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
     paintIcon(); paintButton();
     lookup('icon', iconId).then(paintIcon); lookup('button', refButtonId).then(paintButton);
     // parent picker (edit only): a tree of every menu item; the item itself and its sub items are not offered
-    let parentId = item?.parentId ?? null;
+    let parentId = item ? (item.parentId ?? null) : (initialParentId ?? null);   // a new item starts under the item it was added to (the + on an item adds a sub item)
     const treeBox = h('div', { class: 'el-list', 'data-f': 'mi-parent-tree', style: { maxHeight: '180px', overflow: 'auto', border: '1px solid var(--line, #8884)', borderRadius: '6px', padding: '4px' } });
     if (item && menuNow?.items) {
       const rowsAll = menuNow.items;
@@ -398,7 +412,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
       const body = {
         label: label.value.trim(),
-        name: name.value.trim() || slugify(label.value || 'item', 'item'),
+        name: name.value.trim() || autoName(),
         iconId,
         refButtonId,
         action: action.value.trim(),

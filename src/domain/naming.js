@@ -37,5 +37,6 @@ export function isValidProjectPrefix(prefix) { return typeof prefix === 'string'
 export function prefixedVariableName(prefix, itemType, itemName) {
   const base = slugify(String(itemName ?? ''), 'item');
   if (!prefix) return base;
-  return `${prefix}-${slugify(String(itemType || 'item'), 'item')}-${base}`;
+  const type = slugify(String(itemType || 'item'), 'item');
+  return base.startsWith(`${prefix}-${type}-`) ? base : `${prefix}-${type}-${base}`;   // already named that way: not doubled
 }

@@ -256,9 +256,16 @@ export function hubIconSize(cfg) {
   return v > 0 ? Math.max(0.1, Math.min(1, v)) : 0;
 }
 
-/** Hub "back" button: lower right, out past the centre button and below the right side button (vertical bar: mirrored, below the centre). */
+/**
+ * Hub "back" button: lower right of the centre button, tucked in under the right side button (vertical bar: mirrored,
+ * below the centre). It sits about 1.5 button radii in from the side buttons' column and 1.5 radii below the centre line,
+ * and is pushed out only as far as needed to never touch the centre button.
+ */
 export function hubBackSpot(hub, cx, cy) {
-  const r = hub.big * 0.13, along = hub.big / 2 + hub.gap + hub.small / 2 + hub.big * 0.6, across = hub.big * 0.4;
+  const r = hub.big * 0.13, across = r * 1.5;
+  const sideAlong = hub.big / 2 + hub.gap + hub.small / 2;                  // where the side buttons sit
+  const clear = hub.big / 2 + r * 1.15;                                     // minimum distance from the centre
+  const along = Math.max(sideAlong - r * 1.5, Math.sqrt(Math.max(0, clear * clear - across * across)));
   return { bx: cx + (hub.vertical ? across : along), by: cy + (hub.vertical ? along : across), r };
 }
 

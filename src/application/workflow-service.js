@@ -1,6 +1,6 @@
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from '../domain/errors.js';
 import { normalizeWorkflow, normalizeLink } from '../domain/entities.js';
-import { uniqueKey, slugify } from '../domain/naming.js';
+import { uniqueKey, slugify, prefixedVariableName } from '../domain/naming.js';
 import { stripOwnership } from '../domain/system-users.js';
 import { assertItemAccess } from './access-policy.js';
 import { fallbackOwnerId } from './default-owner.js';
@@ -8,8 +8,8 @@ import { collectScreenRoutes, crawlScreenRoutes, distributeLevels } from '../dom
 
 /** Workflows: screens placed on an infinite canvas plus named links between them (optionally from a specific element). */
 export class WorkflowService {
-  constructor({ workflows, screens, nodes, menus = null, users = null, collaboration = null, trash = null, transaction }) {
-    Object.assign(this, { workflows, screens, nodes, menus, users, collaboration, trash, transaction });
+  constructor({ workflows, screens, nodes, menus = null, users = null, collaboration = null, trash = null, projectPrefix = null, transaction }) {
+    Object.assign(this, { workflows, screens, nodes, menus, users, collaboration, trash, projectPrefix, transaction });
   }
 
   #enrichUsernames(w) {
@@ -115,7 +115,10 @@ export class WorkflowService {
     const pubOwner = this.#publicOwnership(data, actorId ?? actor?.id ?? null, actor);
     if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     if (input.key && this.workflows.keyExists(data.key, data.projectId)) throw new ConflictError(`workflow key "${data.key}" exists in this project`);
-    if (!input.key) data.key = uniqueKey(data.name, k => this.workflows.keyExists(k, data.projectId));
+    if (!input.key) {   // a project with a prefix: prefix-workflow-name
+      const prefix = this.projectPrefix ? this.projectPrefix(data.projectId) : null;
+      data.key = uniqueKey(prefix ? prefixedVariableName(prefix, 'workflow', data.name) : data.name, k => this.workflows.keyExists(k, data.projectId));
+    }
     return this.get(this.workflows.create(data).id);
   }
 

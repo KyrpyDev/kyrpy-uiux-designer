@@ -111,6 +111,12 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   // presets, themes). Migrations and the MCP schema still run when the database is opened.
   const auth = new AuthService({ users: userRepo, transaction });
   if (seed) auth.seed();
+  // the prefix of a project (not the shared default project): new items in it are named prefix-[itemtype]-name
+  const projectPrefix = projectId => {
+    if (projectId == null || Number(projectId) === 1) return null;
+    const v = projectRepo.get(projectId)?.settings?.prefix;
+    return typeof v === 'string' && v ? v : null;
+  };
   const projects = new ProjectService({ projects: projectRepo, users: userRepo, auth, changes: changeRepo, designs, nodes, workflows: workflowRepo, transaction });
   if (seed) projects.seed();
   const collaboration = new CollaborationService({
@@ -138,6 +144,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
         collaboration,
         trash: trashRepo,
         workflows: workflowRepo,
+        projectPrefix,
         transaction
       })
     ])
@@ -151,6 +158,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     users: userRepo,
     collaboration,
     trash: trashRepo,
+    projectPrefix,
     transaction
   });
   collaboration.bind({ services, workflows });

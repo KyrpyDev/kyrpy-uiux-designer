@@ -1,6 +1,6 @@
 import { NotFoundError, ConflictError, ValidationError, ForbiddenError } from '../domain/errors.js';
 import { normalizeDesign, normalizeNode, canContain, TYPES } from '../domain/entities.js';
-import { uniqueKey, slugify } from '../domain/naming.js';
+import { uniqueKey, slugify, prefixedVariableName } from '../domain/naming.js';
 import { validateAnimation } from '../domain/animation.js';
 import { stripOwnership } from '../domain/system-users.js';
 import { assertItemAccess } from './access-policy.js';
@@ -15,8 +15,8 @@ import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScre
  */
 export class DesignService {
   /** @param {{ownerType:'path'|'icon'|'button'|'element'|'screen', designs, nodes, animations, menus?, elementScripts?, users?, collaboration?, trash?, workflows?, transaction:(fn:Function)=>any}} deps */
-  constructor({ ownerType, designs, nodes, animations, menus = null, elementScripts = null, users = null, collaboration = null, trash = null, workflows = null, transaction }) {
-    Object.assign(this, { ownerType, designs, nodes, animations, menus, elementScripts, users, collaboration, trash, workflows, transaction });
+  constructor({ ownerType, designs, nodes, animations, menus = null, elementScripts = null, users = null, collaboration = null, trash = null, workflows = null, projectPrefix = null, transaction }) {
+    Object.assign(this, { ownerType, designs, nodes, animations, menus, elementScripts, users, collaboration, trash, workflows, projectPrefix, transaction });
     // each of these is several writes (rows, touch, trash row, change request): all or nothing (nesting-safe)
     for (const name of ['remove', 'replaceNodes', 'addNode', 'updateNode', 'removeNode']) {
       const fn = this[name].bind(this);
@@ -216,7 +216,12 @@ export class DesignService {
     if (pubOwner != null) { data.creatorId = pubOwner; data.rootOwnerId = pubOwner; }
     // keys are unique per project (src/mcp: per-project keys)
     if (input.key && this.designs.keyExists(data.key, data.projectId)) throw new ConflictError(`${this.ownerType} key "${data.key}" already exists in this project`);
-    if (!input.key) data.key = uniqueKey(data.name, k => this.designs.keyExists(k, data.projectId));
+    // a new item of a project with a prefix is named prefix-[itemtype]-name (explicit keys: imports, clones, seeds: stay as given)
+    if (!input.key) {
+      const prefix = this.projectPrefix ? this.projectPrefix(data.projectId) : null;
+      const base = prefix ? prefixedVariableName(prefix, this.ownerType, data.name) : data.name;
+      data.key = uniqueKey(base, k => this.designs.keyExists(k, data.projectId));
+    }
     if (input.builtin && (!actor || ['admin', 'superadmin'].includes(actor.role))) data.builtin = true;   // not for ordinary users
     const clean = nodes.map(e => ({ ...normalizeNode(e), id: e.id, animations: e.animations }));
     this.#assertInstances(clean);
