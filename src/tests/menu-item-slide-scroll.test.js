@@ -62,3 +62,14 @@ test('menu item dialog: gestures are Nothing / open the focused item, with a scr
   assert.match(src, /rm-toolbar-close/);
   assert.doesNotMatch(src, /if \(!this\.active \|\| ev\.target\.closest\?\.\('\.rm-item/);
 });
+
+test('a project-prefixed scroll-repeater action is read back as the built-in scroll-repeater', async () => {
+  const { menuItemAction, normalizeMenuItem } = await import('../domain/entities.js');
+  assert.equal(menuItemAction('untrap-scroll-repeater'), 'scroll-repeater');
+  assert.equal(menuItemAction(' scroll-repeater '), 'scroll-repeater');
+  assert.equal(menuItemAction('open-camera-scan'), 'open-camera-scan');
+  assert.equal(menuItemAction('a-b-scroll-repeater'), 'a-b-scroll-repeater');   // only a single prefix word is dropped
+  assert.equal(normalizeMenuItem({ action: 'untrap-scroll-repeater' }, { partial: true }).action, 'scroll-repeater');
+  const tree = buildMenuTree([{ id: 9, name: 'home', ord: 0, action: 'untrap-scroll-repeater' }]);
+  assert.equal(tree[0].action, 'scroll-repeater');
+});

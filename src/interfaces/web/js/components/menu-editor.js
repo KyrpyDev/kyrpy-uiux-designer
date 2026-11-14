@@ -14,6 +14,7 @@ import { iconEl, ibtn } from '../icons.js';
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
 import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
+import { menuItemAction } from '/domain/entities.js';
 import { isContainerNode } from '/domain/geometry.js';
 import { isRepeaterNode } from '/domain/repeater.js';
 
@@ -258,7 +259,10 @@ export function targetSummary(screenId, elementId, recs = {}, action = '') {
 
 export async function menuItemDialog({ buttonId, item = null, parentId: initialParentId = null, d = null }) {
   const menuNow = await api.menu(buttonId).catch(() => null);
-  const host = findDesign('button', buttonId);
+  // the menu's button: from the library, else the open document, else fetched (a button of another project is not in the
+  // loaded library, and its project decides the prefix of new variable names and where picked items are copied to)
+  const host = findDesign('button', buttonId) || (Number(d?.doc?.id) === Number(buttonId) && d?.type === 'button' ? d.doc : null)
+    || await api.getDesign('button', buttonId).catch(() => null);
   const projectId = host?.projectId ?? state.activeProjectId;
   return new Promise(resolve => {
     let done = false, iconId = item?.iconId ?? null, refButtonId = item?.refButtonId ?? null, nameTouched = !!item;
@@ -267,7 +271,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     const fin = v => { if (!done) { done = true; resolve(v); } };
     const label = h('input', { type: 'text', value: item?.label ?? '', placeholder: 'Shown to users' });
     const name = h('input', { type: 'text', value: item?.name ?? '', placeholder: 'variable-name (dashed words)', style: { fontFamily: 'Consolas, monospace' } });
-    const action = h('input', { type: 'text', value: item?.action ?? '', placeholder: 'event name for leaf items, or scroll-repeater' });
+    const action = h('input', { type: 'text', value: menuItemAction(item?.action ?? ''), placeholder: 'event name for leaf items, or scroll-repeater' });
     const actionPreset = h('select', { class: 'btn small', style: { minWidth: '120px' }, onchange: () => {
       if (actionPreset.value) action.value = actionPreset.value;
       // choosing Scroll Repeater turns the slide option on by itself (the container stays on Auto)
@@ -276,7 +280,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     } }, [
       ['', 'Action preset…'],
       ['scroll-repeater', '⟳ Scroll Repeater']
-    ].map(([v, l]) => h('option', { value: v, selected: (item?.action === v) }, l)));
+    ].map(([v, l]) => h('option', { value: v, selected: (menuItemAction(item?.action ?? '') === v) }, l)));
     const targetBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-target', style: { width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
     const paintTarget = () => { targetBtn.textContent = targetSummary(targetScreenId, targetElementId, targetRecs, action.value.trim()); targetBtn.title = `${targetBtn.textContent}: click to choose a screen to go to, an element popup, or repeater container to scroll`; };
     targetBtn.addEventListener('click', async () => {

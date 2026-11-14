@@ -8,7 +8,7 @@
  *   - click the centre again      goes one level back (the previous icon / items return)
  *   - click a leaf item           fires its action and closes the menu
  */
-import { DEFAULT_MENU } from './entities.js';
+import { DEFAULT_MENU, menuItemAction } from './entities.js';
 import { esc, attrString } from './svg-util.js';
 import { roleAttrs, resolveTokens } from './theme.js';
 
@@ -162,7 +162,7 @@ export function buildMenuTree(rows, { includeHidden = false } = {}) {
   const all = new Map((rows || []).map(r => [r.id, r]));
   const hiddenAbove = r => { for (let p = all.get(r.parentId), guard = 0; p && guard < 64; p = all.get(p.parentId), guard++) if (p.visible === false) return true; return false; };
   const filtered = includeHidden ? (rows || []) : (rows || []).filter(r => r.visible !== false && !hiddenAbove(r));
-  const by = new Map(filtered.map(r => [r.id, { ...r, children: [], ...(includeHidden && hiddenAbove(r) ? { hiddenByParent: true } : {}) }]));
+  const by = new Map(filtered.map(r => [r.id, { ...r, ...(r.action != null ? { action: menuItemAction(r.action) } : {}), children: [], ...(includeHidden && hiddenAbove(r) ? { hiddenByParent: true } : {}) }]));
   const roots = [];
   for (const r of [...by.values()].sort((a, b) => a.ord - b.ord || a.id - b.id)) {
     const parent = r.parentId != null ? by.get(r.parentId) : null;

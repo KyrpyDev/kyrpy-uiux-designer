@@ -567,6 +567,15 @@ export function normalizeNode(input, { partial = false } = {}) {
 /** Which library types may be placed inside a design of `ownerType` (the hierarchy rule). */
 export const canContain = (ownerType, refType) => TYPES[ownerType]?.accepts.includes(refType) ?? false;
 
+/**
+ * A menu item's action name. The built-in "scroll-repeater" action is never project-prefixed: a name like
+ * "untrap-scroll-repeater" (a project prefix put in front of it) is read back as "scroll-repeater".
+ */
+export function menuItemAction(action) {
+  const a = str(action).trim();
+  return /^[a-z0-9]+-scroll-repeater$/i.test(a) ? 'scroll-repeater' : a;
+}
+
 export function normalizeMenuItem(input, { partial = false } = {}) {
   const out = {};
   const has = k => input[k] !== undefined;
@@ -577,7 +586,7 @@ export function normalizeMenuItem(input, { partial = false } = {}) {
   if (!partial || has('refButtonId')) out.refButtonId = input.refButtonId == null || input.refButtonId === '' ? null : Number(input.refButtonId);
   if (!partial || has('parentId')) out.parentId = input.parentId == null ? null : Number(input.parentId);
   if (!partial || has('ord')) out.ord = Number(input.ord) || 0;
-  if (!partial || has('action')) out.action = str(input.action);
+  if (!partial || has('action')) out.action = menuItemAction(input.action);
   if (!partial || has('targetScreenId')) out.targetScreenId = input.targetScreenId == null || input.targetScreenId === '' ? null : Number(input.targetScreenId);
   if (!partial || has('targetElementId')) out.targetElementId = input.targetElementId == null || input.targetElementId === '' ? null : Number(input.targetElementId);
   if (!partial || has('visible')) out.visible = input.visible === false || input.visible === 0 ? false : true;
