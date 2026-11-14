@@ -14,7 +14,7 @@ import { state, emit, projectLabel, ownerLabel, isSuperadminUser } from '../stat
 import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
-import { askProjectPrefix } from './project-prefix.js';
+import { askProjectPrefix, openCreateProjectDialog } from './project-prefix.js';
 
 /** A sync answer the server refused (`ok: false`, e.g. the remote changed since the last pull) is shown, not reported as done. */
 function syncDone(res) {
@@ -581,35 +581,18 @@ export async function openProjectsModal() {
 
     host.replaceChildren();
 
-    // Create project row
-    const pName = h('input', { type: 'text', placeholder: 'New project name (e.g. Mobile Banking Redesign)' });
-    const pVis = h('select', {}, [
-      h('option', { value: 'public' }, 'Public (items visible to all projects)'),
-      h('option', { value: 'project' }, 'Project-Specific (private to project members)')
-    ]);
-    const pDesc = h('input', { type: 'text', placeholder: 'Project description' });
-
+    // Create project: title, variable (used by MCP), description, prefix and default visibility in one window
     host.append(
       h('div', { style: { padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' } },
-        h('div', { style: { fontWeight: '700', marginBottom: '6px', fontSize: '12px' } }, 'Create New Project'),
-        h('div', { class: 'row wrap' },
-          h('label', { class: 'field grow' }, h('span', {}, 'Project Name'), pName),
-          h('label', { class: 'field grow' }, h('span', {}, 'Description'), pDesc),
-          h('label', { class: 'field' }, h('span', {}, 'Default Visibility'), pVis),
+        h('div', { class: 'row wrap', style: { alignItems: 'center' } },
+          h('div', { class: 'grow' }, h('div', { style: { fontWeight: '700', fontSize: '12px' } }, 'Create New Project'),
+            h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Project title, project variable (used by MCP), description and prefix.')),
           h('button', {
-            class: 'btn primary',
-            style: { alignSelf: 'flex-end' },
+            class: 'btn primary', 'data-f': 'collab-new-project',
             onclick: async () => {
-              if (!pName.value.trim()) return toast('Enter a project name', 'error');
               try {
-                const prefix = await askProjectPrefix(pName.value);
-                if (!prefix) return;
-                const created = await api.createProject({
-                  name: pName.value.trim(),
-                  prefix,
-                  description: pDesc.value.trim(),
-                  visibility: pVis.value
-                });
+                const created = await openCreateProjectDialog({ title: 'Create new project', askVisibility: true, visibility: 'private' });
+                if (!created) return;
                 selectedId = created.id;
                 await setActiveProject(created.id);
                 toast(`Project "${created.name}" created`, 'ok');

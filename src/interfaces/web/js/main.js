@@ -1,4 +1,4 @@
-import { askProjectPrefix } from './components/project-prefix.js';
+import { askProjectPrefix, openCreateProjectDialog } from './components/project-prefix.js';
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api, ApiError, setWriteGuard } from './api.js';
@@ -239,14 +239,11 @@ async function publicEditGuard(url) {
 async function firstProjectGuard({ url } = {}) {
   if (!needsFirstProject()) return publicEditGuard(url);
   firstProjectFlow ||= (async () => {
-    const name = await promptBox('Create your first project', {
-      value: 'My first project', okLabel: 'Create project',
-      label: 'You are in the shared Default Public Project. Name a project of your own: your changes are saved there, so the shared library stays untouched.'
+    const created = await openCreateProjectDialog({
+      title: 'Create your first project', name: 'My first project',
+      intro: 'You are in the shared Default Public Project. Create a project of your own: your changes are saved there, so the shared library stays untouched.'
     });
-    if (!name?.trim()) return { cancelled: true };
-    const prefix = await askProjectPrefix(name);
-    if (!prefix) return { cancelled: true };
-    const created = await api.createProject({ name: name.trim(), prefix, visibility: 'private' });
+    if (!created) return { cancelled: true };
     state.projects = await api.projects();
     state.selectedProjectIds.add(created.id);
     let copy = null;
@@ -267,12 +264,9 @@ async function firstProjectGuard({ url } = {}) {
 setWriteGuard(firstProjectGuard);
 
 async function newProjectAction() {
-  const name = await promptBox('New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
-  if (!name?.trim()) return;
-  const prefix = await askProjectPrefix(name);
-  if (!prefix) return;
+  const created = await openCreateProjectDialog({ title: 'New project', name: 'New UI Project' });
+  if (!created) return;
   try {
-    const created = await api.createProject({ name: name.trim(), prefix, visibility: 'private' });
     state.projects = await api.projects();
     state.selectedProjectIds.add(created.id);
     await setActiveProject(created.id);

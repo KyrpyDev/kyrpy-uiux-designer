@@ -84,3 +84,16 @@ test('new items of a project with a prefix are named prefix-[itemtype]-name; exp
     assert.equal(wf.key, 'untrap-workflow-onboarding');
   } finally { c.close(); }
 });
+
+test('one create-project window everywhere: title, variable (used by MCP), description, prefix', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+  const dlg = read('interfaces/web/js/components/project-prefix.js');
+  for (const f of ['np-name', 'np-key', 'np-desc', 'np-prefix']) assert.match(dlg, new RegExp(`'data-f': '${f}'`));
+  assert.match(dlg, /api\.createProject\(\{\s*name: nameIn\.value\.trim\(\), key: keyIn\.value\.trim\(\), description: descIn\.value\.trim\(\),\s*prefix:/);
+  assert.match(dlg, /Used by MCP tools/);
+  for (const f of ['interfaces/web/js/main.js', 'interfaces/web/js/components/collab-modals.js', 'interfaces/web/js/components/item-browser.js']) {
+    assert.match(read(f), /openCreateProjectDialog\(/, f);
+    assert.doesNotMatch(read(f), /api\.createProject\(\{ name(, prefix)?, visibility/, `${f}: no project created without its fields`);
+  }
+});

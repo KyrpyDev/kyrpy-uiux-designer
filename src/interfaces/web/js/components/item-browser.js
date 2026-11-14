@@ -11,6 +11,7 @@ import { editedIndex } from '../edited.js';
 import { api } from '../api.js';
 import { state, emit, on, renderContext, ALL_ITEM_TYPES, projectLabel, uniqueById } from '../state.js';
 import { h, clear, modal, toast, confirmBox, promptBox } from '../dom.js';
+import { openCreateProjectDialog } from './project-prefix.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
 
@@ -98,10 +99,9 @@ export async function openCopyMoveToProjectsModal({ items = [], mode = 'copy', o
   const createNewProjBtn = h('button', {
     class: 'btn sm',
     onclick: async () => {
-      const name = await promptBox('Create New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
-      if (!name) return;
       try {
-        const created = await api.createProject({ name, visibility: 'private' });
+        const created = await openCreateProjectDialog({ title: 'Create new project', name: 'New UI Project' });
+        if (!created) return;
         state.projects = await api.projects();
         selectedProjects.add(created.id);
         renderProjectChecks();
@@ -456,10 +456,9 @@ export function buildItemBrowserElement({
         class: 'btn sm',
         title: 'Create a new project and select it as target',
         onclick: async () => {
-          const name = await promptBox('Create New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create' });
-          if (!name) return;
           try {
-            const created = await api.createProject({ name, visibility: 'private' });
+            const created = await openCreateProjectDialog({ title: 'Create new project', name: 'New UI Project' });
+            if (!created) return;
             state.projects = await api.projects();
             targetProjectIds.add(created.id);
             renderProjectControls();
