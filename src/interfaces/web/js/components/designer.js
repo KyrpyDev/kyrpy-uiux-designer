@@ -21,7 +21,7 @@ import {
 } from '/domain/geometry.js';
 import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterTemplates, repeaterFitBox, bindRepeaterScroll, REPEATER_KEY } from '/domain/repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterTemplates, repeaterFitBox, bindRepeaterScroll, repeaterCountAfterAdd, REPEATER_ATTR, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
 import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign, resetLibraryIconCache, ensureDesignDeps } from '../actions.js';
@@ -2013,7 +2013,7 @@ export class Designer {
           const saved = await api.patchNode(this.type, this.doc.id, id, patch);
           Object.assign(node, saved);
         }));
-        if (adopted) await this.fitRepeater(adopted.rep.id);
+        if (adopted) await this.fitRepeater(adopted.rep.id, { added: 1 });
         if (adopted) {
           const tpls = repeaterTemplates(this.nodes, adopted.rep.id);
           toast(`Added "${this.byId(adopted.id)?.name || 'node'}" into repeater "${adopted.rep.name || 'repeater'}" (${tpls.length} item types)`, 'ok', 2200);
@@ -2296,11 +2296,21 @@ export class Designer {
    * across their viewport; the template moves to the first slot.
    * Clamps the repeater's total dimensions so it does not exceed the design screen bounding box.
    */
-  async fitRepeater(repId, { quiet = true } = {}) {
-    const rep = this.byId(repId), tpls = rep && repeaterTemplates(this.nodes, rep.id);
+  /**
+   * After sub-items were added / removed or a repeater setting changed: keeps the first sub-item on the first slot.
+   * The repeater's size is fixed (set in the inspector only): nothing here resizes it. `added` = how many sub-items were just
+   * added: the first sub-item of an empty repeater is shown once (count 1), later ones raise the count to the sub-item count.
+   */
+  async fitRepeater(repId, { quiet = true, added = 0 } = {}) {
+    let rep = this.byId(repId);
+    const tpls = rep && repeaterTemplates(this.nodes, rep.id);
     const tpl = tpls?.[0] || null;
     if (!rep || !tpl) return;
-    const cfg = repeaterConfig(rep), outer = nodeBBox(rep, this.nodes), inner = containerInnerBox(rep, this.nodes, state.library.elements);
+    if (added > 0) {
+      const count = repeaterCountAfterAdd(repeaterConfig(rep).itemCount, tpls.length - added, tpls.length);
+      if (count !== repeaterConfig(rep).itemCount) { await this.patchNode(rep.id, { attrs: { ...rep.attrs, [REPEATER_ATTR.itemCount]: count } }, { quiet }); rep = this.byId(repId); }
+    }
+    const cfg = repeaterConfig(rep), inner = containerInnerBox(rep, this.nodes, state.library.elements);
     let maxW = 0, maxH = 0;
     for (const tn of tpls) {
       const b = nodeBBox(tn, this.nodes);
@@ -2309,14 +2319,6 @@ export class Designer {
     }
     const tb = nodeBBox(tpl, this.nodes);
     const item = { w: cfg.itemWidth || maxW || tb.w || 64, h: cfg.itemHeight || maxH || tb.h || 64 };
-
-    // Limit repeater container so it does not exceed the design screen's bounding box
-    const maxScreenBox = {
-      w: Math.max(32, this.doc.width - outer.x),
-      h: Math.max(32, this.doc.height - outer.y)
-    };
-    const box = repeaterFitBox(cfg, outer, inner, item, maxScreenBox);
-    if (Math.abs(box.w - outer.w) > 0.5 || Math.abs(box.h - outer.h) > 0.5) await this.patchNode(rep.id, { attrs: resizeAttrs(rep, outer, box) }, { quiet });
     const cur = this.byId(rep.id), t2 = repeaterTemplate(this.nodes, rep.id);
     if (!cur || !t2 || !['use', 'rect', 'image'].includes(t2.tag)) return;
     const b = nodeBBox(t2, this.nodes), first = repeaterPlan(repeaterConfig(cur), containerInnerBox(cur, this.nodes, state.library.elements), item).copies[0];
@@ -2340,10 +2342,10 @@ export class Designer {
       return made;
     });
     if (el) {
-      await this.fitRepeater(rep.id);
+      await this.fitRepeater(rep.id, { added: 1 });
       this.emit('selection', this.selectedNodes());
       const allTpls = repeaterTemplates(this.nodes, rep.id);
-      toast(`Added "${lib.key}" to repeater (${allTpls.length} item types · ${cfg.itemCount} copies)`, 'ok', 1800);
+      toast(`Added "${lib.key}" to repeater (${allTpls.length} item type(s) · ${repeaterConfig(this.byId(rep.id) || rep).itemCount} shown)`, 'ok', 1800);
     }
     return el;
   }

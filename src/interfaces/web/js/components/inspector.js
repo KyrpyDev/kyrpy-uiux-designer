@@ -711,7 +711,7 @@ export class Inspector {
     } else if (e.parentId != null && isRepeaterNode(d.byId(e.parentId), state.library.elements)) {
       const rep = d.byId(e.parentId);
       secs.push(this.section(`Repeater template · ${rep.name || 'repeater'}`,
-        h('div', { class: 'muted', style: { fontSize: '11px' } }, `This item is repeated ${repeaterConfig(rep).itemCount}× by its repeater; edit it once, every copy follows. Drop another item on the repeater to replace it.`),
+        h('div', { class: 'muted', style: { fontSize: '11px' } }, `A sub-item of this repeater: shown at least once among its ${Math.max(repeaterConfig(rep).itemCount, repeaterTemplates(d.nodes, rep.id).length)} items; edit it once, every copy follows. Drop another item on the repeater to add it.`),
         h('div', { class: 'row wrap' }, ibtn('selectBox', 'Select repeater', () => d.select([rep.id])))));
     } else if (e.parentId != null) {
       const parentCont = d.byId(e.parentId);
@@ -783,7 +783,7 @@ export class Inspector {
     const topOutside = d.nodes.filter(n => n.id !== e.id && n.parentId == null && n.role !== 'bg' && n.role !== 'bg-glow');
     const set = async patchAttrs => {
       await d.patchNode(e.id, { attrs: { ...(e.attrs || {}), ...patchAttrs } });
-      // the repeater grows / shrinks around its copies and keeps templates on slots (count, layout, gap ... changed)
+      // the repeater keeps its size (set with W / H only); the first sub-item stays on the first slot
       await d.fitRepeater(e.id);
     };
     const ring = (cfg.layout === 'carousel' || cfg.layout === 'roll') && cfg.dimension === '3d';
@@ -802,7 +802,7 @@ export class Inspector {
       if (!ch) return;
       const nextOrd = tpls.reduce((m, n) => Math.max(m, (n.ord ?? 0) + 1), 0);
       await d.patchNode(ch.id, { parentId: e.id, ord: nextOrd });
-      await d.fitRepeater(e.id);
+      await d.fitRepeater(e.id, { added: 1 });
       toast(`Added "${ch.name || ch.tag}" into repeater "${e.name || 'repeater'}"`, 'ok', 1500);
     });
 
@@ -819,7 +819,7 @@ export class Inspector {
     return this.section(`Repeater · ${cfg.layout} · ${cfg.dimension.toUpperCase()} · ${cfg.itemCount}×`,
       h('div', { class: 'muted', style: { fontSize: '11px' } },
         tpls.length
-          ? `${tpls.length} item type(s) configured. Repeater randomly distributes all types (at least 1 copy each) across ${cfg.itemCount} slots.`
+          ? `${tpls.length} sub-item(s): each is shown at least once; ${Math.max(cfg.itemCount, tpls.length)} shown in all${cfg.itemCount > tpls.length ? ', the extra ones picked at random' : ''}. The repeater keeps its size (W / H).`
           : 'Drop any icon, button or element onto this repeater to add template items.'),
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The item last selected in the list (tapped, or reached by a menu item that slides this repeater in focus mode) gets a red edge.' },
         h('input', { type: 'checkbox', 'data-f': `rp-focus-ring-${e.id}`, checked: e.attrs?.['data-focus-ring'] === 'true', onchange: ev => set({ 'data-focus-ring': ev.target.checked ? 'true' : 'false' }) }), h('span', {}, 'Red edge on the focused (last selected) item')),
@@ -829,7 +829,7 @@ export class Inspector {
         ], v => set({ [A.layout]: v }))),
         this.field('Dimension', dimToggle)),
       h('div', { class: 'grid2' },
-        this.field(`Item count (1–${REPEATER_MAX_ITEMS})`, this.num(`rp-count-${e.id}`, cfg.itemCount, v => set({ [A.itemCount]: Math.max(1, Math.min(REPEATER_MAX_ITEMS, Math.round(v))) }), { min: 1, max: REPEATER_MAX_ITEMS, step: 1 })),
+        this.field(`Items shown (at least ${Math.max(1, tpls.length)}, max ${REPEATER_MAX_ITEMS})`, this.num(`rp-count-${e.id}`, Math.max(cfg.itemCount, tpls.length), v => set({ [A.itemCount]: Math.max(1, Math.min(REPEATER_MAX_ITEMS, Math.round(v))) }), { min: 1, max: REPEATER_MAX_ITEMS, step: 1 })),
         this.field('Gap (px)', this.num(`rp-gap-${e.id}`, cfg.gap, v => set({ [A.gap]: Math.max(0, v) }), { min: 0, step: 2 }))),
       h('div', { class: 'grid2' },
         this.field('Item width (0 = template)', this.num(`rp-iw-${e.id}`, cfg.itemWidth, v => set({ [A.itemWidth]: Math.max(0, v) }), { min: 0, step: 1 })),

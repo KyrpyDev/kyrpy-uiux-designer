@@ -11,6 +11,7 @@ import { isContainerNode } from '../domain/geometry.js';
 import {
   REPEATER_LAYOUTS, REPEATER_KEY, isRepeaterNode, repeaterConfig, repeaterDefaultAttrs, repeaterTemplate,
   repeaterTemplateOps, repeaterMarkup, repeaterPlan, repeaterAdoptOps
+  , repeaterCountAfterAdd, repeaterTotal
 } from '../domain/repeater.js';
 import { HTML_ELEMENTS } from '../infrastructure/import/elements-catalog.js';
 
@@ -249,15 +250,25 @@ test('repeater: 2D carousel / roll / scroll loops cover the whole view at every 
   assert.ok(!repeaterMarkup('t', tiny, { x: 0, y: 0, w: 6000, h: 100 }, { w: 2, h: 2 }, '<rect/>', 'animate').css.includes('-track'));
 });
 
-test('repeater: render ignores extra children deterministically (first by ord is the template)', () => {
+test('repeater: every sub-item is shown at least once; the total is the item count (never below the sub-items), extras random', () => {
   const nodes = repeaterNodes({ itemCount: 3 });
-  nodes.push({ id: 3, parentId: 1, ord: 5, tag: 'rect', kind: 'shape', name: 'stray', attrs: { x: 30, y: 30, width: 20, height: 20, fill: '#00f' } });
+  nodes.push({ id: 3, parentId: 1, ord: 5, tag: 'rect', kind: 'shape', name: 'second', attrs: { x: 30, y: 30, width: 20, height: 20, fill: '#00f' } });
   const svg = render(nodes);
-  assert.equal(count(svg, /fill="#f00"/g), 3); assert.equal(count(svg, /fill="#00f"/g), 0);
+  assert.equal(count(svg, /fill="#f00"/g) + count(svg, /fill="#00f"/g), 3, 'three copies in all');
+  assert.ok(count(svg, /fill="#f00"/g) >= 1 && count(svg, /fill="#00f"/g) >= 1, 'each sub-item at least once');
+  // the item count is raised to the number of sub-items
+  const one = repeaterNodes({ itemCount: 1 });
+  one.push({ id: 3, parentId: 1, ord: 5, tag: 'rect', kind: 'shape', name: 'second', attrs: { x: 30, y: 30, width: 20, height: 20, fill: '#00f' } });
+  const svg1 = render(one);
+  assert.equal(count(svg1, /fill="#f00"/g), 1); assert.equal(count(svg1, /fill="#00f"/g), 1);
+  // the first sub-item by ord is the one placed on the first slot
   const swapped = nodes.map(n => n.id === 3 ? { ...n, ord: -1 } : n);
-  const svg2 = render(swapped);
-  assert.equal(count(svg2, /fill="#00f"/g), 3); assert.equal(count(svg2, /fill="#f00"/g), 0);
   assert.equal(repeaterTemplate(swapped, 1).id, 3);
+  // a single dropped sub-item is shown once (count 1 after the first add), more sub-items raise the count
+  assert.equal(repeaterCountAfterAdd(5, 0, 1), 1);
+  assert.equal(repeaterCountAfterAdd(1, 1, 2), 2);
+  assert.equal(repeaterCountAfterAdd(8, 2, 3), 8);
+  assert.equal(repeaterTotal(2, 4), 4);
 });
 
 test('repeater: moving an existing node onto a repeater makes it the template and parks the old one beside it', () => {
@@ -301,7 +312,7 @@ test('repeater fit: lists hold every copy, moving layouts fit the item across; c
   const shrink = repeaterAdoptOps([rep, big], rep, big, inner).patches.at(-1).patch.attrs;
   assert.ok(shrink.width <= inner.w);
   const des = readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8');
-  assert.match(des, /async fitRepeater\(repId/); assert.match(des, /if \(el\) \{\s*await this\.fitRepeater\(rep\.id\);/); assert.match(des, /if \(adopted\) await this\.fitRepeater\(adopted\.rep\.id\);/);
+  assert.match(des, /async fitRepeater\(repId/); assert.match(des, /if \(el\) \{\s*await this\.fitRepeater\(rep\.id, \{ added: 1 \}\);/); assert.match(des, /if \(adopted\) await this\.fitRepeater\(adopted\.rep\.id, \{ added: 1 \}\);/);
   assert.match(readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8'), /await d\.fitRepeater\(e\.id\);/);
 });
 
@@ -324,3 +335,14 @@ test('repeater: supports multiple different sub-items and guarantees all appear 
   assert.equal(redCount + greenCount + blueCount, 7, 'total copies equals itemCount (7)');
 });
 
+
+test('repeater runtime (exported page): every sub-item template is shipped and the total covers all of them', () => {
+  const nodes = repeaterNodes({ itemCount: 1 });
+  nodes.push({ id: 3, parentId: 1, ord: 5, tag: 'rect', kind: 'shape', name: 'second', attrs: { x: 30, y: 30, width: 20, height: 20, fill: '#00f' } });
+  const svg = render(nodes, 'runtime');
+  assert.equal(count(svg, /class="ud-rpt-tpl"/g), 2, 'both sub-items are in the page');
+  const data = JSON.parse(/data-rpt="([^"]*)"/.exec(svg)[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+  assert.equal(data.cfg.itemCount, 2, 'the count is raised to the number of sub-items');
+  const out = repeaterMarkup(data.id, data.cfg, data.inner, data.item, ['<i a="0"/>', '<i a="1"/>'], 'static', null);
+  assert.equal(count(out.markup, /<i a="0"\/>/g), 1); assert.equal(count(out.markup, /<i a="1"\/>/g), 1);
+});

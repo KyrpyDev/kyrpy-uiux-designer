@@ -77,8 +77,27 @@ export function repeaterConfig(el) {
     seed: String(a[A.seed] ?? ''),                       // which sub-item appears where: the same seed gives the same picture (Shuffle changes it)
     random: a[A.random] !== 'false' && a[A.random] !== false,   // exported page: every load picks the sub-items again at random
     display: a[A.display] === 'card' ? 'card' : 'list',   // list: plain rows; card: each item on its own card
-    multi: a[A.multi] === '1' || a[A.multi] === 'true' || a[A.multi] === true || !!a['data-repeater-items']
+    multi: a[A.multi] === '1' || a[A.multi] === 'true' || a[A.multi] === true || !!a['data-repeater-items'],
+    // every sub-item is repeated; only an explicit data-repeater-multi="false" keeps the old "first sub-item only" behaviour
+    single: a[A.multi] === '0' || a[A.multi] === 'false' || a[A.multi] === false
   };
+}
+
+/**
+ * How many copies a repeater shows: its item count, never fewer than its sub-items (each sub-item appears at least once;
+ * the copies above that are sub-items picked at random).
+ */
+export function repeaterTotal(itemCount, subItemCount) {
+  return clampN(Math.max(Math.round(Number(itemCount) || 1), Number(subItemCount) || 0), 1, REPEATER_MAX_ITEMS);
+}
+
+/**
+ * The item count after sub-items were added: the first sub-item of an empty repeater is shown once (count 1), later ones
+ * raise the count to at least the number of sub-items. The repeater's size never changes with it.
+ */
+export function repeaterCountAfterAdd(itemCount, subItemsBefore, subItemsAfter) {
+  if (!(subItemsBefore > 0)) return clampN(Math.max(1, subItemsAfter || 1), 1, REPEATER_MAX_ITEMS);
+  return repeaterTotal(itemCount, subItemsAfter);
 }
 
 /** The template child of a repeater (first child by ord), or null. */

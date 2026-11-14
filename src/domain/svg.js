@@ -9,7 +9,7 @@ import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig,
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
-import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems } from './repeater.js';
+import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
 export const CAROUSEL_CSS = [
   '@keyframes ud-roll-2d-horizontal{0%,20%{transform:translateX(0)}33%,53%{transform:translateX(-18px)}66%,86%{transform:translateX(18px)}100%{transform:translateX(0)}}',
@@ -82,8 +82,8 @@ function commonAttrs(el, a, ctx, all) {
 function renderRepeater(el, ctx, idx, all) {
   const allTpls = repeaterTemplates(idx.get(el.id) || [], el.id);
   const cfg = repeaterConfig(el);
-  const isMulti = cfg.multi === true || (allTpls.length > 1 && cfg.multi !== false && (el.attrs?.['data-repeater-multi'] === '1' || el.attrs?.['data-repeater-multi'] === 'true' || el.attrs?.['data-repeater-items'] || allTpls.some(t => t.role === 'repeater-template')));
-  const tplNodes = isMulti ? allTpls : (allTpls.length ? [allTpls[0]] : []);
+  // every sub-item of the repeater is repeated (each at least once); data-repeater-multi="false" keeps the first one only
+  const tplNodes = cfg.single ? allTpls.slice(0, 1) : allTpls;
   const tplNode = tplNodes[0] || null;
   if (!tplNode && (!ctx.editor || ctx.depth > 0)) return '';   // empty slots are an editing aid of the open design only
   const inner = containerInnerBox(el, all, ctx.lib.element);
@@ -117,7 +117,7 @@ function renderRepeater(el, ctx, idx, all) {
   const key = String(el.id).replace(/[^a-zA-Z0-9_-]/g, '');
   const box = { x: inner.x, y: inner.y, w: inner.w, h: inner.h };
   // the total never drops below the number of sub-items, so each of them is shown at least once; the pick is random (seeded)
-  if (tplNodes.length > 1) cfg.itemCount = Math.min(50, Math.max(cfg.itemCount, tplNodes.length));
+  cfg.itemCount = repeaterTotal(cfg.itemCount, tplNodes.length);
   const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key + (cfg.seed ? `:${cfg.seed}` : '')) : null;
 
   if (ctx.repeaterMode === 'runtime' && tplNode) {
