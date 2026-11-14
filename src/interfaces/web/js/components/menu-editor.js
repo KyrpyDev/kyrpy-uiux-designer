@@ -179,7 +179,7 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
       fill();
     };
     q.addEventListener('input', fill);
-    m = modal({ title: 'When clicked: go to a screen, show element or scroll repeater', wide: true, onClose: () => fin(null),
+    m = modal({ title: 'When pressed and slid: go to a screen, show an element or scroll items', wide: true, onClose: () => fin(null),
       content: h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
         tabs, h('div', { class: 'muted', style: { fontSize: '11px' } }, 'An item can route to a screen, open an element as a popup, or scroll a repeater or any scrollable container when slid.'), h('div', { class: 'row', style: { gap: '12px', alignItems: 'center' } }, q, pfxBox), list),
       actions: close => [newBtn,
@@ -250,8 +250,8 @@ export function libraryBrowseButton({ currentScreenId = null, currentElementId =
 
 export function targetSummary(screenId, elementId, recs = {}, action = '') {
   if (action === 'scroll-repeater') {
-    if (elementId) { const e = recs.element || findDesign('element', elementId); return `⟳ Scrolls repeater “${e?.name ?? `#${elementId}`}”`; }
-    return '⟳ Scrolls repeater container on screen (auto-bind)';
+    if (elementId) { const e = recs.element || findDesign('element', elementId); return `⟳ Press and slide scrolls the items of “${e?.name ?? `#${elementId}`}”`; }
+    return '⟳ Press and slide scrolls the items of the repeater on the screen (auto)';
   }
   if (screenId) { const s = recs.screen || findDesign('screen', screenId); return `🖥 Goes to screen “${s?.name ?? `#${screenId}`}”`; }
   if (elementId) { const e = recs.element || findDesign('element', elementId); return `▣ Shows element “${e?.name ?? `#${elementId}`}” as popup`; }
@@ -275,12 +275,12 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     const action = h('input', { type: 'text', value: menuItemAction(item?.action ?? ''), placeholder: 'event name for leaf items, or scroll-repeater' });
     const actionPreset = h('select', { class: 'btn small', style: { minWidth: '120px' }, onchange: () => {
       if (actionPreset.value) action.value = actionPreset.value;
-      // choosing Scroll Repeater turns the slide option on by itself (the container stays on Auto)
+      // choosing Press and Scroll Items turns the slide option on by itself (the container stays on Auto)
       if (action.value.trim() === 'scroll-repeater' && slideCheck && !slideCheck.checked) { slideCheck.checked = true; slideCheck.dispatchEvent(new Event('change')); }
       paintTarget();
     } }, [
       ['', 'Action preset…'],
-      ['scroll-repeater', '⟳ Scroll Repeater']
+      ['scroll-repeater', '⟳ Press and Scroll Items']
     ].map(([v, l]) => h('option', { value: v, selected: (menuItemAction(item?.action ?? '') === v) }, l)));
     const targetBtn = h('button', { class: 'btn', type: 'button', 'data-f': 'mi-target', style: { width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } });
     const paintTarget = () => { targetBtn.textContent = targetSummary(targetScreenId, targetElementId, targetRecs, action.value.trim()); targetBtn.title = `${targetBtn.textContent}: click to choose a screen to go to, an element popup, or repeater container to scroll`; };
@@ -457,7 +457,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
         item ? h('div', { class: 'field' }, h('span', {}, 'Parent item (click one in the tree to move this item under it)'), treeBox) : null,
         h('div', { class: 'row wrap' },
           h('label', { class: 'field grow' }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, 'Action (event name)'), actionPreset), action),
-          h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When clicked or slid (screen, popup or repeater)'), targetBtn)
+          h('div', { class: 'field grow', style: { minWidth: '0' } }, h('span', {}, 'When pressed and slid (screen, popup or repeater)'), targetBtn)
         ),
         gestBox,
         slideBox,
@@ -944,6 +944,7 @@ export class MenuEditor {
     document.addEventListener('keydown', dismissEsc, true);
     this.ctl = bindMenus(designer.stage, {
       keepOpen: true,
+      focusRings: () => !!(this.d.actionsLive || this.d.menuLive),   // the red frame is a runtime aid: shown in the test view, not while editing
       onState: (_, st) => { this.menuState = st; },
       onItem: (_, el) => {
         if (!this.active || this.d.actionsLive || this.d.menuLive) return;
@@ -954,11 +955,10 @@ export class MenuEditor {
       },
       onAction: async a => {
         if (!this.d.actionsLive && !this.d.menuLive) return;
+        // Press and Scroll Items: the runtime already stepped the list; the menu stays open for more taps / slides
+        if (a.action === 'scroll-repeater') return;
         const btnEl = designer.stage.querySelector(`.ud-btn[data-menu="${a.menu}"]`) || designer.stage.querySelector('.ud-btn');
         if (btnEl) this.ctl.set(btnEl, { open: false, path: [] });
-        if (a.action === 'scroll-repeater') {
-          return toast(`⟳ Menu item “${a.item}” bound to repeater scroll (press down & slide to scroll)`, 'info', 2200);
-        }
         if (a.targetElementId || a.targetElement) {
           const el = state.library.elements.find(e => String(e.id) === String(a.targetElementId) || e.key === a.targetElement || String(e.id) === String(a.targetElement));
           if (el) {

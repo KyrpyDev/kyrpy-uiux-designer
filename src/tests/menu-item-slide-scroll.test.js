@@ -73,3 +73,29 @@ test('a project-prefixed scroll-repeater action is read back as the built-in scr
   const tree = buildMenuTree([{ id: 9, name: 'home', ord: 0, action: 'untrap-scroll-repeater' }]);
   assert.equal(tree[0].action, 'scroll-repeater');
 });
+
+test('"Press and Scroll Items" (scroll-repeater) slides by itself, also with its slide box off; a tap steps the list', () => {
+  const rows2 = [{ id: 1, name: 'scan', ord: 0, action: 'scroll-repeater' }, { id: 2, name: 'search', ord: 1 }];
+  const svg = renderMenu({ button: { width: 100, height: 100 }, cfg: menuConfig({ menu: { kind: 'hub', itemScroll: { 1: { on: false, targetId: 'c4', mode: 'scroll' }, 2: { on: false } } } }), tree: buildMenuTree(rows2), ctx, iconKey: null });
+  assert.match(svg, /data-item="scan"[^>]*data-item-scroll="1" data-target-repeater="c4"/, 'the action keeps the chosen container and mode');
+  assert.match(svg, /data-item="search"[^>]*data-item-scroll="0"/);
+  const rt = fs.readFileSync(new URL('../domain/menu-runtime.js', import.meta.url), 'utf8');
+  assert.match(rt, /getAttribute\('data-action'\) === 'scroll-repeater'\) \{\s*try \{ var rs = findRepeaterStage\(btn, el\); if \(rs\) stepFocus\(rs, 1\); \}/);
+  const ed = fs.readFileSync(new URL('../interfaces/web/js/components/menu-editor.js', import.meta.url), 'utf8');
+  assert.match(ed, /'⟳ Press and Scroll Items'/);
+  assert.match(ed, /When pressed and slid \(screen, popup or repeater\)/);
+});
+
+test('press & slide starts at once, never turns into a native drag, and the red frame is always on (runtime only in the designer)', () => {
+  const rt = fs.readFileSync(new URL('../domain/menu-runtime.js', import.meta.url), 'utf8');
+  assert.match(rt, /var SLIDE_HOLD_MS = 0;/);
+  assert.match(rt, /No text selection \/ native drag may start from this press[^\n]*\n\s*if \(ev\.preventDefault\) ev\.preventDefault\(\);/);
+  assert.match(rt, /addEventListener\('dragstart', function \(ev\) \{ if \(rptDrag\) ev\.preventDefault\(\); \}\)/);
+  assert.match(rt, /function ensureFocusRings\(\)/);
+  assert.match(rt, /if \(centreItemEnabled\(\)\) \{ ensureFocusRings\(\); return; \}/);
+  assert.match(rt, /var nx = \(\(cur \+ dir\) % items\.length \+ items\.length\) % items\.length;/, 'the focus loops endlessly');
+  const ed = fs.readFileSync(new URL('../interfaces/web/js/components/menu-editor.js', import.meta.url), 'utf8');
+  assert.match(ed, /focusRings: \(\) => !!\(this\.d\.actionsLive \|\| this\.d\.menuLive\)/);
+  const insp = fs.readFileSync(new URL('../interfaces/web/js/components/inspector.js', import.meta.url), 'utf8');
+  assert.match(insp, /if \(sel\.length\) root\.append\(h\('hr', \{ class: 'insp-divider'[^\n]*#EF4444/);
+});

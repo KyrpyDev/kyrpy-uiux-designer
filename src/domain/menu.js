@@ -373,8 +373,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   };
   const scrollAttr = it => {
     if (perItemScroll) {
-      const s = cfg.itemScroll[String(it.id)];
-      if (!s || !s.on) return ' data-item-scroll="0"' + gestureAttr(it);
+      // the "Press and Scroll Items" action slides by itself (its container / mode come from the slide settings, else Auto / focus)
+      const own = cfg.itemScroll[String(it.id)];
+      const s = own && own.on ? own : it.action === 'scroll-repeater' ? { on: true, targetId: own?.targetId ?? null, mode: own?.mode || 'focus' } : null;
+      if (!s) return ' data-item-scroll="0"' + gestureAttr(it);
       return ` data-item-scroll="1"${s.mode === 'focus' ? ' data-item-scroll-mode="focus"' : ''}${s.targetId != null && s.targetId !== '' ? ` data-target-repeater="${esc(s.targetId)}"` : ''}` + gestureAttr(it);
     }
     return ((it.action === 'scroll-repeater' || it.targetElementKey || it.targetElementId)

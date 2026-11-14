@@ -348,6 +348,11 @@ export function bindMenus(root, opts) {
   }
   function set(btn, st) { if (isHub(btn) && st && !st.open) st = { open: true, path: [], c: st.c == null ? get(btn).c : st.c, prev: st.prev == null ? get(btn).prev : st.prev }; var old = states.get(btn); if (st && !st.spins && old && old.spins) st.spins = old.spins; if (st && !st.fo && old && old.fo && (st.path || []).join('/') === (old.path || []).join('/')) st.fo = old.fo; states.set(btn, st); apply(btn, st); if (opts.onState) opts.onState(btn, st); }
   function fire(btn, el) {
+    // "Press and Scroll Items" (scroll-repeater): a tap steps the list it scrolls one item forward (red edge on the focused item);
+    // pressing and sliding scrolls it (onPointerDown)
+    if (el.getAttribute('data-action') === 'scroll-repeater') {
+      try { var rs = findRepeaterStage(btn, el); if (rs) stepFocus(rs, 1); } catch (e) {}
+    }
     if (opts.onAction) opts.onAction({
       menu: btn.getAttribute('data-menu'), item: el.getAttribute('data-item'), id: el.getAttribute('data-menu-id'), action: el.getAttribute('data-action'),
       target: el.getAttribute('data-target'), targetElement: el.getAttribute('data-popup-element'), targetElementId: el.getAttribute('data-popup-element-id')
@@ -559,7 +564,7 @@ export function bindMenus(root, opts) {
     return true;
   }
   var rptDrag = null;
-  var SLIDE_HOLD_MS = 1000;   // press & slide: hold this long on the centred item before the slide starts (long press is 2000 ms)
+  var SLIDE_HOLD_MS = 0;   // press & slide starts at once: press the centred item and move up / down (opts.slideHoldMs brings a hold back)
   var suppressClickUntil = 0;
   function getBtnRadius(t, btn) {
     var r = 32;
@@ -651,9 +656,11 @@ export function bindMenus(root, opts) {
     };
     // Press timing on the centred item, so the actions can be told apart at runtime:
     //   tap                      -> the click action
-    //   press ~1 s, then slide   -> press & slide (the red frame appears when it is ready: the item under it is the one a double tap opens)
+    //   press, then move up/down -> press & slide: every step moves the red frame to the next / previous item (endless loop)
     //   press 2 s without moving -> the long press action (a separate timer)
-    // Moving before the slide is ready cancels it (no accidental slide while a tap or long press is being made).
+    // With opts.slideHoldMs > 0 the slide waits that long, and moving earlier cancels it.
+    // No text selection / native drag may start from this press: the browser would cancel the pointer (pointercancel) mid-slide.
+    if (ev.preventDefault) ev.preventDefault();
     var drag = rptDrag;
     var armSlide = function () {
       if (rptDrag !== drag) return;
@@ -675,7 +682,7 @@ export function bindMenus(root, opts) {
     var rawDy = ev.clientY - rptDrag.originY;
     var totalX = Math.abs(ev.clientX - rptDrag.startX);
     var totalY = Math.abs(ev.clientY - rptDrag.startY);
-    if (!rptDrag.moved && (totalY >= 4 || totalX >= 4)) {
+    if (!rptDrag.moved && (totalY >= 6 || totalX >= 6)) {   // a tap that wobbles a little stays a tap
       rptDrag.moved = true;
     }
     if (!rptDrag.moved) return;
@@ -741,6 +748,9 @@ export function bindMenus(root, opts) {
     }
   }
   if (root.addEventListener) {
+    // a slide in progress never turns into a native drag / selection (that cancels the pointer)
+    root.addEventListener('dragstart', function (ev) { if (rptDrag) ev.preventDefault(); });
+    root.addEventListener('selectstart', function (ev) { if (rptDrag) ev.preventDefault(); });
     root.addEventListener('pointerdown', onPointerDown);
     root.addEventListener('pointermove', onPointerMove);
     root.addEventListener('pointerup', onPointerEnd);
@@ -934,8 +944,25 @@ export function bindMenus(root, opts) {
   }
   /** Removes the red frame and its hint when the centred item is not slide-enabled (called when the set turns). */
   function refreshFocusRings() {
-    if (centreItemEnabled() || !doc || !doc.querySelectorAll) return;
+    if (centreItemEnabled()) { ensureFocusRings(); return; }
+    if (!doc || !doc.querySelectorAll) return;
     Array.prototype.forEach.call(doc.querySelectorAll('.ud-focus-ring, .ud-focus-hint'), function (n) { n.parentNode && n.parentNode.removeChild(n); });
+  }
+  /**
+   * The red frame is always on: every container with the focus ring option shows it on its focused item (the one nearest the
+   * centre at first) while the set's centred item can slide. opts.focusRings (bool or function) switches it off, e.g. while editing.
+   */
+  function focusRingsOn() { var f = opts && opts.focusRings; return f == null ? true : typeof f === 'function' ? !!f() : !!f; }
+  function ensureFocusRings() {
+    if (!root || !root.querySelectorAll || !focusRingsOn()) return;
+    if (!activeSetBtn && root.querySelector) { var hb = Array.prototype.find.call(root.querySelectorAll('.ud-btn'), function (b) { return isHub(b); }); if (hb) activeSetBtn = hb; }
+    if (!centreItemEnabled()) return;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-focus-ring="1"]'), function (cont) {
+      if (cont.querySelector('.ud-focus-ring')) return;
+      var items = listItems(cont);
+      if (!items.length) return;
+      try { setFocus(cont, cont.__udFocus != null ? cont.__udFocus : nearestToCentre(cont, items), true); } catch (e) {}
+    });
   }
   /** The red focus indicator: a fixed frame at the centre of the container, the size of an item. */
   function setFocus(cont, idx, ring, hint) {
@@ -1036,5 +1063,28 @@ export function bindMenus(root, opts) {
     pendingTap = { src: g.src, timer: setTimeout(function () { pendingTap = null; handleClick(saved); }, 280) };
   });
   if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll('.ud-btn'), function (btn) { if (isHub(btn)) apply(btn, get(btn)); });
-  return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater };
+  // the red frame shows from the start, and comes back after the markup is redrawn (designer canvas, page runtime)
+  var ringQueued = false;
+  var queueRings = function () {
+    if (ringQueued) return; ringQueued = true;
+    var run = function () { ringQueued = false; try { ensureFocusRings(); } catch (e) {} };
+    var view = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+    if (view && view.requestAnimationFrame) view.requestAnimationFrame(run); else setTimeout(run, 0);
+  };
+  if (root && root.querySelectorAll) {
+    queueRings();
+    var MO = (doc && doc.defaultView && doc.defaultView.MutationObserver) || (typeof MutationObserver !== 'undefined' ? MutationObserver : null);
+    if (MO) {
+      try {
+        new MO(function (list) {
+          // only real redraws: the frame's own rect / hint coming and going does not count
+          for (var i = 0; i < list.length; i++) {
+            var ns = Array.prototype.slice.call(list[i].addedNodes || []).concat(Array.prototype.slice.call(list[i].removedNodes || []));
+            if (ns.some(function (n) { return !(n.classList && (n.classList.contains('ud-focus-ring') || n.classList.contains('ud-focus-hint'))); })) { queueRings(); return; }
+          }
+        }).observe(root.nodeType === 9 ? root.documentElement : root, { childList: true, subtree: true });
+      } catch (e) {}
+    }
+  }
+  return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater, ensureFocusRings: ensureFocusRings };
 }
