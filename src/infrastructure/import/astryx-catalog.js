@@ -19,7 +19,7 @@ const base = (tag, kind, o, attrs) => ({
   ...(o.anim ? { animations: o.anim } : {})
 });
 
-const R = (x, y, w, h, o = {}) => base('rect', 'shape', o, {
+export const R = (x, y, w, h, o = {}) => base('rect', 'shape', o, {
   x, y, width: w, height: h, rx: o.rx ?? 0,
   ...(o.role ? {} : { fill: o.fill ?? 'none', stroke: o.stroke ?? 'none', 'stroke-width': o.sw ?? 1 }),
   ...(o.op ? { opacity: o.op } : {}),
@@ -28,24 +28,24 @@ const R = (x, y, w, h, o = {}) => base('rect', 'shape', o, {
   ...(o.extraAttrs || {})
 });
 
-const C = (cx, cy, r, o = {}) => base('circle', 'shape', o, {
+export const C = (cx, cy, r, o = {}) => base('circle', 'shape', o, {
   cx, cy, r,
   ...(o.role ? {} : { fill: o.fill ?? 'none', stroke: o.stroke ?? 'none', 'stroke-width': o.sw ?? 1 }),
   ...(o.fo ? { 'fill-opacity': o.fo } : {})
 });
 
-const L = (x1, y1, x2, y2, o = {}) => base('line', 'shape', o, {
+export const L = (x1, y1, x2, y2, o = {}) => base('line', 'shape', o, {
   x1, y1, x2, y2, stroke: o.stroke ?? '{{line}}',
   'stroke-width': o.sw ?? 1, 'stroke-linecap': 'round',
   ...(o.dash ? { 'stroke-dasharray': o.dash } : {})
 });
 
-const P = (d, o = {}) => base('path', 'shape', o, {
+export const P = (d, o = {}) => base('path', 'shape', o, {
   d, fill: o.fill ?? 'none', stroke: o.stroke ?? '{{accent}}',
   'stroke-width': o.sw ?? 1.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'
 });
 
-const T = (x, y, s, o = {}) => ({
+export const T = (x, y, s, o = {}) => ({
   ...base('text', 'text', o, {
     x, y, 'font-size': o.size ?? 14,
     'font-weight': o.weight ?? 400,
@@ -56,7 +56,7 @@ const T = (x, y, s, o = {}) => ({
   text: s
 });
 
-const item = (key, name, category, htmlTag, w, h, nodes, extra = {}) => ({
+export const item = (key, name, category, htmlTag, w, h, nodes, extra = {}) => ({
   key, name, label: name, category, htmlTag, width: w, height: h, nodes, ...extra
 });
 

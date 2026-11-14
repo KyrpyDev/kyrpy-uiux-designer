@@ -10,9 +10,10 @@ import { h, clear, toast, promptBox, confirmBox, choiceBox, modal } from '../dom
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
 import { markEdited, sessionEdited, lastEdited, rememberName, editedName, forgetSessionEdited } from '../edited.js';
-import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel } from '../state.js';
+import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel, isPublicLibraryItem } from '../state.js';
+import { prefixedVariableName } from '/domain/naming.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
-import { renderDocument, renderIconDocument } from '/domain/svg.js';
+import { renderDocument, renderIconDocument, renderTree } from '/domain/svg.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet,
   isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox,
@@ -32,6 +33,7 @@ import { installPathTools } from './designer-pathtools.js';
 import { installTestActions } from './designer-test-actions.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
+import { popupCfgOf, popupAnimation, makeDraggable, placePopupBox, popupTestControls } from './popup-test-editor.js';
 
 const TOOLS = [
   ['select', 'V', '⌖', 'Select / move'],
@@ -137,6 +139,7 @@ export class Designer {
   }
 
   async load(type, id) {
+    if (this.menu) { this.menu.pinned = null; this.menu.hideToolbar(); }   // no menu toolbar left over from the previous document
     const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
     this._loadingTarget = { type, id: Number(id), seq };
     let rec;
@@ -1598,6 +1601,7 @@ export class Designer {
     if (c.type === 'screen') {
       return this.navigateLiveToScreen(c.targetId);
     }
+    if (c.type === 'swap') return this.swapToTarget(n, c);
     if (c.type === 'animate' || c.type === 'toggle') {
       const domEl = this.stage.querySelector(`[data-el="${n.id}"]`);
       if (domEl) domEl.classList.toggle('ud-on');
@@ -1628,7 +1632,47 @@ export class Designer {
     const el = findDesign('element', c.targetId);
     if (!el) return toast('The element to open no longer exists', 'error');
     const pvKind = c.type === 'show-element' ? (c.displayMode === 'drawer' ? 'drawer' : 'popup') : c.type;
-    this.showPreview(pvKind, c.side || c.position, el);
+    this.showPreview(pvKind, c.side || c.position, el, { node: n, binding: c });
+  }
+
+  /**
+   * "Change to the target item" (test phase): the item's drawing is replaced by the target's (e.g. the asc icon
+   * becomes the desc icon). A second click restores the original drawing.
+   */
+  swapToTarget(n, c) {
+    this.swapState = this.swapState || new Map();
+    const prev = this.swapState.get(n.id);
+    if (prev) {                                  // second click: put the original drawing back
+      prev.current.replaceWith(prev.orig);
+      this.swapState.delete(n.id);
+      return toast('Back to the original', 'info', 1000);
+    }
+    const domEl = this.stage.querySelector(`[data-el="${n.id}"]`);
+    const target = c.targetId ? findDesign('element', c.targetId) : null;
+    if (!domEl || !target) return toast('Nothing to change to: pick the target item first', 'info');
+    // the target's drawing (markup from the domain renderer), scaled and placed where this item is
+    const bb = domEl.getBBox ? domEl.getBBox() : { x: 0, y: 0, width: target.width, height: target.height };
+    const k = Math.min(bb.width / (target.width || bb.width || 1), bb.height / (target.height || bb.height || 1)) || 1;
+    const parsed = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${renderTree(target.nodes, renderContext({}))}</svg>`, 'image/svg+xml');
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('data-el', String(n.id));
+    group.setAttribute('data-swapped', String(c.targetId));
+    group.setAttribute('transform', `translate(${bb.x} ${bb.y}) scale(${k})`);
+    for (const kid of [...parsed.documentElement.childNodes]) group.appendChild(document.importNode(kid, true));
+    this.swapState.set(n.id, { orig: domEl, current: group });
+    domEl.replaceWith(group);
+    toast(`Changed to “${target.name}”`, 'ok', 1000);
+  }
+
+  /** Saves the popup settings (position, animations, durations) onto the click binding that opened it. */
+  async savePopupCfg(node, binding, patch) {
+    if (!node || !binding) return toast('Nothing to save: this popup has no click action', 'error');
+    const popup = { ...popupCfgOf(binding), ...patch };
+    const inEvents = Array.isArray(node.events) && node.events.includes(binding);
+    const body = inEvents ? { events: node.events.map(x => (x === binding ? { ...x, popup } : x)) } : { onClick: { ...binding, popup } };
+    await this.patchNode(node.id, body);
+    binding.popup = popup;
+    toast('Popup settings saved', 'ok', 1400);
   }
 
   /** Renders a small element floating toolbar near the target node on the canvas. */
@@ -1663,20 +1707,68 @@ export class Designer {
   }
 
   /** A popup, drawer, or inline element drawn over the canvas, like the finished app shows it. */
-  showPreview(kind, side, el) {
+  showPreview(kind, side, el, ctx = null) {
     this.closePreview();
     const svg = renderDocument({ owner: el, nodes: el.nodes, ctx: renderContext({}), background: false });
     const panel = h('div', { class: 'dz-pv-panel' });
     panel.innerHTML = svg;      // markup comes from the domain renderer: tags/attributes are whitelisted and escaped
     const w = Math.min(this.viewport.clientWidth * 0.94, Math.max(160, el.width * this.view.z));
+    const isPopup = kind === 'popup' && !!ctx?.node;
+    const cfg = isPopup ? popupCfgOf(ctx.binding) : null;
     const box = h('div', { class: 'dz-pv-box', style: { width: `${w}px` } }, h('button', { class: 'icon-btn dz-pv-x', title: 'Close (Esc)', onclick: () => this.closePreview() }, '✕'), panel);
+    let grip = null;
+    if (isPopup) {
+      // test phase: the popup can be dragged to its real place (snap applies) and its animations / durations saved
+      grip = h('div', { class: 'dz-pv-grip', 'data-f': 'pv-grip', title: 'Drag to move the popup (snaps when snap is on)' }, '⠿ drag to place');
+      const controls = popupTestControls({
+        cfg,
+        onChange: patch => this.applyPopupCfg(box, patch),
+        onSave: patch => this.savePopupCfg(ctx.node, ctx.binding, { ...patch, ...(this.pvCfg?.pos || {}) }),
+        onReset: () => {
+          box.style.position = ''; box.style.left = ''; box.style.top = ''; box.style.margin = '';
+          if (this.pvCfg) this.pvCfg.pos = { x: null, y: null };
+        }
+      });
+      box.prepend(grip);
+      box.append(controls);
+    }
     this.pv = h('div', { class: `dz-pv ${kind}${kind === 'drawer' ? ` from-${side || 'right'}` : ''}` }, h('div', { class: 'dz-pv-scrim', onclick: () => this.closePreview() }), box);
     this.viewport.append(this.pv);
+    if (isPopup) {
+      placePopupBox(box, cfg, this.viewport);
+      box.style.animation = popupAnimation('in', cfg.showAnim, cfg.showMs);
+      this.pvCfg = { close: { name: cfg.closeAnim, ms: cfg.closeMs } };
+      makeDraggable(box, grip, {
+        snap: () => ({ grid: state.settings.snapToGrid ? this.gridSize * this.view.z : 0, anchors: !!state.settings.snapToAnchors }),
+        size: () => ({ w: this.viewport.clientWidth, h: this.viewport.clientHeight }),
+        onEnd: pos => { if (this.pvCfg) this.pvCfg.pos = pos; }
+      });
+    }
     const secs = popupAutoCloseSecs(el.nodes);
     if (secs > 0) { const pv = this.pv; this.pvTimer = setTimeout(() => { if (this.pv === pv) this.closePreview(); }, secs * 1000); }
   }
 
-  closePreview() { clearTimeout(this.pvTimer); this.pvTimer = null; this.pv?.remove(); this.pv = null; this.tbPv?.remove(); this.tbPv = null; }
+  /** Live update of the open popup while its controls change (animation names and durations take effect on the next show / close). */
+  applyPopupCfg(box, patch) {
+    if (!this.pvCfg) return;
+    if (patch.closeAnim !== undefined || patch.closeMs !== undefined) {
+      this.pvCfg.close = { name: patch.closeAnim ?? this.pvCfg.close.name, ms: patch.closeMs ?? this.pvCfg.close.ms };
+    }
+  }
+
+  closePreview() {
+    clearTimeout(this.pvTimer); this.pvTimer = null;
+    const pv = this.pv, cfg = this.pvCfg;
+    this.pv = null; this.pvCfg = null;
+    this.tbPv?.remove(); this.tbPv = null;
+    if (!pv) return;
+    const box = pv.querySelector('.dz-pv-box');
+    const anim = popupAnimation('out', cfg?.close?.name, cfg?.close?.ms);
+    if (box && anim) {
+      box.style.animation = anim;
+      setTimeout(() => pv.remove(), cfg.close.ms);
+    } else pv.remove();
+  }
 
   onPointerDown(ev) {
     if (ev.target.closest?.('.dz-live-hud, .dz-live-input, .dz-live-widget, .dz-live-hotspot, .vbar, .rm-toolbar, .dz-pv, .el-hover-toolbar, .dz-mini-toolbar, .dz-preview-banner')) return;
@@ -2029,6 +2121,15 @@ export class Designer {
     }
   }
 
+  /**
+   * Variable name of a library item placed on this screen. A public item gets the target project's global prefix:
+   * projectprefix-[itemtype]-itemname (e.g. untrap-element-scan-button). Other items keep their own key.
+   */
+  instanceVariableName(refType, lib) {
+    const prefix = isPublicLibraryItem(lib) ? (state.projects || []).find(p => Number(p.id) === Number(this.doc?.projectId))?.settings?.prefix : null;
+    return prefixedVariableName(prefix || null, refType, lib.key);
+  }
+
   uniqueName(base) {
     const names = new Set(this.nodes.map(e => e.name));
     if (!names.has(base)) return base;
@@ -2165,7 +2266,7 @@ export class Designer {
       refId: id,
       parentId,
       role: isRepeaterItem ? 'repeater-container' : isCarouselItem ? 'carousel-container' : isContainerItem ? 'container' : null,
-      name: this.uniqueName(lib.key),
+      name: this.uniqueName(this.instanceVariableName(refType, lib)),
       attrs: { x: pl.x, y: pl.y, width: pl.w, height: pl.h, ...extraAttrs }
     });
     if (el) toast(parentId ? `Added ${refType} "${lib.key}" inside container "${targetContainer.name}" (clamped to inner margin)` : `added ${refType} ${lib.key}`, 'ok', 1800);
@@ -2210,7 +2311,7 @@ export class Designer {
     const w = Math.max(4, Math.round(pl.w * k)), hh = Math.max(4, Math.round(pl.h * k));
     const cfg = repeaterConfig(rep);
     const first = repeaterPlan(cfg, inner, { w: cfg.itemWidth || w, h: cfg.itemHeight || hh }).copies[0];
-    const def = { tag: 'use', kind: 'instance', refType, refId, role: null, name: this.uniqueName(lib.key), attrs: { x: first.x, y: first.y, width: w, height: hh } };
+    const def = { tag: 'use', kind: 'instance', refType, refId, role: null, name: this.uniqueName(this.instanceVariableName(refType, lib)), attrs: { x: first.x, y: first.y, width: w, height: hh } };
     const { removeIds, node } = repeaterTemplateOps(this.nodes, rep, def, null, { replace: false });
     const el = await this.mutate(async () => {
       for (const rid of removeIds) await api.deleteNode(this.type, this.doc.id, rid);

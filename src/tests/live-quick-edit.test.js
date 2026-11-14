@@ -83,3 +83,9 @@ test('popup surface role: auto close after x seconds in the preview and the expo
   assert.match(parts.overlays, /data-ud-autoclose="4"/);
   assert.match(web('components/designer.js'), /popupAutoCloseSecs\(el\.nodes\)/);
 });
+
+test('button inspector: the button icon is shown and changed from the inspector panel', () => {
+  const src = web('components/inspector.js');
+  assert.match(src, /'doc-change-icon'/);
+  assert.match(src, /d\.changeButtonIcon\(inst\)/);
+});

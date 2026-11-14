@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderMenu, buildMenuTree, normalizeItemScroll, hasItemScroll, menuConfig } from '../domain/menu.js';
@@ -7,7 +8,7 @@ const rows = [{ id: 1, name: 'scan', ord: 0, targetElementId: 7 }, { id: 2, name
 const render = cfg => renderMenu({ button: { width: 100, height: 100 }, cfg: menuConfig({ menu: { kind: 'hub', ...cfg } }), tree: buildMenuTree(rows), ctx, iconKey: null });
 
 test('normalizeItemScroll keeps only numeric item ids and sanitises the target', () => {
-  assert.deepEqual(normalizeItemScroll({ 1: { on: '1', targetId: 'n-5"x' }, bad: { on: true }, 2: { on: false } }), { 1: { on: true, targetId: 'n-5x', mode: 'scroll' }, 2: { on: false, targetId: null, mode: 'scroll' } });
+  assert.deepEqual(normalizeItemScroll({ 1: { on: '1', targetId: 'n-5"x' }, bad: { on: true }, 2: { on: false } }), { 1: { on: true, targetId: 'n-5x', mode: 'focus' }, 2: { on: false, targetId: null, mode: 'focus' } });
   assert.equal(hasItemScroll({}), false);
 });
 
@@ -45,4 +46,19 @@ test('menu item gestures: long press / double tap actions are normalised and ren
   assert.equal(normalizeItemScroll({ 1: { on: true, mode: 'focus' } })[1].mode, 'focus');
   const svg = render({ itemScroll: { 1: { on: true, targetId: 'c9', mode: 'focus' } }, itemGestures: { 1: { long: { type: 'screen', target: '5' }, dbl: { type: 'focused', target: null } } } });
   assert.match(svg, /data-item="scan"[^>]*data-item-scroll="1" data-item-scroll-mode="focus" data-target-repeater="c9" data-gest-long="screen:5" data-gest-dbl="focused"/);
+});
+
+test('open the focused item: its own target, or a screen / popup chosen for it', async () => {
+  const { normalizeItemGestures } = await import('../domain/menu.js');
+  const g = normalizeItemGestures({ 4: { long: { type: 'focused', target: 's-12' }, dbl: { type: 'focused', target: 'e-7' } }, 5: { dbl: { type: 'focused', target: 'bad' } } });
+  assert.deepEqual(g['4'], { long: { type: 'focused', target: 's-12' }, dbl: { type: 'focused', target: 'e-7' } });
+  assert.equal(g['5'].dbl.target, null);
+});
+
+test('menu item dialog: gestures are Nothing / open the focused item, with a screen / popup browser button; no ghost toolbar', () => {
+  const src = fs.readFileSync(new URL('../interfaces/web/js/components/menu-editor.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /'Same as a click'/);
+  assert.match(src, /mi-gest-\$\{key\}-pick/);
+  assert.match(src, /rm-toolbar-close/);
+  assert.doesNotMatch(src, /if \(!this\.active \|\| ev\.target\.closest\?\.\('\.rm-item/);
 });

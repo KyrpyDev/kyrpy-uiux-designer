@@ -223,7 +223,11 @@ export class LibraryPanel {
           return false;
         }
       }
-      return (!c || d.category === c) && (!q || `${d.key || ''} ${d.name || ''} ${d.label || ''} ${(d.tags || []).join(' ')} ${d.descriptionDev || ''} ${d.description || ''}`.toLowerCase().includes(q));
+      // "prefix:untrap" lists the items named untrap-[itemtype]-... (the project's global prefix); other text searches as before
+      const pfx = /^prefix:(\S+)\s*/.exec(String(q || '').toLowerCase());
+      const text = pfx ? String(q).slice(pfx[0].length).trim().toLowerCase() : String(q || '').toLowerCase();
+      const okPrefix = !pfx || `${d.key || ''} ${d.name || ''}`.toLowerCase().split(/\s+/).some(w => w.startsWith(`${pfx[1]}-`));
+      return (!c || d.category === c) && okPrefix && (!text || `${d.key || ''} ${d.name || ''} ${d.label || ''} ${(d.tags || []).join(' ')} ${d.descriptionDev || ''} ${d.description || ''}`.toLowerCase().includes(text));
     }), curUserId, usedSet(), kind, editedIndex(), libScope());
   }
 

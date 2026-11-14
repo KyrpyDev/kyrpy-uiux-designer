@@ -9,12 +9,13 @@ import { api } from '../api.js';
 import { state, findDesign, libOf, isPublicLibraryItem } from '../state.js';
 import { reloadLibrary } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
-import { iconEl } from '../icons.js';
+import { iconEl, ibtn } from '../icons.js';
 
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
 import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
 import { isContainerNode } from '/domain/geometry.js';
+import { isRepeaterNode } from '/domain/repeater.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
@@ -218,6 +219,22 @@ export async function targetPatch(r, projectId) {
 }
 
 /** One-line summary of what a menu item does when clicked or slid. */
+/**
+ * The library browser as an icon button, the same popup everywhere a screen or element is chosen:
+ * `onPick({ screenId, elementId })` gets exactly one of them (the other is null).
+ */
+export function libraryBrowseButton({ currentScreenId = null, currentElementId = null, currentAction = '', projectId = null, onPick, onAuto = null, dataF = null, title = 'Browse screens and elements' } = {}) {
+  return h('button', {
+    class: 'btn sm', type: 'button', title, 'aria-label': title, ...(dataF ? { 'data-f': dataF } : {}),
+    onclick: async () => {
+      const r = await pickTarget({ currentScreenId, currentElementId, currentAction, projectId, allowCreate: false });
+      if (r?.repeaterAuto) onAuto?.();
+      else if (r?.screen) onPick({ screenId: r.screen.id, elementId: null });
+      else if (r?.element || r?.repeater) onPick({ screenId: null, elementId: (r.element || r.repeater).id });
+    }
+  }, '🗂');
+}
+
 export function targetSummary(screenId, elementId, recs = {}, action = '') {
   if (action === 'scroll-repeater') {
     if (elementId) { const e = recs.element || findDesign('element', elementId); return `⟳ Scrolls repeater “${e?.name ?? `#${elementId}`}”`; }
@@ -242,6 +259,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
     const action = h('input', { type: 'text', value: item?.action ?? '', placeholder: 'event name for leaf items, or scroll-repeater' });
     const actionPreset = h('select', { class: 'btn small', style: { minWidth: '120px' }, onchange: () => {
       if (actionPreset.value) action.value = actionPreset.value;
+      // choosing Scroll Repeater turns the slide option on by itself (the container stays on Auto)
+      if (action.value.trim() === 'scroll-repeater' && slideCheck && !slideCheck.checked) { slideCheck.checked = true; slideCheck.dispatchEvent(new Event('change')); }
       paintTarget();
     } }, [
       ['', 'Action preset…'],
@@ -257,6 +276,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
       if (p.action !== undefined) {
         action.value = p.action;
         actionPreset.value = p.action === 'scroll-repeater' ? 'scroll-repeater' : '';
+        // a repeater picked as the target turns the slide option on by itself too
+        if (p.action === 'scroll-repeater' && slideCheck && !slideCheck.checked) { slideCheck.checked = true; slideCheck.dispatchEvent(new Event('change')); }
       }
       targetRecs = p.target ? { [p.type]: p.target } : {};
       paintTarget();
@@ -302,7 +323,9 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
     // slide-to-scroll (per item): pressing this item when it is centred and sliding scrolls the chosen container of the screen
     const scrollCfg = (menuNow?.config?.itemScroll && item) ? menuNow.config.itemScroll[String(item.id)] : null;
     const slideCheck = h('input', { type: 'checkbox', 'data-f': 'mi-slide', checked: !!scrollCfg?.on });
-    const scrNodes = (d?.type === 'screen' ? (d.nodes || []) : []).filter(n => n.kind !== 'instance' || n.refType !== 'button');
+    // only repeaters and scrollable containers can be the slide target (no other elements)
+    const scrNodes = (d?.type === 'screen' ? (d.nodes || []) : []).filter(n => (n.kind !== 'instance' || n.refType !== 'button')
+      && (isRepeaterNode(n, state.library?.elements) || isContainerNode(n, state.library?.elements)));
     const scrLabel = n => `${isContainerNode(n, state.library?.elements) ? '▣ ' : ''}${n.name || n.label || n.key || n.kind} · ${n.id}`;
     const scrollSel = h('select', { 'data-f': 'mi-scroll-target', style: { width: '100%' } },
       h('option', { value: '' }, '(Auto: the repeater container on the screen)'),
@@ -311,32 +334,60 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
       ...(scrollCfg?.targetId != null && !scrNodes.some(n => String(n.id) === String(scrollCfg.targetId)) ? [h('option', { value: String(scrollCfg.targetId), selected: true }, `element ${scrollCfg.targetId} (not on this screen)`)] : []));
     // slide mode: free scrolling, or stepping the focus through the list's items (the focused item is centred)
     const modeSel = h('select', { 'data-f': 'mi-scroll-mode', style: { width: '100%' } },
-      h('option', { value: 'scroll', selected: scrollCfg?.mode !== 'focus' }, 'Scroll: the container scrolls freely while sliding'),
-      h('option', { value: 'focus', selected: scrollCfg?.mode === 'focus' }, 'Focus: each slide step moves the focus to the next / previous item, kept in the centre'));
+      h('option', { value: 'scroll', selected: scrollCfg?.mode === 'scroll' }, 'Scroll: the container scrolls freely while sliding'),
+      h('option', { value: 'focus', selected: scrollCfg?.mode !== 'scroll' },'Focus: each slide step moves the focus to the next / previous item, kept in the centre'));
     const paintSlide = () => { scrollSel.disabled = !slideCheck.checked; modeSel.disabled = !slideCheck.checked; };
     slideCheck.addEventListener('change', paintSlide); paintSlide();
     const slideBox = h('div', { class: 'field', title: 'Only this item scrolls: press it while it is the centred hub button and slide up / down (or left / right).' },
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } }, slideCheck, h('span', {}, 'Slide this item (when centred) to scroll a container')),
       h('span', { class: 'muted' }, d?.type === 'screen' ? 'Scrollable container on this screen' : 'Scrollable container (open the item from a screen to list its elements)'),
-      scrollSel, modeSel);
+      h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, scrollSel,
+        libraryBrowseButton({
+          currentAction: 'scroll-repeater', projectId: host?.projectId ?? state.activeProjectId, dataF: 'mi-scroll-browse',
+          title: 'Library browser: repeaters and scrollable containers only',
+          onAuto: () => { scrollSel.value = ''; },
+          onPick: ({ elementId }) => {
+            // the picked library container, as the instance of it on this screen
+            const node = scrNodes.find(n => n.kind === 'instance' && n.refType === 'element' && Number(n.refId) === Number(elementId));
+            if (!node) return toast('That container is not on this screen: place it here first', 'info');
+            scrollSel.value = String(node.id);
+          }
+        })),
+      modeSel);
     // gestures besides the click: long press and double click / tap
     const gestNow = (menuNow?.config?.itemGestures && item) ? menuNow.config.itemGestures[String(item.id)] || {} : {};
-    const screensL = [...(libOf('screen') || [])].sort((a, b) => String(a.label).localeCompare(String(b.label)));
-    const elementsL = [...(libOf('element') || [])].sort((a, b) => String(a.label).localeCompare(String(b.label)));
+    // a gesture: Nothing, or open the focused item of the list — its own screen / popup, or one picked with the
+    // browser button beside it (the same screen / popup window as the click action)
     const gestureRow = (key, title) => {
       const cur = gestNow[key] || { type: 'none', target: null };
-      const typeSel = h('select', { 'data-f': `mi-gest-${key}` },
-        ...[['none', 'Nothing'], ['click', 'Same as a click'], ['screen', 'Go to screen…'], ['popup', 'Show element as popup…'], ['focused', 'Open the focused item of the list (its own screen / popup)']]
-          .map(([v, l]) => h('option', { value: v, selected: cur.type === v }, l)));
-      const tgtSel = h('select', { 'data-f': `mi-gest-${key}-target`, style: { width: '100%' } });
+      let type = cur.type === 'focused' ? 'focused' : 'none';
+      let target = type === 'focused' && /^[se]-\d+$/.test(cur.target || '') ? cur.target : null;
+      const typeSel = h('select', { 'data-f': `mi-gest-${key}`, class: 'grow' },
+        h('option', { value: 'none', selected: type === 'none' }, 'Nothing'),
+        h('option', { value: 'focused', selected: type === 'focused' }, 'Open the focused item of the list'));
+      const what = h('span', { class: 'muted', style: { fontSize: '11px' } });
       const paint = () => {
-        clear(tgtSel);
-        const list = typeSel.value === 'screen' ? screensL : typeSel.value === 'popup' ? elementsL : [];
-        tgtSel.hidden = !list.length;
-        for (const r of list) tgtSel.append(h('option', { value: String(r.id), selected: String(cur.target) === String(r.id) }, `${r.label || r.name} · ${r.key}`));
+        const on = typeSel.value === 'focused';
+        pickBtn.disabled = !on; clearBtn.hidden = !on || !target;
+        if (!on) { what.textContent = ''; return; }
+        if (!target) { what.textContent = "Opens the focused item's own screen / popup"; return; }
+        const id = Number(target.slice(2)), rec = target[0] === 's' ? findDesign('screen', id) : findDesign('element', id);
+        what.textContent = target[0] === 's' ? `🖥 Goes to screen “${rec?.label || rec?.name || '#' + id}”` : `▣ Shows “${rec?.label || rec?.name || '#' + id}” as popup`;
       };
+      const pickBtn = ibtn('monitor', 'Choose the screen or popup element to open (instead of the focused item\'s own)', async () => {
+        const r = await pickTarget({ currentScreenId: target?.[0] === 's' ? Number(target.slice(2)) : null, currentElementId: target?.[0] === 'e' ? Number(target.slice(2)) : null, projectId, allowCreate: false });
+        if (!r) return;
+        const p = await targetPatch(r, projectId);
+        if (!p) return;
+        target = p.targetScreenId ? `s-${p.targetScreenId}` : p.targetElementId ? `e-${p.targetElementId}` : null;
+        paint();
+      }, { dataset: { f: `mi-gest-${key}-pick` } });
+      const clearBtn = ibtn('close', 'Back to the focused item\'s own screen / popup', () => { target = null; paint(); });
       typeSel.addEventListener('change', paint); paint();
-      return { el: h('label', { class: 'field' }, h('span', {}, title), typeSel, tgtSel), value: () => ({ type: typeSel.value, target: tgtSel.hidden ? null : tgtSel.value || null }) };
+      return {
+        el: h('div', { class: 'field grow' }, h('span', {}, title), h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, typeSel, pickBtn, clearBtn), what),
+        value: () => typeSel.value === 'focused' ? { type: 'focused', target } : { type: 'none', target: null }
+      };
     };
     const gLong = gestureRow('long', 'When long pressed'), gDbl = gestureRow('dbl', 'When double clicked / tapped');
     const gestBox = h('div', { class: 'field' },
@@ -364,7 +415,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId = null, d
         const wantOn = slideCheck.checked, wantT = scrollSel.value || null, wantMode = modeSel.value;
         const had = prevMap[String(sid)];
         const patch = {};
-        if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? '') || (had.mode || 'scroll') !== wantMode)) {
+        if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? '') || (had.mode || 'focus') !== wantMode)) {
           // the first per item setting switches the menu from the old menu-wide rule to per item rules
           patch.itemScroll = { ...prevMap, [String(sid)]: { on: wantOn, targetId: wantT, mode: wantMode } };
         }
@@ -852,10 +903,26 @@ export class MenuEditor {
     // same behaviour as the exported page; leaf clicks keep the menu open while editing, or trigger actions/routes in Test mode
     designer.stage.addEventListener('dblclick', ev => this.onDblClick(ev), true);
     // a clicked item keeps its action toolbar until the next click elsewhere on the canvas
+    // (on screens too: the toolbar of a placed menu button used to stay behind as a ghost because only button docs hid it)
     designer.stage.addEventListener('click', ev => {
-      if (!this.active || ev.target.closest?.('.rm-item, [data-rm="center"], .rm-toolbar')) return;
+      if (ev.target.closest?.('.rm-item, [data-rm="center"], .rm-toolbar')) return;
       this.pinned = null; this.hideToolbar();
     });
+    // leaving the canvas, Escape, a pan / zoom or another document also take it away
+    designer.viewport.addEventListener('pointerleave', ev => { if (!ev.relatedTarget?.closest?.('.rm-toolbar')) { this.pinned = null; this.scheduleHide(); } });
+    designer.viewport.addEventListener('wheel', () => { this.pinned = null; this.hideToolbar(); }, { passive: true });
+    designer.viewport.addEventListener('keydown', ev => { if (ev.key === 'Escape') { this.pinned = null; this.hideToolbar(); } });
+    // the toolbar never outlives its context: a press anywhere outside the menu items (side panels, tabs, other screens),
+    // Escape from any focus, or the viewport leaving the page removes it (no ghost toolbar left on the screen)
+    const dismissOutside = ev => {
+      if (this.toolbar.hidden) return;
+      if (!designer.viewport.isConnected) { this.toolbar.remove(); document.removeEventListener('pointerdown', dismissOutside, true); document.removeEventListener('keydown', dismissEsc, true); return; }
+      if (ev.target?.closest?.('.rm-toolbar, .rm-item, [data-rm="center"]')) return;
+      this.pinned = null; this.hideToolbar();
+    };
+    const dismissEsc = ev => { if (ev.key === 'Escape' && !this.toolbar.hidden) { this.pinned = null; this.hideToolbar(); } };
+    document.addEventListener('pointerdown', dismissOutside, true);
+    document.addEventListener('keydown', dismissEsc, true);
     this.ctl = bindMenus(designer.stage, {
       keepOpen: true,
       onState: (_, st) => { this.menuState = st; },
@@ -973,7 +1040,7 @@ export class MenuEditor {
 
   // leaving a hovered item returns to the pinned (clicked) item's toolbar, if any
   scheduleHide() { clearTimeout(this.hideTimer); this.hideTimer = setTimeout(() => (this.pinned ? this.showPinned(0) : this.hideToolbar()), 350); }
-  hideToolbar() { this.toolbar.hidden = true; this.hover = null; }
+  hideToolbar() { clearTimeout(this.hideTimer); this.toolbar.hidden = true; this.hover = null; }
 
   show(hit) {
     const key = hit.hub ? `hub-${hit.buttonId}` : `${hit.buttonId}-${hit.item?.id}`;
@@ -989,6 +1056,7 @@ export class MenuEditor {
     const rows = hit.menuItems || [];
     const levelItem = this.menuState.path.length ? rows.find(m => menuActions.pathOf(rows, m.id).join('/') === this.menuState.path.join('/')) : null;
     const btn = (glyph, title, fn, cls = 'icon-btn small') => h('button', { class: cls, title, onclick: e => { e.stopPropagation(); this.hideToolbar(); fn(); } }, glyph);
+    const closeX = () => h('button', { class: 'icon-btn small', title: 'Close this toolbar (Esc)', 'data-act': 'rm-toolbar-close', onclick: e => { e.stopPropagation(); this.pinned = null; this.hideToolbar(); } }, '✕');
     if (hit.hub) {
       this.toolbar.append(
         h('span', { class: 'muted', style: { padding: '0 6px', fontSize: '11px' } }, levelItem ? levelItem.label || levelItem.name : 'menu'),
@@ -1021,6 +1089,7 @@ export class MenuEditor {
           : btn('◎', `Set “${it.label || it.name}” as the default centre button`, () => this.setDefaultCentre(it.id, hit.buttonId, +hit.el.getAttribute('data-hub-index'))));
       }
     }
+    this.toolbar.append(closeX());
   }
 
   /** Toolbar buttons that focus the previous / next item on the same level (hub: the sub menu centres on its main item, so its neighbours are one step away). */

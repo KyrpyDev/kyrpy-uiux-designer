@@ -787,6 +787,8 @@ export function installTestActions(Designer) {
     if (this.type === 'screen' && unboundLinks.length) {
       const candidateNodes = this.nodes.filter(n => {
         if (n.visible === false || n.role === 'bg' || n.role === 'bg-glow' || n.role === 'shine') return false;
+        // a menu button runs its own items (slide, long press, navigate): a route box over it would block them
+        if (n.kind === 'instance' && n.refType === 'button' && findDesign('button', n.refId)?.menuItems?.length) return false;
         if (n.role === 'button' || n.role === 'card') return true;
         if (n.kind === 'instance' && n.refType === 'button') return true;
         if (n.tag === 'rect') {

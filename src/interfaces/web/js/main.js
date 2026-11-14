@@ -1,3 +1,4 @@
+import { askProjectPrefix } from './components/project-prefix.js';
 /** App shell: top menu bar, left panel (libraries/catalog), right panel (screen designer | workflow designer). */
 import { h, clear, modal, toast, debounce, promptBox, confirmBox, contextMenu, $ } from './dom.js';
 import { api, ApiError, setWriteGuard } from './api.js';
@@ -243,7 +244,9 @@ async function firstProjectGuard({ url } = {}) {
       label: 'You are in the shared Default Public Project. Name a project of your own: your changes are saved there, so the shared library stays untouched.'
     });
     if (!name?.trim()) return { cancelled: true };
-    const created = await api.createProject({ name: name.trim(), visibility: 'private' });
+    const prefix = await askProjectPrefix(name);
+    if (!prefix) return { cancelled: true };
+    const created = await api.createProject({ name: name.trim(), prefix, visibility: 'private' });
     state.projects = await api.projects();
     state.selectedProjectIds.add(created.id);
     let copy = null;
@@ -266,8 +269,10 @@ setWriteGuard(firstProjectGuard);
 async function newProjectAction() {
   const name = await promptBox('New Project', { value: 'New UI Project', label: 'Project Name', okLabel: 'Create Project' });
   if (!name?.trim()) return;
+  const prefix = await askProjectPrefix(name);
+  if (!prefix) return;
   try {
-    const created = await api.createProject({ name: name.trim(), visibility: 'private' });
+    const created = await api.createProject({ name: name.trim(), prefix, visibility: 'private' });
     state.projects = await api.projects();
     state.selectedProjectIds.add(created.id);
     await setActiveProject(created.id);
@@ -298,8 +303,10 @@ async function cloneProjectAction() {
   const curProj = (state.projects || []).find(p => Number(p.id) === pid) || { id: pid, name: 'Project' };
   const name = await promptBox('Clone Project', { value: `${curProj.name} (Clone)`, label: 'Cloned Project Name', okLabel: 'Clone Project' });
   if (!name?.trim()) return;
+  const prefix = await askProjectPrefix(name);
+  if (!prefix) return;
   try {
-    const res = await api.cloneProject(pid, { name: name.trim() });
+    const res = await api.cloneProject(pid, { name: name.trim(), prefix });
     state.projects = await api.projects();
     state.selectedProjectIds.add(res.project.id);
     await setActiveProject(res.project.id);

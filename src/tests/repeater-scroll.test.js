@@ -69,9 +69,10 @@ test('wheel inside the repeater area scrolls its copies only; outside or switche
   s.fire('wheel', { ...INSIDE, deltaY: 4000 });
   assert.equal(s.track.style.transform, 'translateY(-190px)', 'a list stops at its last copy');
   e = s.fire('wheel', { ...INSIDE, deltaY: 40 });
-  assert.equal(e.prevented, false, 'at the end the wheel goes on to the page');
-  s.fire('wheel', { ...INSIDE, deltaY: -9000 });
-  assert.equal(s.track.style.transform, 'translateY(0px)');
+  assert.ok(e.prevented, 'a list rolls: past its last copy it starts again');
+  assert.equal(s.track.style.transform, 'translateY(0px)', 'back at the beginning');
+  s.fire('wheel', { ...INSIDE, deltaY: -40 });
+  assert.equal(s.track.style.transform, 'translateY(-190px)', 'before the beginning it rolls to the end');
 });
 
 test('loops wrap around and take over from the running animation; a drag scrolls and swallows its click', () => {

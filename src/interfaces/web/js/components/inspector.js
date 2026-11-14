@@ -3,7 +3,7 @@ import { h, clear, toast, confirmBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
-import { menuActions, pickButton } from './menu-editor.js';
+import { menuActions, pickButton, libraryBrowseButton } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
 import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
@@ -18,6 +18,7 @@ import { SURFACE_ROLES } from '/domain/theme.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
+
 
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
 const PARAM_FIELDS = {
@@ -236,6 +237,17 @@ export class Inspector {
       this.field('Label (shown to users)', this.text('doc-label', doc.label, v => d.updateDoc({ label: v }))),
       this.field('Category', this.text('doc-category', doc.category, v => d.updateDoc({ category: v.trim() || 'general' }))),
     ];
+    if (type === 'button') {
+      // the button's icon: preview + change / add, right in the inspector (same picker as the hover bar's search button)
+      const inst = (d.nodes || []).find(n => n.kind === 'instance' && n.refType === 'icon');
+      const ic = inst ? findDesign('icon', inst.refId) : null;
+      kids.splice(1, 0, this.field('Icon', h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' }, 'data-f': 'doc-icon' },
+        ic ? h('img', { class: 'thumb small', alt: ic.label || ic.key, src: api.svgUrl('icon', ic.id, { theme: state.themeKey, animated: 0 }), style: { width: '36px', height: '36px', objectFit: 'contain' } }) : null,
+        h('div', { class: 'grow', style: { minWidth: 0 } },
+          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ic ? (ic.label || ic.key) : inst ? `icon #${inst.refId}` : 'No icon'),
+          ic ? h('div', { class: 'muted', style: { fontSize: '11px' } }, ic.key) : null),
+        ibtn('search', inst ? 'Change icon…' : 'Add an icon…', () => d.changeButtonIcon(inst), { cls: 'primary', desc: 'Search the library and pick the icon of this button', dataset: { act: 'doc-change-icon' } }))));
+    }
     if (!TYPES[type].fixedSize) {
       const row = [this.field('Width', this.num('doc-w', doc.width, v => d.updateDoc({ width: v }), { min: 8 })), this.field('Height', this.num('doc-h', doc.height, v => d.updateDoc({ height: v }), { min: 8 }))];
       kids.push(h('div', { class: 'grid2' }, ...row));
@@ -341,10 +353,19 @@ export class Inspector {
           )
         : null,
       cfg.kind === 'show-element'
-        ? this.field('Element to Show', this.select(`mc-${bid}-target-el`, cfg.targetElementId ?? '', [
-            ['', '(choose an element…)'],
-            ...els.map(el => [el.id, `${el.name} (${el.key})`])
-          ], v => set({ targetElementId: v ? Number(v) : null })))
+        ? this.field('Element or Screen to Show', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+            h('span', { class: 'muted', 'data-f': `mc-${bid}-target-el-name`, style: { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+              (() => {
+                if (cfg.targetScreenId && !cfg.targetElementId) { const s = findDesign('screen', cfg.targetScreenId); return `🖥 ${s?.name ?? `screen #${cfg.targetScreenId}`}`; }
+                const cur = els.find(el => el.id === cfg.targetElementId);
+                return cur ? `▣ ${cur.name} (${cur.key})` : '(choose an element or screen…)';
+              })()),
+            libraryBrowseButton({
+              dataF: `mc-${bid}-target-el-browse`, title: 'Browse screens and elements',
+              currentScreenId: cfg.targetScreenId ?? null, currentElementId: cfg.targetElementId ?? null, projectId: d.doc?.projectId ?? state.activeProjectId,
+              onPick: ({ screenId, elementId }) => set(screenId ? { targetScreenId: screenId, targetElementId: null } : { targetElementId: elementId, targetScreenId: null })
+            })
+          ))
         : null,
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
@@ -794,6 +815,9 @@ export class Inspector {
           h('input', { type: 'checkbox', checked: cfg.autoplay, 'data-f': `rp-auto-${e.id}`, onchange: ev => set({ [A.autoplay]: ev.target.checked ? 'true' : 'false' }) }),
           h('span', {}, cfg.autoplay ? 'Playing' : 'Paused')))),
       h('div', { class: 'grid2' },
+        cfg.layout === 'vertical' ? this.field('Columns (0 = auto, 1 = one column)', this.num(`rp-cols-${e.id}`, cfg.columns, v => set({ [A.columns]: Math.max(0, Math.min(12, Math.round(v))) }), { min: 0, max: 12, step: 1 })) : null,
+        tpls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'data-f': `rp-shuffle-${e.id}`, title: 'Pick which sub-item appears where at random again (each sub-item still shows at least once)', onclick: () => set({ [A.seed]: String(Math.floor(Math.random() * 1e9)) }) }, '🔀 Shuffle items') : null,
+        this.field('Items shown as', this.select(`rp-display-${e.id}`, cfg.display, [['list', 'List (plain rows)'], ['card', 'Card (each item on its own card)']], v => set({ [A.display]: v }))),
         ['slide', 'scroll'].includes(cfg.layout) ? this.field('Direction', this.select(`rp-dir-${e.id}`, cfg.direction, [['vertical', 'Vertical'], ['horizontal', 'Horizontal']], v => set({ [A.direction]: v }))) : null,
         cfg.dimension === '3d' ? this.field('Perspective (px)', this.num(`rp-persp-${e.id}`, cfg.perspective, v => set({ [A.perspective]: Math.max(100, v) }), { min: 100, step: 50 })) : null),
       ring ? h('div', { class: 'muted', style: { fontSize: '11px' } }, cfg.layout === 'carousel' ? '3D carousel: the copies turn on a ring around the vertical axis.' : '3D roll: the copies turn on a cylinder around the horizontal axis (picker wheel).') : null,
@@ -970,6 +994,7 @@ export class Inspector {
       ['carousel-menu', 'Act as Carousel Animated Roll Menu (2D/3D)'],
       ['animate', 'Trigger animation'],
       ['toggle', 'Toggle visibility / flip'],
+      ['swap', 'Change to the target item (icon / button, e.g. asc ↔ desc)'],
       ['back', 'Go back']
     ], v => {
       if (v === 'none') return save(null);
@@ -995,11 +1020,30 @@ export class Inspector {
     const open = [];
     if (type === 'screen') {
       const screens = this.screenChoices();
-      kids.push(this.field('Target screen', this.select('ck-screen', cur.targetId ?? '', [['', '(choose a screen…)'], ...screens.filter(s => s.id !== d.doc.id).map(s => [s.id, s.name])], v => v && save({ type: 'screen', targetId: Number(v) }))));
+      kids.push(this.field('Target screen or element', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+        h('span', { class: 'muted', style: { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, cur.targetId ? `🖥 ${findDesign('screen', cur.targetId)?.name ?? `#${cur.targetId}`}` : '(choose a screen…)'),
+        libraryBrowseButton({
+          currentScreenId: cur.targetId ?? null, projectId: d.doc?.projectId ?? state.activeProjectId,
+          onPick: ({ screenId, elementId }) => screenId ? save({ type: 'screen', targetId: screenId }) : save({ type: 'element', targetId: elementId })
+        }))));
       if (cur.targetId) open.push(ibtn('monitor', 'Open that screen', () => d.opts.openDesign?.('screen', cur.targetId)));
+    } else if (type === 'swap') {
+      kids.push(this.field('Target item (shown on click, a second click restores this one)', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+        h('span', { class: 'muted', style: { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, cur.targetId ? `▣ ${findDesign('element', cur.targetId)?.name ?? `#${cur.targetId}`}` : '(choose the target item…)'),
+        libraryBrowseButton({
+          currentElementId: cur.targetId ?? null, projectId: d.doc?.projectId ?? state.activeProjectId,
+          onPick: ({ elementId }) => { if (elementId) save({ type: 'swap', targetId: elementId }); }
+        }))));
     } else if (['element', 'show-element', 'popup', 'toolbar', 'drawer'].includes(type)) {
       const els = [...state.library.elements].sort((a, b) => a.name.localeCompare(b.name));
-      kids.push(this.field('Element / Toolbar to open', this.select('ck-element', cur.targetId ?? '', [['', '(choose an element…)'], ...els.map(x => [x.id, x.name])], v => v && save({ type, targetId: Number(v), ...(type === 'drawer' ? { side: cur.side || 'right' } : {}), ...(type === 'show-element' ? { displayMode: cur.displayMode || 'popup' } : {}) }))));
+      kids.push(this.field('Element / Toolbar or screen to open', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+        h('span', { class: 'muted', style: { flex: '1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, cur.targetId ? `▣ ${findDesign('element', cur.targetId)?.name ?? `#${cur.targetId}`}` : '(choose an element…)'),
+        libraryBrowseButton({
+          currentElementId: cur.targetId ?? null, projectId: d.doc?.projectId ?? state.activeProjectId,
+          onPick: ({ screenId, elementId }) => screenId
+            ? save({ type: 'screen', targetId: screenId })
+            : save({ type, targetId: elementId, ...(type === 'drawer' ? { side: cur.side || 'right' } : {}), ...(type === 'show-element' ? { displayMode: cur.displayMode || 'popup' } : {}) })
+        }))));
       if (type === 'drawer') kids.push(this.field('Slides in from', this.select('ck-side', cur.side || 'right', DRAWER_SIDES, v => cur.targetId && save({ type, targetId: cur.targetId, side: v }))));
       if (type === 'show-element') kids.push(this.field('Display Mode', this.select('ck-display-mode', cur.displayMode || 'popup', [['popup', 'Popup / Modal Box'], ['drawer', 'Slide-In Drawer'], ['inline', 'Inline Overlay']], v => cur.targetId && save({ type, targetId: cur.targetId, displayMode: v }))));
       if (cur.targetId) open.push(ibtn('layers', 'Open that element', () => d.opts.openDesign?.('element', cur.targetId)));

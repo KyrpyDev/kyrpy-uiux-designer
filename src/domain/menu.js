@@ -103,7 +103,7 @@ export function normalizeItemScroll(v) {
     if (!/^\d+$/.test(k) || !s || typeof s !== 'object') continue;
     const on = s.on === true || s.on === 1 || s.on === '1' || s.on === 'true';
     const t = s.targetId == null ? '' : String(s.targetId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
-    out[k] = { on, targetId: t || null, mode: s.mode === 'focus' ? 'focus' : 'scroll' };
+    out[k] = { on, targetId: t || null, mode: s.mode === 'scroll' ? 'scroll' : 'focus' };   // default slide mode: focus
   }
   return out;
 }
@@ -121,6 +121,8 @@ export function normalizeItemGestures(v) {
   const one = g => {
     const type = g && ITEM_GESTURE_TYPES.includes(g.type) ? g.type : 'none';
     const t = g?.target == null ? '' : String(g.target).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    // focused: no target = the focused item's own screen / popup; "s-<id>" a screen or "e-<id>" a popup chosen for it
+    if (type === 'focused') return { type, target: /^[se]-\d+$/.test(t) ? t : null };
     return { type, target: (type === 'screen' || type === 'popup') && t ? t : null };
   };
   for (const [k, g] of Object.entries(v)) {
@@ -455,7 +457,8 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     }
   };
   walk(tree, '', null);
-  const showElAttr = cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '';
+  const showElAttr = (cfg.targetElementId ? ` data-show-element-id="${esc(cfg.targetElementId)}"` : '')
+    + (!cfg.targetElementId && cfg.targetScreenId ? ` data-show-screen-id="${esc(cfg.targetScreenId)}"` : '');
   const hubScrollOn = perItemScroll || cfg.hubCenterScrollRepeater === false ? '0' : '1';
   const hubScrollTarget = !perItemScroll && cfg.hubRepeaterTargetId ? ` data-target-repeater="${esc(cfg.hubRepeaterTargetId)}"` : '';
   const hit = `<circle class="rm-hit" data-rm="center" data-hub-center-scroll="${hubScrollOn}"${hubScrollTarget} cx="${round(cx)}" cy="${round(cy)}" r="${round(lsize / 2)}" fill="transparent"${showElAttr}/>`;

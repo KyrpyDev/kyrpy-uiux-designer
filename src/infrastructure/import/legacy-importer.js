@@ -10,6 +10,7 @@ import { DEFAULT_MENU as menuDefaults, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SET
 import { pathDevDescription, iconDevDescription, buttonDevDescription, menuItemDevDescription, elementDevDescription, screenDevDescription, workflowDevDescription } from '../../domain/dev-description.js';
 import { seedAstryxThemes } from '../../domain/astryx-theme-catalog.js';
 import { ASTRYX_BUTTONS, ASTRYX_ELEMENTS, ASTRYX_SCREENS, ASTRYX_WORKFLOWS } from './astryx-catalog.js';
+import { ASTRYX_EXTENDED_ELEMENTS } from './astryx-catalog-extended.js';
 
 const SHARED_MIN_USES = 2;
 
@@ -463,7 +464,7 @@ export class LegacyImporter {
 
     // 3. Astryx elements
     const haveEls = new Set(S.element.list().filter(inLib).map(e => e.key));
-    for (const e of ASTRYX_ELEMENTS) {
+    for (const e of [...ASTRYX_ELEMENTS, ...ASTRYX_EXTENDED_ELEMENTS]) {
       if (haveEls.has(e.key)) continue;
       const draft = { key: e.key, name: e.name, label: e.label, width: e.width, height: e.height, category: e.category };
       S.element.create({

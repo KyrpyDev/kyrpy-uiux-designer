@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildContainer } from '../composition-root.js';
 import { createHttpServer } from '../interfaces/http/server.js';
+const pfxRand = () => `pfx${Math.random().toString(36).slice(2, 10).replace(/[^a-z0-9]/g, 'a')}`;
 
 async function withServer(fn, env = {}) {
   const saved = {};
@@ -49,7 +50,7 @@ test('private projects and private items of another user are not listed', async 
   await withServer(async req => {
     const a = (await req('POST', '/api/auth/register', { username: 'alice', email: 'alice@example.com', password: 'secret123' })).body;
     const b = (await req('POST', '/api/auth/register', { username: 'bobby', email: 'bobby@example.com', password: 'secret123' })).body;
-    const proj = await req('POST', '/api/projects', { name: 'Alice Secret', visibility: 'private' }, auth(a.token));
+    const proj = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Alice Secret', visibility: 'private' }, auth(a.token));
     assert.equal(proj.status, 200);
     const item = await req('POST', '/api/icons', { name: 'Alice Private Icon', visibility: 'private', projectId: proj.body.id }, auth(a.token));
     assert.equal(item.status, 200);
@@ -282,7 +283,7 @@ test('project button settings leave other projects and the public library alone'
   await withServer(async (req, c) => {
     const a = (await req('POST', '/api/auth/register', { username: 'alice', email: 'alice@example.com', password: 'secret123' })).body;
     const A = auth(a.token);
-    const proj = (await req('POST', '/api/projects', { name: 'Alice Project' }, A)).body;
+    const proj = (await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Alice Project' }, A)).body;
     const own = (await req('POST', '/api/buttons', { name: 'Own Button', projectId: proj.id, visibility: 'project' }, A)).body;
     const lib = (await req('POST', '/api/buttons', { name: 'Library Button', projectId: 1, visibility: 'public' })).body;
     const before = JSON.stringify(c.services.button.get(lib.id).meta);

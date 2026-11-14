@@ -22,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildContainer } from '../composition-root.js';
 import { createHttpServer } from '../interfaces/http/server.js';
+const pfxRand = () => `pfx${Math.random().toString(36).slice(2, 10).replace(/[^a-z0-9]/g, 'a')}`;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const legacyRoot = existsSync(resolve(here, '..', '..', 'v1'))
@@ -90,7 +91,7 @@ test('Persona 1 (@kyrpy-test-ux-coverage): Full coverage of 6 item types, 15 int
     }
 
     // Create a custom project via UI modal payload (using visibility: 'project' which normalizes to 'private')
-    const projRes = await req('POST', '/api/projects', {
+    const projRes = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(), 
       name: 'Ada UX Studio Project',
       visibility: 'project',
       description: 'Project created from Projects modal'
@@ -315,7 +316,7 @@ test('Persona 2 (@kyrpy-test-ux-adversary): Multi-user collaboration, public clo
     assert.equal(lineageRes.body.chain.length, 3);
 
     // 4. Kyrpy creates a project and invites Burak as editor
-    const proj = await req('POST', '/api/projects', { name: 'Sample Shared Redesign', visibility: 'public' });
+    const proj = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Sample Shared Redesign', visibility: 'public' });
     assert.equal(proj.status, 200);
     const invite = await req('POST', `/api/projects/${proj.body.id}/members`, {
       usernameOrEmail: 'burak_ux',
@@ -756,7 +757,7 @@ test('Persona 8 (@kyrpy-gru & @kyrpy-testusers-team): Workflow Filters, Copy/Mov
     assert.equal(scanList.builtin, true);
 
     // 2. Workflow Public / Project-Specific Filter API
-    const projRes = await req('POST', '/api/projects', { name: 'Private Transfer Project', visibility: 'private' });
+    const projRes = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Private Transfer Project', visibility: 'private' });
     assert.equal(projRes.status, 200);
     const targetPid = projRes.body.id;
 
@@ -920,7 +921,7 @@ test('Persona 9 (@kyrpy-gru & @kyrpy-testusers-team): Multi-Format (HTML, SVG, J
     assert.equal(bypassRes.body.bypassed, true);
 
     // 2. Create a target project for private library imports
-    const projRes = await req('POST', '/api/projects', { name: 'MultiFormat Import Project', visibility: 'private' });
+    const projRes = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'MultiFormat Import Project', visibility: 'private' });
     assert.equal(projRes.status, 200);
     const targetPid = projRes.body.id;
 
@@ -1223,9 +1224,9 @@ test('Persona 11 (@kyrpy-gru & @kyrpy-testusers-team): Move Restrictions (Built-
     const bobAuth = { Authorization: `Bearer ${bobToken}` };
 
     // 2. Alice creates two projects she owns (`aliceProjA`, `aliceProjB`); Bob creates `bobProj`
-    const aliceProjA = (await req('POST', '/api/projects', { name: 'Alice Project A', visibility: 'private' }, aliceAuth)).body;
-    const aliceProjB = (await req('POST', '/api/projects', { name: 'Alice Project B', visibility: 'private' }, aliceAuth)).body;
-    const bobProj = (await req('POST', '/api/projects', { name: 'Bob Project', visibility: 'private' }, bobAuth)).body;
+    const aliceProjA = (await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Alice Project A', visibility: 'private' }, aliceAuth)).body;
+    const aliceProjB = (await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Alice Project B', visibility: 'private' }, aliceAuth)).body;
+    const bobProj = (await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Bob Project', visibility: 'private' }, bobAuth)).body;
     assert.equal(aliceProjA.ownerId, aliceId);
     assert.equal(aliceProjB.ownerId, aliceId);
     assert.equal(bobProj.ownerId, bobId);
@@ -1311,7 +1312,7 @@ test('Persona 11 (@kyrpy-gru & @kyrpy-testusers-team): Move Restrictions (Built-
 
     // 8. Multi-Target `Save as…` (`/api/library/save-to-targets`) + Global Private Library (`includeUserPrivate: true`)
     //    Bob edits Alice's screen (or saves it via Save As to `bobProj` + Bob's Global Private Library)
-    const bobProj2 = (await req('POST', '/api/projects', { name: 'Bob Project 2', visibility: 'private' }, bobAuth)).body;
+    const bobProj2 = (await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(),  name: 'Bob Project 2', visibility: 'private' }, bobAuth)).body;
     const movedScreenId = aliceMoveRes.body.moved[0].id;
     const multiSaveRes = await req('POST', '/api/library/save-to-targets', {
       type: 'screen',
@@ -1445,7 +1446,7 @@ test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Sl
     c.importer.run({ legacyRoot });
 
     // 1. Create a New Project and verify default button settings (buttonStyle: 'circle', buttonIconSizePct: 95)
-    const createProjRes = await req('POST', '/api/projects', {
+    const createProjRes = await req('POST', '/api/projects', { prefix: pfxRand(),  prefix: pfxRand(), 
       name: 'Interactive Buttons Workspace',
       description: 'Tests per-project button style & icon size + action menus',
       visibility: 'private'
@@ -1587,7 +1588,8 @@ test('Persona 13 (@kyrpy-uiux-designer): Per-Project Button Style & Icon Size Sl
     assert.equal(saveProjRes.body.buttonIconSizePct, 75);
 
     const cloneProjRes = await req('POST', `/api/projects/${proj.id}/clone`, {
-      name: 'Cloned Interactive Workspace'
+      name: 'Cloned Interactive Workspace',
+      prefix: pfxRand()
     });
     assert.equal(cloneProjRes.status, 200);
     assert.equal(cloneProjRes.body.name, 'Cloned Interactive Workspace');

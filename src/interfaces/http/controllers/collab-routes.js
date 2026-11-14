@@ -4,7 +4,7 @@
  * Translations, and Offline-First PostgreSQL Synchronization.
  */
 import { USER_ROLES, PROJECT_ROLES, VISIBILITY_LEVELS, EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, BUTTON_STYLES } from '../../../domain/entities.js';
-import { ForbiddenError } from '../../../domain/errors.js';
+import { ForbiddenError, ValidationError } from '../../../domain/errors.js';
 import { intId } from '../input.js';
 
 export function collabRoutes(router, c) {
@@ -46,7 +46,13 @@ export function collabRoutes(router, c) {
   router.get('/api/projects', ({ query, actor }) =>
     c.projects.list({ user: actor, includePublic: query.get('includePublic') !== '0', q: query.get('q') || '' })
   );
-  router.post('/api/projects', ({ body, actor }) => c.projects.create(body, { actor }));
+  // a new project made by a user must carry its global prefix (set once here)
+  router.post('/api/projects', ({ body, actor }) => {
+    if (!body || body.prefix === undefined || body.prefix === null || body.prefix === '') {
+      throw new ValidationError('Project prefix is required: 2-16 lowercase letters or digits, starting with a letter');
+    }
+    return c.projects.create(body, { actor });
+  });
   // a private project is visible to its owner, accepted members and admins only
   const readableProject = (id, actor) => {
     const p = c.projects.get(id);
@@ -56,7 +62,13 @@ export function collabRoutes(router, c) {
   router.get('/api/projects/:id', ({ params, actor }) => readableProject(params.id, actor));
   router.put('/api/projects/:id', ({ params, body, actor }) => c.projects.update(params.id, body, { actor }));
   router.post('/api/projects/:id/save', ({ params, body, actor }) => c.projects.saveProject(params.id, body || {}, { actor }));
-  router.post('/api/projects/:id/clone', ({ params, body, actor }) => c.projects.clone(params.id, body || {}, { actor }));
+  // a clone is a new project: it needs its own unique prefix
+  router.post('/api/projects/:id/clone', ({ params, body, actor }) => {
+    if (!body || body.prefix === undefined || body.prefix === null || body.prefix === '') {
+      throw new ValidationError('Project prefix is required: 2-16 lowercase letters or digits, starting with a letter');
+    }
+    return c.projects.clone(params.id, body, { actor });
+  });
   router.get('/api/projects/:id/button-settings', ({ params, actor }) => {
     const p = readableProject(params.id, actor);
     return {

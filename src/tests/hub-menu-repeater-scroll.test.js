@@ -241,7 +241,7 @@ function createScreenWorld({ repeaterAxis = 'y', repeaterLoop = 300, repeaterMax
 test('hub center button: press down and slide up/down scrolls repeater container on the same screen', () => {
   const w = createScreenWorld({ repeaterAxis: 'y', repeaterLoop: 400 });
   const actions = [];
-  bindMenus(w.root, { onAction: a => actions.push(a) });
+  bindMenus(w.root, { onAction: a => actions.push(a), slideHoldMs: 0 });
 
   // 1. Pointerdown on hub center hit circle
   w.fire('pointerdown', w.centerHit, { clientX: 100, clientY: 200 });
@@ -264,7 +264,7 @@ test('hub center button: press down and slide up/down scrolls repeater container
 test('hub center button: quick tap (<4px) fires normal click action instead of scrolling', () => {
   const w = createScreenWorld({ repeaterAxis: 'y', repeaterLoop: 400 });
   const actions = [];
-  bindMenus(w.root, { onAction: a => actions.push(a) });
+  bindMenus(w.root, { onAction: a => actions.push(a), slideHoldMs: 0 });
 
   // Quick tap: down, move 1px (below 4px threshold), up, click
   w.fire('pointerdown', w.centerHit, { clientX: 100, clientY: 200 });
@@ -282,7 +282,7 @@ test('hub center button: quick tap (<4px) fires normal click action instead of s
 test('menu item: action scroll-repeater slides and scrolls targeted repeater container', () => {
   const w = createScreenWorld({ repeaterAxis: 'y', repeaterLoop: 500, targetId: 'rpt-custom' });
   const actions = [];
-  bindMenus(w.root, { onAction: a => actions.push(a) });
+  bindMenus(w.root, { onAction: a => actions.push(a), slideHoldMs: 0 });
 
   w.scrollItem.setAttribute('data-target-repeater', 'rpt-custom');
 
@@ -302,7 +302,7 @@ test('menu item: action scroll-repeater slides and scrolls targeted repeater con
 
 test('horizontal repeater: sliding scrolls along X axis with translateX', () => {
   const w = createScreenWorld({ repeaterAxis: 'x', repeaterLoop: 600 });
-  bindMenus(w.root);
+  bindMenus(w.root, { slideHoldMs: 0 });
 
   w.fire('pointerdown', w.centerHit, { clientX: 200, clientY: 100 });
   w.fire('pointermove', w.centerHit, { clientX: 150, clientY: 100 }); // dx = 50px left
@@ -323,7 +323,7 @@ test('hub continuous auto-scroll: scales speed with displacement within button r
     frameCb = null;
   };
 
-  bindMenus(w.root);
+  bindMenus(w.root, { slideHoldMs: 0 });
 
   // 1. Pointerdown on center button at (100, 200)
   w.fire('pointerdown', w.centerHit, { clientX: 100, clientY: 200 });

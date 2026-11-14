@@ -266,6 +266,26 @@ h3, h4 { margin: 0; }
 .dz-pv-box { position: relative; margin: auto; max-height: 94%; overflow: auto; background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .7); }
 .dz-pv-x { position: absolute; top: 6px; right: 6px; z-index: 2; background: var(--panel2); }
 .dz-pv-panel svg { display: block; width: 100%; height: auto; }
+/* test-phase popup: grip to drag, controls (animations, durations, save) under the preview */
+.dz-pv-grip { cursor: move; user-select: none; touch-action: none; font-size: 11px; color: var(--muted); padding: 4px 8px; background: var(--panel2); border-bottom: 1px solid var(--line, #333); }
+.pv-controls { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px; border-top: 1px solid var(--line, #333); font-size: 12px; }
+.pv-controls .pv-ctl { display: inline-flex; gap: 4px; align-items: center; }
+.pv-controls select, .pv-controls input { font-size: 12px; }
+/* popup show / close animations (keyframes named pv-in-<name> and pv-out-<name>) */
+@keyframes pv-in-fade { from { opacity: 0; } }
+@keyframes pv-out-fade { to { opacity: 0; } }
+@keyframes pv-in-scale { from { opacity: 0; transform: scale(.6); } }
+@keyframes pv-out-scale { to { opacity: 0; transform: scale(.6); } }
+@keyframes pv-in-bounce { 0% { opacity: 0; transform: scale(.3); } 50% { opacity: 1; transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes pv-out-bounce { 0% { transform: scale(1); } 100% { opacity: 0; transform: scale(.3); } }
+@keyframes pv-in-slide-up { from { opacity: 0; transform: translateY(40px); } }
+@keyframes pv-out-slide-up { to { opacity: 0; transform: translateY(40px); } }
+@keyframes pv-in-slide-down { from { opacity: 0; transform: translateY(-40px); } }
+@keyframes pv-out-slide-down { to { opacity: 0; transform: translateY(-40px); } }
+@keyframes pv-in-slide-left { from { opacity: 0; transform: translateX(40px); } }
+@keyframes pv-out-slide-left { to { opacity: 0; transform: translateX(40px); } }
+@keyframes pv-in-slide-right { from { opacity: 0; transform: translateX(-40px); } }
+@keyframes pv-out-slide-right { to { opacity: 0; transform: translateX(-40px); } }
 .dz-pv.drawer .dz-pv-box { margin: 0; border-radius: 0; max-height: none; }
 .dz-pv.from-left, .dz-pv.from-right { flex-direction: row; } .dz-pv.from-left .dz-pv-box, .dz-pv.from-right .dz-pv-box { height: 100%; }
 .dz-pv.from-left { justify-content: flex-start; } .dz-pv.from-right { justify-content: flex-end; }

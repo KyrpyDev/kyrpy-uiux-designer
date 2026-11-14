@@ -25,3 +25,17 @@ export function uniqueKey(base, exists) {
   while (exists(`${key}-${n}`)) n++;
   return `${key}-${n}`;
 }
+
+/** A project's global unique prefix: set once when the project is created (2-16 chars, lowercase letter first). */
+export const PROJECT_PREFIX_RE = /^[a-z][a-z0-9]{1,15}$/;
+export function isValidProjectPrefix(prefix) { return typeof prefix === 'string' && PROJECT_PREFIX_RE.test(prefix); }
+
+/**
+ * Variable name of a public item dropped onto a screen: `projectprefix-[itemtype]-itemname`
+ * (lowercase, dashed; e.g. untrap-element-scan-button). Without a prefix the item name alone is used.
+ */
+export function prefixedVariableName(prefix, itemType, itemName) {
+  const base = slugify(String(itemName ?? ''), 'item');
+  if (!prefix) return base;
+  return `${prefix}-${slugify(String(itemType || 'item'), 'item')}-${base}`;
+}

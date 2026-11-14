@@ -14,6 +14,7 @@ import { state, emit, projectLabel, ownerLabel, isSuperadminUser } from '../stat
 import { reloadLibrary, setActiveProject } from '../actions.js';
 import { h, modal, toast, confirmBox } from '../dom.js';
 import { EVENT_TRIGGERS, CLICK_ACTIONS, TOOLBAR_POSITIONS, DRAWER_SIDES } from '/domain/entities.js';
+import { askProjectPrefix } from './project-prefix.js';
 
 /** A sync answer the server refused (`ok: false`, e.g. the remote changed since the last pull) is shown, not reported as done. */
 function syncDone(res) {
@@ -601,8 +602,11 @@ export async function openProjectsModal() {
             onclick: async () => {
               if (!pName.value.trim()) return toast('Enter a project name', 'error');
               try {
+                const prefix = await askProjectPrefix(pName.value);
+                if (!prefix) return;
                 const created = await api.createProject({
                   name: pName.value.trim(),
+                  prefix,
                   description: pDesc.value.trim(),
                   visibility: pVis.value
                 });
@@ -684,8 +688,10 @@ export async function openProjectsModal() {
               onclick: async () => {
                 const cloneName = await promptBox('Clone Project', { value: `${current.name} (Clone)`, label: 'Cloned Project Name', okLabel: 'Clone Project' });
                 if (!cloneName?.trim()) return;
+                const clonePrefix = await askProjectPrefix(cloneName);
+                if (!clonePrefix) return;
                 try {
-                  const res = await api.cloneProject(current.id, { name: cloneName.trim(), visibility: current.visibility });
+                  const res = await api.cloneProject(current.id, { name: cloneName.trim(), prefix: clonePrefix, visibility: current.visibility });
                   selectedId = res.project.id;
                   await setActiveProject(res.project.id);
                   toast(`Cloned project "${res.project.name}" (${res.copiedCount || 0} item(s))`, 'ok');

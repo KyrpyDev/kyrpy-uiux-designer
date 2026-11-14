@@ -1,7 +1,7 @@
 /** Projects, their settings, members and clones (`ProjectService`). */
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js';
 import { PROJECT_ROLES, VISIBILITY_LEVELS, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, normalizeButtonIconSizePct, normalizeButtonStyleKey, applyButtonStyleAndIconSizeToNodes, isButtonStyleFrame, isDesignButtonTemplate } from '../domain/entities.js';
-import { isValidKey, slugify, uniqueKey } from '../domain/naming.js';
+import { isValidKey, slugify, uniqueKey, isValidProjectPrefix } from '../domain/naming.js';
 import { fallbackOwnerId } from './default-owner.js';
 import { isSystemUser } from '../domain/system-users.js';
 import { ForbiddenError } from './service-shared.js';
@@ -106,6 +106,13 @@ export class ProjectService {
     const key = input.key ? String(input.key).trim() : uniqueKey(slugify(name), k => this.projects.keyExists(k));
     if (!isValidKey(key)) throw new ValidationError('Project key must be dashed lowercase words');
     if (this.projects.keyExists(key)) throw new ConflictError(`Project key "${key}" already exists`);
+    // a project created by a user needs its global prefix (set once here, used for every dropped public item)
+    let prefix = null;
+    if (input.prefix !== undefined && input.prefix !== null) {
+      prefix = String(input.prefix ?? '').trim().toLowerCase();
+      if (!isValidProjectPrefix(prefix)) throw new ValidationError('Project prefix is required: 2-16 lowercase letters or digits, starting with a letter');
+      if (this.list({ includePublic: true }).some(p => p.settings?.prefix === prefix)) throw new ConflictError(`Project prefix "${prefix}" is already used by another project`);
+    }
     const ownerId = actor?.id ?? Number(input.ownerId || fallbackOwnerId(this));
     if (isSystemUser(this.users.get(ownerId))) throw new ValidationError('A system account cannot own a project');
     const rawVis = input.visibility === 'project' ? 'private' : input.visibility;
@@ -115,7 +122,8 @@ export class ProjectService {
         ...DEFAULT_PROJECT_BUTTON_SETTINGS,
         ...(input.settings && typeof input.settings === 'object' ? input.settings : {}),
         ...(input.buttonStyle !== undefined ? { buttonStyle: normalizeButtonStyleKey(input.buttonStyle) } : {}),
-        ...(input.buttonIconSizePct !== undefined ? { buttonIconSizePct: normalizeButtonIconSizePct(input.buttonIconSizePct) } : {})
+        ...(input.buttonIconSizePct !== undefined ? { buttonIconSizePct: normalizeButtonIconSizePct(input.buttonIconSizePct) } : {}),
+        ...(prefix ? { prefix } : {})
       };
       const p = this.projects.create({
         key,
@@ -135,6 +143,10 @@ export class ProjectService {
   update(id, patch, { actor = null } = {}) {
     const p = this.get(id);
     if (actor && !this.isOwnerOrAdmin(p.id, actor)) throw new ForbiddenError('Only the project owner or admin can update project settings');
+    // the prefix is immutable: whatever the route (save, settings, API), a project keeps the prefix it was created with
+    if (patch.settings && typeof patch.settings === 'object' && patch.settings.prefix !== undefined && p.settings?.prefix && patch.settings.prefix !== p.settings.prefix) {
+      throw new ValidationError('The project prefix is set once when the project is created and cannot be changed');
+    }
     const clean = {};
     if (patch.name !== undefined) clean.name = String(patch.name).trim();
     if (patch.label !== undefined) clean.label = String(patch.label).trim();
@@ -162,6 +174,10 @@ export class ProjectService {
    * Saves project metadata & per-project settings (`Save Project` menu action).
    */
   saveProject(id, patch = {}, { actor = null } = {}) {
+    const current = this.get(id).settings?.prefix;
+    if (patch.settings && patch.settings.prefix !== undefined && current && patch.settings.prefix !== current) {
+      throw new ValidationError('The project prefix is set once when the project is created and cannot be changed');
+    }
     const p = this.update(id, {
       ...patch,
       settings: {
@@ -256,14 +272,17 @@ export class ProjectService {
 
   #cloneInto(src, input, actor) {
     const cloneName = String(input.name || `${src.name} (Clone)`).trim();
+    // a clone is a new project: it never inherits the prefix (they are unique), it needs its own
+    const { prefix: _inherited, ...copiedSettings } = src.settings || {};
     const created = this.create({
       name: cloneName,
       key: input.key,
+      ...(input.prefix !== undefined ? { prefix: input.prefix } : {}),
       label: input.label || cloneName,
       description: input.description !== undefined ? input.description : src.description,
       visibility: input.visibility || src.visibility || 'private',
       requireApproval: src.requireApproval,
-      settings: { ...(src.settings || {}) }
+      settings: copiedSettings
     }, { actor: actor || this.users.get(Number(src.ownerId)) });
 
     let copiedCount = 0;

@@ -499,7 +499,8 @@ export function bindMenus(root, opts) {
       var gx = st.getAttribute('data-rpt-axis') === 'x' || (gm.y <= 0 && gm.x > 0);
       var lim = gx ? gm.x : gm.y;
       if (!lim) return false;
-      var go = st.__udOff || 0, gn = Math.max(0, Math.min(lim, go + delta));
+      // a roll: past the end it starts again at the beginning, before the beginning it jumps to the end
+      var go = st.__udOff || 0, gn = delta > 0 && go >= lim - 0.5 ? 0 : delta < 0 && go <= 0.5 ? lim : Math.max(0, Math.min(lim, go + delta));
       if (gn === go) return false;
       st.__udOff = gn;
       genericInner(st).setAttribute('transform', (gx ? 'translate(' + (-gn) + ' 0)' : 'translate(0 ' + (-gn) + ')'));
@@ -529,7 +530,8 @@ export function bindMenus(root, opts) {
       } catch (e) { off = 0; }
     }
     var next = off + delta;
-    next = loop ? ((next % loop) + loop) % loop : Math.max(0, Math.min(max, next));
+    // loops wrap seamlessly; lists and slides roll over: past the end back to the beginning, before it to the end
+    next = loop ? ((next % loop) + loop) % loop : delta > 0 && off >= max - 0.5 ? 0 : delta < 0 && off <= 0.5 ? max : Math.max(0, Math.min(max, next));
     if (!loop && next === off && st.__udOff != null) return false;
     st.__udOff = next;
     if (track.style) {
@@ -557,6 +559,7 @@ export function bindMenus(root, opts) {
     return true;
   }
   var rptDrag = null;
+  var SLIDE_HOLD_MS = 1000;   // press & slide: hold this long on the centred item before the slide starts (long press is 2000 ms)
   var suppressClickUntil = 0;
   function getBtnRadius(t, btn) {
     var r = 32;
@@ -584,6 +587,8 @@ export function bindMenus(root, opts) {
     if (!t) return;
     var btn = t.closest ? t.closest('.ud-btn') : null;
     if (!btn) return;
+    if (!isHub(btn)) return;   // only the set (hub) buttons slide the list items
+    activeSetBtn = btn;
     var isCenter = t.getAttribute('data-rm') === 'center' || t.getAttribute('data-hub-pos') === 'center';
     var m = btn.querySelector ? btn.querySelector('.ud-menu') : null;
     // hub: the item sitting in the centre decides (per item slide-scroll setting); the centre hit area stands for it
@@ -640,11 +645,30 @@ export function bindMenus(root, opts) {
       lastY: ev.clientY,
       activeSpeed: 0,
       rafId: null,
-      moved: false
+      moved: false,
+      armed: false,
+      armTimer: null
     };
+    // Press timing on the centred item, so the actions can be told apart at runtime:
+    //   tap                      -> the click action
+    //   press ~1 s, then slide   -> press & slide (the red frame appears when it is ready: the item under it is the one a double tap opens)
+    //   press 2 s without moving -> the long press action (a separate timer)
+    // Moving before the slide is ready cancels it (no accidental slide while a tap or long press is being made).
+    var drag = rptDrag;
+    var armSlide = function () {
+      if (rptDrag !== drag) return;
+      drag.armed = true;
+      try { var fc = listOf(stage), fi = listItems(fc); if (fi.length) setFocus(fc, fc.__udFocus != null ? fc.__udFocus : nearestToCentre(fc, fi), true); } catch (e) {}
+    };
+    var holdMs = opts && opts.slideHoldMs != null ? Number(opts.slideHoldMs) : SLIDE_HOLD_MS;
+    if (holdMs > 0) drag.armTimer = setTimeout(armSlide, holdMs); else armSlide();
   }
   function onPointerMove(ev) {
     if (!rptDrag) return;
+    if (!rptDrag.armed) {          // the slide is not ready yet: moving now means this is no press & slide
+      if (Math.hypot(ev.clientX - rptDrag.startX, ev.clientY - rptDrag.startY) >= 8) { clearTimeout(rptDrag.armTimer); rptDrag = null; }
+      return;
+    }
     var dx = rptDrag.lastX - ev.clientX;
     var dy = rptDrag.lastY - ev.clientY;
     var rawDx = ev.clientX - rptDrag.originX;
@@ -705,6 +729,7 @@ export function bindMenus(root, opts) {
   }
   function onPointerEnd(ev) {
     if (rptDrag) {
+      clearTimeout(rptDrag.armTimer);
       if (rptDrag.rafId) {
         var view = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
         if (view && view.cancelAnimationFrame) view.cancelAnimationFrame(rptDrag.rafId);
@@ -770,9 +795,14 @@ export function bindMenus(root, opts) {
     var btn = t.closest('.ud-btn');
     if (!btn) return;
     var st = get(btn), next;
-    if (isHub(btn)) { ev.stopPropagation(); set(btn, hubStep(btn, t, st)); return; }
+    if (isHub(btn)) { ev.stopPropagation(); set(btn, hubStep(btn, t, st)); activeSetBtn = btn; refreshFocusRings(); return; }
     if (t.getAttribute('data-rm') === 'center') {
       var showElId = t.getAttribute('data-show-element-id');
+      var showScrId = t.getAttribute('data-show-screen-id');
+      if (showScrId && !showElId && opts.onAction) {
+        // show-element menu whose target is a screen: route to it (same shape as a "screen" gesture)
+        opts.onAction({ menu: btn.getAttribute('data-menu'), item: 'center', action: '', target: showScrId });
+      }
       if (showElId && opts.onAction) {
         opts.onAction({
           menu: btn.getAttribute('data-menu'),
@@ -827,7 +857,7 @@ export function bindMenus(root, opts) {
       suppressClickUntil = Date.now() + 500;   // the release after a long press is not a click
       if (rptDrag) { if (rptDrag.rafId) { try { cancelAnimationFrame(rptDrag.rafId); } catch (e) {} } rptDrag = null; }
       runGesture(g.btn, g.src, g.src.getAttribute('data-gest-long'));
-    }, 550) };
+    }, 2000) };   // long press: 2 seconds
   });
   function cancelLong(ev) {
     if (!longPress) return;
@@ -843,6 +873,14 @@ export function bindMenus(root, opts) {
     if (type === 'focused') {
       var st = findRepeaterStage(btn, src), cont = st ? listOf(st) : null;
       var el = cont ? focusedItem(cont, true) : null;
+      var pick = /^([se])-(\d+)$/.exec(target);
+      if (pick && opts.onAction) {       // a screen / popup chosen for "open the focused item" (it gets the focused item's index)
+        var its = cont ? listItems(cont) : [];
+        base.action = ''; base.focusIndex = el ? its.indexOf(el) : -1;
+        if (el) base.focusItem = el.getAttribute('data-rpt-index') || el.getAttribute('data-el') || '';
+        if (pick[1] === 's') base.target = pick[2]; else { base.target = ''; base.targetElement = pick[2]; base.targetElementId = pick[2]; }
+        opts.onAction(base); return;
+      }
       if (!el || !el.getBoundingClientRect || !doc || !doc.elementFromPoint) return;
       var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
       var hit = doc.elementFromPoint(x, y) || el;
@@ -860,7 +898,7 @@ export function bindMenus(root, opts) {
     if (copies.length) return Array.prototype.slice.call(copies);
     var box = cont, f = cont.firstElementChild;
     if (f && f.getAttribute('data-scroll-inner') === '1' && cont.childElementCount === 1) box = f;
-    return Array.prototype.filter.call(box.children || [], function (c) { return c.tagName && c.tagName.toLowerCase() !== 'title' && !c.classList.contains('ud-focus-ring'); });
+    return Array.prototype.filter.call(box.children || [], function (c) { return c.tagName && c.tagName.toLowerCase() !== 'title' && !c.classList.contains('ud-focus-ring') && !c.classList.contains('ud-focus-hint'); });
   }
   function clipRect(cont) {
     try {
@@ -882,45 +920,104 @@ export function bindMenus(root, opts) {
   function focusedItem(cont, pickCentre) {
     var items = listItems(cont);
     if (!items.length) return null;
+    // the red frame is a navigator: the selected item is the focused one (the one under the frame)
+    if (cont.__udFocus != null) return items[Math.max(0, Math.min(items.length - 1, cont.__udFocus))];
+    if (cont.getAttribute('data-focus-ring') === '1' || cont.__udRing) return items[nearestToCentre(cont, items)];
     if (cont.__udFocus == null) { if (!pickCentre) return null; setFocus(cont, nearestToCentre(cont, items), false); }
     return items[Math.max(0, Math.min(items.length - 1, cont.__udFocus))];
   }
-  function setFocus(cont, idx, ring) {
+  /** The red frame only stands for a slide-enabled item: the centred item of the set must be enabled (outside a set, always). */
+  var activeSetBtn = null;   // the set (hub) button last pressed or turned: the one whose centre item decides
+  function centreItemEnabled() {
+    var c = activeSetBtn && activeSetBtn.querySelector ? activeSetBtn.querySelector('.rm-hub-item[data-hub-pos="center"]') : null;
+    return !c || c.getAttribute('data-item-scroll') === '1';
+  }
+  /** Removes the red frame and its hint when the centred item is not slide-enabled (called when the set turns). */
+  function refreshFocusRings() {
+    if (centreItemEnabled() || !doc || !doc.querySelectorAll) return;
+    Array.prototype.forEach.call(doc.querySelectorAll('.ud-focus-ring, .ud-focus-hint'), function (n) { n.parentNode && n.parentNode.removeChild(n); });
+  }
+  /** The red focus indicator: a fixed frame at the centre of the container, the size of an item. */
+  function setFocus(cont, idx, ring, hint) {
     var items = listItems(cont);
     if (!items.length) return;
-    idx = Math.max(0, Math.min(items.length - 1, idx));
+    idx = ((idx % items.length) + items.length) % items.length;
     cont.__udFocus = idx;
     Array.prototype.forEach.call(cont.querySelectorAll('.ud-focus-ring'), function (r) { r.parentNode.removeChild(r); });
-    if (!(ring || cont.getAttribute('data-focus-ring') === '1')) return;
-    var it = items[idx], bb = null;
-    try { bb = it.getBBox(); } catch (e) {}
+    if (!((ring || cont.getAttribute('data-focus-ring') === '1') && centreItemEnabled())) return;
+    cont.__udRing = true;
+    var it = items[idx], bb = null, m = null;
+    try { bb = it.getBBox(); m = cont.getScreenCTM && cont.getScreenCTM(); } catch (e) {}
     if (!bb || !doc) return;
+    // the frame is the size of ONE item as it is on screen (its rect, in the container's units), not the item's local bbox
+    var ir = it.getBoundingClientRect ? it.getBoundingClientRect() : null, fw = bb.width, fh = bb.height;
+    if (ir && ir.width && ir.height && m) { fw = ir.width / (Math.hypot(m.a, m.b) || 1); fh = ir.height / (Math.hypot(m.c, m.d) || 1); }
+    // the frame sits on the selected item where it really is (at the ends of a plain list that is not the centre)
+    var c = clipRect(cont), sx = ir && ir.width ? ir.left + ir.width / 2 : c.left + c.width / 2, sy = ir && ir.height ? ir.top + ir.height / 2 : c.top + c.height / 2, lx, ly;
+    if (m && m.inverse) {
+      var inv = m.inverse(); lx = inv.a * sx + inv.c * sy + inv.e; ly = inv.b * sx + inv.d * sy + inv.f;
+    } else { var cb = cont.getBBox ? cont.getBBox() : { x: 0, y: 0, width: 0, height: 0 }; lx = cb.x + cb.width / 2; ly = cb.y + cb.height / 2; }
     var r = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
     r.setAttribute('class', 'ud-focus-ring');
-    r.setAttribute('x', bb.x - 2); r.setAttribute('y', bb.y - 2); r.setAttribute('width', bb.width + 4); r.setAttribute('height', bb.height + 4);
-    r.setAttribute('rx', 10); r.setAttribute('fill', 'none'); r.setAttribute('stroke', '#EF4444'); r.setAttribute('stroke-width', 2.5); r.setAttribute('pointer-events', 'none');
-    // a group holds the ring (it moves with the item); a single shape gets it right after itself, in the same coordinates
-    if (it.tagName && it.tagName.toLowerCase() === 'g') it.appendChild(r); else it.parentNode.insertBefore(r, it.nextSibling);
+    r.setAttribute('x', lx - fw / 2 - 3); r.setAttribute('y', ly - fh / 2 - 3); r.setAttribute('width', fw + 6); r.setAttribute('height', fh + 6);
+    r.setAttribute('rx', 10); r.setAttribute('fill', 'none'); r.setAttribute('stroke', '#EF4444'); r.setAttribute('stroke-width', 3); r.setAttribute('pointer-events', 'none');
+    cont.appendChild(r);      // in the container, not the item: it stays at the centre while the list rolls under it
+    if (hint) showFocusHint(cont, lx + fw / 2 - 6, ly - fh / 2 + 12);
   }
-  /** One slide step in focus mode: the focus moves to the next / previous item, which is scrolled to the centre. */
-  function stepFocus(stage, dir) {
-    var cont = listOf(stage), items = listItems(cont);
-    if (!items.length) return;
-    if (cont.__udFocus == null) cont.__udFocus = nearestToCentre(cont, items);
-    else cont.__udFocus = Math.max(0, Math.min(items.length - 1, cont.__udFocus + dir));
-    setFocus(cont, cont.__udFocus, true);
-    var it = items[cont.__udFocus], c = clipRect(cont), r = it.getBoundingClientRect();
+  /** "double click to view" inside the top right corner of the red frame: shown for 3 seconds after each scroll step. */
+  function showFocusHint(cont, x, y) {
+    if (!doc) return;
+    Array.prototype.forEach.call(cont.querySelectorAll('.ud-focus-hint'), function (n) { n.parentNode.removeChild(n); });
+    var t = doc.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('class', 'ud-focus-hint');
+    t.setAttribute('x', x); t.setAttribute('y', y); t.setAttribute('text-anchor', 'end');
+    t.setAttribute('font-size', 9); t.setAttribute('font-weight', 700); t.setAttribute('fill', '#FFFFFF');
+    t.setAttribute('pointer-events', 'none');
+    t.textContent = 'double click to view';
+    cont.appendChild(t);
+    clearTimeout(cont.__udHintTimer);
+    cont.__udHintTimer = setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 3000);
+  }
+  /** Scrolls the list so item `idx` sits at the centre (under the red indicator). */
+  function centreOn(stage, cont, items, idx) {
+    var it = items[idx], c = clipRect(cont), r = it.getBoundingClientRect();
     var axisX = stage.getAttribute('data-rpt-axis') === 'x';
     var delta = axisX ? (r.left + r.width / 2 - (c.left + c.width / 2)) / c.sx : (r.top + r.height / 2 - (c.top + c.height / 2)) / c.sy;
     if (Math.abs(delta) > 0.5) moveRepeater(stage, delta, true);
   }
-  /** A tap on an item of a list with the red edge option marks it as the focused (last selected) item. */
+  /**
+   * Scrolls the list so item `idx` is as near the centre as the list allows. A plain list stops at its ends (its first items can
+   * never reach the centre), so the red frame then sits on the item itself; a seamless loop always centres it.
+   */
+  function revealItem(stage, cont, items, idx) {
+    var loop = parseFloat(stage.getAttribute('data-rpt-loop')) || 0, max = parseFloat(stage.getAttribute('data-rpt-max')) || 0;
+    if (loop || !max || stage.getAttribute('data-scroll-generic') === '1') return centreOn(stage, cont, items, idx);
+    var it = items[idx], c = clipRect(cont), r = it.getBoundingClientRect();
+    var axisX = stage.getAttribute('data-rpt-axis') === 'x';
+    var delta = axisX ? (r.left + r.width / 2 - (c.left + c.width / 2)) / c.sx : (r.top + r.height / 2 - (c.top + c.height / 2)) / c.sy;
+    moveRepeater(stage, 0, true);                    // makes sure the current offset is known
+    var off = stage.__udOff || 0, target = Math.max(0, Math.min(max, off + delta)), d = target - off;
+    if (Math.abs(d) > 0.5) moveRepeater(stage, d, true);
+  }
+  /**
+   * One slide step in focus mode: the red frame moves to the next / previous item and the list follows. It rolls on endlessly:
+   * after the last item comes the first again (and before the first the last).
+   */
+  function stepFocus(stage, dir) {
+    var cont = listOf(stage), items = listItems(cont);
+    if (!items.length) return;
+    var cur = cont.__udFocus != null ? Math.max(0, Math.min(items.length - 1, cont.__udFocus)) : nearestToCentre(cont, items);
+    var nx = ((cur + dir) % items.length + items.length) % items.length;
+    revealItem(stage, cont, items, nx);
+    setFocus(cont, nx, true, true);   // placed after the list moved; scrolling shows the "double click to view" hint for 3 seconds
+  }
+  /** A tap on an item of a list with the red indicator rolls that item to the centre. */
   function focusTap(ev) {
     var t = ev.target;
     var cont = t && t.closest ? t.closest('[data-focus-ring="1"]') : null;
     if (!cont) return;
-    var items = listItems(cont);
-    for (var i = 0; i < items.length; i++) if (items[i] === t || items[i].contains(t)) { setFocus(cont, i, true); return; }
+    var items = listItems(cont), stage = (cont.querySelector && cont.querySelector('[data-rpt-axis]')) || cont;
+    for (var i = 0; i < items.length; i++) if (items[i] === t || items[i].contains(t)) { revealItem(stage, cont, items, i); setFocus(cont, i, true); return; }
   }
   root.addEventListener('click', function (ev) {
     if (suppressClickUntil && Date.now() < suppressClickUntil) return handleClick(ev);

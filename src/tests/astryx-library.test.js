@@ -19,6 +19,21 @@ import {
   ASTRYX_SCREENS,
   ASTRYX_WORKFLOWS
 } from '../infrastructure/import/astryx-catalog.js';
+import { ASTRYX_EXTENDED_ELEMENTS } from '../infrastructure/import/astryx-catalog-extended.js';
+
+test('Astryx extended catalog: at least 100 unique, valid public elements across the requested domains', () => {
+  assert.ok(ASTRYX_EXTENDED_ELEMENTS.length >= 100, `expected >= 100 elements, got ${ASTRYX_EXTENDED_ELEMENTS.length}`);
+  const keys = new Set(ASTRYX_EXTENDED_ELEMENTS.map(e => e.key));
+  assert.equal(keys.size, ASTRYX_EXTENDED_ELEMENTS.length, 'element keys must be unique');
+  const cats = new Set(ASTRYX_EXTENDED_ELEMENTS.map(e => e.category));
+  for (const c of ['admin', 'users', 'credits', 'apikeys', 'reports', 'cards', 'auth', 'config', 'subscriptions', 'popups', 'files']) {
+    assert.ok(cats.has(c), `missing category ${c}`);
+  }
+  for (const e of ASTRYX_EXTENDED_ELEMENTS) {
+    assert.ok(e.nodes.length > 0, `${e.key} has no nodes`);
+    assert.ok(e.nodes.every(n => n && n.tag && n.attrs), `${e.key} has an invalid node`);
+  }
+});
 
 test('Astryx Themes: 8 families in dark & light pairs with matching SVG defs', () => {
   assert.equal(ASTRYX_THEMES.length, 16, 'Expected 16 themes (8 families x 2 modes)');
@@ -101,7 +116,7 @@ test('Astryx Ingestion Pipeline: Seeds themes, buttons, elements, screens & work
     const stats1 = c.importer.ensureAstryxLibrary();
     assert.equal(stats1.themes, 16);
     assert.equal(stats1.buttons, ASTRYX_BUTTONS.length);
-    assert.equal(stats1.elements, ASTRYX_ELEMENTS.length);
+    assert.equal(stats1.elements, ASTRYX_ELEMENTS.length + ASTRYX_EXTENDED_ELEMENTS.length);
     assert.equal(stats1.screens, ASTRYX_SCREENS.length);
     assert.equal(stats1.workflows, ASTRYX_WORKFLOWS.length);
 

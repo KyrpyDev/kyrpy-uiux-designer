@@ -114,12 +114,14 @@ function renderRepeater(el, ctx, idx, all) {
   const clip = `<clipPath id="${clipId}"><rect x="${inner.x}" y="${inner.y}" width="${inner.w}" height="${inner.h}" rx="8"/></clipPath>`;
   const key = String(el.id).replace(/[^a-zA-Z0-9_-]/g, '');
   const box = { x: inner.x, y: inner.y, w: inner.w, h: inner.h };
-  const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key) : null;
+  // the total never drops below the number of sub-items, so each of them is shown at least once; the pick is random (seeded)
+  if (tplNodes.length > 1) cfg.itemCount = Math.min(50, Math.max(cfg.itemCount, tplNodes.length));
+  const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key + (cfg.seed ? `:${cfg.seed}` : '')) : null;
 
   if (ctx.repeaterMode === 'runtime' && tplNode) {
     ctx.hasRepeaterRuntime = true;
     const first = repeaterPlan(cfg, box, item).copies[0];
-    const data = JSON.stringify({ id: key, cfg, inner: box, item, assignments });
+    const data = JSON.stringify({ id: key, cfg, inner: box, item, assignments: cfg.random ? null : assignments });   // random: the page picks again on every load
     const tplMarkup = Array.isArray(tpl)
       ? tpl.map(t => `<g class="ud-rpt-tpl">${t}</g>`).join('')
       : `<g class="ud-rpt-tpl">${tpl}</g>`;

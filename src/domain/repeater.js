@@ -11,6 +11,8 @@
  *   speed      ms per item (default 1800)   autoplay  true | false
  *   (carousel / roll / scroll loop infinitely: clone sets follow the copies so the track wraps without a seam)
  *   perspective px (3d, default 800)       direction vertical | horizontal (scroll and slide axis)
+ *   display    list | card (default list): card puts every item on its own padded card
+ *   columns    vertical list only: 1 (default) | N | 0 = auto; items are resized to (width - gaps) / columns
  *
  * `repeaterPlan` and `repeaterMarkup` are self-contained (no outer references except repeaterPlan) so the exported
  * HTML runtime can embed them with Function.prototype.toString(), like the menu runtime.
@@ -25,9 +27,9 @@ export const REPEATER_ATTR = {
   layout: 'data-repeater-layout', dimension: 'data-repeater-dim', itemCount: 'data-repeater-count', gap: 'data-repeater-gap',
   itemWidth: 'data-repeater-item-width', itemHeight: 'data-repeater-item-height', speed: 'data-repeater-speed',
   autoplay: 'data-repeater-autoplay', perspective: 'data-repeater-perspective', direction: 'data-repeater-direction',
-  multi: 'data-repeater-multi'
+  multi: 'data-repeater-multi', display: 'data-repeater-display', columns: 'data-repeater-columns', seed: 'data-repeater-seed', random: 'data-repeater-random'
 };
-export const REPEATER_DEFAULTS = { layout: 'vertical', dimension: '2d', itemCount: 5, gap: 12, itemWidth: 0, itemHeight: 0, speed: 1800, autoplay: true, perspective: 800, direction: 'vertical' };
+export const REPEATER_DEFAULTS = { layout: 'vertical', dimension: '2d', itemCount: 5, gap: 12, itemWidth: 0, itemHeight: 0, speed: 1800, autoplay: true, perspective: 800, direction: 'vertical', display: 'list', columns: 1 };
 
 /** Default attrs of a freshly placed repeater container. */
 export function repeaterDefaultAttrs(overrides = {}) {
@@ -71,6 +73,10 @@ export function repeaterConfig(el) {
     autoplay: a[A.autoplay] !== 'false' && a[A.autoplay] !== false,
     perspective: clampN(num(a[A.perspective], D.perspective), 100, 5000),
     direction: a[A.direction] === 'horizontal' ? 'horizontal' : 'vertical',
+    columns: clampN(Math.round(num(a[A.columns], D.columns)), 0, 12),   // vertical list: 1 = one column, N = N columns, 0 = auto from the width
+    seed: String(a[A.seed] ?? ''),                       // which sub-item appears where: the same seed gives the same picture (Shuffle changes it)
+    random: a[A.random] !== 'false' && a[A.random] !== false,   // exported page: every load picks the sub-items again at random
+    display: a[A.display] === 'card' ? 'card' : 'list',   // list: plain rows; card: each item on its own card
     multi: a[A.multi] === '1' || a[A.multi] === 'true' || a[A.multi] === true || !!a['data-repeater-items']
   };
 }
@@ -174,7 +180,8 @@ export function repeaterAdoptOps(nodes, repeater, moved, inner, { keepSize = fal
  */
 export function repeaterPlan(cfg, inner, item) {
   var n = Math.max(1, Math.min(50, Math.round(cfg.itemCount) || 1));
-  var iw = Math.max(1, item.w), ih = Math.max(1, item.h), gap = Math.max(0, cfg.gap || 0);
+  var pad = cfg.display === 'card' ? 10 : 0;   // card: every slot grows by the card padding
+  var iw = Math.max(1, item.w) + 2 * pad, ih = Math.max(1, item.h) + 2 * pad, gap = Math.max(0, cfg.gap || 0);
   var r = function (v) { return Math.round(v * 100) / 100; };
   var copies = [], track = null, ring = null, tilt = null, i;
   var cx = inner.x + (inner.w - iw) / 2, cy = inner.y + (inner.h - ih) / 2;
@@ -194,7 +201,16 @@ export function repeaterPlan(cfg, inner, item) {
       var t = 'translate(' + r(iw / 2 + (horiz ? d : 0)) + ' ' + r(ih / 2 + (horiz ? 0 : d)) + ') scale(' + r(horiz ? k * squash : k) + ' ' + r(horiz ? k : k * squash) + ') translate(' + r(-iw / 2) + ' ' + r(-ih / 2) + ')';
       copies.push({ i: i, x: r(cx), y: r(cy), t: t, o: r(0.3 + 0.7 * (c + 1) / 2), clone: false, angle: r(th * 180 / Math.PI) });
     }
-    return { n: n, iw: iw, ih: ih, copies: copies, track: null, ring: ring, tilt: null };
+    return { n: n, iw: iw, ih: ih, pad: pad, copies: copies, track: null, ring: ring, tilt: null };
+  }
+  // columned view (vertical list): rows of `cols` items, every item resized to the column width (aspect kept)
+  var cols = 1;
+  if (layout === 'vertical') { cols = cfg.columns > 0 ? cfg.columns : Math.floor((inner.w + gap) / (iw + gap)); cols = Math.max(1, Math.min(cols, n)); }
+  if (cols > 1) {
+    var slotW = (inner.w - gap * (cols - 1)) / cols, kk = slotW / iw, slotH = ih * kk, rowStep = slotH + gap, rows = Math.ceil(n / cols);
+    for (i = 0; i < n; i++) copies.push({ i: i, x: r(inner.x + (i % cols) * (slotW + gap)), y: r(inner.y + Math.floor(i / cols) * rowStep), t: 'scale(' + r(kk) + ')', o: 1, clone: false });
+    return { n: n, iw: r(slotW), ih: r(slotH), cellW: iw, cellH: ih, pad: pad, cols: cols, copies: copies, track: null, ring: null, tilt: null,
+      scroll: { axis: 'y', step: r(rowStep), kind: 'list', loop: 0, max: r(Math.max(0, rows * rowStep - gap - inner.h)) } };
   }
   var axis = layout === 'horizontal' || layout === 'carousel' || ((layout === 'slide' || layout === 'scroll') && cfg.direction === 'horizontal') ? 'x' : 'y';
   var stepA = axis === 'x' ? iw + gap : ih + gap;
@@ -222,7 +238,7 @@ export function repeaterPlan(cfg, inner, item) {
   // travel item by item, plain lists only as far as their copies overflow the content box
   var scroll = { axis: axis, step: r(stepA), kind: track ? track.kind : 'list', loop: track && track.kind === 'loop' ? track.distance : 0,
     max: track && track.kind === 'slide' ? r((n - 1) * stepA) : track ? 0 : r(Math.max(0, n * stepA - gap - view)) };
-  return { n: n, iw: iw, ih: ih, copies: copies, track: track, ring: null, tilt: tilt, scroll: scroll };
+  return { n: n, iw: iw, ih: ih, pad: pad, copies: copies, track: track, ring: null, tilt: tilt, scroll: scroll };
 }
 
 /**
@@ -265,7 +281,8 @@ export function repeaterMarkup(id, cfg, inner, item, tpl, mode, assignments = nu
   var noIdsList = tplList.map(function (s) { return String(s).replace(/\sid="[^"]*"/g, ''); });
   var chosenMap = assignments;
   if (!chosenMap || chosenMap.length !== plan.n) {
-    chosenMap = assignItems(mCount, plan.n, String(id));
+    // every sub-item appears at least once (plan.n is never below the number of sub-items); the rest is random
+    chosenMap = assignItems(mCount, plan.n, String(id) + (cfg.seed ? ':' + cfg.seed : '') + (!assignments && cfg.random && mCount > 1 ? ':' + Math.random() : ''));
   }
   var P = plan.ring ? plan.ring.perspective : cfg.perspective || 800;
   for (var c = 0; c < plan.copies.length; c++) {
@@ -276,7 +293,9 @@ export function repeaterMarkup(id, cfg, inner, item, tpl, mode, assignments = nu
       (cp.t ? ' transform="' + cp.t + '"' : '') + (cp.o !== 1 ? ' opacity="' + cp.o + '"' : '') +
       (c > 0 ? ' aria-hidden="true"' : '') +
       (plan.ring && anim ? ' style="animation-delay:' + Math.round(-plan.ring.period * cp.i / plan.n) + 'ms"' : '');
-    body += '<g transform="translate(' + cp.x + ' ' + cp.y + ')"><g' + attrs + '>' + inner3 + '</g></g>';
+    var padC = plan.pad || 0;
+    var cardRect = padC ? '<rect class="ud-rpt-card" width="' + (plan.cellW || plan.iw) + '" height="' + (plan.cellH || plan.ih) + '" rx="14" fill="rgba(127,127,127,0.12)" stroke="rgba(127,127,127,0.35)" stroke-width="1"/>' : '';
+    body += '<g transform="translate(' + cp.x + ' ' + cp.y + ')"><g' + attrs + '>' + cardRect + (padC ? '<g transform="translate(' + padC + ' ' + padC + ')">' + inner3 + '</g>' : inner3) + '</g></g>';
   }
   var hw = Math.round(plan.iw / 2 * 100) / 100, hh = Math.round(plan.ih / 2 * 100) / 100;
   if (plan.ring && anim) {
@@ -380,8 +399,9 @@ export function bindRepeaterScroll(root, isOn) {
       } catch (e) { off = 0; }
     }
     var next = off + delta;
-    next = loop ? ((next % loop) + loop) % loop : Math.max(0, Math.min(max, next));
-    if (!loop && next === off && st.__udOff != null) return false;      // at an end: the page may scroll instead
+    // a roll: loops wrap seamlessly; lists and slides go from the end back to the beginning (and the other way)
+    next = loop ? ((next % loop) + loop) % loop : delta > 0 && off >= max - 0.5 ? 0 : delta < 0 && off <= 0.5 ? max : Math.max(0, Math.min(max, next));
+    if (!loop && next === off && st.__udOff != null) return false;
     st.__udOff = next;
     track.style.animation = 'none';
     track.style.transform = (axis === 'x' ? 'translateX(' : 'translateY(') + (-Math.round(next * 100) / 100) + 'px)';

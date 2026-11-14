@@ -110,6 +110,7 @@ export const CLICK_ACTIONS = [
   'toolbar',
   'animate',
   'toggle',
+  'swap',
   'radial-menu',
   'drawer-menu',
   'slider-vertical',
@@ -127,6 +128,7 @@ export const CLICK_TARGET_TYPE = {
   drawer: 'element',
   element: 'element',
   'show-element': 'element',
+  swap: 'element',
   toolbar: 'element',
   'scroll-repeater': 'element'
 };
@@ -177,16 +179,37 @@ export function normalizeClickAction(input) {
   if (input.targetId === null || input.targetId === undefined || input.targetId === '' || !Number.isInteger(targetId) || targetId <= 0) {
     throw new ValidationError(`a "${type}" action needs a target ${CLICK_TARGET_TYPE[type]}`);
   }
+  // the test-phase popup settings (position, animations, durations) travel with the popup-type actions
+  const popup = ['popup', 'show-element', 'drawer', 'element'].includes(type) ? normalizePopupCfg(input.popup) : null;
+  const extra = popup ? { popup } : {};
   if (type === 'drawer') {
     const side = input.side === undefined || input.side === '' ? 'right' : String(input.side);
     if (!DRAWER_SIDES.includes(side)) throw new ValidationError(`drawer side must be one of ${DRAWER_SIDES.join(', ')}`);
-    return { type, targetId, side };
+    return { type, targetId, side, ...extra };
   }
   if (type === 'show-element') {
     const displayMode = ['popup', 'modal', 'drawer', 'inline'].includes(input.displayMode) ? input.displayMode : 'popup';
-    return { type, targetId, displayMode };
+    return { type, targetId, displayMode, ...extra };
   }
-  return { type, targetId };
+  return { type, targetId, ...extra };
+}
+
+const POPUP_ANIMS = ['none', 'fade', 'scale', 'bounce', 'slide-up', 'slide-down', 'slide-left', 'slide-right'];
+/** Cleans a popup's saved test-phase settings; null when there are none. Position is a fraction of the viewport (0..1). */
+export function normalizePopupCfg(input) {
+  if (!input || typeof input !== 'object') return null;
+  const frac = v => (v === null || v === undefined || v === '' ? null : Math.max(0, Math.min(1, Number(v))));
+  const ms = (v, d) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(5000, Math.round(Number(v)))) : d);
+  const anim = (v, d) => (POPUP_ANIMS.includes(v) ? v : d);
+  const x = frac(input.x), y = frac(input.y);
+  return {
+    x: Number.isFinite(x) ? x : null,
+    y: Number.isFinite(y) ? y : null,
+    showAnim: anim(input.showAnim, 'fade'),
+    showMs: ms(input.showMs, 300),
+    closeAnim: anim(input.closeAnim, 'fade'),
+    closeMs: ms(input.closeMs, 200)
+  };
 }
 
 /** Normalizes a single event binding `{ trigger, ...action }` (e.g. `{ trigger: 'mouseover', type: 'toolbar', targetId: 5 }`). */
