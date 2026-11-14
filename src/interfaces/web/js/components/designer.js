@@ -34,6 +34,7 @@ import { installTestActions } from './designer-test-actions.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
 import { popupCfgOf, popupAnimation, makeDraggable, placePopupBox, popupTestControls } from './popup-test-editor.js';
+import { transitionsOf, udTransition } from '/domain/transition.js';
 
 const TOOLS = [
   ['select', 'V', '⌖', 'Select / move'],
@@ -1597,7 +1598,10 @@ export class Designer {
   async runAction(n, evOverride = null) {
     const c = evOverride || (Array.isArray(n.events) && n.events.find(x => x.trigger === 'click')) || n.onClick;
     if (!c) return;
-    if (c.type === 'back') { if (this.opts.onBack) return this.opts.onBack(); return toast('Go back (in the finished app this is history.back())'); }
+    if (c.type === 'back') {
+      if (this.opts.onBack) { if (this.actionsLive) this._keepActionsLive = true; return this.actionsLive ? this.transitionTo('back', () => this.opts.onBack()) : this.opts.onBack(); }
+      return toast('Go back (in the finished app this is history.back())');
+    }
     if (c.type === 'screen') {
       return this.navigateLiveToScreen(c.targetId);
     }
@@ -1706,6 +1710,41 @@ export class Designer {
     this.viewport.append(this.tbPv);
   }
 
+  /** Transitions an element plays when opened / closed: its own when saved, else the open screen's "open next element". */
+  elementTransitions(el) {
+    const own = transitionsOf(el, 'element');
+    if (el?.meta?.transitions || this.type !== 'screen') return own;
+    return { ...own, open: transitionsOf(this.doc, 'screen').open };
+  }
+
+  /** Plays one transition of the open design on the canvas (inspector ▶): close plays going out, the others coming in. */
+  async previewTransition(ev) {
+    const svg = this.stage.querySelector('svg');
+    if (!svg || !this.doc) return;
+    const tr = transitionsOf(this.doc, this.type === 'element' ? 'element' : 'screen')[ev];
+    if (!tr || tr.effect === 'none' || !(tr.duration > 0)) return toast('This transition is set to none', 'info', 1400);
+    const a = await udTransition(svg, tr, ev, ev === 'close' ? 'out' : 'in');
+    if (ev === 'close') setTimeout(() => a?.cancel?.(), 250);   // shows the screen again after the preview
+  }
+
+  /**
+   * Test view navigation with transitions: the screen being left plays its close transition, then the next screen comes in
+   * with its go-to transition (go back: the screen that is left decides how the previous one comes back).
+   */
+  async transitionTo(kind, open) {
+    const leaving = this.type === 'screen' && this.doc ? transitionsOf(this.doc, 'screen') : null;
+    const oldSvg = this.stage.querySelector('svg');
+    let out = null;
+    if (leaving && oldSvg) out = await udTransition(oldSvg, leaving.close, 'close', 'out');
+    const ok = await open();
+    out?.cancel?.();
+    if (ok === false) return ok;
+    const svg = this.stage.querySelector('svg');
+    const tr = kind === 'back' ? leaving?.back : transitionsOf(this.doc, 'screen').goto;
+    if (svg && tr) await udTransition(svg, tr, kind, 'in');
+    return ok;
+  }
+
   /** A popup, drawer, or inline element drawn over the canvas, like the finished app shows it. */
   showPreview(kind, side, el, ctx = null) {
     this.closePreview();
@@ -1734,10 +1773,15 @@ export class Designer {
     }
     this.pv = h('div', { class: `dz-pv ${kind}${kind === 'drawer' ? ` from-${side || 'right'}` : ''}` }, h('div', { class: 'dz-pv-scrim', onclick: () => this.closePreview() }), box);
     this.viewport.append(this.pv);
+    // the element's own transitions (open / close), else the screen's open transition: unless this placement saved its own
+    // popup animation in the test view, which wins
+    const ownAnim = isPopup && ctx?.binding?.popup && (ctx.binding.popup.showAnim != null || ctx.binding.popup.closeAnim != null);
+    const elTr = this.elementTransitions(el);
+    if (!ownAnim) { udTransition(box, elTr.open, 'open', 'in'); this.pvTr = elTr.close; } else this.pvTr = null;
     if (isPopup) {
       placePopupBox(box, cfg, this.viewport);
-      box.style.animation = popupAnimation('in', cfg.showAnim, cfg.showMs);
-      this.pvCfg = { close: { name: cfg.closeAnim, ms: cfg.closeMs } };
+      if (ownAnim) box.style.animation = popupAnimation('in', cfg.showAnim, cfg.showMs);
+      this.pvCfg = { close: ownAnim ? { name: cfg.closeAnim, ms: cfg.closeMs } : { name: 'none', ms: 0 } };
       makeDraggable(box, grip, {
         snap: () => ({ grid: state.settings.snapToGrid ? this.gridSize * this.view.z : 0, anchors: !!state.settings.snapToAnchors }),
         size: () => ({ w: this.viewport.clientWidth, h: this.viewport.clientHeight }),
@@ -1758,11 +1802,17 @@ export class Designer {
 
   closePreview() {
     clearTimeout(this.pvTimer); this.pvTimer = null;
-    const pv = this.pv, cfg = this.pvCfg;
-    this.pv = null; this.pvCfg = null;
+    const pv = this.pv, cfg = this.pvCfg, tr = this.pvTr;
+    this.pv = null; this.pvCfg = null; this.pvTr = null;
     this.tbPv?.remove(); this.tbPv = null;
     if (!pv) return;
     const box = pv.querySelector('.dz-pv-box');
+    // the element's close transition (seconds), when this placement has no popup animation of its own
+    if (box && tr && tr.effect !== 'none' && tr.duration > 0) {
+      pv.style.pointerEvents = 'none';
+      udTransition(box, tr, 'close', 'out').then(() => pv.remove());
+      return;
+    }
     const anim = popupAnimation('out', cfg?.close?.name, cfg?.close?.ms);
     if (box && anim) {
       box.style.animation = anim;

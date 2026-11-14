@@ -17,6 +17,7 @@ import { ANIMATION_TYPES, TRIGGERS, EASINGS } from '/domain/animation.js';
 import { isRepeaterNode, repeaterConfig, repeaterTemplate, repeaterTemplates, repeaterPlan, REPEATER_ATTR, REPEATER_MAX_ITEMS } from '/domain/repeater.js';
 import { SURFACE_ROLES } from '/domain/theme.js';
 import { scriptPhotoUri } from '/domain/image.js';
+import { TRANSITION_EFFECTS, TRANSITION_EFFECT_LABELS, TRANSITION_EVENTS, TRANSITION_EVENT_LABELS, MAX_TRANSITION_SECONDS, transitionsOf, normalizeTransitions, transitionSeconds } from '/domain/transition.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
@@ -185,7 +186,10 @@ export class Inspector {
     if (sel.length === 1) root.append(...this.nodeSections(sel[0]));
     else if (sel.length > 1) root.append(this.multiSection(sel));
     if (d.type === 'button') root.append(this.menuSection(d.doc.id));
+    // a red divider line between the selected item's sections and the open design's own sections
+    if (sel.length) root.append(h('hr', { class: 'insp-divider', 'aria-hidden': 'true', style: { border: '0', borderTop: '2px solid #EF4444', margin: '10px 0 4px', opacity: '1' } }));
     root.append(this.designSection());
+    if (d.type === 'screen' || d.type === 'element') root.append(this.transitionSection());
     if (d.type === 'element') root.append(this.elementScriptSection());
     root.append(this.nodesList());
     if (this.lowSections.length) root.append(...this.lowSections);
@@ -1156,6 +1160,37 @@ export class Inspector {
         this.field('Trigger', this.select(`a${a.id}-trg`, a.trigger, TRIGGERS, v => up({ trigger: v }))),
         this.field(infinite ? 'Repeat' : 'Repeat (times)', infinite ? this.select(`a${a.id}-it`, 'infinite', ['infinite', 'once'], v => up({ iterations: v === 'once' ? 1 : 'infinite' }))
           : this.num(`a${a.id}-it`, a.iterations, v => up({ iterations: Math.max(1, Math.round(v)) }), { min: 1 }))));
+  }
+
+  /**
+   * Transitions of the open screen / element: an effect and a duration (seconds) for each navigation event, played in the
+   * test view and in exported prototypes (go to screen, go back, open next element, close).
+   */
+  transitionSection() {
+    const d = this.d, doc = d.doc, type = d.type;
+    const cur = transitionsOf(doc, type);
+    const save = (ev, patch) => {
+      const next = normalizeTransitions({ ...cur, [ev]: { ...cur[ev], ...patch } }, type);
+      d.updateDoc({ meta: { ...(doc.meta || {}), transitions: next } });
+    };
+    const rows = TRANSITION_EVENTS.map(ev => {
+      const sel = h('select', { 'data-f': `tr-${ev}-effect`, style: { flex: '1 1 auto', minWidth: '0', width: '100%' }, onchange: e => save(ev, { effect: e.target.value }) },
+        ...TRANSITION_EFFECTS.map(fx => h('option', { value: fx, selected: cur[ev].effect === fx }, TRANSITION_EFFECT_LABELS[fx])));
+      const dur = h('input', { type: 'number', min: 0, max: MAX_TRANSITION_SECONDS, step: 0.05, value: cur[ev].duration, 'data-f': `tr-${ev}-dur`, title: 'Duration in seconds', style: { width: '64px', flex: 'none' },
+        onchange: e => save(ev, { duration: transitionSeconds(e.target.value, cur[ev].duration) }) });
+      const play = h('button', { class: 'btn sm', type: 'button', title: 'Play this transition on the canvas', 'data-f': `tr-${ev}-play`,
+        onclick: () => d.previewTransition?.(ev) }, '▶');
+      return h('div', { class: 'field' },
+        h('span', {}, TRANSITION_EVENT_LABELS[ev]),
+        h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } },
+          sel, dur, h('span', { class: 'muted', style: { fontSize: '11px', flex: 'none' } }, 'sec'), play));
+    });
+    return this.section('Transitions',
+      h('div', { class: 'muted', style: { fontSize: '11px', marginBottom: '4px' } },
+        type === 'screen'
+          ? 'How this screen comes in (go to screen), how the screen before it comes back when you go back from here, how the elements it opens appear (unless an element sets its own), and how it leaves (close). Duration in seconds.'
+          : 'How this element appears when it is opened (open next element) and how it goes away (close); go to / go back apply when it is shown as a page. Duration in seconds.'),
+      ...rows);
   }
 
   /** Sandboxed custom ES module JS & pinned public JS imports for `element` designs (zero execution on Designer origin). */

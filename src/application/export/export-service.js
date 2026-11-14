@@ -8,6 +8,7 @@ import { isMenuItemShown } from '../../domain/menu.js';
 import { repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll } from '../../domain/repeater.js';
 import * as T from './templates.js';
 import { projectViewerHtml } from './project-viewer.js';
+import { transitionsOf, transitionAttr, udTransition } from '../../domain/transition.js';
 
 const stripAnimations = svg => svg.replace(/<style>[\s\S]*?<\/style>/, '');
 const stamp = () => new Date().toISOString();
@@ -123,7 +124,10 @@ export class ExportService {
                 this.render.context(primary, full.nodes).lib.icon.forEach((_, i) => used.icon.add(i));
                 for (const t of ['button', 'element']) this.render.context(primary, full.nodes).lib[t].forEach((_, i) => used[t].add(i));
                 used.element.add(el.id);
-                overlays.set(id, { id, kind: c.type, side, key: el.key, label: el.label || el.name, width: el.width, height: el.height, autoClose: popupAutoCloseSecs(full.nodes),
+                // the element's own transitions; one without saved transitions opens with the screen's "open next element"
+                const elTr = transitionsOf(full, 'element');
+                if (!full.meta?.transitions) elTr.open = transitionsOf(s, 'screen').open;
+                overlays.set(id, { id, kind: c.type, side, key: el.key, label: el.label || el.name, width: el.width, height: el.height, autoClose: popupAutoCloseSecs(full.nodes), tr: transitionAttr(elTr),
                   svgs: themes.map(th => suffixIds(this.render.boxSvg('element', el.id, th.key, { emitIds: true, standalone: false, repeaterMode: 'runtime' }), `${th.key}-${id}`).replace('<svg', `<svg data-theme="${th.key}"`)) });
               }
               actions.push({ ...base, element: el.key, ...(side ? { side } : {}), overlay: id });
@@ -138,6 +142,7 @@ export class ExportService {
       }
 
       const info = { key: s.key, name: s.name, label: s.label, descriptionDev: s.descriptionDev, width: s.width, height: s.height, category: s.category, device: s.meta?.device || null,
+        tr: transitionAttr(transitionsOf(s, 'screen')),
         file: `screens/${s.key}.html`, svg, links, components, actions: actions.map(({ overlay, ...a }) => a) };
       screenInfos.push({ ...info, notes, inline, overlays: [...overlays.values()], actionRows: actions });
     }
@@ -207,7 +212,7 @@ export class ExportService {
     add('index.html', T.indexHtml({ screens: manifest.screens, icons: iconInfos, themes, primary, title, thumbs }));
     add('css/themes.css', T.themesCss(themes));
     add('css/app.css', T.APP_CSS);
-    add('js/app.js', T.appJs(runtime, repeaterRuntime));
+    add('js/app.js', T.appJs(runtime, `${repeaterRuntime}\n${udTransition.toString()}`));   // + screen / element transitions
     add('js/screens.js', T.screensJs(manifest));
     add('ts/app.ts', T.appTs());
     add('ts/menu.ts', T.menuTs(runtime));
@@ -261,7 +266,7 @@ export class ExportService {
     const content = projectViewerHtml({
       devices, title, themes: internal.themes, primary: internal.primary, screens,
       workflows: workflows.map(w => ({ ...w, screens: w.ids.map(id => keyById.get(id)).filter(Boolean) })).filter(w => w.screens.length),
-      menuRuntime: bindMenus.toString(), repeaterRuntime: [repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll].map(f => f.toString()).join('\n')
+      menuRuntime: bindMenus.toString(), repeaterRuntime: `${[repeaterPlan, repeaterMarkup, bindRepeaters, bindRepeaterScroll].map(f => f.toString()).join('\n')}\n${udTransition.toString()}`   // + screen / element transitions
     });
     return { filename: `${projectKey}-project.html`, content, contentType: 'text/html; charset=utf-8', summary: { workflows: workflows.length, screens: screens.length, bytes: Buffer.byteLength(content) } };
   }

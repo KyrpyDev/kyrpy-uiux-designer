@@ -88,32 +88,63 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
 
   // popups, drawers, inline elements and toolbars: hotspots carry data-ud-open="<overlay id>" and optional data-trigger
   var openOverlay = null, returnTo = null, autoTimer = null;
-  function closeOverlay() {
+  // screen / element transitions (data-ud-tr: an effect and seconds per event: goto, back, open, close)
+  var play = typeof udTransition === 'function' ? udTransition : function () { return Promise.resolve(); };
+  function closeOverlay(instant) {
     clearTimeout(autoTimer); autoTimer = null;
     if (!openOverlay) return false;
-    openOverlay.hidden = true; openOverlay = null;
+    var o = openOverlay; openOverlay = null;
+    var panel = o.querySelector('.ud-panel');
+    if (instant || !panel) o.hidden = true;
+    else play(panel, o.getAttribute('data-ud-tr') || '', 'close', 'out').then(function (a) { o.hidden = true; if (a && a.cancel) a.cancel(); });
     if (returnTo && returnTo.focus) returnTo.focus();
     returnTo = null; return true;
   }
+  // leaving the page: the screen plays its close transition first; going back remembers how the previous screen comes back
+  var device = document.querySelector('.ud-device[data-ud-tr]');
+  function leave(go, back) {
+    try { sessionStorage.setItem('ud-nav', back ? 'back' : 'goto'); if (back && device) sessionStorage.setItem('ud-back-tr', device.getAttribute('data-ud-tr') || ''); } catch (e) {}
+    if (!device) { go(); return; }
+    play(device, device.getAttribute('data-ud-tr') || '', 'close', 'out').then(function () { go(); });
+  }
+  function enter(back) {
+    if (!device) return;
+    var nav = null, backTr = '';
+    try { nav = sessionStorage.getItem('ud-nav'); backTr = sessionStorage.getItem('ud-back-tr') || ''; sessionStorage.removeItem('ud-nav'); sessionStorage.removeItem('ud-back-tr'); } catch (e) {}
+    if (device.getAnimations) device.getAnimations().forEach(function (a) { a.cancel(); });
+    if (back || nav === 'back') play(device, backTr || device.getAttribute('data-ud-tr') || '', 'back', 'in');
+    else play(device, device.getAttribute('data-ud-tr') || '', 'goto', 'in');
+  }
+  enter(false);
+  // a page restored from the back / forward cache does not run its script again: show it again with the back transition
+  window.addEventListener('pageshow', function (ev) { if (ev.persisted) enter(true); });
+  function goBack() { leave(function () { history.back(); }, true); }
   function triggerHotspot(t) {
     if (!t) return;
     if (t.hasAttribute('data-ud-close')) { closeOverlay(); return; }
-    if (t.hasAttribute('data-ud-back')) { history.back(); return; }
+    if (t.hasAttribute('data-ud-back')) { goBack(); return; }
     if (t.hasAttribute('data-ud-toggle')) { t.classList.toggle('ud-on'); return; }
     var href = t.getAttribute('data-ud-href');
-    if (href) { location.href = href; return; }
+    if (href) { leave(function () { location.href = href; }, false); return; }
     var o = document.getElementById(t.getAttribute('data-ud-open'));
     if (!o) return;
-    closeOverlay(); o.hidden = false; openOverlay = o; returnTo = t;
+    closeOverlay(true); o.hidden = false; openOverlay = o; returnTo = t;
+    var pnl = o.querySelector('.ud-panel'); if (pnl) play(pnl, o.getAttribute('data-ud-tr') || '', 'open', 'in');
     var ac = Number(o.getAttribute('data-ud-autoclose')) || 0;
     if (ac > 0) autoTimer = setTimeout(function () { if (openOverlay === o) closeOverlay(); }, ac * 1000);
     var c = o.querySelector('.ud-close'); if (c) c.focus();
   }
   document.addEventListener('click', function (ev) {
     var t = ev.target && ev.target.closest ? ev.target.closest('[data-ud-open], [data-ud-close], [data-ud-back], [data-ud-toggle], [data-ud-href]') : null;
-    if (!t) return;
+    if (!t) {
+      // a plain workflow link hotspot (<a href="key.html">): the screen leaves with its close transition first
+      var a = ev.target && ev.target.closest ? ev.target.closest('a.ud-hotspot') : null;
+      var trg = a ? a.getAttribute('data-trigger') || 'click' : '';
+      if (a && device && (trg === 'click' || trg === 'tap') && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) { ev.preventDefault(); var to = a.href; leave(function () { location.href = to; }, false); }
+      return;
+    }
     var trig = t.getAttribute('data-trigger') || 'click';
-    if (trig === 'click' || t.hasAttribute('data-ud-close')) triggerHotspot(t);
+    if (trig === 'click' || t.hasAttribute('data-ud-close')) { if (t.hasAttribute('data-ud-href')) ev.preventDefault(); triggerHotspot(t); }
   });
   ['dblclick', 'mouseover', 'mouseleave', 'mousedown', 'mouseup', 'dragstart', 'drop', 'focus'].forEach(function (domEv) {
     var mapTrig = domEv === 'mouseup' ? 'release' : (domEv === 'dragstart' ? 'drag' : domEv);
@@ -125,7 +156,7 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
 
   // keyboard: Alt+Left goes back, Escape closes an open popup/drawer, else returns to the index
   document.addEventListener('keydown', function (ev) {
-    if (ev.altKey && ev.key === 'ArrowLeft') history.back();
+    if (ev.altKey && ev.key === 'ArrowLeft') goBack();
     if (ev.key === 'Escape') { if (closeOverlay()) return; if (document.body.dataset.screen) location.href = '../index.html'; }
   });
 
@@ -140,7 +171,12 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
 
   // button menus (popup / rotating): the same runtime the designer preview uses
   var bindMenus = ${menuRuntime};
-  bindMenus(document, { onAction: function (a) { if (a.target) location.href = a.target + '.html'; else document.dispatchEvent(new CustomEvent('ud-menu-action', { detail: a })); } });
+  bindMenus(document, { onAction: function (a) {
+    if (a.target) { leave(function () { location.href = a.target + '.html'; }, false); return; }
+    if (a.action === 'back') { goBack(); return; }
+    if (a.action === 'close') { closeOverlay(); return; }
+    document.dispatchEvent(new CustomEvent('ud-menu-action', { detail: a }));
+  } });
 
   // repeater containers: each .ud-repeater holds its template once; repeat it itemCount times with its layout / 2D-3D effect
   ${repeaterRuntime}
@@ -318,7 +354,7 @@ export function screenParts({ screen, inlineSvgs, links, components, actions = [
     if (a.type === 'animate' || a.type === 'toggle') return `<button type="button" class="ud-hotspot" data-ud-toggle ${common}></button>`;
     return `<button type="button" class="ud-hotspot" data-ud-back ${common}></button>`;
   }).join('\n      ');
-  const ov = overlays.map(o => `<div class="ud-overlay ud-${o.kind}${o.side ? ` ud-from-${o.side}` : ''}" id="${esc(o.id)}"${o.autoClose > 0 ? ` data-ud-autoclose="${Number(o.autoClose)}"` : ''} role="dialog" aria-modal="true" aria-label="${esc(o.label)}" hidden>
+  const ov = overlays.map(o => `<div class="ud-overlay ud-${o.kind}${o.side ? ` ud-from-${o.side}` : ''}" id="${esc(o.id)}"${o.autoClose > 0 ? ` data-ud-autoclose="${Number(o.autoClose)}"` : ''} role="dialog" aria-modal="true" aria-label="${esc(o.label)}"${o.tr ? ` data-ud-tr="${esc(o.tr)}"` : ''} hidden>
   <div class="ud-scrim" data-ud-close></div>
   <div class="ud-panel" style="--ud-panel-w:${o.width}px">
     <button type="button" class="ud-close" data-ud-close aria-label="Close">✕</button>
@@ -330,7 +366,7 @@ export function screenParts({ screen, inlineSvgs, links, components, actions = [
   const ctl = components.filter(c => ['button', 'a'].includes(c.htmlTag)).map(c =>
     `<${c.htmlTag === 'a' ? 'a href="#"' : 'button type="button"'} class="ud-ctl" style="left:${pct(c.box.x, W)};top:${pct(c.box.y, H)};width:${pct(c.box.w, W)};height:${pct(c.box.h, H)}" aria-label="${esc(c.name)}"></${c.htmlTag === 'a' ? 'a' : 'button'}>`).join('\n      ');
   const linkList = links.map(l => `<a href="${esc(l.to)}.html"><strong>${esc(l.name || l.to)}</strong><small>→ ${esc(l.to)} · ${esc(l.trigger)}</small></a>`).join('\n        ') || '<small>No outgoing links.</small>';
-  const device = `<div class="ud-device" style="--ud-device-w:${W}px" id="${esc(screen.key)}">
+  const device = `<div class="ud-device" style="--ud-device-w:${W}px" id="${esc(screen.key)}"${screen.tr ? ` data-ud-tr="${esc(screen.tr)}"` : ''}>
     ${inlineSvgs.join('\n    ')}
     ${hot}
     ${act}

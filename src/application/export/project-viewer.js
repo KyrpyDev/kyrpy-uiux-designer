@@ -128,7 +128,8 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
     for (var i = 0; i < all.length; i++) { var id = all[i].id.toLowerCase(); if (id === k || id.slice(-(k.length + 1)) === '-' + k) return all[i]; }
     return null;
   }
-  function openOv(o, from) { if (!o) return false; closeOverlay(); o.hidden = false; openOverlay = o; returnTo = from || null; var ac = Number(o.getAttribute('data-ud-autoclose')) || 0; if (ac > 0) autoTimer = setTimeout(function () { if (openOverlay === o) closeOverlay(); }, ac * 1000); var c = o.querySelector('.ud-close'); if (c) c.focus(); return true; }
+  var play = typeof udTransition === 'function' ? udTransition : function () { return Promise.resolve(); };
+  function openOv(o, from) { if (!o) return false; closeOverlay(true); o.hidden = false; openOverlay = o; returnTo = from || null; var pnl = o.querySelector('.ud-panel'); if (pnl) play(pnl, o.getAttribute('data-ud-tr') || '', 'open', 'in'); var ac = Number(o.getAttribute('data-ud-autoclose')) || 0; if (ac > 0) autoTimer = setTimeout(function () { if (openOverlay === o) closeOverlay(); }, ac * 1000); var c = o.querySelector('.ud-close'); if (c) c.focus(); return true; }
   var menus = bindMenus(stage, { onAction: function (a) {
     var act = a.action || '';
     if (a.target && byKey[a.target]) { go(a.target); return; }
@@ -194,15 +195,29 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   function wfOf(key) { for (var i = 0; i < DATA.workflows.length; i++) if (DATA.workflows[i].screens.indexOf(key) >= 0) return DATA.workflows[i]; return null; }
   function order() { var w = cur.wf ? DATA.workflows.filter(function (x) { return x.key === cur.wf; })[0] : null; return w ? w.screens : screens.map(function (s) { return s.key; }); }
 
+  // screen transitions: the screen being left plays its close transition, then the next one comes in with its "go to screen"
+  // transition (going back: the screen that is left decides how the previous one comes back)
+  var leaving = false;
   function go(key, opts) {
     opts = opts || {};
     var s = byKey[key], tpl = document.getElementById('t-' + key);
-    if (!s || !tpl) return;
+    if (!s || !tpl || leaving) return;
+    var oldDev = stage.querySelector('.ud-device'), oldTr = oldDev ? oldDev.getAttribute('data-ud-tr') || '' : '';
+    if (oldDev && !opts.keep && cur.screen && cur.screen !== key) {
+      leaving = true;
+      play(oldDev, oldTr, 'close', 'out').then(function () { leaving = false; show(key, opts); var nd = stage.querySelector('.ud-device'); if (nd) play(nd, opts.back ? oldTr : nd.getAttribute('data-ud-tr') || '', opts.back ? 'back' : 'goto', 'in'); });
+      return;
+    }
+    show(key, opts);
+    if (!opts.keep) { var d0 = stage.querySelector('.ud-device'); if (d0) play(d0, d0.getAttribute('data-ud-tr') || '', 'goto', 'in'); }
+  }
+  function show(key, opts) {
+    var s = byKey[key], tpl = document.getElementById('t-' + key);
     if (cur.screen && cur.screen !== key && !opts.back && !opts.keep) history.push({ screen: cur.screen, wf: cur.wf });
     if (opts.wf !== undefined) cur.wf = opts.wf;
     else if (!cur.wf || DATA.workflows.filter(function (w) { return w.key === cur.wf && w.screens.indexOf(key) >= 0; }).length === 0) { var w = wfOf(key); cur.wf = w ? w.key : null; }
     cur.screen = key;
-    closeOverlay();
+    closeOverlay(true);
     stage.innerHTML = '';
     stage.appendChild(tpl.content.cloneNode(true));
     applyFrame(s);
@@ -233,7 +248,14 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
 
   // popups, drawers, inline elements and toolbars of the screen
   var openOverlay = null, returnTo = null, autoTimer = null;
-  function closeOverlay() { clearTimeout(autoTimer); autoTimer = null; if (!openOverlay) return false; openOverlay.hidden = true; openOverlay = null; if (returnTo && returnTo.focus) returnTo.focus(); returnTo = null; return true; }
+  function closeOverlay(instant) {
+    clearTimeout(autoTimer); autoTimer = null;
+    if (!openOverlay) return false;
+    var o = openOverlay, pnl = o.querySelector('.ud-panel'); openOverlay = null;
+    if (instant || !pnl) o.hidden = true;
+    else play(pnl, o.getAttribute('data-ud-tr') || '', 'close', 'out').then(function (a) { o.hidden = true; if (a && a.cancel) a.cancel(); });
+    if (returnTo && returnTo.focus) returnTo.focus(); returnTo = null; return true;
+  }
   function trigger(t) {
     if (!t) return;
     if (t.hasAttribute('data-ud-close')) { closeOverlay(); return; }

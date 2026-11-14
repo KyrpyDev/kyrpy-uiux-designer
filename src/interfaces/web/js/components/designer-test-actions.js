@@ -99,7 +99,7 @@ export function installTestActions(Designer) {
     if (tr?.mode === 'notify') return toast(`🔗 ${label ? `${label} → ` : ''}would go to “${s.name}” (test the workflow to follow routes)`, 'info', 2600);
     toast(`🔗 ${label ? `${label} → ` : '→ '}${s.name}`, 'ok', 1800);
     this._keepActionsLive = true;
-    return this.opts.openDesign?.('screen', s.id);
+    return this.transitionTo('goto', () => this.opts.openDesign?.('screen', s.id));
   };
 
   /** Expands a small node's bbox (e.g. a <text> or <use> icon inside a button) to its enclosing button/pill <rect> if present. */
@@ -295,7 +295,7 @@ export function installTestActions(Designer) {
             class: 'btn small',
             disabled: !(this.opts.canBack?.() ?? false),
             title: 'Go back to previous screen/design',
-            onclick: () => this.opts.onBack()
+            onclick: () => { this._keepActionsLive = true; this.transitionTo('back', () => this.opts.onBack()); }
           }, '← Back')
         : null,
       h('button', {
