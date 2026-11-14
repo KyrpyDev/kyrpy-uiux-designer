@@ -16,6 +16,7 @@ import {
 import { ANIMATION_TYPES, TRIGGERS, EASINGS } from '/domain/animation.js';
 import { isRepeaterNode, repeaterConfig, repeaterTemplate, repeaterTemplates, repeaterPlan, REPEATER_ATTR, REPEATER_MAX_ITEMS } from '/domain/repeater.js';
 import { SURFACE_ROLES } from '/domain/theme.js';
+import { scriptPhotoUri } from '/domain/image.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
@@ -1219,6 +1220,7 @@ export class Inspector {
       try {
         const res = await api.setElementScript(id, payload);
         this.scriptCache.set(id, { loaded: true, script: res.script });
+        this.syncScriptPhoto(id, res.script);
         toast(humanApproved ? 'Element script saved & network capability approved' : 'Sandboxed element script saved', 'ok', 1800);
         this.render();
       } catch (err) {
@@ -1242,6 +1244,7 @@ export class Inspector {
       try {
         await api.deleteElementScript(id);
         this.scriptCache.set(id, { loaded: true, script: null });
+        this.syncScriptPhoto(id, null);
         toast('Removed custom element script', 'ok', 1600);
         this.render();
       } catch (err) {
@@ -1284,6 +1287,16 @@ export class Inspector {
       ),
       h('div', { class: 'muted', style: { fontSize: '10.5px' } }, 'Never runs on the Designer origin: executes strictly inside <iframe sandbox="allow-scripts" referrerpolicy="no-referrer"> with nonce CSP.')
     );
+  }
+
+  /** The photo the saved script carries shows at once in the element's photo placeholder (open design and library copy). */
+  syncScriptPhoto(id, script) {
+    const photo = script?.enabled ? scriptPhotoUri(script.moduleCode) : null;
+    for (const rec of [this.d.doc?.id === id ? this.d.doc : null, findDesign('element', id)]) {
+      if (!rec) continue;
+      if (photo) rec.photo = photo; else delete rec.photo;
+    }
+    if (this.d.doc?.id === id) this.d.renderStage();
   }
 
   async openElementSandboxModal(elementId) {

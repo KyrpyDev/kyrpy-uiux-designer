@@ -1,6 +1,7 @@
 import { NotFoundError } from '../domain/errors.js';
 import { createContext, renderDocument, renderIconDocument, renderSprite } from '../domain/svg.js';
 import { buildMenuTree, menuConfig, menuExtent } from '../domain/menu.js';
+import { scriptPhotoUri } from '../domain/image.js';
 
 /**
  * Renders stored designs to SVG for a theme. Loads only what a design references
@@ -8,7 +9,14 @@ import { buildMenuTree, menuConfig, menuExtent } from '../domain/menu.js';
  */
 export class RenderService {
   /** @param {{designs:{path,icon,button,element,screen}, nodes, animations, themes, menus}} deps repositories */
-  constructor({ designs, nodes, animations, themes, menus }) { Object.assign(this, { designs, nodes, animations, themes, menus }); }
+  constructor({ designs, nodes, animations, themes, menus, elementScripts = null }) { Object.assign(this, { designs, nodes, animations, themes, menus, elementScripts }); }
+
+  /** The photo an element's enabled script carries (drawn in its photo placeholder), or null. */
+  #photo(type, id) {
+    if (type !== 'element' || !this.elementScripts) return null;
+    const sc = this.elementScripts.getByElementId(id);
+    return sc?.enabled ? scriptPhotoUri(sc.moduleCode) : null;
+  }
 
   theme(key) {
     const t = (key && this.themes.getByKey(key)) || this.themes.list()[0];
@@ -19,7 +27,8 @@ export class RenderService {
   #full(type, id) {
     const d = typeof id === 'object' ? id : this.designs[type].get(id);
     if (!d) throw new NotFoundError(type, id);
-    return { ...d, nodes: this.nodes.listByOwner(type, d.id) };
+    const photo = this.#photo(type, d.id);
+    return { ...d, nodes: this.nodes.listByOwner(type, d.id), ...(photo ? { photo } : {}) };
   }
 
   /** Builds a render context holding every design referenced (transitively) by `nodes`. */
@@ -32,6 +41,8 @@ export class RenderService {
       if (!d) return;
       const ns = this.nodes.listByOwner(type, id);
       const entry = { key: d.key, width: d.width, height: d.height, nodes: ns };
+      const photo = this.#photo(type, id);
+      if (photo) entry.photo = photo;
       if (type === 'button') {
         const items = this.menus.list(id).map(m => ({
           ...m,

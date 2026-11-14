@@ -120,7 +120,7 @@ function iconIndex() {
 
 /** Render context for the domain renderer built from the cached library. `animations` overrides the cached ones. */
 export function renderContext({ animations, ...extra } = {}) {
-  const one = d => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes }];
+  const one = d => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, ...(d.photo ? { photo: d.photo } : {}) }];
   const btn = d => ({ ...one(d)[1], menu: d.menuItems?.length ? { cfg: menuConfig(d.meta), items: d.menuItems.map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '', targetElementKey: findDesign('element', m.targetElementId)?.key || '' })) } : null });
   const lib = {
     path: new Map(state.library.paths.map(one)),

@@ -7,7 +7,7 @@ import { resolveTokens, roleAttrs, buildThemeDefs } from './theme.js';
 import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
-import { imageMarkup } from './image.js';
+import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
@@ -181,8 +181,10 @@ function renderNode(el, ctx, idx, all) {
     return `<g${attrString(a)}>${kids}</g>`;
   }
   const selfMarkup = `<${el.tag}${attrString(a)}/>`;
+  // an element whose script carries a photo shows it inside its photo placeholder shape (the script itself never runs here)
+  const photoMarkup = ctx.photo && isPhotoPlaceholder(el) ? photoInPlaceholderMarkup(el, a, ctx.photo, { attrString }) : '';
   const subMarkup = renderContainerChildren(el, ctx, idx, all);
-  return selfMarkup + subMarkup;
+  return selfMarkup + photoMarkup + subMarkup;
 }
 
 function renderInstance(el, a, ctx, all) {
@@ -214,8 +216,9 @@ function renderInstance(el, a, ctx, all) {
   ctx.depth++;
   ctx.activeInstances?.add(instKey);
   const wasHub = ctx.inHub, wasHubItems = ctx.hubHasItems; ctx.inHub = !!menu; ctx.hubHasItems = !!(menu && menu.cfg?.kind === 'hub' && (menu.items || []).some(m => m.parentId == null && m.visible !== false));   // the button's own icons turn while open and are hidden while a sub level shows its icon
+  const wasPhoto = ctx.photo; ctx.photo = el.refType === 'element' ? target.photo || null : null;
   const inner = renderTree(target.nodes, ctx);
-  ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems;
+  ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems; ctx.photo = wasPhoto;
   let menuMarkup = '';
   if (menu) {
     ctx.hasMenu = true;
@@ -315,7 +318,9 @@ function scopeThemeIds(svg, theme) {
 /** Full svg for a button, element or screen. */
 export function renderDocument({ owner, nodes, ctx, background = false, standalone = true, viewBox = null }) {
   const bg = background ? `<rect width="${owner.width}" height="${owner.height}" fill="${resolveTokens('{{bg}}', ctx.theme.tokens)}"/>` : '';
+  const wasPhoto = ctx.photo; ctx.photo = owner?.photo || null;
   const body = renderTree(nodes, ctx);
+  ctx.photo = wasPhoto;
   const vbw = viewBox ? round(viewBox.w) : owner.width, vbh = viewBox ? round(viewBox.h) : owner.height;
   return assemble(ctx, { width: vbw, height: vbh, viewBox: viewBox ? `${round(viewBox.x)} ${round(viewBox.y)} ${round(viewBox.w)} ${round(viewBox.h)}` : null, body, standalone, label: owner.label || owner.name, background: bg });
 }
@@ -367,7 +372,7 @@ export function suffixIds(svg, suffix) {
  * `menus` maps button id -> menu item rows; button meta supplies the menu settings.
  */
 export function indexLibrary({ paths = [], icons = [], buttons = [], elements = [] }, menus = new Map()) {
-  const one = (d, extra) => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, ...extra }];
+  const one = (d, extra) => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, ...(d.photo ? { photo: d.photo } : {}), ...extra }];
   return {
     path: new Map(paths.map(d => one(d))),
     icon: new Map(icons.map(d => one(d))),

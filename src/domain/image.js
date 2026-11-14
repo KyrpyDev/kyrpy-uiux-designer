@@ -111,3 +111,70 @@ export function imageMarkup(el, a, { attrString, imageHref } = {}) {
   }
   return `${clipDef}<image${attrString({ ...attrs, preserveAspectRatio: preserveAspectRatio || 'xMidYMid slice' })} href="${escAttr(href)}"/>`;
 }
+
+/* ---------- photo of an element script, shown in the element's photo placeholder ---------- */
+
+const PHOTO_PREFIX = /data:image\/(?:png|jpeg|gif|webp);base64,/;
+const B64 = /^[A-Za-z0-9+/=\s]*$/;
+
+/**
+ * The picture a sandboxed element script carries (its default photo), as a safe base64 data URI, or null.
+ * The script never runs on the Designer origin, so the canvas reads the picture out of the source text: the data URI may be
+ * one string literal or split into literals joined with `+` / an array `.join("")`. Only PNG / JPEG / GIF / WebP data URIs
+ * are taken (no remote URLs, no SVG).
+ */
+export function scriptPhotoUri(code) {
+  const src = String(code ?? '');
+  const m = PHOTO_PREFIX.exec(src);
+  if (!m) return null;
+  let out = m[0];
+  let i = m.index + m[0].length;
+  // the rest of the literal the prefix sits in
+  const q = src[m.index - 1];
+  if (q === '"' || q === "'" || q === '`') {
+    const end = src.indexOf(q, i);
+    if (end < 0) return null;
+    const part = src.slice(i, end);
+    if (!B64.test(part)) return null;
+    out += part; i = end + 1;
+    // following literals joined by +, [ ], commas and whitespace (`"…" + ["…", "…"].join("")`)
+    for (;;) {
+      const gap = /^[\s+,[\]]*/.exec(src.slice(i))[0];
+      const j = i + gap.length, c = src[j];
+      if (c !== '"' && c !== "'" && c !== '`') break;
+      const end2 = src.indexOf(c, j + 1);
+      if (end2 < 0) break;
+      const lit = src.slice(j + 1, end2);
+      if (!lit || !B64.test(lit)) break;
+      out += lit; i = end2 + 1;
+    }
+  } else {
+    out += (/^[A-Za-z0-9+/=]*/.exec(src.slice(i)) || [''])[0];
+  }
+  const safe = safeImageHref(out);
+  return safe && parseImageDataUri(safe)?.bytes > 0 ? safe : null;
+}
+
+/** Shapes that stand for a photo: a circle / ellipse / rect named or tagged like `photo-placeholder`, `avatar`, `portrait`. */
+const PHOTO_NAME = /(^|[-_\s.])(photo|avatar|portrait|picture|pic|image|img)([-_\s.]|$)/i;
+export function isPhotoPlaceholder(el) {
+  if (!el || el.kind === 'instance' || !['circle', 'ellipse', 'rect'].includes(el.tag)) return false;
+  return PHOTO_NAME.test(String(el.name || '')) || el.attrs?.['data-photo'] === 'true' || el.attrs?.['data-photo'] === true;
+}
+
+/** An <image> of `href` covering the placeholder shape `el` (resolved attrs `a`), clipped to the same circle / ellipse / rounded box. */
+export function photoInPlaceholderMarkup(el, a, href, { attrString } = {}) {
+  const n = k => Number(a[k]) || 0;
+  let box, clip;
+  if (el.tag === 'circle') { const r = n('r'); box = { x: n('cx') - r, y: n('cy') - r, w: 2 * r, h: 2 * r }; clip = '<ellipse cx="0.5" cy="0.5" rx="0.5" ry="0.5"/>'; }
+  else if (el.tag === 'ellipse') { const rx = n('rx'), ry = n('ry'); box = { x: n('cx') - rx, y: n('cy') - ry, w: 2 * rx, h: 2 * ry }; clip = '<ellipse cx="0.5" cy="0.5" rx="0.5" ry="0.5"/>'; }
+  else {
+    box = { x: n('x'), y: n('y'), w: n('width'), h: n('height') };
+    const rx = n('rx') || n('ry'), ry = n('ry') || n('rx');
+    clip = `<rect width="1" height="1" rx="${box.w ? Math.min(0.5, rx / box.w) : 0}" ry="${box.h ? Math.min(0.5, ry / box.h) : 0}"/>`;
+  }
+  if (!(box.w > 0 && box.h > 0)) return '';
+  const id = `udphoto-clip-${el.id}`;
+  const attrs = { x: box.x, y: box.y, width: box.w, height: box.h, preserveAspectRatio: 'xMidYMid slice', 'clip-path': `url(#${id})`, transform: a.transform || null, 'pointer-events': 'none', 'data-photo-for': el.id };
+  return `<clipPath id="${id}" clipPathUnits="objectBoundingBox">${clip}</clipPath><image${attrString(attrs)} href="${escAttr(href)}"/>`;
+}

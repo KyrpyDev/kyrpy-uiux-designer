@@ -183,7 +183,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   const translations = new TranslationService({ translations: translationRepo });
   const settings = new SettingsService({ settings: settingsRepo });
   const menuService = new MenuService({ buttons: designs.button, icons: designs.icon, screens: designs.screen, elements: designs.element, menus });
-  const render = new RenderService({ designs, nodes, animations, themes: themeRepo, menus });
+  const render = new RenderService({ designs, nodes, animations, themes: themeRepo, menus, elementScripts: elementScriptRepo });
   const libraryTransfer = new LibraryTransferService({
     services,
     workflows,

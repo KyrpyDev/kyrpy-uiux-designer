@@ -4,6 +4,7 @@ import { uniqueKey, slugify, prefixedVariableName } from '../domain/naming.js';
 import { validateAnimation } from '../domain/animation.js';
 import { stripOwnership } from '../domain/system-users.js';
 import { assertItemAccess } from './access-policy.js';
+import { scriptPhotoUri } from '../domain/image.js';
 import { fallbackOwnerId } from './default-owner.js';
 import { scaleNodeSet, isContainerNode, clampNodeToContainer, fitContainerToScreenBox, resizeAttrs, nodeBBox } from '../domain/geometry.js';
 
@@ -58,14 +59,27 @@ export class DesignService {
     const byOwner = group(narrow ? this.nodes.listByOwners(this.ownerType, rows.map(r => r.id)) : this.nodes.listAllByType(this.ownerType), 'ownerId');
     const items = this.ownerType === 'button' && this.menus ? group(this.menus.listAll(), 'buttonId') : null;
     const names = new Map();
+    const photos = this.#photos(rows.map(r => r.id));
     return rows.map(d => this.#enrichUsernames({
       ...d,
       nodes: byOwner.get(d.id) || [],
+      ...(photos.has(d.id) ? { photo: photos.get(d.id) } : {}),
       ...(items ? { menuItems: items.get(d.id) || [] } : {})
     }, names));
   }
 
   categories() { return this.designs.categories(); }
+
+  /** Element id -> the photo its enabled script carries (data URI), drawn in the element's photo placeholder on the canvas. */
+  #photos(ids) {
+    const out = new Map();
+    if (this.ownerType !== 'element' || !this.elementScripts?.listByElementIds || !ids.length) return out;
+    for (const [id, sc] of this.elementScripts.listByElementIds(ids)) {
+      const photo = sc?.enabled ? scriptPhotoUri(sc.moduleCode) : null;
+      if (photo) out.set(id, photo);
+    }
+    return out;
+  }
 
   #require(idOrKey) {
     const d = typeof idOrKey === 'number' || /^\d+$/.test(String(idOrKey)) ? this.designs.get(Number(idOrKey)) : this.designs.getByKey(String(idOrKey));
@@ -82,10 +96,12 @@ export class DesignService {
   /** Full record: design + nodes + animations (+ menu items of a button). */
   get(idOrKey) {
     const d = this.#require(idOrKey);
+    const photo = this.#photos([d.id]).get(d.id);
     return this.#enrichUsernames({
       ...d,
       nodes: this.nodes.listByOwner(this.ownerType, d.id),
       animations: this.animations.listByOwner(this.ownerType, d.id),
+      ...(photo ? { photo } : {}),
       usage: this.ownerType === 'screen' ? 0 : this.designs.usageCount(d.id),
       ...(this.ownerType === 'button' && this.menus ? { menuItems: this.menus.list(d.id) } : {})
     });
