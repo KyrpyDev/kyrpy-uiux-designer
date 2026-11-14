@@ -1,4 +1,5 @@
 /** Text templates of the exported project (html, css, ts, js, md). Pure string builders. */
+import { foldSearchText } from '../../domain/search.js';
 import { themeCssVars, resolveTokens } from '../../domain/theme.js';
 import { esc } from '../../domain/svg.js';
 
@@ -131,8 +132,10 @@ export function appJs(menuRuntime = 'function bindMenus() {}', repeaterRuntime =
   // index page: filter cards
   var search = document.getElementById('ud-search');
   if (search) search.addEventListener('input', function () {
-    var q = search.value.toLowerCase();
-    document.querySelectorAll('.ud-card').forEach(function (c) { c.style.display = (c.getAttribute('data-search') || '').indexOf(q) >= 0 ? '' : 'none'; });
+    // every word of the search (split at spaces and dashes) in the card's name, key or description-dev
+    var fold = function (v) { return String(v || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/\\u0131/g, 'i'); };
+    var words = fold(search.value).split(/[\\s\\-_.,\\/]+/).filter(Boolean);
+    document.querySelectorAll('.ud-card').forEach(function (c) { var hay = c.getAttribute('data-search') || ''; c.style.display = words.every(function (w) { return hay.indexOf(w) >= 0; }) ? '' : 'none'; });
   });
 
   // button menus (popup / rotating): the same runtime the designer preview uses
@@ -209,8 +212,10 @@ document.addEventListener('keydown', ev => {
 
 const search = document.getElementById('ud-search') as HTMLInputElement | null;
 search?.addEventListener('input', () => {
-  const q = search.value.toLowerCase();
-  document.querySelectorAll<HTMLElement>('.ud-card').forEach(c => { c.style.display = (c.dataset.search ?? '').includes(q) ? '' : 'none'; });
+  // every word of the search (split at spaces and dashes) in the card's name, key or description-dev
+  const fold = (v: string) => v.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/\\u0131/g, 'i');
+  const words = fold(search.value).split(/[\\s\\-_.,\\/]+/).filter(Boolean);
+  document.querySelectorAll<HTMLElement>('.ud-card').forEach(c => { const hay = c.dataset.search ?? ''; c.style.display = words.every(w => hay.includes(w)) ? '' : 'none'; });
 });
 
 bindMenus(document, { onAction: a => { if (a.target) location.href = a.target + '.html'; else document.dispatchEvent(new CustomEvent('ud-menu-action', { detail: a })); } });
@@ -369,7 +374,7 @@ ${ov}
 }
 
 export function indexHtml({ screens, icons, themes, primary, title, thumbs }) {
-  const cards = screens.map(s => `    <a class="ud-card" href="screens/${esc(s.key)}.html" data-search="${esc(`${s.key} ${s.name} ${s.category} ${s.descriptionDev}`.toLowerCase())}">
+  const cards = screens.map(s => `    <a class="ud-card" href="screens/${esc(s.key)}.html" data-search="${esc(foldSearchText(`${s.key} ${s.name} ${s.label || ''} ${s.category} ${s.descriptionDev}`))}">
       <img src="${esc(thumbs[s.key])}" alt="${esc(s.label)}" loading="lazy">
       <strong>${esc(s.label || s.name)}</strong><small>${esc(s.key)} · ${s.width}×${s.height}</small>
     </a>`).join('\n');

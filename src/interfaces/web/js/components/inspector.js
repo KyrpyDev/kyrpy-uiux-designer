@@ -1,4 +1,5 @@
 /** Right-hand property inspector of a Designer: design record, selection, geometry, style, animations. */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, clear, toast, confirmBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
@@ -79,11 +80,10 @@ export function openIconPicker(currentId, onPick) {
   const search = h('input', { type: 'search', class: 'grow', placeholder: 'Search icons by name, key or category…', 'aria-label': 'Search icons' });
   const count = h('span', { class: 'muted', style: { whiteSpace: 'nowrap', fontSize: '11px' } });
   const grid = h('div', { class: 'icon-pick-grid', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '8px', maxHeight: '62vh', overflowY: 'auto', paddingTop: '4px' } });
-  const hayOf = it => [it.label, it.key, it.name, it.category, ...(Array.isArray(it.tags) ? it.tags : [])].filter(Boolean).join(' ').toLowerCase();
   const render = () => {
     clear(grid);
-    const terms = query.split(/\s+/).filter(Boolean);
-    const list = icons.filter(it => terms.every(t => hayOf(it).includes(t)));
+    const terms = searchTerms(query);
+    const list = icons.filter(it => matchesSearch(terms, ...itemSearchFields(it)));
     // thousands of pack icons: draw the first 300 matches only (each is an <img> of the icon svg)
     const shown = list.slice(0, 300);
     count.textContent = shown.length < list.length ? `${shown.length} shown · ${list.length} of ${icons.length}` : `${list.length} of ${icons.length}`;

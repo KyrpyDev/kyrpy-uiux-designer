@@ -1,4 +1,5 @@
 /** Design style picker: every design style as a card that shows a sample design rendered in that style. */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, modal } from '../dom.js';
 import { api } from '../api.js';
 import { state } from '../state.js';
@@ -53,7 +54,7 @@ export function openThemePicker({ current = null } = {}) {
   };
 
   function render() {
-    const list = (state.themes || []).filter(t => (mode === 'all' || modeOf(t) === mode) && (!query || `${t.name} ${t.key} ${t.kind || ''}`.toLowerCase().includes(query)));
+    const list = (state.themes || []).filter(t => (mode === 'all' || modeOf(t) === mode) && matchesSearch(query, t.name, t.key, t.label, t.kind, t.descriptionDev, t.description));
     grid.replaceChildren(...list.map(card));
     if (!list.length) grid.append(h('p', { class: 'muted' }, 'No design style matches.'));
     count.textContent = `${list.length} of ${(state.themes || []).length} styles`;

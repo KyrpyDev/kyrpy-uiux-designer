@@ -81,14 +81,14 @@ test('bulkReview skips changes that are no longer pending and keeps going after 
 test('approve all matching a filter, text search and per-status counts', () => {
   const { c, proj, pending } = setup(4);
   const actor = ownerOf(c);
-  // q matches the target name, case-insensitively, and the author username
+  // q matches the target name, case-insensitively, and the author username (every word must match: "0" alone is in each summary, "0 added")
   assert.equal(c.collaboration.list({ projectId: proj.id, q: 'screen 1' }).length, 1);
   assert.equal(c.collaboration.list({ projectId: proj.id, q: 'COLLAB_DEV' }).length, 4);
   assert.equal(c.collaboration.list({ projectId: proj.id, q: '100%_' }).length, 0, 'LIKE wildcards are escaped');
 
   c.collaboration.reject(pending.find(p => p.targetName === 'Screen 3').id, { actor });
   assert.deepEqual(c.collaboration.counts({ projectId: proj.id }), { pending: 3, approved: 0, rejected: 1, all: 4 });
-  assert.deepEqual(c.collaboration.counts({ projectId: proj.id, status: 'approved', q: 'screen 0' }), { pending: 1, approved: 0, rejected: 0, all: 1 },
+  assert.deepEqual(c.collaboration.counts({ projectId: proj.id, status: 'approved', q: 'screen 2' }), { pending: 1, approved: 0, rejected: 0, all: 1 },
     'counts ignore the status filter but honour the others');
 
   // a filter that matches nothing reviews nothing; then approve every pending screen change

@@ -2,6 +2,7 @@
  * Workflow designer: screens on an infinite canvas (move, collapse, expand, edit in a modal) and named links
  * between them (curved or cornered; cornered lines hop over each other with a small "U" at intersections).
  */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, clear, toast, confirmBox, promptBox, choiceBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { rememberName } from '../edited.js';
@@ -390,7 +391,7 @@ export class WorkflowDesigner {
     };
     const draw = () => {
       const q = search.value.trim().toLowerCase();
-      const hits = all.filter(s => !q || [s.name, s.key, s.label, ...(s.tags || [])].some(v => String(v ?? '').toLowerCase().includes(q)));
+      const terms = searchTerms(q), hits = all.filter(s => matchesSearch(terms, ...itemSearchFields(s)));
       clear(grid);
       for (const s of hits) {
         const used = inWf.has(s.id);

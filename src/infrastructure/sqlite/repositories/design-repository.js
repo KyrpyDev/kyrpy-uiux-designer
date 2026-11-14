@@ -1,3 +1,4 @@
+import { sqlSearch } from '../../../domain/search.js';
 import { inTransaction } from '../database.js';
 import { defaultOwnerId } from '../../../domain/system-users.js';
 import { TYPES } from '../../../domain/entities.js';
@@ -48,8 +49,8 @@ export class DesignRepository {
     for (const t of Array.isArray(terms) ? terms : []) {
       const term = String(t || '').toLowerCase();
       if (!term) continue;
-      where.push(`ulower(key || ' ' || name || ' ' || label || ' ' || tags) LIKE ? ESCAPE '\\'`);
-      args.push(`%${term.replace(/[\\%_]/g, '\\$&')}%`);
+      const m = sqlSearch(term, ['key', 'name', 'label', 'tags', 'description_dev']);
+      if (m.sql) { where.push(m.sql); args.push(...m.args); }
     }
     const p = String(pack || '').toLowerCase();
     if (p) {
@@ -68,7 +69,8 @@ export class DesignRepository {
     const effUserId = actorId != null && actorId !== ''
       ? Number(actorId)
       : (creatorId != null && creatorId !== '' ? Number(creatorId) : null);
-    if (q) { where.push(`(key LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR label LIKE ? ESCAPE '\\' OR tags LIKE ? ESCAPE '\\' OR description_dev LIKE ? ESCAPE '\\')`); const l = `%${String(q).replace(/[\\%_]/g, '\\$&')}%`; args.push(l, l, l, l, l); }
+    // every word of the query in the label, name, variable name (dashed parts too), tags or description-dev
+    if (q) { const m = sqlSearch(q, ['key', 'name', 'label', 'tags', 'description_dev', 'category']); if (m.sql) { where.push(m.sql); args.push(...m.args); } }
     if (category) { where.push('category = ?'); args.push(category); }
     const vis = visibility === 'all' ? '' : visibility;
     if (vis === 'mine' && effUserId) {

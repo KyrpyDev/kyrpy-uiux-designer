@@ -4,6 +4,7 @@
  *    (add sub item · edit · delete) and the same click behaviour as the exported page (via menu-runtime).
  *  - menuActions: add / edit / delete / move / settings, shared with the inspector.
  */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, modal, toast, confirmBox, clear, promptBox } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign, libOf, isPublicLibraryItem } from '../state.js';
@@ -81,7 +82,7 @@ export function pickButton(currentId = null, excludeId = null) {
     const fill = () => {
       clear(list);
       const s = q.value.trim().toLowerCase();
-      const rows = all.filter(r => r.b.id !== excludeId && (!s || `${r.b.key} ${r.b.label} ${r.b.name} ${r.b.category}`.toLowerCase().includes(s)));
+      const rows = all.filter(r => r.b.id !== excludeId && matchesSearch(s, ...itemSearchFields(r.b)));
       const mine = rows.filter(r => r.own), pub = rows.filter(r => !r.own);
       const head = t => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, t);
       if (mine.length) list.append(head(`All my projects · ${mine.length}`), ...mine.slice(0, 150).map(r => card(r.b, true)));
@@ -145,7 +146,7 @@ export function pickTarget({ currentScreenId = null, currentElementId = null, cu
       const rows = all[tab];
       if (!rows) return list.append(h('div', { class: 'muted', style: { gridColumn: '1/-1' } }, `Loading ${tab}s…`));
       const t = q.value.trim().toLowerCase();
-      const hit = rows.filter(s => !t || `${s.key} ${s.name} ${s.label} ${s.category}`.toLowerCase().includes(t));
+      const terms = searchTerms(t), hit = rows.filter(s => matchesSearch(terms, ...itemSearchFields(s)));
       const head = txt => h('div', { class: 'muted', style: { gridColumn: '1/-1', fontSize: '11px', fontWeight: 700 } }, txt);
       const curTargetId = tab === 'screen' ? currentScreenId : currentElementId;
       // the target that is set now comes first of the whole list (green edge), whatever group it belongs to

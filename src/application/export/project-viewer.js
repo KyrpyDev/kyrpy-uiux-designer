@@ -282,11 +282,12 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   });
 
   // left panel: tree + search
+  var pvFold = function (v) { return String(v || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/\\u0131/g, 'i'); };
   var tree = document.getElementById('pv-tree');
   function row(key, wfKey, idx) {
     var s = byKey[key]; if (!s) return null;
     var b = document.createElement('button'); b.type = 'button'; b.className = 'pv-screen'; b.setAttribute('data-screen', key); b.setAttribute('data-wf', wfKey || '');
-    b.setAttribute('data-search', ((s.label || '') + ' ' + (s.name || '') + ' ' + key).toLowerCase());
+    b.setAttribute('data-search', pvFold([s.label, s.name, key, s.category, s.descriptionDev].filter(Boolean).join(' ')));
     var n = document.createElement('span'); n.textContent = (s.label || s.name); var m = document.createElement('small'); m.textContent = (idx != null ? (idx + 1) + ' · ' : '') + s.width + '×' + s.height;
     b.appendChild(n); b.appendChild(m); b.addEventListener('click', function () { go(key, { wf: wfKey || null }); }); return b;
   }
@@ -302,8 +303,9 @@ export function viewerJs(menuRuntime, repeaterRuntime) {
   var loose = screens.map(function (s) { return s.key; }).filter(function (k) { return !assigned[k]; });
   if (loose.length) tree.appendChild(group('Screens outside workflows', loose, '', !DATA.workflows.length, loose.length));
   document.getElementById('pv-search').addEventListener('input', function (e) {
-    var q = e.target.value.toLowerCase();
-    tree.querySelectorAll('.pv-screen').forEach(function (b) { b.style.display = !q || b.getAttribute('data-search').indexOf(q) >= 0 ? '' : 'none'; });
+    // every word of the search (split at spaces and dashes) somewhere in the label, name, key or description-dev
+    var q = pvFold(e.target.value), words = q.split(/[\\s\\-_.,\\/]+/).filter(Boolean);
+    tree.querySelectorAll('.pv-screen').forEach(function (b) { var hay = b.getAttribute('data-search') || ''; b.style.display = words.every(function (w) { return hay.indexOf(w) >= 0; }) ? '' : 'none'; });
     if (q) tree.querySelectorAll('details').forEach(function (d) { d.open = true; });
   });
 

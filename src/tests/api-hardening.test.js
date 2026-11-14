@@ -628,7 +628,7 @@ test('icon search filters, counts and pages in SQL (terms, pack, Unicode case, L
     assert.equal(s('zeta nav right').items.map(i => i.name).join(), 'Zeta Arrow Right');
     assert.equal(s('ДОМИК').total, 1, 'Unicode lower-casing');
     assert.equal(s('zeta 100%').total, 1, '% is a character, not a wildcard');
-    assert.equal(s('zeta_arrow').total, 0, '_ is a character, not a wildcard');
+    assert.equal(s('zeta_arrow').total, 2, '_ separates words like a dash (variable name parts)');
     assert.equal(s('zeta', { pack: 'lucide' }).total, 2);
     assert.equal(s('zeta', { pack: 'builtin' }).total, 4);
     const page = s('zeta', { limit: 2, offset: 1 });

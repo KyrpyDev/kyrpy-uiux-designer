@@ -1,4 +1,5 @@
 /** Projects, their settings, members and clones (`ProjectService`). */
+import { searchTerms, matchesSearch } from '../domain/search.js';
 import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.js';
 import { PROJECT_ROLES, VISIBILITY_LEVELS, BUTTON_STYLES, DEFAULT_PROJECT_BUTTON_SETTINGS, normalizeButtonIconSizePct, normalizeButtonStyleKey, applyButtonStyleAndIconSizeToNodes, isButtonStyleFrame, isDesignButtonTemplate } from '../domain/entities.js';
 import { isValidKey, slugify, uniqueKey, isValidProjectPrefix } from '../domain/naming.js';
@@ -44,9 +45,9 @@ export class ProjectService {
   /** Projects `user` may see: public ones (unless includePublic is false), their own and those they are a member of; admins see all. No user = no filter (internal callers). */
   list({ user = null, includePublic = true, q = '' } = {}) {
     const all = this.projects.list();
-    const text = String(q || '').trim().toLowerCase();
+    const terms = searchTerms(q);
     return all.filter(p => {
-      if (text && !`${p.key} ${p.name} ${p.label} ${p.description}`.toLowerCase().includes(text)) return false;
+      if (terms.length && !matchesSearch(terms, p.key, p.name, p.label, p.description, p.settings?.prefix)) return false;
       if (!user || this.auth.isAdmin(user) || p.ownerId === user.id) return true;
       if (p.visibility === 'public') return includePublic !== false;
       const m = this.projects.getMember(p.id, user.id);

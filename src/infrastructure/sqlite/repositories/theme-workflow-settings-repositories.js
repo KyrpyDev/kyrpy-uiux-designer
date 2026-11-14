@@ -1,3 +1,4 @@
+import { sqlSearch } from '../../../domain/search.js';
 import { inTransaction } from '../database.js';
 import { defaultOwnerId } from '../../../domain/system-users.js';
 
@@ -80,7 +81,7 @@ export class WorkflowRepository {
     const effUserId = creatorId != null && creatorId !== ''
       ? Number(creatorId)
       : (actorId != null && actorId !== '' ? Number(actorId) : null);
-    if (q) { where.push(`(w.key LIKE ? ESCAPE '\\' OR w.name LIKE ? ESCAPE '\\' OR w.label LIKE ? ESCAPE '\\' OR w.description_dev LIKE ? ESCAPE '\\')`); const l = `%${String(q).replace(/[\\%_]/g, '\\$&')}%`; args.push(l, l, l, l); }
+    if (q) { const m = sqlSearch(q, ['w.key', 'w.name', 'w.label', 'w.description_dev']); if (m.sql) { where.push(m.sql); args.push(...m.args); } }
     const vis = visibility === 'all' ? '' : visibility;
     if (vis) {
       where.push('w.visibility = ?'); args.push(vis);

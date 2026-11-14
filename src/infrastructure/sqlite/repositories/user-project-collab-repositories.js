@@ -1,3 +1,4 @@
+import { sqlSearch } from '../../../domain/search.js';
 import { createHash } from 'node:crypto';
 /**
  * SQLite repositories for Users, Sessions, Projects, Project Members, Collaborative Change Requests,
@@ -275,13 +276,8 @@ export class ChangeRequestRepository {
     if (targetId != null && targetId !== '') { where.push('c.target_id = ?'); args.push(Number(targetId)); }
     if (ownerId != null && ownerId !== '') { where.push('c.owner_id = ?'); args.push(Number(ownerId)); }
     if (authorId != null && authorId !== '') { where.push('c.author_id = ?'); args.push(Number(authorId)); }
-    const text = String(q || '').trim().toLowerCase();
-    if (text) {
-      const like = `%${text.replace(/[\\%_]/g, m => `\\${m}`)}%`;
-      where.push(`(lower(c.target_name) LIKE ? ESCAPE '\\' OR lower(c.target_key) LIKE ? ESCAPE '\\'
-        OR lower(c.summary) LIKE ? ESCAPE '\\' OR lower(COALESCE(ua.username, '')) LIKE ? ESCAPE '\\')`);
-      args.push(like, like, like, like);
-    }
+    const m = sqlSearch(q, ['c.target_name', 'c.target_key', 'c.summary', 'ua.username']);
+    if (m.sql) { where.push(m.sql); args.push(...m.args); }
     return { w: where.length ? `WHERE ${where.join(' AND ')}` : '', args };
   }
 
@@ -537,11 +533,7 @@ export class TrashRepository {
     if (itemType) { where.push('t.item_type = ?'); args.push(itemType); }
     if (projectId != null && projectId !== '') { where.push('t.project_id = ?'); args.push(Number(projectId)); }
     if (visibility) { where.push('t.visibility = ?'); args.push(visibility); }
-    if (q) {
-      where.push(`(t.item_key LIKE ? ESCAPE '\\' OR t.item_name LIKE ? ESCAPE '\\' OR t.label LIKE ? ESCAPE '\\')`);
-      const l = `%${String(q).replace(/[\\%_]/g, '\\$&')}%`;
-      args.push(l, l, l);
-    }
+    if (q) { const m = sqlSearch(q, ['t.item_key', 't.item_name', 't.label']); if (m.sql) { where.push(m.sql); args.push(...m.args); } }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db.prepare(`SELECT t.*, ud.username AS deleted_by_username, uc.username AS creator_username
       FROM trash_items t

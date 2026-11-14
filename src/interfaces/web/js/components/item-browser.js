@@ -4,6 +4,7 @@
  * Empty Project Private Library Tool (default libraries immutable),
  * and Trash Management Modal (Restore / Purge / Empty with Admin guard on public items).
  */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { renderDocument, renderIconDocument } from '/domain/svg.js';
 import { visClass, scopeTier } from '/domain/entities.js';
 import { editedIndex } from '../edited.js';
@@ -329,6 +330,7 @@ export function buildItemBrowserElement({
 
   function visibleItems() {
     const types = typeFilter === 'all' ? ALL_ITEM_TYPES : [typeFilter];
+    const queryTerms = searchTerms(query);   // every word of the search in the label, name, key, tags or description-dev
     const curUserId = Number(state.user?.id || 1);
     const out = [];
     for (const t of types) {
@@ -345,10 +347,7 @@ export function buildItemBrowserElement({
           // If topbar multi-project filter is active, show public items + private user items + items in selected projects
           if (itemVis === 'project' && !state.selectedProjectIds.has(item.projectId || 1)) continue;
         }
-        if (query) {
-          const hay = `${item.name || ''} ${item.key || ''} ${item.label || ''} ${item.category || ''} ${t}`.toLowerCase();
-          if (!hay.includes(query)) continue;
-        }
+        if (queryTerms.length && !matchesSearch(queryTerms, ...itemSearchFields(item), t)) continue;
         out.push({ type: t, item });
       }
     }

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MIGRATIONS } from './migrations.js';
+import { foldSearchHaystack } from '../../domain/search.js';
 import { applyMcpSchema, dropMcpTriggers } from '../../mcp/infrastructure/sqlite/mcp-schema.js';
 import { dropOutboxTriggers } from './outbox-triggers.js';
 
@@ -63,6 +64,8 @@ export function openDatabase(file) {
   db.exec('PRAGMA foreign_keys = ON;');
   // Unicode lower-casing for searches (SQLite's LOWER only knows ASCII)
   db.function('ulower', { deterministic: true }, v => (v == null ? null : String(v).toLowerCase()));
+  // searches: lower case without accents (see domain/search.js), so every word of a query is matched the same way
+  db.function('ufold', { deterministic: true }, v => (v == null ? null : foldSearchHaystack(v)));
   cacheStatements(db);
   return db;
 }

@@ -2,6 +2,7 @@
  * Left panel: the libraries along the hierarchy  Paths → Icons → Buttons → Elements,  the Screens catalog and the Workflows.
  * Items are dragged onto the open designer (the hierarchy rules decide where they may go).
  */
+import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js';
 import { h, clear, debounce, promptBox, confirmBox, toast } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
@@ -227,7 +228,7 @@ export class LibraryPanel {
       const pfx = /^prefix:(\S+)\s*/.exec(String(q || '').toLowerCase());
       const text = pfx ? String(q).slice(pfx[0].length).trim().toLowerCase() : String(q || '').toLowerCase();
       const okPrefix = !pfx || `${d.key || ''} ${d.name || ''}`.toLowerCase().split(/\s+/).some(w => w.startsWith(`${pfx[1]}-`));
-      return (!c || d.category === c) && okPrefix && (!text || `${d.key || ''} ${d.name || ''} ${d.label || ''} ${(d.tags || []).join(' ')} ${d.descriptionDev || ''} ${d.description || ''}`.toLowerCase().includes(text));
+      return (!c || d.category === c) && okPrefix && matchesSearch(text, ...itemSearchFields(d));
     }), curUserId, usedSet(), kind, editedIndex(), libScope());
   }
 
