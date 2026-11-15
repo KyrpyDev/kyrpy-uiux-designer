@@ -465,7 +465,7 @@ test('menu item UI: edit dialog has the parent tree, inspector tree rows are dra
   const rd = f => readFileSync(new URL(`../interfaces/web/js/${f}`, import.meta.url), 'utf8');
   const ed = rd('components/menu-editor.js'), ins = rd('components/inspector.js'), api = rd('api.js');
   assert.match(ed, /mi-parent-tree/); assert.match(ed, /api\.moveMenuItem\(buttonId, item\.id, \{ parentId \}\)/);
-  assert.match(ins, /draggable: 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/);
+  assert.match(ins, /draggable: inst \? 'false' : 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/);
   assert.match(api, /menu\/items\/\$\{iid\}\/move/);
 });
 

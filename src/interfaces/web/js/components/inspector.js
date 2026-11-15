@@ -6,7 +6,7 @@ import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
 import { menuActions, pickButton, libraryBrowseButton, pressSlideTargetLabel } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
-import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
+import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, instanceMenu, nodeMenuOverride, nodeMenuAttr, hasNodeMenuOverride, NODE_MENU_ATTR, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, ANCHORS,
@@ -300,9 +300,9 @@ export class Inspector {
   }
 
   /** Button style tool: one library button used as the frame of EVERY menu item (items with their own button can be reset to follow it). */
-  menuStyleTool(bid, cfg, rows, set) {
+  menuStyleTool(bid, cfg, rows, set, { instance = false } = {}) {
     const cur = cfg.itemButtonId ? findDesign('button', cfg.itemButtonId) : null;
-    const own = rows.filter(r => r.refButtonId).length;
+    const own = instance ? 0 : rows.filter(r => r.refButtonId).length;   // item rows belong to the button: only its designer clears them
     return h('div', { class: 'row wrap', style: { gap: '6px', alignItems: 'center' } },
       cur ? h('img', { class: 'thumb small', alt: cur.label || cur.key, src: api.svgUrl('button', cur.id, { theme: state.themeKey, animated: 0, size: 48 }), style: { width: '36px', height: '36px', objectFit: 'contain' } }) : null,
       h('span', { class: 'grow', style: { fontSize: '12px' } }, cur ? `Item style: ${cur.label || cur.key}` : 'Item style: this button\'s own body'),
@@ -315,13 +315,31 @@ export class Inspector {
   }
 
   /** Buttons & Button Instances: action/menu modes (radial, drawer, vertical/horizontal slider, carousel animated roll, show element) and nested menu items. */
-  menuSection(buttonId = null) {
+  menuSection(buttonId = null, inst = null) {
     const d = this.d;
     const bid = buttonId || (d.type === 'button' ? d.doc.id : null);
     const btnDoc = (d.type === 'button' && d.doc.id === bid) ? d.doc : findDesign('button', bid);
     if (!btnDoc) return h('div');
-    const cfg = menuConfig(btnDoc.meta), rows = btnDoc.menuItems || [];
-    const set = patch => menuActions.config(d, patch, bid);
+    // a button placed on a screen (inst = its node): every setting here is kept on that node, the library button is unchanged
+    // (its own designer, opened with ✎ Edit, is the only place that changes it for every screen)
+    const baseRows = btnDoc.menuItems || [];
+    const own = inst ? instanceMenu({ cfg: menuConfig(btnDoc.meta), items: baseRows }, inst) : null;
+    const cfg = own ? own.cfg : menuConfig(btnDoc.meta), rows = own ? own.items : baseRows;
+    const writeOwn = o => { const a = { ...(inst.attrs || {}) }, v = nodeMenuAttr(o); if (v) a[NODE_MENU_ATTR] = v; else delete a[NODE_MENU_ATTR]; return d.patchNode(inst.id, { attrs: a }); };
+    const set = inst
+      ? async patch => {
+        const o = nodeMenuOverride(inst);
+        await writeOwn({ ...o, cfg: { ...o.cfg, ...patch } });
+        if (patch && (patch.hubCount !== undefined || patch.kind !== undefined || patch.hubFixedPositions !== undefined)) d.fit?.();
+      }
+      : patch => menuActions.config(d, patch, bid);
+    const toggleVisible = id => {
+      if (!inst) return menuActions.toggleVisible(d, id, bid);
+      const o = nodeMenuOverride(inst), base = baseRows.find(r => r.id === id), cur = rows.find(r => r.id === id);
+      const next = !(cur?.visible !== false), items = { ...o.items };
+      if (next === (base?.visible !== false)) delete items[String(id)]; else items[String(id)] = { visible: next };
+      return writeOwn({ ...o, items });
+    };
     const num = (k, label, step = 0.05) => this.field(label, this.num(`mc-${bid}-${k}`, cfg[k], v => set({ [k]: v }), { step }));
     const els = [...(state.library.elements || [])].sort((a, b) => a.name.localeCompare(b.name));
     const curOrient = menuOrientation(cfg);
@@ -433,7 +451,7 @@ export class Inspector {
             ['top-left', 'Radial fan · top left corner of the screen']
           ], v => set({ fanCorner: v })))
         : null,
-      this.menuStyleTool(bid, cfg, rows, set),
+      this.menuStyleTool(bid, cfg, rows, set, { instance: !!inst }),
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the opened menu would leave the device screen it is shifted back inside' },
         h('input', { type: 'checkbox', checked: cfg.keepInside !== false, 'data-f': `mc-${bid}-keep`, onchange: e => set({ keepInside: e.target.checked }) }), h('span', {}, 'Keep the menu inside the device screen')),
       this.field('Centre icon turns while open (°, 0 = off)', this.num(`mc-${bid}-rot`, cfg.rotateOnOpen, v => set({ rotateOnOpen: v }), { step: 5 }))
@@ -447,7 +465,7 @@ export class Inspector {
       const isVisible = n.visible !== false, offByParent = !!n.hiddenByParent;   // a hidden parent disables its whole sub tree
       const canFocus = d.menu?.focusItem && d.doc?.id === bid;
       lines.push(h('div', {
-        draggable: 'true', dataset: { menuItem: String(n.id) },
+        draggable: inst ? 'false' : 'true', dataset: { menuItem: String(n.id) },
         ondragstart: e => { e.dataTransfer.setData('text/plain', String(n.id)); e.dataTransfer.effectAllowed = 'move'; this.dragMenuItem = n.id; },
         ondragend: () => { this.dragMenuItem = null; document.querySelectorAll('.mi-drop-before,.mi-drop-after,.mi-drop-inside').forEach(x => x.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside')); },
         ondragover: e => {
@@ -481,19 +499,32 @@ export class Inspector {
           popEl ? h('span', { class: 'badge', style: { marginLeft: '4px' }, title: `Opens popup element: ${popEl.name}` }, `🗔 ${popEl.key}`) : null,
           scr ? h('span', { class: 'badge', style: { marginLeft: '4px' }, title: `Routes to screen: ${scr.name}` }, `➜ ${scr.name}`) : null
         ),
-        ibtn(isVisible ? 'view' : 'close', isVisible ? 'Visible' : 'Hidden', () => menuActions.toggleVisible(d, n.id, bid), { desc: isVisible ? 'Click to hide this item' : 'Click to show this item' }),
-        ibtn('plus', 'Add sub item', () => menuActions.add(d, n.id, bid)),
+        ibtn(isVisible ? 'view' : 'close', isVisible ? 'Visible' : 'Hidden', () => toggleVisible(n.id), { desc: inst ? (isVisible ? 'Hide this item on this placed button only' : 'Show this item on this placed button only') : isVisible ? 'Click to hide this item' : 'Click to show this item' }),
+        inst ? null : ibtn('plus', 'Add sub item', () => menuActions.add(d, n.id, bid)),
         // hub: the top-level item the bar starts with in the centre (first visible item when none is set)
         cfg.kind === 'hub' && depth === 0
-          ? ibtn('target', 'Default centre button', () => d.menu?.setDefaultCentre ? d.menu.setDefaultCentre(n.id, bid, tree.filter(x => x.visible !== false).findIndex(x => x.id === n.id)) : set({ hubCenterItemId: n.id }), { active: Number(cfg.hubCenterItemId) === n.id || (cfg.hubCenterItemId == null && tree.find(x => x.visible !== false)?.id === n.id), desc: 'The hub menu starts with this item in the centre, between its neighbours' })
+          ? ibtn('target', 'Default centre button', () => !inst && d.menu?.setDefaultCentre ? d.menu.setDefaultCentre(n.id, bid, tree.filter(x => x.visible !== false).findIndex(x => x.id === n.id)) : set({ hubCenterItemId: n.id }), { active: Number(cfg.hubCenterItemId) === n.id || (cfg.hubCenterItemId == null && tree.find(x => x.visible !== false)?.id === n.id), desc: 'The hub menu starts with this item in the centre, between its neighbours' })
           : null,
-        ibtn('pencil', 'Edit menu item', () => menuActions.edit(d, n.id, bid)),
-        ibtn('arrowUp', 'Move earlier', () => menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
-        ibtn('arrowDown', 'Move later', () => menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),
-        ibtn('trash', 'Remove menu item', () => menuActions.remove(d, n.id, bid))));
+        ...(inst ? [] : [
+          ibtn('pencil', 'Edit menu item', () => menuActions.edit(d, n.id, bid)),
+          ibtn('arrowUp', 'Move earlier', () => menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
+          ibtn('arrowDown', 'Move later', () => menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),
+          ibtn('trash', 'Remove menu item', () => menuActions.remove(d, n.id, bid))])));
       walk(n.children, depth + 1);
     });
     walk(tree, 0);
+    if (inst) {
+      const changed = hasNodeMenuOverride(inst);
+      return this.section(`Menu · this placed button · ${rows.length} item(s)`,
+        h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'mc-inst-note' }, changed
+          ? 'These settings belong to this placed button only (the library button is unchanged). Show / hide items here (👁); add, edit, reorder or remove items in the button itself (✎ Edit).'
+          : 'Changes here apply to this placed button only; the library button stays as it is. To change the button everywhere it is used, open it with ✎ Edit.'),
+        h('div', { class: 'row wrap' },
+          ibtn('pencil', 'Edit the button (every screen)', () => d.openEditor(inst), { desc: 'Open the library button in its own designer: changes there apply wherever it is used' }),
+          changed ? ibtn('undo', 'Use the button\'s settings', () => writeOwn({}), { desc: 'Drop this placed button\'s own menu settings', dataset: { f: 'mc-inst-reset' } }) : null),
+        ...settings,
+        h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')));
+    }
     return this.section(`Menu Items · ${rows.length} item(s)`,
       h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Order items (↑/↓) or drag them (top / bottom edge = before / after, middle = inside), add (＋), edit (✎, also changes the parent), toggle visible (👁), or remove (🗑). Each item can route to a screen or show an element as a popup/modal box.'),
       ...settings,
@@ -735,7 +766,7 @@ export class Inspector {
     if (roleSec) secs.push(roleSec);
 
     if (e.kind === 'instance' && e.refType === 'button' && e.refId) {
-      secs.push(this.menuSection(e.refId));
+      secs.push(this.menuSection(e.refId, e));
       const psSec = this.pressSlideInstanceSection(e);
       if (psSec) secs.push(psSec);
     }
@@ -1326,22 +1357,32 @@ export class Inspector {
     return L.filter(el => (el.nodes || []).some(n => isContainerNode(n, L) || isRepeaterNode(n, L)));
   }
 
-  /** Placed press & slide button on a screen: which container / repeater of this screen its scroll directions move. */
+  /**
+   * A press & slide button placed on a screen: its press & slide settings and what it scrolls, kept on this node only
+   * (attr data-ps-config, same shape as meta.pressSlide). The library button changes only in its own designer (✎ Edit).
+   */
   pressSlideInstanceSection(e) {
     const d = this.d, L = state.library.elements || [];
     const lib = findDesign('button', e.refId);
-    const ps = lib && !(lib.menuItems || []).length ? pressSlideConfig(lib.meta) : null;
-    if (!ps) return null;
+    if (!lib || (lib.menuItems || []).length) return null;   // a button with menu items sets press & slide per item
+    const a = e.attrs || {}, owned = a[NODE_PRESS_SLIDE_ATTR] != null;
+    const cur = owned ? nodePressSlideConfig(e, { all: true }) : pressSlideConfig(lib.meta, { all: true });
     const label = n => `${n.name || n.tag} (#${n.id})`;
     const opts = d.nodes.filter(n => n.id !== e.id && (isContainerNode(n, L) || isRepeaterNode(n, L) ||
       (n.kind === 'instance' && n.refType === 'element' && (findDesign('element', n.refId)?.nodes || []).some(c => isContainerNode(c, L) || isRepeaterNode(c, L)))));
-    const libTarget = ps.target ? findDesign('element', Number(ps.target)) : null;
-    const def = ps.target ? `Button setting: ${libTarget ? libTarget.name || libTarget.key : `element #${ps.target}`}` : 'Button setting: Auto (first repeater, else first scrollable container)';
-    const cur = String(e.attrs?.['data-ps-target'] || '');
-    return this.section('Press & slide on this screen',
-      this.field('Scrolls', this.select(`ps-inst-target-${e.id}`, cur, [['', def], ...opts.map(n => [String(n.id), label(n)])],
-        v => d.patchNode(e.id, { attrs: { ...(e.attrs || {}), 'data-ps-target': v || null } }))),
-      h('div', { class: 'muted', style: { fontSize: '11px' } }, opts.length ? 'Hold the button in the test view (▶) and slide: the chosen list scrolls and its red frame moves.' : 'No container or repeater on this screen yet.'));
+    const libTarget = cur.target ? findDesign('element', Number(cur.target)) : null;
+    const def = cur.target ? `Button setting: ${libTarget ? libTarget.name || libTarget.key : `element #${cur.target}`}` : 'Auto (first repeater, else first scrollable container)';
+    const save = p => d.patchNode(e.id, { attrs: { ...a, [NODE_PRESS_SLIDE_ATTR]: JSON.stringify({ ...cur, ...p }) } });
+    const reset = () => { const n = { ...a }; delete n[NODE_PRESS_SLIDE_ATTR]; return d.patchNode(e.id, { attrs: n }); };
+    const target = [this.field('Scrolls (the scroll directions move)', this.select(`ps-inst-target-${e.id}`, String(a['data-ps-target'] || ''), [['', def], ...opts.map(n => [String(n.id), label(n)])],
+      v => { const n = { ...a }; if (v) n['data-ps-target'] = v; else delete n['data-ps-target']; return d.patchNode(e.id, { attrs: n }); })),
+    h('div', { class: 'muted', style: { fontSize: '11px' } }, opts.length ? 'Hold the button in the test view (▶) and slide: the chosen list scrolls and its red frame moves.' : 'No container or repeater on this screen yet.')];
+    return this.section('Press & slide · this placed button',
+      h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'ps-inst-note' }, owned
+        ? 'This placed button has its own press & slide settings; the library button is unchanged.'
+        : 'Shows the button\'s settings. A change here is kept for this placed button only; ✎ Edit changes the button everywhere.'),
+      owned ? h('div', { class: 'row wrap' }, ibtn('undo', 'Use the button\'s settings', reset, { desc: 'Drop this placed button\'s own press & slide settings', dataset: { f: 'ps-inst-reset' } })) : null,
+      ...this.pressSlideEditor(cur, save, { prefix: `ps-inst-${e.id}`, target }));
   }
 
   pressSlideSection() {

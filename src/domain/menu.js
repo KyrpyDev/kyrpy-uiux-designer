@@ -170,6 +170,46 @@ export function menuConfig(buttonMeta) {
   return merged;
 }
 
+/**
+ * A library button placed on a screen keeps its own menu settings in this node attribute (JSON):
+ * { cfg: { ...menu config keys that differ for this placed button }, items: { [itemId]: { visible } } }.
+ * The library button stays as it is; only its own designer (✎ Edit) changes it for every screen. Never written into markup.
+ */
+export const NODE_MENU_ATTR = 'data-menu-config';
+
+/** The per-instance menu override of a placed button node: { cfg, items } (both objects, possibly empty). */
+export function nodeMenuOverride(node) {
+  let raw = node?.attrs?.[NODE_MENU_ATTR];
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
+  const cfg = raw && typeof raw.cfg === 'object' && raw.cfg && !Array.isArray(raw.cfg) ? raw.cfg : {};
+  const items = {};
+  if (raw && raw.items && typeof raw.items === 'object') {
+    for (const [k, v] of Object.entries(raw.items)) if (/^\d+$/.test(k) && v && typeof v === 'object' && typeof v.visible === 'boolean') items[k] = { visible: v.visible };
+  }
+  return { cfg, items };
+}
+
+/** True when the node changes anything of its button's menu. */
+export function hasNodeMenuOverride(node) {
+  const o = nodeMenuOverride(node);
+  return Object.keys(o.cfg).length > 0 || Object.keys(o.items).length > 0;
+}
+
+/** The attribute value for an override ({ cfg, items }), or null when it changes nothing. */
+export function nodeMenuAttr({ cfg = {}, items = {} } = {}) {
+  return Object.keys(cfg).length || Object.keys(items).length ? JSON.stringify({ cfg, items }) : null;
+}
+
+/** The menu a placed button shows: the library button's menu ({ cfg, items }) with the node's own settings over it. */
+export function instanceMenu(menu, node) {
+  if (!menu) return menu;
+  const o = nodeMenuOverride(node);
+  if (!Object.keys(o.cfg).length && !Object.keys(o.items).length) return menu;
+  const cfg = { ...menu.cfg, ...o.cfg };
+  const items = (menu.items || []).map(it => o.items[String(it.id)] ? { ...it, visible: o.items[String(it.id)].visible } : it);
+  return { ...menu, cfg, items };
+}
+
 /** True when a menu item is shown: its own switch is on and no item above it is hidden (a hidden item disables its sub tree). */
 export function isMenuItemShown(rows, item) {
   const by = new Map((rows || []).map(r => [r.id, r]));

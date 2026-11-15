@@ -8,7 +8,7 @@ import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
-import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
+import { renderMenu, buildMenuTree, menuConfig, instanceMenu, NODE_MENU_ATTR, MENU_CSS } from './menu.js';
 import { pressSlideConfig, pressSlideDirs, pressSlideSpec, pressSlideTarget, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
@@ -168,7 +168,7 @@ function renderNode(el, ctx, idx, all) {
   if (!SAFE_TAGS.has(el.tag)) return '';
   let a = resolvedAttrs(el, ctx);
   if (a.display === 'none' && !ctx.editor) return '';
-  delete a[NODE_PRESS_SLIDE_ATTR];   // settings, never markup
+  delete a[NODE_PRESS_SLIDE_ATTR]; delete a[NODE_MENU_ATTR];   // settings, never markup
   if (el.kind === 'instance' || (el.tag === 'use' && el.refType)) {
     const instMarkup = renderInstance(el, a, ctx, all);
     const subMarkup = renderContainerChildren(el, ctx, idx, all);
@@ -230,12 +230,14 @@ function renderInstance(el, a, ctx, all) {
   if (ctx.depth > 5 || ctx.activeInstances?.has(instKey)) return placeholder(el, a, ctx, all);
   const tw = w || target.width, th = h || target.height;
   const { x: _x, y: _y, width: _w, height: _h, ...rest } = a;
-  const menu = el.refType === 'button' && target.menu?.items?.length ? target.menu : null;
+  // a placed button keeps its own menu settings (node attribute); the library button only changes in its own designer
+  const menu = el.refType === 'button' && target.menu?.items?.length ? instanceMenu(target.menu, el) : null;
   const attrs = commonAttrs(el, { ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
   if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs['data-btn-id'] = el.refId; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
   // press & slide: the runtime contract on the button, its body wrapped so the slide can nudge it, the direction paths over its icon
   // (a button with menu items sets it per item instead: cfg.itemPressSlide, drawn by the menu)
-  const ps = el.refType === 'button' && !menu ? target.pressSlide || null : null;
+  // (a placed button with its own press & slide settings uses them instead of the button's)
+  const ps = el.refType === 'button' && !menu ? (el.attrs?.[NODE_PRESS_SLIDE_ATTR] != null ? nodePressSlideConfig(el) : target.pressSlide || null) : null;
   const psDirs = ps ? pressSlideDirs(ps) : [];
   if (psDirs.length) {
     ctx.hasPressSlide = true;
@@ -256,7 +258,7 @@ function renderInstance(el, a, ctx, all) {
   const wasPhoto = ctx.photo; ctx.photo = el.refType === 'element' ? target.photo || null : null;
   let inner = renderTree(target.nodes, ctx);
   ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems; ctx.photo = wasPhoto;
-  if (psDirs.length) inner = `<g class="ud-ps-body">${inner}${pressSlideOverlay(target, psDirs, ctx)}</g>`;
+  if (psDirs.length) inner = `<g class="ud-ps-body">${inner}${pressSlideOverlay({ ...target, pressSlide: ps }, psDirs, ctx)}</g>`;
   // a placed element used as a container: its own content is clipped to the container's inner box and scrolls there
   // (the same contract as sub-items dropped onto a container: data-container-children + clip-path)
   if (el.refType === 'element' && !isRepeaterNode(el, ctx.lib.element) && isContainerNode(el, ctx.lib.element) && inner) {
