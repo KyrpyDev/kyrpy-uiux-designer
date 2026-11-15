@@ -9,7 +9,7 @@ import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig,
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
-import { pressSlideConfig, pressSlideDirs, pressSlideSpec, pressSlideTarget, findPressSlidePath, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
+import { pressSlideConfig, pressSlideDirs, pressSlideSpec, pressSlideTarget, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
 export const CAROUSEL_CSS = [
@@ -168,6 +168,7 @@ function renderNode(el, ctx, idx, all) {
   if (!SAFE_TAGS.has(el.tag)) return '';
   let a = resolvedAttrs(el, ctx);
   if (a.display === 'none' && !ctx.editor) return '';
+  delete a[NODE_PRESS_SLIDE_ATTR];   // settings, never markup
   if (el.kind === 'instance' || (el.tag === 'use' && el.refType)) {
     const instMarkup = renderInstance(el, a, ctx, all);
     const subMarkup = renderContainerChildren(el, ctx, idx, all);
@@ -185,7 +186,25 @@ function renderNode(el, ctx, idx, all) {
   // an element whose script carries a photo shows it inside its photo placeholder shape (the script itself never runs here)
   const photoMarkup = ctx.photo && isPhotoPlaceholder(el) ? photoInPlaceholderMarkup(el, a, ctx.photo, { attrString }) : '';
   const subMarkup = renderContainerChildren(el, ctx, idx, all);
+  // a plain shape with the "button" role can be a press & slide button of its own (settings on the node, no library button)
+  const ps = el.role === 'button' ? nodePressSlideConfig(el) : null;
+  const psDirs = ps ? pressSlideDirs(ps) : [];
+  if (psDirs.length) return pressSlideNodeMarkup(el, ps, psDirs, selfMarkup + photoMarkup + subMarkup, ctx, all);
   return selfMarkup + photoMarkup + subMarkup;
+}
+
+/** A plain button-role shape with press & slide: the same runtime contract as a placed library button, around its own box. */
+function pressSlideNodeMarkup(el, ps, dirs, inner, ctx, all) {
+  const b = nodeBBox(el, all), W = b.w > 0 ? b.w : 48, H = b.h > 0 ? b.h : 48, m = Math.min(W, H);
+  const k = Number(ps.arrowSize) > 0 ? Number(ps.arrowSize) : 1, aw = W * k, ah = H * k;
+  const kids = all.filter(n => n.parentId === el.id);
+  const icon = kids.find(n => n.kind === 'instance' && n.refType === 'icon');
+  const iw = Math.min(parseFloat(icon?.attrs?.width) || 0, parseFloat(icon?.attrs?.height) || 0) || m * 0.6;
+  const wrap = { class: 'ud-ps', 'data-press-slide': pressSlideSpec(ps), 'data-ps-hold': ps.holdMs, 'data-ps-size': round(m),
+    'data-btn-key': el.name || `node-${el.id}`, 'data-ps-node': el.id, style: `--ps-hold:${ps.holdMs}ms` };
+  if (ps.target) wrap['data-target-repeater'] = ps.target;
+  const overlay = pressSlideMarkup(dirs, { x: b.x + (W - aw) / 2, y: b.y + (H - ah) / 2, w: aw, h: ah }, { cx: b.x + W / 2, cy: b.y + H / 2, size: m }, ctx, iw);
+  return `<g${attrString(wrap)}><g class="ud-ps-body">${inner}${overlay}</g></g>`;
 }
 
 function renderInstance(el, a, ctx, all) {

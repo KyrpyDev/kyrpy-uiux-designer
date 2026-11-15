@@ -136,3 +136,26 @@ test('single press & slide button: "Arrows size" scales the arrows around its ce
   assert.match(render(button({ pressSlide: { on: true } })), /data-dir="u" transform="translate\(0 0\) scale\(2 2\)"/);
   assert.match(render(button({ pressSlide: { on: true, arrowSize: 1.5 } })), /data-dir="u" transform="translate\(-12 -12\) scale\(3 3\)"/);
 });
+
+test('a plain shape with the "button" role keeps its own press & slide on the screen (no library button)', async () => {
+  const { nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR } = await import('../domain/press-slide.js');
+  const cfg = JSON.stringify({ on: true, target: '77', l: { on: false }, r: { action: 'enter', target: 's-12' } });
+  const shape = { id: 3, kind: 'shape', tag: 'rect', role: 'button', name: 'cta-button', parentId: null, ord: 0, visible: true,
+    attrs: { x: 16, y: 500, width: 320, height: 56, rx: 26, [NODE_PRESS_SLIDE_ATTR]: cfg } };
+  assert.equal(nodePressSlideConfig({ attrs: {} }), null);
+  assert.equal(nodePressSlideConfig({ attrs: { [NODE_PRESS_SLIDE_ATTR]: 'not json' } }), null);
+  assert.equal(nodePressSlideConfig(shape).target, '77');
+  const lib = indexLibrary({ paths, icons: [] });
+  const ctx = createContext({ theme, lib, editor: true });
+  const svg = renderDocument({ owner: { id: 1, width: 360, height: 640 }, nodes: [shape], ctx });
+  assert.match(svg, /class="ud-ps"[^>]*data-press-slide="u:scroll-up;d:scroll-down;r:enter@s-12"/);
+  assert.match(svg, /data-target-repeater="77"/);
+  assert.match(svg, /data-btn-key="cta-button"/);
+  assert.match(svg, /<g class="ud-ps-body"><rect[^>]*data-el="3"/);
+  assert.equal(svg.includes(NODE_PRESS_SLIDE_ATTR), false, 'the settings never reach the markup');
+  assert.equal((svg.match(/class="ud-ps-dir"/g) || []).length, 3);
+  // the same shape with another role (or press & slide off) is drawn as before
+  const plain = renderDocument({ owner: { id: 1, width: 360, height: 640 }, nodes: [{ ...shape, role: 'card' }], ctx: createContext({ theme, lib, editor: true }) });
+  assert.equal(plain.includes('ud-ps'), false);
+  assert.equal(plain.includes(NODE_PRESS_SLIDE_ATTR), false);
+});

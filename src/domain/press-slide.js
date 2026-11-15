@@ -118,3 +118,17 @@ export const PRESS_SLIDE_CSS = [
   '@keyframes ud-ps-pulse{0%,100%{opacity:.9}50%{opacity:.35}}',
   '@media (prefers-reduced-motion:reduce){.ud-ps-body{transition:none}.ud-ps-ring{animation:none!important}}'
 ].join('');
+
+/**
+ * A plain shape with the surface role "button" (drawn on a screen, not a library button) keeps its own press & slide settings
+ * in this attribute, as JSON of the same shape as meta.pressSlide; `target` is then the id of a container / repeater node of
+ * the same screen. The renderer never writes the attribute into the markup.
+ */
+export const NODE_PRESS_SLIDE_ATTR = 'data-ps-config';
+
+/** The normalised press & slide settings of a plain node (see pressSlideConfig), or null. */
+export function nodePressSlideConfig(node, { all = false } = {}) {
+  let raw = node?.attrs?.[NODE_PRESS_SLIDE_ATTR];
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
+  return pressSlideConfig(raw && typeof raw === 'object' ? { pressSlide: raw } : null, { all });
+}

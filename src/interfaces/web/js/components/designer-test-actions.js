@@ -153,7 +153,13 @@ export function installTestActions(Designer) {
     this.liveLayer.style.visibility = 'hidden';
     let t = null;
     try { t = document.elementFromPoint(ev.clientX, ev.clientY); } finally { this.liveLayer.style.visibility = prev; }
-    return t && this.stage.contains(t) && t.closest?.('[data-press-slide]') ? t : null;   // the deepest element: the runtime finds its button
+    if (t && this.stage.contains(t) && t.closest?.('[data-press-slide]')) return t;   // the deepest element: the runtime finds its button
+    // a label or icon drawn over a press & slide shape (a sibling, not inside it): the shape whose box holds the point
+    for (const b of this.stage.querySelectorAll('.ud-ps[data-press-slide]')) {
+      const r = b.getBoundingClientRect();
+      if (ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom) return b.querySelector('.ud-ps-body > *') || b;
+    }
+    return null;
   };
 
   /** Re-dispatches a hotspot click to the menu under it; true when a menu took it. */
@@ -436,7 +442,9 @@ export function installTestActions(Designer) {
       const combinedText = textsInside.map(t => t.text || '').join(' ').toLowerCase();
       if (combinedText.includes('doğrudan giriş') || combinedText.includes('giriş yap') || combinedText.includes('kaydol')) continue;
 
-      fieldRects.push({ node: r, box: b, textNode: textsInside[0] || null, kind: b.h >= 72 ? 'textarea' : 'input' });
+      // the field's own settings (inspector "Field settings"): input type, placeholder, options
+      const it = r.attrs?.['data-input-type'];
+      fieldRects.push({ node: r, box: b, textNode: textsInside[0] || null, kind: it === 'textarea' || it === 'select' ? it : it ? 'input' : b.h >= 72 ? 'textarea' : 'input', inputType: it && it !== 'textarea' && it !== 'select' ? it : null });
     }
 
     // If we are inside the Element Designer for an input/textarea/select/search-bar element without `role="field"`, add its main box
@@ -485,19 +493,23 @@ export function installTestActions(Designer) {
 
     for (const f of fieldRects) {
       const stateKey = `${this.type}:${d.id}:${f.fieldId || f.node.id}`;
-      const rawInitial = f.textNode?.text || '';
-      const isPassword = rawInitial.includes('••') || f.elementKey === 'html-password-input';
+      const ph = f.node.attrs?.['data-placeholder'] || '';
+      const rawInitial = f.textNode?.text || ph;
+      const isPassword = f.inputType ? f.inputType === 'password' : rawInitial.includes('••') || f.elementKey === 'html-password-input';
       const isDate = f.elementKey === 'html-date-input';
       const isNumber = f.elementKey === 'html-number-input';
       const savedVal = this.liveFormValues.get(stateKey);
 
       let control;
       if (f.kind === 'select') {
-        control = h('select', { class: 'dz-live-input' },
-          h('option', { value: 'Option 1' }, rawInitial || 'Select an option…'),
-          h('option', { value: 'Option 2' }, 'Option 2 — Active'),
-          h('option', { value: 'Option 3' }, 'Option 3 — Custom')
-        );
+        const own = String(f.node.attrs?.['data-options'] || '').split('\n').map(x => x.trim()).filter(Boolean);
+        control = own.length
+          ? h('select', { class: 'dz-live-input' }, ph ? h('option', { value: '' }, ph) : null, ...own.map(o => h('option', { value: o, selected: savedVal === o }, o)))
+          : h('select', { class: 'dz-live-input' },
+            h('option', { value: 'Option 1' }, rawInitial || 'Select an option…'),
+            h('option', { value: 'Option 2' }, 'Option 2 — Active'),
+            h('option', { value: 'Option 3' }, 'Option 3 — Custom')
+          );
       } else if (f.kind === 'textarea') {
         control = h('textarea', {
           class: 'dz-live-input',
@@ -507,7 +519,8 @@ export function installTestActions(Designer) {
         control.value = savedVal ?? rawInitial;
       } else {
         control = h('input', {
-          type: isPassword ? 'password' : isDate ? 'date' : isNumber ? 'number' : 'text',
+          type: f.inputType && f.inputType !== 'password' ? f.inputType : isPassword ? 'password' : isDate ? 'date' : isNumber ? 'number' : 'text',
+          required: f.node.attrs?.['data-required'] === 'true',
           class: 'dz-live-input',
           placeholder: rawInitial || 'Enter value…',
           value: savedVal ?? (isPassword ? 'password123' : rawInitial)

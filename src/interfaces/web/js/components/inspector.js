@@ -20,7 +20,7 @@ import { scriptPhotoUri } from '/domain/image.js';
 import { TRANSITION_EFFECTS, TRANSITION_EFFECT_LABELS, TRANSITION_EVENTS, TRANSITION_EVENT_LABELS, MAX_TRANSITION_SECONDS, transitionsOf, normalizeTransitions, transitionSeconds } from '/domain/transition.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
-import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath } from '/domain/press-slide.js';
+import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR } from '/domain/press-slide.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
 
 
@@ -727,9 +727,12 @@ export class Inspector {
           }
         })),
         this.field('Rotation °', this.num('el-rot', e.rotation, v => patch({ rotation: v })))),
-      e.role === 'popup' ? this.field('Auto close after (sec, 0 = never)', this.num('el-autoclose', Number(e.attrs?.['data-autoclose']) || 0, v => patch({ attrs: { ...(e.attrs || {}), 'data-autoclose': v > 0 ? String(v) : null } }))) : null,
       e.role ? h('div', { class: 'muted', style: { fontSize: '11px' } }, 'The theme draws this element (fill, border, shadow). Setting colours below overrides the theme.') : null,
       (() => { const t = h('textarea', { rows: 3, placeholder: 'description-dev for this element…', 'data-f': 'el-dev' }); t.value = e.descriptionDev || ''; t.addEventListener('change', () => patch({ descriptionDev: t.value })); return this.field('description-dev', t); })()));
+
+    // the settings of the chosen surface role, edited right here on this screen (no library item needed)
+    const roleSec = this.roleSettingsSection(e, setAttr);
+    if (roleSec) secs.push(roleSec);
 
     if (e.kind === 'instance' && e.refType === 'button' && e.refId) {
       secs.push(this.menuSection(e.refId));
@@ -809,6 +812,92 @@ export class Inspector {
     // (shown at the bottom of the inspector, below the design / menu / layers sections)
     this.lowSections = [this.clickSection(e), this.animationSection(e)];
     return secs;
+  }
+
+  /**
+   * Settings of the node's surface role, kept on the node itself so a shape on a screen is customised in place:
+   * button (style, label, press & slide), field (input type, placeholder), card (shadow), popup (auto close).
+   * Container / repeater roles have their own sections below; bg, bg-glow and shine are drawn by the theme only.
+   */
+  roleSettingsSection(e, setAttr) {
+    const d = this.d, role = e.role, a = e.attrs || {};
+    if (!role) return null;
+    const note = txt => h('div', { class: 'muted', style: { fontSize: '11px' } }, txt);
+    const eventsNote = note('Tap, hover and release actions: “Events & click action” at the bottom of this panel.');
+    if (role === 'popup') {
+      return this.section('Popup settings',
+        this.field('Auto close after (sec, 0 = never)', this.num('el-autoclose', Number(a['data-autoclose']) || 0, v => setAttr('data-autoclose', v > 0 ? String(v) : null))));
+    }
+    if (role === 'bg' || role === 'bg-glow' || role === 'shine') {
+      return this.section(`${role} settings`, note(role === 'shine' ? 'A shine layer: the theme draws its highlight over the shape below it. Fill and opacity below override it.' : 'A background layer: the theme paints it and it never takes taps. Fill below overrides the theme.'));
+    }
+    if (role === 'field') {
+      const types = [['text', 'Text'], ['password', 'Password'], ['email', 'E-mail'], ['number', 'Number'], ['tel', 'Phone'], ['date', 'Date'], ['search', 'Search'], ['textarea', 'Multi-line text'], ['select', 'Drop-down list']];
+      const opts = h('textarea', { rows: 3, 'data-f': 'rf-options', placeholder: 'One option per line' }); opts.value = a['data-options'] || '';
+      opts.addEventListener('change', () => setAttr('data-options', opts.value.trim()));
+      const type = a['data-input-type'] || '';
+      return this.section('Field settings',
+        h('div', { class: 'grid2' },
+          this.field('Input type', this.select('rf-type', type, [['', 'Auto (from its text)'], ...types], v => setAttr('data-input-type', v || null))),
+          this.field('Placeholder', this.text('rf-ph', a['data-placeholder'] || '', v => setAttr('data-placeholder', v.trim() || null)))),
+        type === 'select' ? this.field('Options', opts) : null,
+        h('label', { class: 'row' }, h('input', { type: 'checkbox', 'data-f': 'rf-req', checked: a['data-required'] === 'true', onchange: ev => setAttr('data-required', ev.target.checked ? 'true' : null) }), h('span', {}, 'Required')),
+        note('The test view (▶) puts a real input of this type over the field.'));
+    }
+    if (role === 'card') {
+      const shadow = /gShadow/.test(String(a.filter || ''));
+      return this.section('Card settings',
+        h('label', { class: 'row' }, h('input', { type: 'checkbox', 'data-f': 'rc-shadow', checked: shadow, onchange: ev => setAttr('filter', ev.target.checked ? 'url(#gShadow)' : null) }), h('span', {}, 'Drop shadow (theme)')),
+        eventsNote);
+    }
+    if (role === 'button' && e.kind !== 'instance') return this.section('Button settings', ...this.buttonRoleControls(e, setAttr), eventsNote);
+    return null;
+  }
+
+  /** A plain shape with the "button" role: its style (shape), its label and its own press & slide. */
+  buttonRoleControls(e, setAttr) {
+    const d = this.d, a = e.attrs || {}, box = nodeBBox(e, d.nodes), minDim = Math.min(box.w, box.h) || 48;
+    const kids = [];
+    // style: the same shapes as a library button, applied to this shape only
+    const rx = Number(a.rx) || 0;
+    const guess = a.fill === 'none' ? 'outline' : [...BUTTON_STYLES].filter(b => !b.fill && !b.opacity).sort((p, q) => Math.abs(p.rxRatio * minDim - rx) - Math.abs(q.rxRatio * minDim - rx))[0]?.key;
+    const cur = a['data-button-style'] || guess || 'rounded';
+    kids.push(this.field('Button style', this.select('rb-style', cur, BUTTON_STYLES.map(b => [b.key, b.label]), v => {
+      const st = BUTTON_STYLES.find(b => b.key === v); if (!st) return;
+      const next = { ...a, 'data-button-style': v };
+      if (e.tag === 'rect') { next.rx = Math.round(st.rxRatio * minDim * 100) / 100; delete next.ry; }
+      if (st.fill === 'none') { next.fill = 'none'; next.stroke = next.stroke && next.stroke !== 'none' ? next.stroke : '{{accent}}'; next['stroke-width'] = `{{sw*${st.strokeRatio || 1}}}`; }
+      else if (a['data-button-style'] === 'outline' || a.fill === 'none') delete next.fill;
+      if (st.opacity) next.opacity = st.opacity; else if (a['data-button-style'] === 'ghost') delete next.opacity;
+      return d.patchNode(e.id, { attrs: next });
+    })));
+    // label: the text drawn over the button (its child, else the text whose centre is inside it)
+    const inside = t => { const b = nodeBBox(t, d.nodes), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h; };
+    const label = d.nodes.find(n => n.tag === 'text' && n.parentId === e.id) || d.nodes.find(n => n.tag === 'text' && n.id !== e.id && n.visible !== false && inside(n));
+    if (label) {
+      const la = label.attrs || {};
+      const setL = (k, v) => { const n = { ...la }; if (v === '' || v == null) delete n[k]; else n[k] = v; return d.patchNode(label.id, { attrs: n }); };
+      kids.push(h('div', { class: 'grid2' },
+        this.field('Label', this.text('rb-label', label.text || '', v => d.patchNode(label.id, { text: v }))),
+        this.field('Label size', this.num('rb-lsize', Number(la['font-size']) || 16, v => setL('font-size', Math.max(6, v))))),
+      h('div', { class: 'grid2' },
+        this.field('Label weight', this.select('rb-lweight', la['font-weight'] ?? 400, [300, 400, 500, 600, 700, 800], v => setL('font-weight', v))),
+        this.colorField('rb-lcolor', 'Label colour', la.fill, v => setL('fill', v))),
+      h('div', { class: 'row wrap' }, ibtn('pointer', 'Select label', () => d.select([label.id]))));
+    } else {
+      kids.push(h('div', { class: 'row wrap' }, ibtn('plus', 'Add label', () => d.addNode({ kind: 'shape', tag: 'text', name: `${e.name || 'button'}-label`, text: 'Button',
+        attrs: { x: Math.round(box.x + box.w / 2), y: Math.round(box.y + box.h / 2), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 16, 'font-weight': 600, fill: '{{text}}' } }, { select: false }),
+      { desc: 'Draw a text label centred over this button', dataset: { f: 'rb-add-label' } })));
+    }
+    // press & slide on this shape itself
+    const ps = nodePressSlideConfig(e, { all: true });
+    const L = state.library.elements || [];
+    const opts = d.nodes.filter(n => n.id !== e.id && (isContainerNode(n, L) || isRepeaterNode(n, L) ||
+      (n.kind === 'instance' && n.refType === 'element' && (findDesign('element', n.refId)?.nodes || []).some(c => isContainerNode(c, L) || isRepeaterNode(c, L)))));
+    const save = p => { const next = { ...ps, ...p }; return setAttr(NODE_PRESS_SLIDE_ATTR, next.on || Object.keys(a).includes(NODE_PRESS_SLIDE_ATTR) ? JSON.stringify(next) : null); };
+    const target = [this.field('Scrolls (the scroll directions move)', this.select('rb-ps-target', ps.target, [['', 'Auto: the first repeater on the screen, else the first scrollable container'], ...opts.map(n => [String(n.id), `${n.name || n.tag} (#${n.id})`])], v => save({ target: v })))];
+    kids.push(h('div', { class: 'insp-sub', style: { marginTop: '6px' } }, ...this.pressSlideEditor(ps, save, { prefix: 'rb-ps', target })));
+    return kids;
   }
 
   /** Repeater controls: layout, 2D/3D, item count, gap, slot size, speed, autoplay, perspective. Shows all sub-items added into the repeater. */
@@ -1267,11 +1356,22 @@ export class Inspector {
         h('div', { style: { fontSize: '12px', marginTop: '4px' }, 'data-f': 'ps-items' }, on.length ? `On for: ${on.map(r => r.label || r.name).join(', ')}` : 'No menu item uses it yet.'));
     }
     const cur = pressSlideConfig(doc.meta, { all: true });
-    const save = patch => {
-      const next = { ...cur, ...patch };
-      d.updateDoc({ meta: { ...(doc.meta || {}), pressSlide: next } });
-    };
-    const onBox = h('input', { type: 'checkbox', checked: cur.on, 'data-f': 'ps-on', onchange: e => save({ on: e.target.checked }) });
+    const save = patch => d.updateDoc({ meta: { ...(doc.meta || {}), pressSlide: { ...cur, ...patch } } });
+    const target = [this.field('Scrolls (the scroll directions move)', this.select('ps-target', cur.target, [
+      ['', 'Auto: the first repeater on the screen, else the first scrollable container'],
+      ...this.pressSlideTargetElements().map(el => [String(el.id), `${el.name || el.key} (element #${el.id})`])
+    ], v => save({ target: v })), ''),
+    h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '-2px' } }, 'A placed button can pick another one on its screen (select the button there).')];
+    return this.section('Press & slide', ...this.pressSlideEditor(cur, save, { prefix: 'ps', target }));
+  }
+
+  /**
+   * The press & slide controls (on / off, the four directions with their actions and targets, scroll target, arrows size, hold),
+   * shared by a library button (its meta) and a plain button-role shape on a screen (its own attribute). `prefix` names the fields.
+   */
+  pressSlideEditor(cur, save, { prefix = 'ps', target = [] } = {}) {
+    const P = prefix;
+    const onBox = h('input', { type: 'checkbox', checked: cur.on, 'data-f': `${P}-on`, onchange: e => save({ on: e.target.checked }) });
     const kids = [
       h('label', { class: 'row', title: 'Press the button 1 second, then slide it like a joystick' }, onBox, h('span', {}, 'Press & slide (joystick)')),
       h('div', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 6px' } },
@@ -1281,29 +1381,25 @@ export class Inspector {
       const pathOf = k => findPressSlidePath(state.library.paths, k);
       for (const k of PRESS_SLIDE_DIRS) {
         const p = pathOf(k);
-        const chk = h('input', { type: 'checkbox', checked: cur[k].on, 'data-f': `ps-${k}-on`, title: `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}: on / off`, onchange: e => save({ [k]: { ...cur[k], on: e.target.checked } }) });
-        const sel = h('select', { 'data-f': `ps-${k}-action`, disabled: !cur[k].on, style: { flex: '1 1 auto', minWidth: '0', width: '100%' }, onchange: e => save({ [k]: { ...cur[k], action: e.target.value } }) },
+        const chk = h('input', { type: 'checkbox', checked: cur[k].on, 'data-f': `${P}-${k}-on`, title: `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}: on / off`, onchange: e => save({ [k]: { ...cur[k], on: e.target.checked } }) });
+        const sel = h('select', { 'data-f': `${P}-${k}-action`, disabled: !cur[k].on, style: { flex: '1 1 auto', minWidth: '0', width: '100%' }, onchange: e => save({ [k]: { ...cur[k], action: e.target.value } }) },
           ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: cur[k].action === v }, l)));
         const thumb = p ? h('img', { class: 'thumb small', alt: p.key, title: p.key, src: api.svgUrl('path', p.id, { theme: state.themeKey, animated: 0 }), style: { width: '22px', height: '22px', objectFit: 'contain', flex: 'none' } }) : null;
         const open = cur[k].on && cur[k].action === 'enter';
-        const browse = open ? libraryBrowseButton({ dataF: `ps-${k}-browse`, title: 'Pick the screen or element this direction opens',
+        const browse = open ? libraryBrowseButton({ dataF: `${P}-${k}-browse`, title: 'Pick the screen or element this direction opens',
           onPick: ({ screenId, elementId }) => save({ [k]: { ...cur[k], target: screenId ? `s-${screenId}` : elementId ? `e-${elementId}` : '' } }) }) : null;
-        const clearT = open && cur[k].target ? h('button', { class: 'btn sm', type: 'button', title: 'No target: open the focused list item', 'data-f': `ps-${k}-clear`, onclick: () => save({ [k]: { ...cur[k], target: '' } }) }, '✕') : null;
+        const clearT = open && cur[k].target ? h('button', { class: 'btn sm', type: 'button', title: 'No target: open the focused list item', 'data-f': `${P}-${k}-clear`, onclick: () => save({ [k]: { ...cur[k], target: '' } }) }, '✕') : null;
         kids.push(h('div', { class: 'field' }, h('span', {}, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`),
           h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk, thumb, sel, browse, clearT),
-          open ? h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': `ps-${k}-target` }, pressSlideTargetLabel(cur[k].target)) : null));
+          open ? h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': `${P}-${k}-target` }, pressSlideTargetLabel(cur[k].target)) : null));
       }
-      kids.push(this.field('Scrolls (the scroll directions move)', this.select('ps-target', cur.target, [
-        ['', 'Auto: the first repeater on the screen, else the first scrollable container'],
-        ...this.pressSlideTargetElements().map(el => [String(el.id), `${el.name || el.key} (element #${el.id})`])
-      ], v => save({ target: v })), ''),
-        h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '-2px' } }, 'A placed button can pick another one on its screen (select the button there).'));
-      kids.push(this.field('Arrows size × button (1 = its edges, 0.5 … 1.6; resize the icon itself on the canvas)', this.num('ps-arrow', cur.arrowSize, v => save({ arrowSize: Math.max(0.5, Math.min(1.6, Number(v) || 1)) }), { step: 0.05, min: 0.5, max: 1.6 })));
-      kids.push(this.field('Hold before sliding (seconds)', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: cur.holdMs / 1000, 'data-f': 'ps-hold',
+      kids.push(...target);
+      kids.push(this.field('Arrows size × button (1 = its edges, 0.5 … 1.6; resize the icon itself on the canvas)', this.num(`${P}-arrow`, cur.arrowSize, v => save({ arrowSize: Math.max(0.5, Math.min(1.6, Number(v) || 1)) }), { step: 0.05, min: 0.5, max: 1.6 })));
+      kids.push(this.field('Hold before sliding (seconds)', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: cur.holdMs / 1000, 'data-f': `${P}-hold`,
         onchange: e => { const v = Number(e.target.value); save({ holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : cur.holdMs }); } })));
       kids.push(h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Try it in the test view (▶). Scroll moves the red focus frame through the list (or the content) of the screen\'s container; Enter opens the focused item; Back goes back.'));
     }
-    return this.section('Press & slide', ...kids);
+    return kids;
   }
 
   transitionSection() {
