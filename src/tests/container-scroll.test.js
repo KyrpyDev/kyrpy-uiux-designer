@@ -33,7 +33,7 @@ test('the container markup carries the clip and the scroll axes the runtime read
 });
 
 /** A container group (clip 0 0 200 100) holding content of `content` size, in a host scaled 1× at (0, 0). */
-function fakeContainer(content, { sx = '1', sy = '1' } = {}) {
+function fakeContainer(content, { sx = '1', sy = '1', bind = r => bindRepeaterScroll(r) } = {}) {
   let transform = null;
   const inner = { getAttribute: k => (k === 'data-scroll-inner' ? '1' : k === 'transform' ? transform : null),
     setAttribute: (k, v) => { if (k === 'transform') transform = v; }, removeAttribute: k => { if (k === 'transform') transform = null; },
@@ -52,7 +52,7 @@ function fakeContainer(content, { sx = '1', sy = '1' } = {}) {
     for (const fn of handlers[type] || []) fn(e);
     return e;
   };
-  bindRepeaterScroll(root);
+  bind(root);
   return { fire, offset: () => transform };
 }
 
@@ -81,4 +81,31 @@ test('a container whose content fits, or a horizontal-only one, scrolls correctl
   const row = fakeContainer({ w: 600, h: 300 }, { sy: '0' });
   row.fire('wheel', { deltaY: 70 });
   assert.equal(row.offset(), 'translate(-70 0)', 'only sideways to go: the plain wheel scrolls sideways');
+});
+
+test('a placed library element with the container role clips its own content to its box and scrolls it', async () => {
+  const { indexLibrary } = await import('../domain/svg.js');
+  const el = { id: 40, key: 'policy-scroll', width: 300, height: 200,
+    nodes: [{ id: 401, kind: 'shape', tag: 'text', text: 'long policy', parentId: null, ord: 0, attrs: { x: 10, y: 20 } },
+      { id: 402, kind: 'shape', tag: 'text', text: 'far below', parentId: null, ord: 1, attrs: { x: 10, y: 480 } }] };
+  const lib = indexLibrary({ elements: [el] });
+  const placed = { id: 7, kind: 'instance', tag: 'use', refType: 'element', refId: 40, role: 'container', name: 'policy', parentId: null, ord: 0, visible: true,
+    attrs: { x: 16, y: 100, width: 300, height: 200, 'data-scroll-x': 'false' } };
+  const svg = renderTree([placed], createContext({ theme: BUILTIN_THEMES[0], lib, editor: true }));
+  assert.match(svg, /<clipPath id="ud-clip-inst-7-\d+"><rect x="0" y="0" width="300" height="200"\/><\/clipPath>/);
+  assert.match(svg, /data-container-children="7" data-scroll-x="0" data-scroll-y="1"[^>]*>.*far below/);
+  // without the container role the element is drawn as before (no clip)
+  const plain = renderTree([{ ...placed, role: null }], createContext({ theme: BUILTIN_THEMES[0], lib, editor: true }));
+  assert.equal(plain.includes('data-container-children'), false);
+});
+
+test('the designer\'s edit mode: the wheel scrolls a container (Ctrl + wheel left to the zoom), drag stays off', () => {
+  const s = fakeContainer({ w: 200, h: 300 }, { bind: r => bindRepeaterScroll(r, () => false, { wheel: ev => !ev.ctrlKey }) });
+  assert.ok(s.fire('wheel', { deltaY: 60 }).prevented);
+  assert.equal(s.offset(), 'translate(0 -60)');
+  assert.ok(!s.fire('wheel', { deltaY: 60, ctrlKey: true }).prevented, 'Ctrl + wheel zooms the canvas');
+  s.fire('pointerdown', { clientX: 50, clientY: 50 }); s.fire('pointermove', { clientX: 50, clientY: 10 }); s.fire('pointerup', {});
+  assert.equal(s.offset(), 'translate(0 -60)', 'a drag moves elements in edit mode, it never scrolls');
+  const off = fakeContainer({ w: 200, h: 300 }, { bind: r => bindRepeaterScroll(r, () => false) });
+  assert.ok(!off.fire('wheel', { deltaY: 60 }).prevented, 'without opts.wheel nothing scrolls while off');
 });

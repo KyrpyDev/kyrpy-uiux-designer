@@ -257,6 +257,15 @@ function renderInstance(el, a, ctx, all) {
   let inner = renderTree(target.nodes, ctx);
   ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems; ctx.photo = wasPhoto;
   if (psDirs.length) inner = `<g class="ud-ps-body">${inner}${pressSlideOverlay(target, psDirs, ctx)}</g>`;
+  // a placed element used as a container: its own content is clipped to the container's inner box and scrolls there
+  // (the same contract as sub-items dropped onto a container: data-container-children + clip-path)
+  if (el.refType === 'element' && !isRepeaterNode(el, ctx.lib.element) && isContainerNode(el, ctx.lib.element) && inner) {
+    // the element's own design sets its padding: clip to its whole box (in the element's own units)
+    const cx = 0, cy = 0, cw = Number(target.width) || 0, ch = Number(target.height) || 0;
+    const clipId = `ud-clip-inst-${el.id}-${ctx.depth}`;
+    inner = `<clipPath id="${clipId}"><rect x="${round(cx)}" y="${round(cy)}" width="${round(Math.max(0, cw))}" height="${round(Math.max(0, ch))}"/></clipPath>` +
+      `<g class="ud-container-children" data-container-for="${el.id}" clip-path="url(#${clipId})" data-container-children="${el.id}" data-scroll-x="${el.attrs?.['data-scroll-x'] === 'false' ? 0 : 1}" data-scroll-y="${el.attrs?.['data-scroll-y'] === 'false' ? 0 : 1}"${focusRingOn(el) ? ' data-focus-ring="1"' : ''}>${inner}</g>`;
+  }
   let menuMarkup = '';
   if (menu) {
     ctx.hasMenu = true;

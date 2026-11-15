@@ -99,7 +99,7 @@ test('loops wrap around and take over from the running animation; a drag scrolls
 
 test('the designer binds it to test mode and every export ships it', () => {
   const read = p => readFileSync(resolve(here, '..', p), 'utf8');
-  assert.match(read('interfaces/web/js/components/designer.js'), /bindRepeaterScroll\(this\.stage, \(\) => this\.actionsLive\)/);
+  assert.match(read('interfaces/web/js/components/designer.js'), /bindRepeaterScroll\(this\.stage, \(\) => this\.actionsLive, \{ wheel: ev => !ev\.ctrlKey && !ev\.metaKey \}\)/);
   assert.match(read('application/export/templates.js'), /bindRepeaters\(document\);\n\s*bindRepeaterScroll\(document\);/);
   assert.match(read('application/export/project-viewer.js'), /bindRepeaterScroll\(stage\);/);
   assert.equal((read('application/export/export-service.js').match(/bindRepeaters, bindRepeaterScroll\]/g) || []).length, 2);

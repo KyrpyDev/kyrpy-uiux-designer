@@ -107,7 +107,8 @@ export class Designer {
     this.frame = h('div', { class: 'dz-device-frame' });
     this.stage = h('div', { class: 'dz-stage' });
     // test mode: a wheel / drag inside a repeater's area scrolls its copies instead of zooming the canvas
-    bindRepeaterScroll(this.stage, () => this.actionsLive);
+    // edit mode too: the wheel over a container / repeater whose content overflows scrolls it (Ctrl / ⌘ + wheel still zooms)
+    bindRepeaterScroll(this.stage, () => this.actionsLive, { wheel: ev => !ev.ctrlKey && !ev.metaKey });
     this.liveLayer = h('div', { class: 'dz-live-layer', hidden: true });
     this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.overlay.setAttribute('class', 'dz-overlay');
@@ -115,7 +116,7 @@ export class Designer {
     this.world.append(this.frame, this.inPlaceBackdrop, this.stage, this.liveLayer, this.overlay);
     this.liveHud = h('div', { class: 'dz-live-hud', hidden: true });
     this.hoverBar = h('div', { class: 'el-hover-toolbar', hidden: true });
-    this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom · Space/middle-drag: pan · Click element: open/close quick toolbar · Right-click: menu & events · Del: delete · Enter: edit vertices');
+    this.hint = h('div', { class: 'dz-hint' }, 'Wheel: zoom (over a scrollable container: scrolls it; Ctrl + wheel zooms) · Space/middle-drag: pan · Click element: open/close quick toolbar · Right-click: menu & events · Del: delete · Enter: edit vertices');
     this.previewBanner = h('div', { class: 'dz-preview-banner', hidden: true, role: 'status' });
     this.inPlaceBanner = h('div', { class: 'dz-preview-banner dz-inplace-banner', hidden: true, role: 'status' });
     this.viewport.append(this.world, this.hoverBar, this.hint, this.previewBanner, this.inPlaceBanner);

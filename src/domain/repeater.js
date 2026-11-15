@@ -388,10 +388,12 @@ export function bindRepeaters(root) {
  * slides travel between their items, lists scroll as far as their copies overflow. Autoplay pauses while the user scrolls
  * and picks up from the same place afterwards. `isOn` (optional) switches it off, e.g. outside the designer's test mode.
  */
-export function bindRepeaterScroll(root, isOn) {
+export function bindRepeaterScroll(root, isOn, opts) {
   if (!root || root.__udRptScroll || !root.addEventListener) return;
   root.__udRptScroll = true;
   var live = function () { return !isOn || isOn(); };
+  // `opts.wheel(ev)`: the wheel scrolls (repeaters, containers) even while `isOn` is off, e.g. in the designer's edit mode
+  var wheelOn = function (ev) { return live() || !!(opts && opts.wheel && opts.wheel(ev)); };
   // the top-most repeater whose content box holds the pointer (the box is in the user units of the repeater's group)
   var find = function (ev) {
     var list = root.querySelectorAll('.ud-rpt-stage[data-rpt-axis]');
@@ -478,8 +480,10 @@ export function bindRepeaterScroll(root, isOn) {
     if (!bb) return { x: 0, y: 0 };
     return { x: ax ? Math.max(0, bb.x + bb.width - (c.x + c.w)) : 0, y: ay ? Math.max(0, bb.y + bb.height - (c.y + c.h)) : 0 };
   };
-  // the innermost scrollable container under the pointer whose content overflows
-  var findCont = function (ev) {
+  // the scrollable containers under the pointer whose content overflows, innermost first (a nested one scrolls before its host)
+  var findCont = function (ev) { return findConts(ev)[0] || null; };
+  var findConts = function (ev) {
+    var out = [];
     var list = root.querySelectorAll ? root.querySelectorAll('[data-container-children]') : [];
     for (var i = list.length - 1; i >= 0; i--) {
       var g = list[i], c = contClip(g), m = g.getScreenCTM ? g.getScreenCTM() : null;
@@ -490,9 +494,9 @@ export function bindRepeaterScroll(root, isOn) {
       var x = (m.d * dx - m.c * dy) / det, y = (m.a * dy - m.b * dx) / det;
       if (x < c.x || x > c.x + c.w || y < c.y || y > c.y + c.h) continue;
       var lim = contLimits(g, c);
-      if (lim.x > 0 || lim.y > 0) return { g: g, lim: lim, scale: Math.sqrt(Math.abs(det)) || 1 };
+      if (lim.x > 0 || lim.y > 0) out.push({ g: g, lim: lim, scale: Math.sqrt(Math.abs(det)) || 1 });
     }
-    return null;
+    return out;
   };
   var moveCont = function (hit, dx, dy) {
     var w = contInner(hit.g), cur = contOffset(w);
@@ -507,7 +511,7 @@ export function bindRepeaterScroll(root, isOn) {
     return !!(b && b.querySelector && b.querySelector('.ud-menu'));
   };
   root.addEventListener('wheel', function (ev) {
-    if (!live() || ev.defaultPrevented) return;
+    if (!wheelOn(ev) || ev.defaultPrevented) return;
     var d0 = ev.deltaMode === 1 ? 16 : 1;
     var hit = find(ev);
     if (hit) {
@@ -515,12 +519,17 @@ export function bindRepeaterScroll(root, isOn) {
       if (move(hit.st, d * d0 / hit.scale)) { ev.preventDefault(); ev.stopPropagation(); return; }
     }
     if (onMenu(ev)) return;
-    var ch = findCont(ev);
-    if (!ch) return;
-    var wx = ev.deltaX * d0, wy = ev.deltaY * d0;
-    if (ev.shiftKey && !wx) { wx = wy; wy = 0; }               // shift + wheel scrolls sideways
-    if (!ch.lim.y && !wx) { wx = wy; wy = 0; }                 // only sideways to go: the wheel scrolls sideways
-    if (moveCont(ch, wx / ch.scale, wy / ch.scale)) { ev.preventDefault(); ev.stopPropagation(); }
+    var hits = findConts(ev);
+    if (!hits.length) return;
+    // innermost first; at its end the wheel goes on to the container around it. Over a scrollable container the wheel
+    // never falls through to the page / canvas (no zoom or page scroll while the pointer is inside it)
+    for (var k = 0; k < hits.length; k++) {
+      var ch = hits[k], wx = ev.deltaX * d0, wy = ev.deltaY * d0;
+      if (ev.shiftKey && !wx) { wx = wy; wy = 0; }               // shift + wheel scrolls sideways
+      if (!ch.lim.y && !wx) { wx = wy; wy = 0; }                 // only sideways to go: the wheel scrolls sideways
+      if (moveCont(ch, wx / ch.scale, wy / ch.scale)) break;
+    }
+    ev.preventDefault(); ev.stopPropagation();
   }, { passive: false });
   var drag = null;
   root.addEventListener('pointerdown', function (ev) {
