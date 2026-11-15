@@ -56,3 +56,18 @@ test('a placed press & slide button uses its own settings when it has them', () 
   // a button without press & slide can get it on one placed copy
   assert.match(render(btn(8, {}), place(8, { [NODE_PRESS_SLIDE_ATTR]: JSON.stringify({ on: true }) })), /class="ud-ps"/);
 });
+
+test('a placed copy with its own design draws its own nodes and size; the attribute never reaches the markup', async () => {
+  const { OWN_DESIGN_ATTR, ownDesignAttr, ownDesignOf, ownDesignNodes } = await import('../domain/instance-design.js');
+  const b = btn(5, {});
+  const lib = render(b, place(5));
+  assert.match(lib, /<circle[^>]*r="24"/);
+  const own = ownDesignAttr({ nodes: [{ id: 1, kind: 'shape', tag: 'rect', parentId: null, ord: 0, attrs: { width: 96, height: 48, fill: '#f00' } }], width: 96, height: 48, meta: {} });
+  const svg = render(b, place(5, { [OWN_DESIGN_ATTR]: own }));
+  assert.doesNotMatch(svg, /<circle[^>]*r="24"/);
+  assert.match(svg, /<rect[^>]*fill="#f00"/);
+  assert.match(svg, /scale\(0\.5 1\)/);                 // 48 box / own width 96
+  assert.doesNotMatch(svg, /data-own-design/);
+  assert.equal(ownDesignOf({ attrs: { [OWN_DESIGN_ATTR]: 'broken' } }), null);
+  assert.equal(ownDesignNodes([{ kind: 'instance', attrs: { [OWN_DESIGN_ATTR]: own } }]).length, 1);
+});

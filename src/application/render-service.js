@@ -1,4 +1,5 @@
 import { NotFoundError } from '../domain/errors.js';
+import { ownDesignOf } from '../domain/instance-design.js';
 import { createContext, renderDocument, renderIconDocument, renderSprite } from '../domain/svg.js';
 import { buildMenuTree, menuConfig, menuExtent } from '../domain/menu.js';
 import { scriptPhotoUri } from '../domain/image.js';
@@ -64,7 +65,7 @@ export class RenderService {
     };
     for (let guard = 0; queue.length && guard < 20000; guard++) {
       const n = queue.pop();
-      if (n.kind === 'instance' && n.refType) need(n.refType, n.refId);
+      if (n.kind === 'instance' && n.refType) { need(n.refType, n.refId); const own = ownDesignOf(n); if (own) queue.push(...own.nodes); }   // a placed copy's own design places its own items
     }
     // image nodes: server-side SVG (exports, <img> previews) cannot load files, so pictures are embedded as data URIs
     return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds, repeaterMode, imageHref: this.imageHref || null });

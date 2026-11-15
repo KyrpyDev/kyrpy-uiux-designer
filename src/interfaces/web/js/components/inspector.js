@@ -22,6 +22,7 @@ import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
 import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR } from '/domain/press-slide.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
+import { ownDesignOf, OWN_DESIGN_ATTR, OWN_DESIGN_TYPES } from '/domain/instance-design.js';
 
 
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
@@ -198,14 +199,29 @@ export class Inspector {
     if (d.type === 'button') root.append(this.pressSlideSection());
     // a red divider line between the selected item's sections and the open design's own sections
     if (sel.length) root.append(h('hr', { class: 'insp-divider', 'aria-hidden': 'true', style: { border: '0', borderTop: '2px solid #EF4444', margin: '10px 0 4px', opacity: '1' } }));
-    root.append(this.designSection());
-    if (d.type === 'screen' || d.type === 'element') root.append(this.transitionSection());
-    if (d.type === 'element') root.append(this.elementScriptSection());
+    // a placed copy (✎ on a placed item): its name, key, library and script stay the library item's
+    if (d.instanceEdit) root.append(this.placedCopySection());
+    else {
+      root.append(this.designSection());
+      if (d.type === 'screen' || d.type === 'element') root.append(this.transitionSection());
+      if (d.type === 'element') root.append(this.elementScriptSection());
+    }
     root.append(this.nodesList());
     if (this.lowSections.length) root.append(...this.lowSections);
     root.scrollTop = scroll;
     if (wasIn && focusKey) { const f = root.querySelector(`[data-f="${focusKey}"]`); f?.focus(); f?.select?.(); }
     d.fitInspectorToContent?.();   // first render only: fit the panel to its content
+  }
+
+  /** The designer shows one placed copy of a library item: where its changes go, and the way back to the library item. */
+  placedCopySection() {
+    const d = this.d, s = d.instanceEdit, what = (TYPES[d.type]?.label || d.type).toLowerCase();
+    return this.section(`Placed copy · ${d.doc.label || d.doc.name}`,
+      h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'inst-copy-note' },
+        `Every change here is kept on this placed copy of ${s.host.type} “${s.host.name}”. The library ${what} and its other uses stay as they are; no library item is created.`),
+      h('div', { class: 'row wrap' },
+        ibtn('back', `Done: back to ${s.host.type} “${s.host.name}”`, () => d.closePlacedCopy(), { cls: 'primary' }),
+        ibtn('pencil', `Edit the library ${what} (every use)`, async () => { const t = d.instanceEdit; if (!t || !(await d.confirmLeave())) return; d.editLibraryItem({ kind: 'instance', refType: t.type, refId: t.id }); })));
   }
 
   /** Top of the button inspector: change the button style (shape) of the open button. */
@@ -520,7 +536,7 @@ export class Inspector {
           ? 'These settings belong to this placed button only (the library button is unchanged). Show / hide items here (👁); add, edit, reorder or remove items in the button itself (✎ Edit).'
           : 'Changes here apply to this placed button only; the library button stays as it is. To change the button everywhere it is used, open it with ✎ Edit.'),
         h('div', { class: 'row wrap' },
-          ibtn('pencil', 'Edit the button (every screen)', () => d.openEditor(inst), { desc: 'Open the library button in its own designer: changes there apply wherever it is used' }),
+          ibtn('pencil', 'Edit the library button (every screen)', () => d.editLibraryItem(inst), { desc: 'Open the library button in its own designer: changes there apply wherever it is used' }),
           changed ? ibtn('undo', 'Use the button\'s settings', () => writeOwn({}), { desc: 'Drop this placed button\'s own menu settings', dataset: { f: 'mc-inst-reset' } }) : null),
         ...settings,
         h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')));
@@ -744,8 +760,13 @@ export class Inspector {
     // identity (placed at the very top of the inspector panel when any element is selected, with dynamic element type title)
     const ed = d.editorFor(e);
     secs.push(this.section(elementTypeTitle(e),
-      h('div', { class: 'row wrap' }, ibtn('pencil', ed?.label || 'Open editor', () => d.openEditor(e), { desc: ed?.hint || '', disabled: !ed || ed.disabled, cls: 'primary' }),
+      h('div', { class: 'row wrap' }, ibtn('pencil', ed?.label || 'Open editor', () => d.openEditor(e), { desc: ed?.hint || '', disabled: !ed || ed.disabled, cls: 'primary', dataset: { f: 'el-open-editor' } }),
         h('span', { class: 'muted', style: { fontSize: '11px' } }, ed?.hint || '')),
+      // a placed button / element: ✎ above edits this copy only; the library item has its own way in
+      e.kind === 'instance' && OWN_DESIGN_TYPES.has(e.refType) && !d.instanceEdit ? h('div', { class: 'row wrap' },
+        ibtn('template', `Edit the library ${(TYPES[e.refType]?.label || e.refType).toLowerCase()} (every use)`, () => d.editLibraryItem(e), { desc: 'Opens the library item itself: changes there apply wherever it is used', dataset: { f: 'el-edit-library' } }),
+        ownDesignOf(e) ? ibtn('undo', 'Use the library design', () => setAttr(OWN_DESIGN_ATTR, null), { desc: 'Drop the design kept on this placed copy: it follows the library item again', dataset: { f: 'el-drop-own' } }) : null,
+        ownDesignOf(e) ? h('span', { class: 'muted', style: { fontSize: '11px' } }, 'This placed copy has its own design.') : null) : null,
       this.field('Variable name', this.text('el-name', e.name, v => patch({ name: v.trim() }), { mono: true })),
       h('div', { class: 'grid2' },
         this.field('Surface role', this.select('el-role', e.role || '', [['', '(none)'], ...SURFACE_ROLES], async v => {

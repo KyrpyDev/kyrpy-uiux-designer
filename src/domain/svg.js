@@ -8,6 +8,7 @@ import { animationsToCss, nodeClass } from './animation.js';
 import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox } from './geometry.js';
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
+import { ownDesignOf, OWN_DESIGN_ATTR, OWN_DESIGN_TYPES } from './instance-design.js';
 import { renderMenu, buildMenuTree, menuConfig, instanceMenu, NODE_MENU_ATTR, MENU_CSS } from './menu.js';
 import { pressSlideConfig, pressSlideDirs, pressSlideSpec, pressSlideTarget, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
@@ -168,7 +169,7 @@ function renderNode(el, ctx, idx, all) {
   if (!SAFE_TAGS.has(el.tag)) return '';
   let a = resolvedAttrs(el, ctx);
   if (a.display === 'none' && !ctx.editor) return '';
-  delete a[NODE_PRESS_SLIDE_ATTR]; delete a[NODE_MENU_ATTR];   // settings, never markup
+  delete a[NODE_PRESS_SLIDE_ATTR]; delete a[NODE_MENU_ATTR]; delete a[OWN_DESIGN_ATTR];   // settings, never markup
   if (el.kind === 'instance' || (el.tag === 'use' && el.refType)) {
     const instMarkup = renderInstance(el, a, ctx, all);
     const subMarkup = renderContainerChildren(el, ctx, idx, all);
@@ -208,7 +209,11 @@ function pressSlideNodeMarkup(el, ps, dirs, inner, ctx, all) {
 }
 
 function renderInstance(el, a, ctx, all) {
-  const target = ctx.lib[el.refType]?.get(el.refId);
+  const libTarget = ctx.lib[el.refType]?.get(el.refId);
+  // a placed copy designed on its own (✎ on the placed item): its nodes / size / press & slide, the library item's menu
+  const own = libTarget && OWN_DESIGN_TYPES.has(el.refType) ? ownDesignOf(el) : null;
+  const target = own ? { ...libTarget, nodes: own.nodes, width: own.width || libTarget.width, height: own.height || libTarget.height,
+    ...(own.meta.pressSlide ? { pressSlide: pressSlideConfig(own.meta) } : {}) } : libTarget;
   const w = parseFloat(a.width), h = parseFloat(a.height), x = parseFloat(a.x) || 0, y = parseFloat(a.y) || 0;
   if (!target) return placeholder(el, a, ctx, all);
 
