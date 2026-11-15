@@ -171,6 +171,14 @@ export class Inspector {
     return /^#[0-9a-f]{6}$/i.test(c) ? c : '#808080';
   }
 
+  /** "Keep proportions" switch shared by every width / height pair (also used by the canvas corner handles). */
+  keepRatioToggle(key) {
+    const d = this.d;
+    return h('label', { class: 'row', title: 'On: changing the width changes the height by the same proportion (and the other way round). Shift while dragging a corner handle inverts it.' },
+      h('input', { type: 'checkbox', 'data-f': key, checked: !!d.keepRatio, onchange: ev => { d.setKeepRatio(ev.target.checked); this.render(); } }),
+      h('span', { class: 'muted' }, d.keepRatio ? '🔗 Keep proportions (on)' : '⛓️‍💥 Keep proportions (off)'));
+  }
+
   section(title, ...kids) { return h('div', { class: 'insp-sec' }, title ? h('h4', {}, title) : null, ...kids); }
 
   /* ---------- render ---------- */
@@ -256,8 +264,12 @@ export class Inspector {
         ibtn('search', inst ? 'Change icon…' : 'Add an icon…', () => d.changeButtonIcon(inst), { cls: 'primary', desc: 'Search the library and pick the icon of this button', dataset: { act: 'doc-change-icon' } }))));
     }
     if (!TYPES[type].fixedSize) {
-      const row = [this.field('Width', this.num('doc-w', doc.width, v => d.updateDoc({ width: v }), { min: 8 })), this.field('Height', this.num('doc-h', doc.height, v => d.updateDoc({ height: v }), { min: 8 }))];
-      kids.push(h('div', { class: 'grid2' }, ...row));
+      // "Keep proportions" on: changing one side changes the other by the current width / height ratio
+      const ratio = doc.width > 0 && doc.height > 0 ? doc.width / doc.height : 0;
+      const setW = v => d.updateDoc(d.keepRatio && ratio ? { width: v, height: Math.max(8, Math.round(v / ratio)) } : { width: v });
+      const setH = v => d.updateDoc(d.keepRatio && ratio ? { height: v, width: Math.max(8, Math.round(v * ratio)) } : { height: v });
+      const row = [this.field('Width', this.num('doc-w', doc.width, setW, { min: 8 })), this.field('Height', this.num('doc-h', doc.height, setH, { min: 8 }))];
+      kids.push(h('div', { class: 'grid2' }, ...row), this.keepRatioToggle('doc-ratio'));
       if (type !== 'screen') kids.push(h('label', { class: 'row', title: 'Resizing the bounding box scales every sub element with it' }, h('input', { type: 'checkbox', checked: d.scaleContent, onchange: e => { d.scaleContent = e.target.checked; d.buildBar(); } }), h('span', { class: 'muted' }, 'Scale the contents with the bounding box')));
     }
     // screen device selection lives in the designer top bar (device icon button)
@@ -747,7 +759,9 @@ export class Inspector {
     // geometry
     const geo = [h('div', { class: 'grid4' },
       this.field('X', this.num('g-x', box.x, v => setBox({ x: v }))), this.field('Y', this.num('g-y', box.y, v => setBox({ y: v }))),
-      this.field('W', this.num('g-w', box.w, v => setBox({ w: Math.max(0.5, v) }))), this.field('H', this.num('g-h', box.h, v => setBox({ h: Math.max(0.5, v) })))),
+      this.field('W', this.num('g-w', box.w, v => { const w = Math.max(0.5, v); setBox(d.keepRatio && box.w > 0 && box.h > 0 ? { w, h: Math.max(0.5, w * box.h / box.w) } : { w }); })),
+      this.field('H', this.num('g-h', box.h, v => { const hh = Math.max(0.5, v); setBox(d.keepRatio && box.w > 0 && box.h > 0 ? { h: hh, w: Math.max(0.5, hh * box.w / box.h) } : { h: hh }); }))),
+      this.keepRatioToggle('g-ratio'),
       h('label', { class: 'row' }, h('input', { type: 'checkbox', checked: !!e.locked, onchange: ev => patch({ locked: ev.target.checked }) }), h('span', { class: 'muted' }, e.locked ? '🔒 Position locked (cannot be dragged)' : '🔓 Position unlocked (check to lock position)')),
       this.anchorGrid(),
       h('div', { class: 'row wrap' }, ['front', 'up', 'down', 'back'].map(w => ibtn(w === 'front' ? 'bringFront' : w === 'back' ? 'sendBack' : w === 'up' ? 'arrowUp' : 'arrowDown', w === 'front' ? 'To front' : w === 'back' ? 'To back' : w === 'up' ? 'Forward' : 'Backward', () => d.reorder(w))),
@@ -821,8 +835,38 @@ export class Inspector {
       toast(`Added "${ch.name || ch.tag}" into repeater "${e.name || 'repeater'}"`, 'ok', 1500);
     });
 
-    const childRows = tpls.map((ch, idx) => h('div', { class: 'el-row' },
-      h('span', { class: 't' }, `#${idx + 1} ${TAG_LABEL[ch.tag] || ch.tag}`),
+    // drag a row onto another to reorder the sub-items; the copies then follow this order ("As listed")
+    let dragFrom = -1;
+    const dropAt = (row, ev) => { const r = row.getBoundingClientRect(); return ev.clientY > r.top + r.height / 2; };
+    const clearMarks = () => root().querySelectorAll('.rp-drop-before, .rp-drop-after').forEach(n => { n.classList.remove('rp-drop-before', 'rp-drop-after'); n.style.boxShadow = ''; });
+    const root = () => this.root;
+    const childRows = tpls.map((ch, idx) => h('div', {
+      class: 'el-row', draggable: tpls.length > 1 ? 'true' : 'false', 'data-f': `rp-item-${ch.id}`,
+      title: tpls.length > 1 ? 'Drag to reorder the items in the repeater' : null,
+      style: tpls.length > 1 ? { cursor: 'grab' } : null,
+      ondragstart: ev => { dragFrom = idx; ev.dataTransfer.effectAllowed = 'move'; try { ev.dataTransfer.setData('text/plain', String(ch.id)); } catch { /* some browsers refuse custom data */ } ev.currentTarget.style.opacity = '0.45'; },
+      ondragend: ev => { ev.currentTarget.style.opacity = ''; clearMarks(); dragFrom = -1; },
+      ondragover: ev => {
+        if (dragFrom < 0) return;
+        ev.preventDefault(); ev.dataTransfer.dropEffect = 'move';
+        clearMarks();
+        const after = dropAt(ev.currentTarget, ev);
+        ev.currentTarget.classList.add(after ? 'rp-drop-after' : 'rp-drop-before');
+        ev.currentTarget.style.boxShadow = after ? 'inset 0 -2px 0 var(--accent, #2e9bff)' : 'inset 0 2px 0 var(--accent, #2e9bff)';
+      },
+      ondrop: ev => {
+        if (dragFrom < 0) return;
+        ev.preventDefault();
+        let to = idx + (dropAt(ev.currentTarget, ev) ? 1 : 0);
+        const from = dragFrom; dragFrom = -1; clearMarks();
+        if (to > from) to--;
+        if (to === from) return;
+        const ids = tpls.map(n => n.id);
+        ids.splice(to, 0, ...ids.splice(from, 1));
+        d.reorderRepeaterItems(e.id, ids);
+      }
+    },
+      h('span', { class: 't' }, `${tpls.length > 1 ? '⠿ ' : ''}#${idx + 1} ${TAG_LABEL[ch.tag] || ch.tag}`),
       h('span', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name || ch.tag),
       ibtn('pointer', 'Select sub-item', () => d.select([ch.id])),
       ibtn('unlink', 'Detach sub-item', async () => {
@@ -834,7 +878,7 @@ export class Inspector {
     return this.section(`Repeater · ${cfg.layout} · ${cfg.dimension.toUpperCase()} · ${cfg.itemCount}×`,
       h('div', { class: 'muted', style: { fontSize: '11px' } },
         tpls.length
-          ? `${tpls.length} sub-item(s): each is shown at least once; ${Math.max(cfg.itemCount, tpls.length)} shown in all${cfg.itemCount > tpls.length ? ', the extra ones picked at random' : ''}. The repeater keeps its size (W / H).`
+          ? `${tpls.length} sub-item(s): each is shown at least once; ${Math.max(cfg.itemCount, tpls.length)} shown in all${cfg.itemCount > tpls.length ? (cfg.ordered ? ', the list repeats in order' : ', the extra ones picked at random') : ''}.${tpls.length > 1 ? ' Drag the rows below to reorder them.' : ''} The repeater keeps its size (W / H).`
           : 'Drop any icon, button or element onto this repeater to add template items.'),
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'The item last selected in the list (tapped, or reached by a menu item that slides this repeater in focus mode) gets a red edge.' },
         h('input', { type: 'checkbox', 'data-f': `rp-focus-ring-${e.id}`, checked: e.attrs?.['data-focus-ring'] === 'true', onchange: ev => set({ 'data-focus-ring': ev.target.checked ? 'true' : 'false' }) }), h('span', {}, 'Red edge on the focused (last selected) item')),
@@ -856,7 +900,8 @@ export class Inspector {
           h('span', {}, cfg.autoplay ? 'Playing' : 'Paused')))),
       h('div', { class: 'grid2' },
         cfg.layout === 'vertical' ? this.field('Columns (0 = auto, 1 = one column)', this.num(`rp-cols-${e.id}`, cfg.columns, v => set({ [A.columns]: Math.max(0, Math.min(12, Math.round(v))) }), { min: 0, max: 12, step: 1 })) : null,
-        tpls.length > 1 ? h('button', { class: 'btn small', type: 'button', 'data-f': `rp-shuffle-${e.id}`, title: 'Pick which sub-item appears where at random again (each sub-item still shows at least once)', onclick: () => set({ [A.seed]: String(Math.floor(Math.random() * 1e9)) }) }, '🔀 Shuffle items') : null,
+        tpls.length > 1 ? this.field('Item order', this.select(`rp-order-${e.id}`, cfg.ordered ? 'listed' : 'random', [['listed', 'As listed (drag to reorder)'], ['random', 'Random (seeded pick)']], v => set({ [A.order]: v }))) : null,
+        tpls.length > 1 && !cfg.ordered ? h('button', { class: 'btn small', type: 'button', 'data-f': `rp-shuffle-${e.id}`, title: 'Pick which sub-item appears where at random again (each sub-item still shows at least once)', onclick: () => set({ [A.seed]: String(Math.floor(Math.random() * 1e9)) }) }, '🔀 Shuffle items') : null,
         this.field('Items shown as', this.select(`rp-display-${e.id}`, cfg.display, [['list', 'List (plain rows)'], ['card', 'Card (each item on its own card)']], v => set({ [A.display]: v }))),
         ['slide', 'scroll'].includes(cfg.layout) ? this.field('Direction', this.select(`rp-dir-${e.id}`, cfg.direction, [['vertical', 'Vertical'], ['horizontal', 'Horizontal']], v => set({ [A.direction]: v }))) : null,
         cfg.dimension === '3d' ? this.field('Perspective (px)', this.num(`rp-persp-${e.id}`, cfg.perspective, v => set({ [A.perspective]: Math.max(100, v) }), { min: 100, step: 50 })) : null),

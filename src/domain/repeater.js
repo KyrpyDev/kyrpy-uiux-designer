@@ -27,7 +27,8 @@ export const REPEATER_ATTR = {
   layout: 'data-repeater-layout', dimension: 'data-repeater-dim', itemCount: 'data-repeater-count', gap: 'data-repeater-gap',
   itemWidth: 'data-repeater-item-width', itemHeight: 'data-repeater-item-height', speed: 'data-repeater-speed',
   autoplay: 'data-repeater-autoplay', perspective: 'data-repeater-perspective', direction: 'data-repeater-direction',
-  multi: 'data-repeater-multi', display: 'data-repeater-display', columns: 'data-repeater-columns', seed: 'data-repeater-seed', random: 'data-repeater-random'
+  multi: 'data-repeater-multi', display: 'data-repeater-display', columns: 'data-repeater-columns', seed: 'data-repeater-seed', random: 'data-repeater-random',
+  order: 'data-repeater-order'
 };
 export const REPEATER_DEFAULTS = { layout: 'vertical', dimension: '2d', itemCount: 5, gap: 12, itemWidth: 0, itemHeight: 0, speed: 1800, autoplay: true, perspective: 800, direction: 'vertical', display: 'list', columns: 1 };
 
@@ -75,7 +76,9 @@ export function repeaterConfig(el) {
     direction: a[A.direction] === 'horizontal' ? 'horizontal' : 'vertical',
     columns: clampN(Math.round(num(a[A.columns], D.columns)), 0, 12),   // vertical list: 1 = one column, N = N columns, 0 = auto from the width
     seed: String(a[A.seed] ?? ''),                       // which sub-item appears where: the same seed gives the same picture (Shuffle changes it)
-    random: a[A.random] !== 'false' && a[A.random] !== false,   // exported page: every load picks the sub-items again at random
+    // order "listed": the copies follow the sub-items' order (drag to reorder in the inspector), then repeat it; "random" (default): seeded random pick
+    ordered: a[A.order] === 'listed',
+    random: a[A.order] !== 'listed' && a[A.random] !== 'false' && a[A.random] !== false,   // exported page: every load picks the sub-items again at random
     display: a[A.display] === 'card' ? 'card' : 'list',   // list: plain rows; card: each item on its own card
     multi: a[A.multi] === '1' || a[A.multi] === 'true' || a[A.multi] === true || !!a['data-repeater-items'],
     // every sub-item is repeated; only an explicit data-repeater-multi="false" keeps the old "first sub-item only" behaviour
@@ -115,10 +118,11 @@ export function repeaterTemplates(nodes, repeaterId) {
  * Each distinct template is assigned at least once (randomly/evenly distributed),
  * filling up to total itemCount. Deterministic when seed string provided.
  */
-export function assignRepeaterItems(templateCount, itemCount, seed = '') {
+export function assignRepeaterItems(templateCount, itemCount, seed = '', { ordered = false } = {}) {
   const m = Math.max(1, templateCount);
   const n = Math.max(1, Math.min(REPEATER_MAX_ITEMS, Math.round(itemCount) || 1));
   if (m === 1) return new Array(n).fill(0);
+  if (ordered) return Array.from({ length: n }, (_, i) => i % m);   // listed order: 0, 1, 2, … then again from the first
 
   // Simple pseudo-random hash generator based on seed
   let s = 0;
@@ -269,8 +273,8 @@ export function repeaterMarkup(id, cfg, inner, item, tpl, mode, assignments = nu
   function assignItems(templateCount, itemCount, seed) {
     var m = Math.max(1, templateCount);
     var n = Math.max(1, Math.min(50, Math.round(itemCount) || 1));
-    if (m === 1) {
-      var arr = []; for (var k = 0; k < n; k++) arr.push(0); return arr;
+    if (m === 1 || cfg.ordered) {
+      var arr = []; for (var k = 0; k < n; k++) arr.push(k % m); return arr;
     }
     var s = 0;
     var str = String(seed || '');

@@ -119,7 +119,7 @@ function renderRepeater(el, ctx, idx, all) {
   const box = { x: inner.x, y: inner.y, w: inner.w, h: inner.h };
   // the total never drops below the number of sub-items, so each of them is shown at least once; the pick is random (seeded)
   cfg.itemCount = repeaterTotal(cfg.itemCount, tplNodes.length);
-  const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key + (cfg.seed ? `:${cfg.seed}` : '')) : null;
+  const assignments = tplNodes.length > 1 ? assignRepeaterItems(tplNodes.length, cfg.itemCount, key + (cfg.seed ? `:${cfg.seed}` : ''), { ordered: cfg.ordered }) : null;
 
   if (ctx.repeaterMode === 'runtime' && tplNode) {
     ctx.hasRepeaterRuntime = true;

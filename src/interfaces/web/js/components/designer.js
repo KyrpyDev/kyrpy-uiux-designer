@@ -37,6 +37,9 @@ import { openCopyMoveToProjectsModal } from './item-browser.js';
 import { popupCfgOf, popupAnimation, makeDraggable, placePopupBox, popupTestControls } from './popup-test-editor.js';
 import { transitionsOf, udTransition } from '/domain/transition.js';
 
+const KEEP_RATIO_KEY = 'uiux.keepRatio';
+function readKeepRatio() { try { return localStorage.getItem(KEEP_RATIO_KEY) === '1'; } catch { return false; } }
+
 const TOOLS = [
   ['select', 'V', '⌖', 'Select / move'],
   ['node', 'N', '✦', 'Vertex editing of the selected path (Enter)'],
@@ -80,7 +83,7 @@ export class Designer {
     this.undoStack = []; this.redoStack = [];
     this.listeners = new Map();
     this.guides = []; this.marquee = null; this.ghost = null;
-    this.dragging = false; this.inspectorOpen = true; this.scaleContent = true; this.menuLive = false; this.actionsLive = false; this.pv = null; this.tbPv = null;
+    this.dragging = false; this.inspectorOpen = true; this.scaleContent = true; this.keepRatio = readKeepRatio(); this.menuLive = false; this.actionsLive = false; this.pv = null; this.tbPv = null;
     this.build();
     this.vtx = new VertexEditor(this);
     this.menu = new MenuEditor(this);
@@ -1035,6 +1038,12 @@ export class Designer {
     this.updateHoverToolbar();
   }
 
+  /** Keep proportions on / off: the inspector width / height fields and the corner handles follow it (remembered per browser). */
+  setKeepRatio(v) {
+    this.keepRatio = !!v;
+    try { localStorage.setItem(KEEP_RATIO_KEY, this.keepRatio ? '1' : '0'); } catch { /* storage blocked: the switch still works for this session */ }
+  }
+
   setInspectorWidth(w) {
     this.inspectorEl.style.width = `${Math.min(720, Math.max(190, Math.round(w)))}px`;
   }
@@ -1978,7 +1987,7 @@ export class Designer {
       let x0 = f.x, y0 = f.y, x1 = f.x + f.w, y1 = f.y + f.h;
       if (k.includes('w')) x0 = Math.min(s.x, x1 - 1); if (k.includes('e')) x1 = Math.max(s.x, x0 + 1);
       if (k.includes('n')) y0 = Math.min(s.y, y1 - 1); if (k.includes('s')) y1 = Math.max(s.y, y0 + 1);
-      if (ev.shiftKey && f.w && f.h && k.length === 2) { const r = f.w / f.h; const w = x1 - x0, hh = y1 - y0; if (w / hh > r) { const nw = hh * r; if (k.includes('w')) x0 = x1 - nw; else x1 = x0 + nw; } else { const nh = w / r; if (k.includes('n')) y0 = y1 - nh; else y1 = y0 + nh; } }
+      if (ev.shiftKey !== !!this.keepRatio && f.w && f.h && k.length === 2) { const r = f.w / f.h; const w = x1 - x0, hh = y1 - y0; if (w / hh > r) { const nw = hh * r; if (k.includes('w')) x0 = x1 - nw; else x1 = x0 + nw; } else { const nh = w / r; if (k.includes('n')) y0 = y1 - nh; else y1 = y0 + nh; } }
       let targetBox = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
       if (op.el.parentId != null) {
         const parent = this.byId(op.el.parentId);
@@ -2552,6 +2561,22 @@ export class Designer {
       this.changed();
     } catch (err) { toast(err.message, 'error'); await this.reload(); }
     return kids.length;
+  }
+
+  /** Reorders a repeater's sub-items (ids in their new order) as one undo step and switches the repeater to "As listed" order. */
+  async reorderRepeaterItems(repeaterId, orderedIds) {
+    const rep = this.byId(repeaterId);
+    if (!rep) return;
+    const snap = this.snapshot();
+    const attrs = { ...(rep.attrs || {}), [REPEATER_ATTR.order]: 'listed' };
+    try {
+      await Promise.all(orderedIds.map((id, ord) => this.byId(id) && this.byId(id).ord !== ord
+        ? api.patchNode(this.type, this.doc.id, id, { ord }).then(saved => Object.assign(this.byId(id), saved)) : null));
+      Object.assign(rep, await api.patchNode(this.type, this.doc.id, repeaterId, { attrs }));
+      this.pushUndo(snap); this.lastPatch = 0;
+      this.renderStage(); this.renderOverlay(); this.emit('selection', this.selectedNodes());
+      this.changed();
+    } catch (err) { toast(err.message, 'error'); await this.reload(); }
   }
 
   async patchNode(id, patch, { quiet = false } = {}) {
