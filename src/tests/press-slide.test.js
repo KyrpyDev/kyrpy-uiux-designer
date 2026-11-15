@@ -129,3 +129,10 @@ test('menu items: the press & slide arrows size is separate from the icon size (
   assert.equal(psArrowSize({ psArrowSize: 0.1 }), 0.5);
   assert.equal(hubIconSize({ hubIconSize: 0.4 }), 0.4);
 });
+
+test('single press & slide button: "Arrows size" scales the arrows around its centre (default 1 = its edges)', () => {
+  assert.equal(pressSlideConfig({ pressSlide: { on: true } }).arrowSize, 1);
+  assert.equal(pressSlideConfig({ pressSlide: { on: true, arrowSize: 3 } }).arrowSize, 1.6);
+  assert.match(render(button({ pressSlide: { on: true } })), /data-dir="u" transform="translate\(0 0\) scale\(2 2\)"/);
+  assert.match(render(button({ pressSlide: { on: true, arrowSize: 1.5 } })), /data-dir="u" transform="translate\(-12 -12\) scale\(3 3\)"/);
+});

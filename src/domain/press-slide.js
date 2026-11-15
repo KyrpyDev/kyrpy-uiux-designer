@@ -55,7 +55,9 @@ export function pressSlideConfig(meta, { all = false } = {}) {
   const on = raw.on === true || raw.on === 1 || raw.on === '1';
   if (!on && !all) return null;
   const hold = Number(raw.holdMs);
-  const out = { on, holdMs: Number.isFinite(hold) && hold >= 0 ? Math.min(5000, Math.round(hold)) : PRESS_SLIDE_HOLD_MS, target: pressSlideTarget(raw.target) };
+  const as = Number(raw.arrowSize);
+  const out = { on, holdMs: Number.isFinite(hold) && hold >= 0 ? Math.min(5000, Math.round(hold)) : PRESS_SLIDE_HOLD_MS, target: pressSlideTarget(raw.target),
+    arrowSize: as > 0 ? Math.max(0.5, Math.min(1.6, as)) : 1 };   // arrows box × the button (1 = its edges)
   for (const k of PRESS_SLIDE_DIRS) {
     const d = raw[k] && typeof raw[k] === 'object' ? raw[k] : {};
     const action = ACTION_SET.has(d.action) ? d.action : PRESS_SLIDE_DEFAULT_ACTIONS[k];
@@ -78,7 +80,7 @@ export function pressSlideTarget(v) {
 
 /** Fresh settings: every direction on with its default action. */
 export function defaultPressSlide(on = true) {
-  const out = { on, holdMs: PRESS_SLIDE_HOLD_MS, target: '' };
+  const out = { on, holdMs: PRESS_SLIDE_HOLD_MS, target: '', arrowSize: 1 };
   for (const k of PRESS_SLIDE_DIRS) out[k] = { on: true, action: PRESS_SLIDE_DEFAULT_ACTIONS[k], target: '' };
   return out;
 }

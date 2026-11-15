@@ -1298,6 +1298,7 @@ export class Inspector {
         ...this.pressSlideTargetElements().map(el => [String(el.id), `${el.name || el.key} (element #${el.id})`])
       ], v => save({ target: v })), ''),
         h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '-2px' } }, 'A placed button can pick another one on its screen (select the button there).'));
+      kids.push(this.field('Arrows size × button (1 = its edges, 0.5 … 1.6; resize the icon itself on the canvas)', this.num('ps-arrow', cur.arrowSize, v => save({ arrowSize: Math.max(0.5, Math.min(1.6, Number(v) || 1)) }), { step: 0.05, min: 0.5, max: 1.6 })));
       kids.push(this.field('Hold before sliding (seconds)', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: cur.holdMs / 1000, 'data-f': 'ps-hold',
         onchange: e => { const v = Number(e.target.value); save({ holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : cur.holdMs }); } })));
       kids.push(h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Try it in the test view (▶). Scroll moves the red focus frame through the list (or the content) of the screen\'s container; Enter opens the focused item; Back goes back.'));

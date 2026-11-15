@@ -281,7 +281,9 @@ function pressSlideOverlay(target, dirs, ctx) {
   const W = Number(target.width) || 24, H = Number(target.height) || 24, m = Math.min(W, H);
   const iw = Math.min(parseFloat(icon?.attrs?.width) || 0, parseFloat(icon?.attrs?.height) || 0) || m * 0.6;
   // the arrows snap to the button's own edges (its box), over the button's current icon; their lines are as thick as the icon's
-  return pressSlideMarkup(dirs, { x: 0, y: 0, w: W, h: H }, { cx: W / 2, cy: H / 2, size: m }, ctx, iw);
+  // "Arrows size" scales the arrows' box around the button's centre so they can clear a big icon
+  const k = Number(target.pressSlide?.arrowSize) > 0 ? Number(target.pressSlide.arrowSize) : 1, aw = W * k, ah = H * k;
+  return pressSlideMarkup(dirs, { x: (W - aw) / 2, y: (H - ah) / 2, w: aw, h: ah }, { cx: W / 2, cy: H / 2, size: m }, ctx, iw);
 }
 
 /**
