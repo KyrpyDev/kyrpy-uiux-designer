@@ -249,6 +249,14 @@ export function libraryBrowseButton({ currentScreenId = null, currentElementId =
   }, '🗂');
 }
 
+/** What an "Open / go to" press & slide direction opens, in words ('s-<id>' / 'e-<id>' / ''). */
+export function pressSlideTargetLabel(t) {
+  const m = /^([se])-(\d+)$/.exec(t || '');
+  if (!m) return '↪ No target picked: opens the focused list item (🗂 to pick a screen or element)';
+  if (m[1] === 's') { const s = findDesign('screen', Number(m[2])); return `🖥 Goes to screen “${s?.name ?? `#${m[2]}`}”`; }
+  const e = findDesign('element', Number(m[2])); return `▣ Opens element “${e?.name ?? `#${m[2]}`}” as popup`;
+}
+
 export function targetSummary(screenId, elementId, recs = {}, action = '') {
   if (action === 'scroll-repeater') {
     if (elementId) { const e = recs.element || findDesign('element', elementId); return `⟳ Press and slide scrolls the items of “${e?.name ?? `#${elementId}`}”`; }
@@ -423,12 +431,23 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
       const p = findPressSlidePath(state.library.paths, k);
       const chk = h('input', { type: 'checkbox', checked: psNow[k].on, 'data-f': `mi-ps-${k}-on`, title: `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}: on / off` });
       const sel = h('select', { 'data-f': `mi-ps-${k}-action`, class: 'grow' }, ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: psNow[k].action === v }, l)));
-      chk.addEventListener('change', () => { sel.disabled = !chk.checked; });
-      sel.disabled = !chk.checked;
-      psRows[k] = { chk, sel };
+      const row = psRows[k] = { chk, sel, target: psNow[k].target || '' };
+      const sum = h('div', { class: 'muted', style: { fontSize: '11px', marginLeft: '34px' }, 'data-f': `mi-ps-${k}-target` });
+      const browse = libraryBrowseButton({ dataF: `mi-ps-${k}-browse`, title: 'Pick the screen or element this direction opens',
+        onPick: ({ screenId, elementId }) => { row.target = screenId ? `s-${screenId}` : elementId ? `e-${elementId}` : ''; paintRow(); } });
+      const clearT = h('button', { class: 'btn sm', type: 'button', title: 'No target: open the focused list item', 'data-f': `mi-ps-${k}-clear`, onclick: () => { row.target = ''; paintRow(); } }, '✕');
+      const paintRow = () => {
+        sel.disabled = !chk.checked;
+        const open = sel.value === 'enter' && chk.checked;
+        browse.hidden = clearT.hidden = sum.hidden = !open;
+        clearT.hidden = !open || !row.target;
+        sum.textContent = pressSlideTargetLabel(row.target);
+      };
+      chk.addEventListener('change', paintRow); sel.addEventListener('change', paintRow);
       psDirBox.append(h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk,
         p ? h('img', { alt: p.key, title: p.key, src: api.svgUrl('path', p.id, { theme: state.themeKey, animated: 0 }), style: { width: '22px', height: '22px', objectFit: 'contain', flex: 'none' } }) : null,
-        h('span', { style: { width: '84px', flex: 'none' } }, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`), sel));
+        h('span', { style: { width: '84px', flex: 'none' } }, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`), sel, browse, clearT), sum);
+      paintRow();
     }
     const psHold = h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: psNow.holdMs / 1000, 'data-f': 'mi-ps-hold', style: { width: '70px' } });
     psDirBox.append(h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, h('span', {}, 'Hold before sliding'), psHold, h('span', { class: 'muted' }, 'sec')));
@@ -436,7 +455,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     psOn.addEventListener('change', paintPs); paintPs();
     const psValue = () => {
       const v = Number(psHold.value), out = { on: psOn.checked, holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : psNow.holdMs };
-      for (const k of PRESS_SLIDE_DIRS) out[k] = { on: psRows[k].chk.checked, action: psRows[k].sel.value };
+      for (const k of PRESS_SLIDE_DIRS) out[k] = { on: psRows[k].chk.checked, action: psRows[k].sel.value, target: psRows[k].sel.value === 'enter' ? psRows[k].target : '' };
       return out;
     };
     const psBox = h('div', { class: 'field', 'data-f': 'mi-ps' },
@@ -995,7 +1014,7 @@ export class MenuEditor {
       onAction: async a => {
         if (!this.d.actionsLive && !this.d.menuLive) return;
         // press & slide button (the runtime already scrolled / entered): only Back needs the designer
-        if (a.pressSlide) {
+        if (a.pressSlide && !a.target && !a.targetElementId) {   // with a picked target it navigates like a menu item (below)
           if (a.action === 'back') return this.d.runAction(null, { type: 'back' });
           return toast(`⚡ Press & slide ${a.pressSlide}: “${a.action}”`, 'ok', 1600);
         }

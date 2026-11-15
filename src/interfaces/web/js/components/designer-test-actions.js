@@ -146,6 +146,16 @@ export function installTestActions(Designer) {
     return t && this.stage.contains(t) && t.closest?.('.ud-btn') ? t : null;
   };
 
+  /** The element of a press & slide button (or menu item) under a hotspot at the pointer, or null. */
+  proto.pressSlideUnder = function (ev) {
+    if (!this.liveLayer || ev.clientX == null) return null;
+    const prev = this.liveLayer.style.visibility;
+    this.liveLayer.style.visibility = 'hidden';
+    let t = null;
+    try { t = document.elementFromPoint(ev.clientX, ev.clientY); } finally { this.liveLayer.style.visibility = prev; }
+    return t && this.stage.contains(t) && t.closest?.('[data-press-slide]') ? t : null;   // the deepest element: the runtime finds its button
+  };
+
   /** Re-dispatches a hotspot click to the menu under it; true when a menu took it. */
   proto.forwardToMenu = function (ev) {
     const t = this.menuUnder(ev);
@@ -700,10 +710,17 @@ export function installTestActions(Designer) {
           height: `${Math.round(box.h)}px`
         }
       });
-      btn.addEventListener('pointerdown', ev => ev.stopPropagation());
+      btn.addEventListener('pointerdown', ev => {
+        ev.stopPropagation();
+        // a press & slide button under the hotspot gets the press too (hold, joystick visuals, scrolling the list)
+        const ps = this.pressSlideUnder(ev);
+        if (ps) ps.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, clientX: ev.clientX, clientY: ev.clientY, button: ev.button, buttons: ev.buttons, pointerId: ev.pointerId, pointerType: ev.pointerType, isPrimary: ev.isPrimary }));
+      });
       if (onClick) {
         btn.addEventListener('click', ev => {
           ev.stopPropagation();
+          // the release after a joystick slide is not a click (no navigation / event)
+          if (this.menu?.ctl?.pressSlideBusy?.()) return;
           // a menu drawn under this hotspot gets the click (its own items / centre), not the hotspot's event
           if (this.forwardToMenu(ev)) return;
           btn.classList.remove('ud-pulse');

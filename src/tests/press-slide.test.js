@@ -96,3 +96,36 @@ test('menu items: press & slide is per item; a button with menu items ignores th
   assert.equal((svg.match(/class="ud-ps-overlay"/g) || []).length, 1);
   assert.match(svg, /data-item="b"[\s\S]*?<g class="ud-ps-body">[\s\S]*?class="ud-ps-dir" data-dir="u"/);
 });
+
+test('press & slide scroll target: auto by default, the button\'s element, overridden by the placed button on a screen', () => {
+  assert.equal(pressSlideConfig({ pressSlide: { on: true } }).target, '');
+  assert.equal(pressSlideConfig({ pressSlide: { on: true, target: 'auto' } }).target, '');
+  assert.equal(pressSlideConfig({ pressSlide: { on: true, target: '42"><x' } }).target, '');   // only plain ids
+  assert.equal(pressSlideConfig({ pressSlide: { on: true, target: 42 } }).target, '42');
+  // auto: no target attribute (the runtime picks the first repeater, else the first scrollable container)
+  assert.doesNotMatch(render(button({ pressSlide: { on: true } })), /data-target-repeater/);
+  assert.match(render(button({ pressSlide: { on: true, target: '42' } })), /class="ud-ps"[^>]*data-target-repeater="42"/);
+  const b = button({ pressSlide: { on: true, target: '42' } });
+  const lib = indexLibrary({ buttons: [b], paths, icons: [{ id: 5, key: 'ic', width: 24, height: 24, nodes: [] }] });
+  const nodes = [{ id: -1, kind: 'instance', tag: 'use', refType: 'button', refId: 9, parentId: null, ord: 0, visible: true, attrs: { x: 0, y: 0, width: 48, height: 48, 'data-ps-target': '7001' } }];
+  assert.match(renderDocument({ owner: b, nodes, ctx: createContext({ theme, lib, editor: true }) }), /data-target-repeater="7001"/);
+});
+
+test('press & slide "Open / go to": a picked screen / element rides on the runtime contract; other actions drop it', () => {
+  const c = pressSlideConfig({ pressSlide: { on: true, r: { action: 'enter', target: 's-190' }, l: { action: 'back', target: 's-5' }, u: { action: 'enter', target: 'x-1' } } });
+  assert.equal(c.r.target, 's-190');
+  assert.equal(c.l.target, '');   // only "Open / go to" keeps a target
+  assert.equal(c.u.target, '');   // bad ids dropped
+  assert.equal(pressSlideSpec(c), 'u:enter;d:scroll-down;l:back;r:enter@s-190');
+  assert.match(render(button({ pressSlide: { on: true, r: { action: 'enter', target: 'e-12' } } })), /data-press-slide="[^"]*r:enter@e-12"/);
+});
+
+test('menu items: the press & slide arrows size is separate from the icon size (0 = auto, clamped 0.5 … 1.6)', async () => {
+  const { psArrowSize, hubIconSize } = await import('../domain/menu.js');
+  assert.equal(psArrowSize({}), 1);
+  assert.equal(psArrowSize({ psArrowSize: 0 }), 1);
+  assert.equal(psArrowSize({ psArrowSize: 1.3 }), 1.3);
+  assert.equal(psArrowSize({ psArrowSize: 9 }), 1.6);
+  assert.equal(psArrowSize({ psArrowSize: 0.1 }), 0.5);
+  assert.equal(hubIconSize({ hubIconSize: 0.4 }), 0.4);
+});

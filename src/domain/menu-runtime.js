@@ -466,6 +466,7 @@ export function bindMenus(root, opts) {
       }
       // a chosen target that is not on this screen scrolls nothing (it never falls back to another container)
       if (itemEl && itemEl.getAttribute && itemEl.getAttribute('data-item-scroll') === '1') return null;
+      if (!itemEl && btn && btn.getAttribute && btn.getAttribute('data-press-slide')) return null;   // same for a press & slide button
     }
     var stage = (screen && screen.querySelector) ? screen.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage') : null;
     if (!stage && root && root.querySelector) stage = root.querySelector('.ud-repeater .ud-rpt-stage, .ud-rpt-stage[data-rpt-axis], .ud-rpt-stage');
@@ -791,6 +792,7 @@ export function bindMenus(root, opts) {
   function psStage(btn, horizontal) {
     var st = findRepeaterStage(btn, null);
     if (st) return st;
+    if (btn.getAttribute && btn.getAttribute('data-target-repeater')) return null;   // a chosen target that is not on this screen: nothing else scrolls
     // no repeater: the first scrollable container on the screen scrolls its content
     var scr = (btn.closest && (btn.closest('.ud-screen') || btn.closest('svg'))) || root;
     var all = scr && scr.querySelectorAll ? scr.querySelectorAll('[data-container-children]') : [];
@@ -806,7 +808,8 @@ export function bindMenus(root, opts) {
     return null;
   }
   function psRun(st, dir) {
-    var act = st.spec[dir], btn = st.btn;
+    var act = st.spec[dir], btn = st.btn, at = act ? act.indexOf('@') : -1, tgt = at > 0 ? act.slice(at + 1) : '';
+    if (at > 0) act = act.slice(0, at);
     if (!act || act === 'none') return;
     try { var E0 = doc && doc.defaultView && doc.defaultView.CustomEvent; if (E0) btn.dispatchEvent(new E0('ud-press-slide', { bubbles: true, detail: { dir: dir, action: act } })); } catch (e) {}
     if (act.indexOf('scroll-') === 0) {
@@ -818,6 +821,14 @@ export function bindMenus(root, opts) {
       var cont = listOf(stage), items = listItems(cont);
       if (stage.getAttribute('data-scroll-generic') === '1' && items.length < 2) moveRepeater(stage, fwd * 40, true);
       else stepFocus(stage, fwd);
+      return;
+    }
+    if (act === 'enter' && /^[se]-\d+$/.test(tgt) && opts.onAction) {
+      // Open / go to: the screen (s-<id>) or element popup (e-<id>) picked in the library browser
+      var ohost = btn.classList && btn.classList.contains('rm-item') && btn.closest ? btn.closest('.ud-btn') : null;
+      var oa = { menu: (ohost || btn).getAttribute('data-menu') || btn.getAttribute('data-btn-key') || '', item: ohost ? btn.getAttribute('data-item') || '' : '', id: ohost ? btn.getAttribute('data-menu-id') : btn.getAttribute('data-btn-id'), action: '', target: '', pressSlide: dir };
+      if (tgt.charAt(0) === 's') oa.target = tgt.slice(2); else { oa.targetElement = tgt.slice(2); oa.targetElementId = tgt.slice(2); }
+      opts.onAction(oa);
       return;
     }
     if (act === 'enter') {
@@ -1241,5 +1252,7 @@ export function bindMenus(root, opts) {
       } catch (e) {}
     }
   }
-  return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater, ensureFocusRings: ensureFocusRings };
+  /** True while a press & slide gesture runs or just ended (the release is not a click): hosts with overlays skip their click. */
+  function pressSlideBusy() { return !!psDrag || (!!psSuppressUntil && Date.now() < psSuppressUntil); }
+  return { get: get, set: set, apply: apply, findRepeaterStage: findRepeaterStage, moveRepeater: moveRepeater, ensureFocusRings: ensureFocusRings, pressSlideBusy: pressSlideBusy };
 }

@@ -273,6 +273,12 @@ export function hubBarReach(cfg, hubG, itemCount = null) {
 }
 
 /** Hub icon size as a fraction of the button it sits in: 0 = automatic, else 0.1-1 (1 = the button's full extent). */
+/** Size of the press & slide arrows of menu items × the item's box (1 = on the item's edges, the default; 0.5 … 1.6). */
+export function psArrowSize(cfg) {
+  const v = Number(cfg?.psArrowSize);
+  return v > 0 ? Math.max(0.5, Math.min(1.6, v)) : 1;
+}
+
 export function hubIconSize(cfg) {
   const v = Number(cfg?.hubIconSize);
   return v > 0 ? Math.max(0.1, Math.min(1, v)) : 0;
@@ -377,7 +383,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   const hub = hubGeometry(cfg, size);
   const lsize = isHub ? hub.big : size;                    // fan sizes are relative to the centre button in a hub
   // hub: an explicit icon size (fraction of each button, up to the whole button) replaces the automatic 62 % glyph
-  const hubFrac = isHub ? hubIconSize(cfg) : 0;
+  const hubFrac = hubIconSize(cfg);   // "Icon size of the menu items": every menu kind (0 = automatic)
   const iconSize = lsize * cfg.itemScale * (hubFrac || 0.62);
   // hub glyphs follow the button's own icon: an icon as big as the button draws the usual 62% glyph, a bigger icon scales it
   // up until it fills the centre circle (its container), a smaller one scales it down
@@ -448,9 +454,10 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
   const itemBody = (it, r, iconSz) => {
     const body = itemBodyPlain(it, r, iconSz), dirs = psDirsOf(it);
     if (!dirs.length || !pressSlideMarkup) return body;
-    // the arrows snap to the item button's edges (over its icon), lines as thick as the icon's
-    const g = iconSz > 0 ? iconSz : r * 1.24;
-    return `<g class="ud-ps-body">${body}${pressSlideMarkup(dirs, { x: -r, y: -r, w: r * 2, h: r * 2 }, { cx: 0, cy: 0, size: r * 2 }, ctx, g)}</g>`;
+    // the arrows snap to the item button's edges (over its icon), lines as thick as the icon's; "Press & slide arrows size"
+    // scales their box around the item's centre (1 = the item's edges), so they can clear a big icon
+    const g = iconSz > 0 ? iconSz : r * 1.24, a = psArrowSize(cfg) * r;
+    return `<g class="ud-ps-body">${body}${pressSlideMarkup(dirs, { x: -a, y: -a, w: a * 2, h: a * 2 }, { cx: 0, cy: 0, size: r * 2 }, ctx, g)}</g>`;
   };
   // static picture (previews, thumbnails, exports without the runtime): the default centre item sits on the button, the others are hidden;
   // the runtime's CSS transform / opacity override these presentation attributes as soon as it runs

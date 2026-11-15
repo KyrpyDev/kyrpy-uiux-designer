@@ -131,6 +131,11 @@ export class MenuService {
       if (!(v >= 0 && v <= 1)) throw new ValidationError('hubIconSize must be a number from 0 (automatic) to 1 (the icon fills the button)');
       cfg = { ...cfg, hubIconSize: v };
     }
+    if (cfg.psArrowSize !== undefined) {
+      const v = Number(cfg.psArrowSize) || 0;
+      if (!(v === 0 || (v >= 0.5 && v <= 1.6))) throw new ValidationError('psArrowSize must be 0 (automatic: the item edges) or a number from 0.5 to 1.6 (× the item box)');
+      cfg = { ...cfg, psArrowSize: v };
+    }
     if (cfg.hubCount !== undefined) {
       const v = Number(cfg.hubCount);
       if (!Number.isInteger(v) || v < 1 || v > 6) throw new ValidationError('hubCount must be a whole number from 1 to 6 (buttons the hub bar shows at once)');

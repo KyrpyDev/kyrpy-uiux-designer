@@ -3,7 +3,10 @@
  * followed by a slide up / down / left / right: each direction runs its own action, and the button moves a little towards
  * the slide. Every enabled direction draws its public path (press-and-slide-u / -d / -l / -r) over the button's icon.
  *
- * meta.pressSlide = { on: boolean, holdMs: number, u|d|l|r: { on: boolean, action: string } }
+ * meta.pressSlide = { on: boolean, holdMs: number, target: string, u|d|l|r: { on: boolean, action: string } }
+ * target: '' = auto (the first repeater on the screen, else the first scrollable container), or the id of the library
+ * element (container / repeater) the scroll actions move. A placed button can override it on a screen (attr data-ps-target).
+
  * Pure and isomorphic: used by the renderer (overlay + data attributes), the inspector and the tests.
  */
 
@@ -16,7 +19,7 @@ export const PRESS_SLIDE_ACTIONS = [
   ['scroll-left', 'Scroll left'],
   ['scroll-right', 'Scroll right'],
   ['back', 'Back'],
-  ['enter', 'Enter the item'],
+  ['enter', 'Open / go to…'],   // a screen or element picked in the library browser; none picked = the focused list item
   ['click', 'Press the button'],
   ['none', 'Nothing']
 ];
@@ -52,18 +55,31 @@ export function pressSlideConfig(meta, { all = false } = {}) {
   const on = raw.on === true || raw.on === 1 || raw.on === '1';
   if (!on && !all) return null;
   const hold = Number(raw.holdMs);
-  const out = { on, holdMs: Number.isFinite(hold) && hold >= 0 ? Math.min(5000, Math.round(hold)) : PRESS_SLIDE_HOLD_MS };
+  const out = { on, holdMs: Number.isFinite(hold) && hold >= 0 ? Math.min(5000, Math.round(hold)) : PRESS_SLIDE_HOLD_MS, target: pressSlideTarget(raw.target) };
   for (const k of PRESS_SLIDE_DIRS) {
     const d = raw[k] && typeof raw[k] === 'object' ? raw[k] : {};
-    out[k] = { on: d.on === undefined ? true : !!d.on, action: ACTION_SET.has(d.action) ? d.action : PRESS_SLIDE_DEFAULT_ACTIONS[k] };
+    const action = ACTION_SET.has(d.action) ? d.action : PRESS_SLIDE_DEFAULT_ACTIONS[k];
+    out[k] = { on: d.on === undefined ? true : !!d.on, action, target: action === 'enter' ? pressSlideOpenTarget(d.target) : '' };
   }
   return out;
 }
 
+/** The screen / element an "Open / go to" direction opens: 's-<id>' (screen) or 'e-<id>' (element as popup), else '' (the focused item). */
+export function pressSlideOpenTarget(v) {
+  const s = String(v ?? '').trim();
+  return /^[se]-\d{1,12}$/.test(s) ? s : '';
+}
+
+/** The scroll target as stored: '' (auto) or an id string. */
+export function pressSlideTarget(v) {
+  const s = v === undefined || v === null ? '' : String(v).trim();
+  return s === 'auto' || !/^[\w-]{1,80}$/.test(s) ? '' : s;
+}
+
 /** Fresh settings: every direction on with its default action. */
 export function defaultPressSlide(on = true) {
-  const out = { on, holdMs: PRESS_SLIDE_HOLD_MS };
-  for (const k of PRESS_SLIDE_DIRS) out[k] = { on: true, action: PRESS_SLIDE_DEFAULT_ACTIONS[k] };
+  const out = { on, holdMs: PRESS_SLIDE_HOLD_MS, target: '' };
+  for (const k of PRESS_SLIDE_DIRS) out[k] = { on: true, action: PRESS_SLIDE_DEFAULT_ACTIONS[k], target: '' };
   return out;
 }
 
@@ -73,9 +89,9 @@ export function pressSlideDirs(cfg) {
   return PRESS_SLIDE_DIRS.filter(k => cfg[k] && cfg[k].on && cfg[k].action !== 'none');
 }
 
-/** Runtime contract: data-press-slide="u:scroll-up;d:scroll-down;l:back;r:enter" (enabled directions only). */
+/** Runtime contract: data-press-slide="u:scroll-up;d:scroll-down;l:back;r:enter@s-190" (enabled directions only; @ = picked target). */
 export function pressSlideSpec(cfg) {
-  return pressSlideDirs(cfg).map(k => `${k}:${cfg[k].action}`).join(';');
+  return pressSlideDirs(cfg).map(k => `${k}:${cfg[k].action}${cfg[k].target ? `@${cfg[k].target}` : ''}`).join(';');
 }
 
 /** Fallback chevrons (24 grid) when a direction's public path is not in the render library. */

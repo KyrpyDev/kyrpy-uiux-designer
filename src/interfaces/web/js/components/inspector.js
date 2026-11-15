@@ -4,7 +4,7 @@ import { h, clear, toast, confirmBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
-import { menuActions, pickButton, libraryBrowseButton } from './menu-editor.js';
+import { menuActions, pickButton, libraryBrowseButton, pressSlideTargetLabel } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
 import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
@@ -386,13 +386,17 @@ export class Inspector {
             })
           ))
         : null,
+      // the items' icons and their press & slide arrows are sized separately, so a big icon never runs into the arrows
+      h('div', { class: 'grid2' },
+        this.field('Icon size of the menu items (0 = auto … 1 = fills the item)', this.num(`mc-${bid}-hubiconsize`, cfg.hubIconSize ?? 0, v => set({ hubIconSize: Math.max(0, Math.min(1, Number(v) || 0)) }), { step: 0.05, min: 0, max: 1 })),
+        this.field('Press & slide arrows size × item (0 = auto: item edges, 0.5 … 1.6)', this.num(`mc-${bid}-psarrow`, cfg.psArrowSize ?? 0, v => { const n = Number(v) || 0; set({ psArrowSize: n <= 0 ? 0 : Math.max(0.5, Math.min(1.6, n)) }); }, { step: 0.05, min: 0, max: 1.6 }))),
       cfg.kind === 'hub'
         ? h('div', { class: 'grid2' },
             this.field('Buttons shown at once (the rest: turn the ring)', this.select(`mc-${bid}-hubcount`, hubCount(cfg), [1, 2, 3, 4, 5, 6].map(n => [n, String(n)]), async v => {
               await set({ hubCount: Number(v) });
               d.fit?.();
             })),
-            this.field('Icon size inside the buttons (0 = auto … 1 = fills the button)', this.num(`mc-${bid}-hubiconsize`, cfg.hubIconSize ?? 0, v => set({ hubIconSize: Math.max(0, Math.min(1, Number(v) || 0)) }), { step: 0.05, min: 0, max: 1 })),
+
             num('centerScale', 'Centre item size × button (0 = 2 × base small)'), num('hubCenterSize', 'Bar: centre size × centre (even bars: both middle ones)'), num('hubSideSize', 'Bar: side size × centre'), num('hubEdgeSize', 'Bar: edge size × centre'), num('hubScale', 'Base small size × button (gaps, back button)'), num('gap', 'Gap small ↔ centre × button'), num('radius', 'Sub items distance from centre ×'), num('itemScale', 'Sub items size × centre'), num('startAngle', 'Fan start angle °', 5), num('sweep', 'Fan sweep °', 5),
             h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'Menu items stay at their fixed preset positions along the bar and do not move to the center position when clicked' },
               h('input', { type: 'checkbox', checked: !!cfg.hubFixedPositions, 'data-f': `mc-${bid}-hubfixed`, onchange: async e => { await set({ hubFixedPositions: e.target.checked }); d.fit?.(); } }), h('span', {}, 'Fix item positions (do not move to center)')),
@@ -729,6 +733,8 @@ export class Inspector {
 
     if (e.kind === 'instance' && e.refType === 'button' && e.refId) {
       secs.push(this.menuSection(e.refId));
+      const psSec = this.pressSlideInstanceSection(e);
+      if (psSec) secs.push(psSec);
     }
 
     if (isRepeaterNode(e, state.library.elements)) {
@@ -1225,6 +1231,30 @@ export class Inspector {
    * Press & slide (visual joystick) of the open button: hold 1 s, then slide up / down / left / right to run that direction's
    * action. Each enabled direction draws its public path (press-and-slide-u / d / l / r) over the button's icon.
    */
+  /** Library elements a press & slide button can scroll: those holding a container or a repeater. */
+  pressSlideTargetElements() {
+    const L = state.library.elements || [];
+    return L.filter(el => (el.nodes || []).some(n => isContainerNode(n, L) || isRepeaterNode(n, L)));
+  }
+
+  /** Placed press & slide button on a screen: which container / repeater of this screen its scroll directions move. */
+  pressSlideInstanceSection(e) {
+    const d = this.d, L = state.library.elements || [];
+    const lib = findDesign('button', e.refId);
+    const ps = lib && !(lib.menuItems || []).length ? pressSlideConfig(lib.meta) : null;
+    if (!ps) return null;
+    const label = n => `${n.name || n.tag} (#${n.id})`;
+    const opts = d.nodes.filter(n => n.id !== e.id && (isContainerNode(n, L) || isRepeaterNode(n, L) ||
+      (n.kind === 'instance' && n.refType === 'element' && (findDesign('element', n.refId)?.nodes || []).some(c => isContainerNode(c, L) || isRepeaterNode(c, L)))));
+    const libTarget = ps.target ? findDesign('element', Number(ps.target)) : null;
+    const def = ps.target ? `Button setting: ${libTarget ? libTarget.name || libTarget.key : `element #${ps.target}`}` : 'Button setting: Auto (first repeater, else first scrollable container)';
+    const cur = String(e.attrs?.['data-ps-target'] || '');
+    return this.section('Press & slide on this screen',
+      this.field('Scrolls', this.select(`ps-inst-target-${e.id}`, cur, [['', def], ...opts.map(n => [String(n.id), label(n)])],
+        v => d.patchNode(e.id, { attrs: { ...(e.attrs || {}), 'data-ps-target': v || null } }))),
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, opts.length ? 'Hold the button in the test view (▶) and slide: the chosen list scrolls and its red frame moves.' : 'No container or repeater on this screen yet.'));
+  }
+
   pressSlideSection() {
     const d = this.d, doc = d.doc;
     // a button with menu items: press & slide is set per menu item (its edit window), never for all items at once
@@ -1255,9 +1285,19 @@ export class Inspector {
         const sel = h('select', { 'data-f': `ps-${k}-action`, disabled: !cur[k].on, style: { flex: '1 1 auto', minWidth: '0', width: '100%' }, onchange: e => save({ [k]: { ...cur[k], action: e.target.value } }) },
           ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: cur[k].action === v }, l)));
         const thumb = p ? h('img', { class: 'thumb small', alt: p.key, title: p.key, src: api.svgUrl('path', p.id, { theme: state.themeKey, animated: 0 }), style: { width: '22px', height: '22px', objectFit: 'contain', flex: 'none' } }) : null;
+        const open = cur[k].on && cur[k].action === 'enter';
+        const browse = open ? libraryBrowseButton({ dataF: `ps-${k}-browse`, title: 'Pick the screen or element this direction opens',
+          onPick: ({ screenId, elementId }) => save({ [k]: { ...cur[k], target: screenId ? `s-${screenId}` : elementId ? `e-${elementId}` : '' } }) }) : null;
+        const clearT = open && cur[k].target ? h('button', { class: 'btn sm', type: 'button', title: 'No target: open the focused list item', 'data-f': `ps-${k}-clear`, onclick: () => save({ [k]: { ...cur[k], target: '' } }) }, '✕') : null;
         kids.push(h('div', { class: 'field' }, h('span', {}, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`),
-          h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk, thumb, sel)));
+          h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk, thumb, sel, browse, clearT),
+          open ? h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': `ps-${k}-target` }, pressSlideTargetLabel(cur[k].target)) : null));
       }
+      kids.push(this.field('Scrolls (the scroll directions move)', this.select('ps-target', cur.target, [
+        ['', 'Auto: the first repeater on the screen, else the first scrollable container'],
+        ...this.pressSlideTargetElements().map(el => [String(el.id), `${el.name || el.key} (element #${el.id})`])
+      ], v => save({ target: v })), ''),
+        h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '-2px' } }, 'A placed button can pick another one on its screen (select the button there).'));
       kids.push(this.field('Hold before sliding (seconds)', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: cur.holdMs / 1000, 'data-f': 'ps-hold',
         onchange: e => { const v = Number(e.target.value); save({ holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : cur.holdMs }); } })));
       kids.push(h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Try it in the test view (▶). Scroll moves the red focus frame through the list (or the content) of the screen\'s container; Enter opens the focused item; Back goes back.'));

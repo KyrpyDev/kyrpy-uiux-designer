@@ -9,7 +9,7 @@ import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig,
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
-import { pressSlideConfig, pressSlideDirs, pressSlideSpec, findPressSlidePath, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
+import { pressSlideConfig, pressSlideDirs, pressSlideSpec, pressSlideTarget, findPressSlidePath, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
 export const CAROUSEL_CSS = [
@@ -226,6 +226,9 @@ function renderInstance(el, a, ctx, all) {
     attrs['data-ps-size'] = round(Math.min(Number(target.width) || 48, Number(target.height) || 48));
     attrs['data-btn-id'] = el.refId;
     if (!attrs['data-btn-key']) attrs['data-btn-key'] = target.key;
+    // what the scroll directions move: this placed button's own choice, else the button's, else auto (no attribute)
+    const psTarget = pressSlideTarget(a['data-ps-target']) || ps.target;
+    if (psTarget) attrs['data-target-repeater'] = psTarget; else delete attrs['data-target-repeater'];
     attrs.style = [attrs.style, `--ps-hold:${ps.holdMs}ms`].filter(Boolean).join(';');
   }
   ctx.depth++;
