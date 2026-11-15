@@ -2,6 +2,7 @@ import { NotFoundError } from '../domain/errors.js';
 import { createContext, renderDocument, renderIconDocument, renderSprite } from '../domain/svg.js';
 import { buildMenuTree, menuConfig, menuExtent } from '../domain/menu.js';
 import { scriptPhotoUri } from '../domain/image.js';
+import { pressSlideConfig, pressSlideDirs, PRESS_SLIDE_PATH_ALIASES } from '../domain/press-slide.js';
 
 /**
  * Renders stored designs to SVG for a theme. Loads only what a design references
@@ -50,6 +51,13 @@ export class RenderService {
           targetElementKey: m.targetElementId != null ? this.designs.element.get(m.targetElementId)?.key ?? '' : ''
         }));
         if (items.length) { entry.menu = { cfg: menuConfig(d.meta), items }; for (const m of items) if (m.iconId != null) need('icon', m.iconId); }
+        // press & slide: the public direction paths drawn over the icon
+        const ps = pressSlideConfig(d.meta);
+        if (ps) entry.pressSlide = ps;
+        // the direction paths: for the button itself, or for its menu items that use press & slide
+        const itemPs = items.length ? Object.values(menuConfig(d.meta).itemPressSlide || {}).filter(v => v && v.on) : [];
+        const dirs = new Set([...(ps && !items.length ? pressSlideDirs(ps) : []), ...itemPs.flatMap(v => pressSlideDirs(pressSlideConfig({ pressSlide: v })))]);
+        for (const k of dirs) for (const key of PRESS_SLIDE_PATH_ALIASES[k]) { const p = this.designs.path.getByKey?.(key, 1); if (p) { need('path', p.id); break; } }
       }
       lib[type].set(id, entry);
       queue.push(...ns);

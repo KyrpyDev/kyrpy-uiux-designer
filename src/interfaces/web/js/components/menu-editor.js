@@ -18,6 +18,7 @@ import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
 import { menuItemAction } from '/domain/entities.js';
 import { isContainerNode } from '/domain/geometry.js';
 import { isRepeaterNode } from '/domain/repeater.js';
+import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath } from '/domain/press-slide.js';
 
 /* ---------- dialogs ---------- */
 /** Icon picker: a searchable grid of the icon library. Resolves with an icon id or null (cancel). */
@@ -412,6 +413,36 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     const gestBox = h('div', { class: 'field' },
       h('span', { class: 'muted' }, 'The click action is set above. "Open the focused item" uses the list this item slides (Slide option below): the item with the red edge.'),
       h('div', { class: 'row wrap', style: { gap: '10px' } }, gLong.el, gDbl.el));
+    // press & slide (visual joystick) of THIS item only: hold 1 s, slide up / down / left / right; the enabled directions
+    // draw their press-and-slide paths over this item's icon (other items are not affected)
+    const psNow = pressSlideConfig({ pressSlide: (item && menuNow?.config?.itemPressSlide?.[String(item.id)]) || null }, { all: true });
+    const psOn = h('input', { type: 'checkbox', checked: psNow.on, 'data-f': 'mi-ps-on' });
+    const psRows = {};
+    const psDirBox = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+    for (const k of PRESS_SLIDE_DIRS) {
+      const p = findPressSlidePath(state.library.paths, k);
+      const chk = h('input', { type: 'checkbox', checked: psNow[k].on, 'data-f': `mi-ps-${k}-on`, title: `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}: on / off` });
+      const sel = h('select', { 'data-f': `mi-ps-${k}-action`, class: 'grow' }, ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: psNow[k].action === v }, l)));
+      chk.addEventListener('change', () => { sel.disabled = !chk.checked; });
+      sel.disabled = !chk.checked;
+      psRows[k] = { chk, sel };
+      psDirBox.append(h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk,
+        p ? h('img', { alt: p.key, title: p.key, src: api.svgUrl('path', p.id, { theme: state.themeKey, animated: 0 }), style: { width: '22px', height: '22px', objectFit: 'contain', flex: 'none' } }) : null,
+        h('span', { style: { width: '84px', flex: 'none' } }, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`), sel));
+    }
+    const psHold = h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: psNow.holdMs / 1000, 'data-f': 'mi-ps-hold', style: { width: '70px' } });
+    psDirBox.append(h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, h('span', {}, 'Hold before sliding'), psHold, h('span', { class: 'muted' }, 'sec')));
+    const paintPs = () => { psDirBox.hidden = !psOn.checked; };
+    psOn.addEventListener('change', paintPs); paintPs();
+    const psValue = () => {
+      const v = Number(psHold.value), out = { on: psOn.checked, holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : psNow.holdMs };
+      for (const k of PRESS_SLIDE_DIRS) out[k] = { on: psRows[k].chk.checked, action: psRows[k].sel.value };
+      return out;
+    };
+    const psBox = h('div', { class: 'field', 'data-f': 'mi-ps' },
+      h('label', { class: 'row', style: { cursor: 'pointer' } }, psOn, h('span', {}, 'Press & slide (joystick) for this item')),
+      h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Only this item: hold it, then slide it up / down / left / right to run that direction\'s action; each direction that is on draws its press-and-slide path over this item\'s icon.'),
+      psDirBox);
     let m;
     const save = async () => {
       if (!label.value.trim() && !iconId && !refButtonId) return toast('Give the item a label, an icon or a button', 'error');
@@ -442,6 +473,12 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
         if (sid != null && JSON.stringify(gPrev[String(sid)] || { long: { type: 'none', target: null }, dbl: { type: 'none', target: null } }) !== JSON.stringify(gWant)) {
           patch.itemGestures = { ...gPrev, [String(sid)]: gWant };
         }
+        const psPrev = menuNow?.config?.itemPressSlide || {}, psWant = psValue();
+        if (sid != null && (psWant.on || psPrev[String(sid)])) {
+          const next = { ...psPrev };
+          if (psWant.on) next[String(sid)] = psWant; else delete next[String(sid)];
+          if (JSON.stringify(next) !== JSON.stringify(psPrev)) patch.itemPressSlide = next;
+        }
         if (Object.keys(patch).length) await api.menuConfig(buttonId, patch);
         fin(saved); m.close();
       } catch (e) { toast(e.message, 'error'); }
@@ -461,6 +498,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
         ),
         gestBox,
         slideBox,
+        psBox,
         h('label', { class: 'field' }, h('span', {}, 'description-dev'), dev)),
       actions: close => [h('button', { class: 'btn', onclick: () => { fin(null); close(); } }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')] });
     setTimeout(() => label.focus(), 30);
@@ -945,6 +983,7 @@ export class MenuEditor {
     this.ctl = bindMenus(designer.stage, {
       keepOpen: true,
       focusRings: () => !!(this.d.actionsLive || this.d.menuLive),   // the red frame is a runtime aid: shown in the test view, not while editing
+      pressSlide: () => !!(this.d.actionsLive || this.d.menuLive),   // press & slide buttons: a runtime gesture (test view only)
       onState: (_, st) => { this.menuState = st; },
       onItem: (_, el) => {
         if (!this.active || this.d.actionsLive || this.d.menuLive) return;
@@ -955,6 +994,11 @@ export class MenuEditor {
       },
       onAction: async a => {
         if (!this.d.actionsLive && !this.d.menuLive) return;
+        // press & slide button (the runtime already scrolled / entered): only Back needs the designer
+        if (a.pressSlide) {
+          if (a.action === 'back') return this.d.runAction(null, { type: 'back' });
+          return toast(`⚡ Press & slide ${a.pressSlide}: “${a.action}”`, 'ok', 1600);
+        }
         // Press and Scroll Items: the runtime already stepped the list; the menu stays open for more taps / slides
         if (a.action === 'scroll-repeater') return;
         const btnEl = designer.stage.querySelector(`.ud-btn[data-menu="${a.menu}"]`) || designer.stage.querySelector('.ud-btn');

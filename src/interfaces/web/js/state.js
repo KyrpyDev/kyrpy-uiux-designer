@@ -1,5 +1,6 @@
 /** Client state + a tiny event bus. Components read `state` and react to events; they never reach into each other. */
 import { createContext } from '/domain/svg.js';
+import { pressSlideConfig } from '/domain/press-slide.js';
 import { menuConfig } from '/domain/menu.js';
 import { cachedIcon, requestIconNodes } from './icon-store.js';
 
@@ -62,11 +63,25 @@ export const isAdminUser = (u = state.user) => !!u && (['admin', 'superadmin'].i
 export const isSuperadminUser = (u = state.user) => !!u && u.role === 'superadmin';
 /** True when the record belongs to the public library (owned by the `public` system user). */
 export const isPublicLibraryItem = rec => !!rec && state.publicUserId != null && Number(rec.creatorId || rec.rootOwnerId || 0) === Number(state.publicUserId);
-/** Save rights: the owner, or the superadmin curating a public-library item. */
+/** Project roles that may change a project's items (same set as application/access-policy.js). */
+const PROJECT_EDIT_ROLES = new Set(['owner', 'admin', 'editor', 'contributor']);
+/** True when the signed-in user owns the item's project or is an accepted member with an editing role. */
+const canEditInProject = rec => {
+  const p = (state.projects || []).find(x => Number(x.id) === Number(rec.projectId));
+  const uid = Number(state.user?.id);
+  if (!p || !uid) return false;
+  if (Number(p.ownerId) === uid) return true;
+  return (p.members || []).some(m => Number(m.userId) === uid && m.status === 'accepted' && PROJECT_EDIT_ROLES.has(m.role));
+};
+/**
+ * Save rights: the owner, the superadmin curating a public-library item, or an editor of the item's project for a
+ * `project` item (e.g. one an AI agent created in the project with a member's API key).
+ */
 export const canEditOwned = rec => {
   if (!rec) return true;
   const ownerId = Number(rec.creatorId || rec.rootOwnerId || 1);
   if (ownerId === Number(state.user?.id || 1)) return true;
+  if (rec.visibility === 'project' && rec.projectId != null && canEditInProject(rec)) return true;
   return isPublicLibraryItem(rec) && isSuperadminUser();
 };
 /** Display label of an owner: `@public · Public library` for the system user, `@name` otherwise. */
@@ -121,7 +136,7 @@ function iconIndex() {
 /** Render context for the domain renderer built from the cached library. `animations` overrides the cached ones. */
 export function renderContext({ animations, ...extra } = {}) {
   const one = d => [d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, ...(d.photo ? { photo: d.photo } : {}) }];
-  const btn = d => ({ ...one(d)[1], menu: d.menuItems?.length ? { cfg: menuConfig(d.meta), items: d.menuItems.map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '', targetElementKey: findDesign('element', m.targetElementId)?.key || '' })) } : null });
+  const btn = d => ({ ...one(d)[1], menu: d.menuItems?.length ? { cfg: menuConfig(d.meta), items: d.menuItems.map(m => ({ ...m, targetKey: findDesign('screen', m.targetScreenId)?.key || '', targetElementKey: findDesign('element', m.targetElementId)?.key || '' })) } : null, pressSlide: pressSlideConfig(d.meta) });
   const lib = {
     path: new Map(state.library.paths.map(one)),
     icon: iconIndex(),

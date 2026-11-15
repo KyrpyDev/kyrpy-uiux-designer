@@ -473,12 +473,14 @@ export function bindMenus(root, opts) {
   }
   // the clip-path sits on the container group, so the scroll offset goes on an inner wrapper (moving the clipped group would move its clip too)
   function genericInner(g) {
-    var f = g.firstElementChild;
-    if (f && f.getAttribute('data-scroll-inner') === '1' && g.childElementCount === 1) return f;
+    // the red frame / hint sit beside the wrapper (they stay put while the content scrolls): never wrap them
+    var aid = function (c) { return c.classList && (c.classList.contains('ud-focus-ring') || c.classList.contains('ud-focus-hint')); };
+    for (var f = g.firstElementChild; f; f = f.nextElementSibling) if (f.getAttribute('data-scroll-inner') === '1') return f;
     var w = g.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
     w.setAttribute('data-scroll-inner', '1');
-    while (g.firstChild) w.appendChild(g.firstChild);
-    g.appendChild(w);
+    var kids = Array.prototype.slice.call(g.childNodes);
+    for (var i = 0; i < kids.length; i++) if (!aid(kids[i])) w.appendChild(kids[i]);
+    g.insertBefore(w, g.firstChild);
     return w;
   }
   function genericMax(g) {
@@ -504,11 +506,14 @@ export function bindMenus(root, opts) {
       var gx = st.getAttribute('data-rpt-axis') === 'x' || (gm.y <= 0 && gm.x > 0);
       var lim = gx ? gm.x : gm.y;
       if (!lim) return false;
+      // the wrapper's offset on both axes: a wheel / drag (bindRepeaterScroll) may have moved it too
+      var gw = genericInner(st), gt = (gw.getAttribute('transform') || '').match(/translate\(\s*(-?[\d.e+-]+)[\s,]+(-?[\d.e+-]+)\s*\)/);
+      var ox = gt ? -parseFloat(gt[1]) || 0 : 0, oy = gt ? -parseFloat(gt[2]) || 0 : 0;
       // a roll: past the end it starts again at the beginning, before the beginning it jumps to the end
-      var go = st.__udOff || 0, gn = delta > 0 && go >= lim - 0.5 ? 0 : delta < 0 && go <= 0.5 ? lim : Math.max(0, Math.min(lim, go + delta));
+      var go = gx ? ox : oy, gn = delta > 0 && go >= lim - 0.5 ? 0 : delta < 0 && go <= 0.5 ? lim : Math.max(0, Math.min(lim, go + delta));
       if (gn === go) return false;
       st.__udOff = gn;
-      genericInner(st).setAttribute('transform', (gx ? 'translate(' + (-gn) + ' 0)' : 'translate(0 ' + (-gn) + ')'));
+      gw.setAttribute('transform', 'translate(' + (-(gx ? gn : ox)) + ' ' + (-(gx ? oy : gn)) + ')');
       return true;
     }
     var track = st.querySelector ? st.querySelector('.ud-rpt-track') : null;
@@ -602,6 +607,7 @@ export function bindMenus(root, opts) {
       var ci = btn.querySelector('.rm-hub-item[data-hub-pos="center"]');
       if (ci) src = ci;
     }
+    if (src.getAttribute('data-press-slide')) return;   // this item uses press & slide (its own directions) instead
     var perItem = src.getAttribute('data-item-scroll');
     if (perItem === '0') return;
     var isRptAction = perItem === '1' || src.getAttribute('data-action') === 'scroll-repeater' || !!src.getAttribute('data-target-repeater');
@@ -747,6 +753,154 @@ export function bindMenus(root, opts) {
       rptDrag = null;
     }
   }
+  /*
+   * Press & slide buttons (.ud-ps[data-press-slide="u:scroll-up;d:scroll-down;l:back;r:enter"], data-ps-hold ms): a visual joystick.
+   * Hold the press (1 s by default; the hold ring fills), then slide up / down / left / right: the button moves a little towards the
+   * slide and the direction's action runs (scroll actions repeat while held there). Releasing before the hold is a normal click;
+   * moving before the hold cancels it. opts.pressSlide (bool / fn) switches it off (the designer: only in the test view).
+   * Actions: scroll-up / scroll-down / scroll-left / scroll-right (the focus frame steps through the list, or the content scrolls),
+   * back (opts.onAction({ action: 'back', pressSlide })), enter (opens the focused item), click (the button's own click), none.
+   * Every run also fires a bubbling "ud-press-slide" event on the button ({ dir, action }).
+   */
+  var psDrag = null, psSuppressUntil = 0;
+  var PS_STEP = 26;   // px of slide that picks a direction
+  function psOn() { var f = opts.pressSlide; return f === undefined || f === null ? true : typeof f === 'function' ? !!f() : !!f; }
+  function psSpec(btn) {
+    var out = {};
+    String(btn.getAttribute('data-press-slide') || '').split(';').forEach(function (p) { var i = p.indexOf(':'); if (i > 0) out[p.slice(0, i)] = p.slice(i + 1); });
+    return out;
+  }
+  function psBody(btn) { return btn.querySelector ? btn.querySelector('.ud-ps-body') : null; }
+  /** The press & slide element a press lands on: a plain button, or the one menu item that has it (never the other items). */
+  function psTargetOf(t) {
+    if (!t || !t.closest) return null;
+    var c = t.closest('[data-rm="center"]');
+    if (c) {
+      var hb = c.closest('.ud-btn'), ci = hb && hb.querySelector('.rm-hub-item[data-hub-pos="center"]');
+      return ci && ci.getAttribute('data-press-slide') ? ci : null;
+    }
+    var it = t.closest('.rm-item');
+    if (it) return it.getAttribute('data-press-slide') ? it : null;   // other items keep their own gestures
+    return t.closest('.ud-ps[data-press-slide]');
+  }
+  function psNudge(st, dir) {
+    var b = psBody(st.btn); if (!b) return;
+    var k = st.nudge, v = dir === 'u' ? [0, -k] : dir === 'd' ? [0, k] : dir === 'l' ? [-k, 0] : dir === 'r' ? [k, 0] : null;
+    b.style.transform = v ? 'translate(' + v[0] + 'px,' + v[1] + 'px)' : '';
+  }
+  function psStage(btn, horizontal) {
+    var st = findRepeaterStage(btn, null);
+    if (st) return st;
+    // no repeater: the first scrollable container on the screen scrolls its content
+    var scr = (btn.closest && (btn.closest('.ud-screen') || btn.closest('svg'))) || root;
+    var all = scr && scr.querySelectorAll ? scr.querySelectorAll('[data-container-children]') : [];
+    for (var i = 0; i < all.length; i++) {
+      var g = all[i];
+      if (btn.contains && btn.contains(g)) continue;
+      if (g.getAttribute(horizontal ? 'data-scroll-x' : 'data-scroll-y') === '0') continue;
+      g.setAttribute('data-scroll-generic', '1');
+      g.setAttribute('data-rpt-axis', horizontal ? 'x' : 'y');
+      g.__udMax = null;
+      return g;
+    }
+    return null;
+  }
+  function psRun(st, dir) {
+    var act = st.spec[dir], btn = st.btn;
+    if (!act || act === 'none') return;
+    try { var E0 = doc && doc.defaultView && doc.defaultView.CustomEvent; if (E0) btn.dispatchEvent(new E0('ud-press-slide', { bubbles: true, detail: { dir: dir, action: act } })); } catch (e) {}
+    if (act.indexOf('scroll-') === 0) {
+      var horiz = act === 'scroll-left' || act === 'scroll-right';
+      var stage = psStage(btn, horiz);
+      if (!stage) return;
+      // up / left = the next item (the list moves up / left, as in the hub's press & slide)
+      var fwd = act === 'scroll-up' || act === 'scroll-left' ? 1 : -1;
+      var cont = listOf(stage), items = listItems(cont);
+      if (stage.getAttribute('data-scroll-generic') === '1' && items.length < 2) moveRepeater(stage, fwd * 40, true);
+      else stepFocus(stage, fwd);
+      return;
+    }
+    if (act === 'enter') {
+      // the focused item (under the red frame, else the one nearest the centre) gets a click at its centre
+      var est = psStage(btn, false) || psStage(btn, true), ec = est ? listOf(est) : null, el = ec ? focusedItem(ec, true) : null;
+      if (!el || !el.getBoundingClientRect || !doc || !doc.elementFromPoint) return;
+      var er = el.getBoundingClientRect(), ex = er.left + er.width / 2, ey = er.top + er.height / 2;
+      var hit = doc.elementFromPoint(ex, ey), v2 = doc.defaultView, E2 = v2 && v2.MouseEvent;
+      if (!hit || !el.contains(hit)) hit = el;
+      if (E2) hit.dispatchEvent(new E2('click', { bubbles: true, cancelable: true, clientX: ex, clientY: ey, view: v2 }));
+      return;
+    }
+    if (act === 'click') {
+      var view = doc && doc.defaultView, E = view && view.MouseEvent;
+      psSuppressUntil = 0;
+      if (E) btn.dispatchEvent(new E('click', { bubbles: true, cancelable: true, view: view }));
+      return;
+    }
+    var host = btn.classList && btn.classList.contains('rm-item') && btn.closest ? btn.closest('.ud-btn') : null;
+    if (opts.onAction) opts.onAction({ menu: (host || btn).getAttribute('data-menu') || btn.getAttribute('data-btn-key') || '', item: host ? btn.getAttribute('data-item') || '' : '', id: host ? btn.getAttribute('data-menu-id') : btn.getAttribute('data-btn-id'), action: act, target: '', pressSlide: dir });
+  }
+  function psStopRepeat(st) { if (st && st.rep) { clearInterval(st.rep); st.rep = null; } }
+  function psEnd(ev) {
+    var st = psDrag;
+    if (!st) return;
+    psDrag = null;
+    clearTimeout(st.timer); psStopRepeat(st);
+    st.btn.removeAttribute('data-ps-state'); st.btn.removeAttribute('data-ps-dir');
+    psNudge(st, null);
+    if (st.armed) psSuppressUntil = Date.now() + 400;   // the release after a joystick press is not a click
+  }
+  root.addEventListener('pointerdown', function (ev) {
+    if (ev.button || !psOn()) return;
+    var t = ev.target && ev.target.closest ? ev.target : null;
+    if (!t) return;
+    // a menu item with press & slide (set per item); the hub's centre hit area stands for the item in the centre
+    var btn = psTargetOf(t);
+    if (!btn) return;
+    var spec = psSpec(btn);
+    if (!Object.keys(spec).length) return;
+    psEnd();
+    var hold = parseFloat(btn.getAttribute('data-ps-hold')); if (!(hold >= 0)) hold = 1000;
+    var size = parseFloat(btn.getAttribute('data-ps-size')) || 48;
+    var st = psDrag = { btn: btn, spec: spec, x: ev.clientX, y: ev.clientY, armed: false, dir: null, rep: null, nudge: Math.max(2, Math.round(size * 0.09 * 100) / 100), timer: null };
+    if (ev.preventDefault) ev.preventDefault();   // no native drag / selection (it would cancel the pointer)
+    btn.setAttribute('data-ps-state', 'hold');
+    st.timer = setTimeout(function () {
+      if (psDrag !== st) return;
+      st.armed = true; btn.setAttribute('data-ps-state', 'armed');
+      if (longPress) { clearTimeout(longPress.timer); longPress = null; }   // the joystick wins over the item's long press
+    }, hold);
+  });
+  function psMove(ev) {
+    var st = psDrag;
+    if (!st) return;
+    var dx = ev.clientX - st.x, dy = ev.clientY - st.y, dist = Math.hypot(dx, dy);
+    if (!st.armed) { if (dist >= 10) psEnd(); return; }   // moving before the hold ends: no joystick
+    if (ev.preventDefault) ev.preventDefault();
+    var dir = dist < PS_STEP * 0.6 ? null : dist < PS_STEP && !st.dir ? null : Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'd' : 'u');
+    if (dir && !st.spec[dir]) dir = null;
+    if (dir === st.dir) return;
+    psStopRepeat(st);
+    st.dir = dir;
+    if (dir) st.btn.setAttribute('data-ps-dir', dir); else st.btn.removeAttribute('data-ps-dir');
+    psNudge(st, dir);
+    if (!dir) return;
+    psRun(st, dir);
+    if (String(st.spec[dir]).indexOf('scroll-') === 0) st.rep = setInterval(function () { if (psDrag === st && st.dir === dir) psRun(st, dir); else psStopRepeat(st); }, 380);
+  }
+  root.addEventListener('click', function (ev) {
+    if (!psSuppressUntil || Date.now() > psSuppressUntil) return;
+    var t = ev.target && ev.target.closest ? (ev.target.closest('.ud-ps') || ev.target.closest('[data-rm="center"]')) : null;
+    if (!t) return;
+    psSuppressUntil = 0;
+    if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    if (ev.stopPropagation) ev.stopPropagation();
+    if (ev.preventDefault) ev.preventDefault();
+  }, true);
+  var psHost = doc && doc.addEventListener ? doc : root;   // the slide may leave the button (and the canvas)
+  psHost.addEventListener('pointermove', psMove);
+  psHost.addEventListener('pointerup', psEnd); psHost.addEventListener('pointercancel', psEnd);
+  root.addEventListener('dragstart', function (ev) { if (psDrag) ev.preventDefault(); });
+  root.addEventListener('selectstart', function (ev) { if (psDrag) ev.preventDefault(); });
   if (root.addEventListener) {
     // a slide in progress never turns into a native drag / selection (that cancels the pointer)
     root.addEventListener('dragstart', function (ev) { if (rptDrag) ev.preventDefault(); });
@@ -906,8 +1060,9 @@ export function bindMenus(root, opts) {
   function listItems(cont) {
     var copies = cont.querySelectorAll ? cont.querySelectorAll('.ud-rpt-copy[data-rpt-index]') : [];
     if (copies.length) return Array.prototype.slice.call(copies);
-    var box = cont, f = cont.firstElementChild;
-    if (f && f.getAttribute('data-scroll-inner') === '1' && cont.childElementCount === 1) box = f;
+    // the scroll wrapper of a plain container holds the items (the red frame / hint appended beside it do not count)
+    var box = cont, own = Array.prototype.filter.call(cont.children || [], function (c) { return !(c.classList && (c.classList.contains('ud-focus-ring') || c.classList.contains('ud-focus-hint'))); });
+    if (own.length === 1 && own[0].getAttribute && own[0].getAttribute('data-scroll-inner') === '1') box = own[0];
     return Array.prototype.filter.call(box.children || [], function (c) { return c.tagName && c.tagName.toLowerCase() !== 'title' && !c.classList.contains('ud-focus-ring') && !c.classList.contains('ud-focus-hint'); });
   }
   function clipRect(cont) {

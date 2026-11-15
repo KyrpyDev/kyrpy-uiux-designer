@@ -66,7 +66,7 @@ export const SCHEMA_REGISTRY_SEED = {
   },
   buttons: {
     purpose: 'Interactive buttons: a frame plus icons, with optional popup / radial / drawer / slider / carousel menu.',
-    usage: 'Shapes in `nodes` (owner_type = "button"); menu entries in `menu_items`. The frame shape and icon size follow the project button settings (projects.settings.buttonStyle, buttonIconSizePct 50–100, default 95).',
+    usage: 'Shapes in `nodes` (owner_type = "button"); menu entries in `menu_items`. The frame shape and icon size follow the project button settings (projects.settings.buttonStyle, buttonIconSizePct 50–100, default 95). Press & slide (visual joystick): meta.pressSlide = { on, holdMs (default 1000), u|d|l|r: { on, action } } with action scroll-up | scroll-down | scroll-left | scroll-right | back | enter | click | none (defaults u scroll-up, d scroll-down, l back, r enter); each enabled direction draws the public path press-and-slide-u / -d / -l / -r over the button icon, and the runtime marks the button .ud-ps[data-press-slide] and fires a bubbling "ud-press-slide" event { dir, action }.',
     constraints: [HIERARCHY, 'May contain icon and path instances.', 'Needs an accessible `label`.'],
     columns: designColumns()
   },

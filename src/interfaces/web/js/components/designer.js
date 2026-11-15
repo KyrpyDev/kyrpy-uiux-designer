@@ -14,6 +14,7 @@ import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLab
 import { prefixedVariableName } from '/domain/naming.js';
 import { designFingerprint, restoreBody } from '/domain/doc-fingerprint.js';
 import { renderDocument, renderIconDocument, renderTree } from '/domain/svg.js';
+import { pressSlideConfig } from '/domain/press-slide.js';
 import {
   nodeBBox, translateAttrs, resizeAttrs, snap, anchorPoints, placeAtAnchor, scaleNodeSet,
   isContainerNode, isCarouselContainerNode, getContainerConfig, containerInnerBox,
@@ -769,9 +770,9 @@ export class Designer {
   titleField() {
     const name = this.doc.name;
     if (!this.isOwnedByCurrentUser(this.doc)) {
-      return h('b', { style: { padding: '0 8px', maxWidth: '20ch', minWidth: '12ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name);
+      return (this.titleEl = h('b', { class: 'doc-title-ro', style: { padding: '0 8px', maxWidth: '20ch', minWidth: '12ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: `${this.doc.key} (read-only: not your item)` }, name));
     }
-    const input = h('input', { class: 'doc-title', type: 'text', value: name, title: `Click to rename · variable name: ${this.doc.key}`, 'aria-label': 'Item name', maxlength: '80', spellcheck: 'false' });
+    const input = this.titleEl = h('input', { class: 'doc-title', type: 'text', value: name, title: `Click to rename · variable name: ${this.doc.key}`, 'aria-label': 'Item name', maxlength: '80', spellcheck: 'false' });
     const fit = () => { input.style.width = '20ch'; };
     const commit = async () => {
       const v = input.value.trim();
@@ -787,6 +788,19 @@ export class Designer {
     input.addEventListener('blur', commit);
     fit();
     return input;
+  }
+
+  /** Keeps the bar's item name in step with the open document (renamed in the inspector, reloaded, saved elsewhere). */
+  syncTitle() {
+    const el = this.titleEl, doc = this.doc;
+    if (!el || !doc || !el.isConnected) return;
+    if (el.tagName === 'INPUT') {
+      if (document.activeElement !== el && el.value !== doc.name) el.value = doc.name;
+      el.title = `Click to rename · variable name: ${doc.key}`;
+    } else {
+      if (el.textContent !== doc.name) el.textContent = doc.name;
+      el.title = `${doc.key} (read-only: not your item)`;
+    }
   }
 
   /* ================= toolbar ================= */
@@ -886,7 +900,7 @@ export class Designer {
   }
 
   /* ================= rendering ================= */
-  renderAll() { this.renderStage(); this.renderOverlay(); this.applyView(); this.emit('selection', this.selectedNodes()); }
+  renderAll() { this.renderStage(); this.renderOverlay(); this.applyView(); this.syncTitle(); this.emit('selection', this.selectedNodes()); }
 
   animationsForRender() {
     if (this.dragging) return [];
@@ -907,7 +921,7 @@ export class Designer {
     else if (this.type === 'button') {
       // the live button: its own nodes plus its menu, exactly as it appears when placed on a screen
       const rows = this.menuRows();
-      ctx.lib.button.set(d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, menu: rows.length ? { cfg: menuConfig(d.meta), items: rows } : null });
+      ctx.lib.button.set(d.id, { key: d.key, width: d.width, height: d.height, nodes: d.nodes, menu: rows.length ? { cfg: menuConfig(d.meta), items: rows } : null, pressSlide: pressSlideConfig(d.meta) });
       const inst = [{ id: -1, kind: 'instance', tag: 'use', refType: 'button', refId: d.id, parentId: null, ord: 0, visible: true, attrs: { x: 0, y: 0, width: d.width, height: d.height } }];
       svg = renderDocument({ owner: d, nodes: inst, ctx, background: false });
     } else svg = renderDocument({ owner: d, nodes: d.nodes, ctx, background: false });
@@ -2515,6 +2529,31 @@ export class Designer {
   }
 
   /** Patch one node (used by the inspector and the vertex editor). */
+  /**
+   * A node that just became a (scrollable) container wraps the content drawn over it: the nodes on the same level, above it
+   * in the stack, whose centre lies inside it become its children (they move with it and scroll inside it at run time).
+   * Returns how many nodes were wrapped.
+   */
+  async wrapIntoContainer(id) {
+    const c = this.byId(id);
+    if (!c || !isContainerNode(c, state.library.elements)) return 0;
+    const box = nodeBBox(c, this.nodes), at = this.nodes.indexOf(c), level = c.parentId ?? null;
+    const kids = this.nodes.filter((n, i) => {
+      if (i <= at || n.id === c.id || (n.parentId ?? null) !== level || n.role === 'bg' || n.role === 'bg-glow') return false;
+      const b = nodeBBox(n, this.nodes), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h;
+    });
+    if (!kids.length) return 0;
+    const snap = this.snapshot();
+    try {
+      for (const k of kids) Object.assign(k, await api.patchNode(this.type, this.doc.id, k.id, { parentId: c.id }));
+      this.pushUndo(snap);
+      this.renderStage(); this.renderOverlay(); this.emit('selection', this.selectedNodes());
+      this.changed();
+    } catch (err) { toast(err.message, 'error'); await this.reload(); }
+    return kids.length;
+  }
+
   async patchNode(id, patch, { quiet = false } = {}) {
     const e = this.byId(id);
     if (!e) return;
@@ -2640,6 +2679,7 @@ export class Designer {
       if (sizing && snap) this.pushUndo(snap);
       this.doc = { ...saved };
       this.renderAll();
+      this.syncTitle();
       this.changed(); this.emit('record', this.doc);
     } catch (e) { toast(e.message, 'error'); await this.reload(); }
   }

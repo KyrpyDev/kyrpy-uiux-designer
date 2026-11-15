@@ -379,7 +379,8 @@ export function bindRepeaters(root) {
 
 /**
  * Scrolling inside a repeater's own area (self-contained): a mouse wheel or a drag over the content box of a repeater
- * moves its copies along the repeater axis and nothing else on the page. Loops (carousel / roll / scroll) wrap around,
+ * moves its copies along the repeater axis and nothing else on the page. A plain scrollable container scrolls its
+ * overflowing content the same way, vertically and horizontally. Loops (carousel / roll / scroll) wrap around,
  * slides travel between their items, lists scroll as far as their copies overflow. Autoplay pauses while the user scrolls
  * and picks up from the same place afterwards. `isOn` (optional) switches it off, e.g. outside the designer's test mode.
  */
@@ -435,23 +436,107 @@ export function bindRepeaterScroll(root, isOn) {
     }, 1600);
     return true;
   };
+  /*
+   * Plain scrollable containers (`data-container-children`): the content past the clip box scrolls on both axes the container
+   * allows (data-scroll-x / -y), clamped to the content (no wrap). The offset sits on an inner wrapper, because the clip-path is
+   * on the container group itself; the menu runtime (slide to scroll) moves the same wrapper.
+   */
+  var svgNs = 'http://www.w3.org/2000/svg';
+  var contInner = function (g) {
+    // the red focus frame / hint sit beside the wrapper: never wrap them (a second wrapper would nest the first)
+    for (var f = g.firstElementChild; f; f = f.nextElementSibling) if (f.getAttribute('data-scroll-inner') === '1') return f;
+    var w = (g.ownerDocument || root).createElementNS(svgNs, 'g');
+    w.setAttribute('data-scroll-inner', '1');
+    var kids = Array.prototype.slice.call(g.childNodes);
+    for (var i = 0; i < kids.length; i++) if (!(kids[i].classList && (kids[i].classList.contains('ud-focus-ring') || kids[i].classList.contains('ud-focus-hint')))) w.appendChild(kids[i]);
+    g.insertBefore(w, g.firstChild);
+    return w;
+  };
+  var contClip = function (g) {
+    var cp = (g.getAttribute('clip-path') || '').match(/#([^)"']+)/), d = g.ownerDocument || root;
+    var cr = cp && d.getElementById ? d.getElementById(cp[1]) : null, r = cr && cr.querySelector ? cr.querySelector('rect') : null;
+    if (!r) return null;
+    var f = function (k) { return parseFloat(r.getAttribute(k)) || 0; };
+    return { x: f('x'), y: f('y'), w: f('width'), h: f('height') };
+  };
+  var contOffset = function (w) {
+    var m = (w.getAttribute('transform') || '').match(/translate\(\s*(-?[\d.e+-]+)[\s,]+(-?[\d.e+-]+)\s*\)/);
+    return m ? { x: -parseFloat(m[1]) || 0, y: -parseFloat(m[2]) || 0 } : { x: 0, y: 0 };
+  };
+  // how far the content runs past the clip box (0 on an axis the container does not scroll)
+  var contLimits = function (g, c) {
+    var ax = g.getAttribute('data-scroll-x') !== '0', ay = g.getAttribute('data-scroll-y') !== '0';
+    if (!ax && !ay) return { x: 0, y: 0 };
+    var w = contInner(g), prev = w.getAttribute('transform'), bb = null;
+    if (prev) w.removeAttribute('transform');
+    try { bb = w.getBBox ? w.getBBox() : null; } catch (e) { bb = null; }
+    if (prev) w.setAttribute('transform', prev);
+    if (!bb) return { x: 0, y: 0 };
+    return { x: ax ? Math.max(0, bb.x + bb.width - (c.x + c.w)) : 0, y: ay ? Math.max(0, bb.y + bb.height - (c.y + c.h)) : 0 };
+  };
+  // the innermost scrollable container under the pointer whose content overflows
+  var findCont = function (ev) {
+    var list = root.querySelectorAll ? root.querySelectorAll('[data-container-children]') : [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var g = list[i], c = contClip(g), m = g.getScreenCTM ? g.getScreenCTM() : null;
+      if (!c || !m) continue;
+      var det = m.a * m.d - m.b * m.c;
+      if (!det) continue;
+      var dx = ev.clientX - m.e, dy = ev.clientY - m.f;
+      var x = (m.d * dx - m.c * dy) / det, y = (m.a * dy - m.b * dx) / det;
+      if (x < c.x || x > c.x + c.w || y < c.y || y > c.y + c.h) continue;
+      var lim = contLimits(g, c);
+      if (lim.x > 0 || lim.y > 0) return { g: g, lim: lim, scale: Math.sqrt(Math.abs(det)) || 1 };
+    }
+    return null;
+  };
+  var moveCont = function (hit, dx, dy) {
+    var w = contInner(hit.g), cur = contOffset(w);
+    var nx = Math.max(0, Math.min(hit.lim.x, cur.x + dx)), ny = Math.max(0, Math.min(hit.lim.y, cur.y + dy));
+    if (Math.abs(nx - cur.x) < 0.01 && Math.abs(ny - cur.y) < 0.01) return false;
+    w.setAttribute('transform', 'translate(' + (-Math.round(nx * 100) / 100) + ' ' + (-Math.round(ny * 100) / 100) + ')');
+    return true;
+  };
+  // a press on a button with a menu (hub press & slide, radial menus) belongs to the menu runtime, not to the container
+  var onMenu = function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('.ud-btn') : null;
+    return !!(b && b.querySelector && b.querySelector('.ud-menu'));
+  };
   root.addEventListener('wheel', function (ev) {
-    if (!live()) return;
+    if (!live() || ev.defaultPrevented) return;
+    var d0 = ev.deltaMode === 1 ? 16 : 1;
     var hit = find(ev);
-    if (!hit) return;
-    var d = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
-    if (ev.deltaMode === 1) d *= 16;
-    if (move(hit.st, d / hit.scale)) { ev.preventDefault(); ev.stopPropagation(); }
+    if (hit) {
+      var d = Math.abs(ev.deltaY) >= Math.abs(ev.deltaX) ? ev.deltaY : ev.deltaX;
+      if (move(hit.st, d * d0 / hit.scale)) { ev.preventDefault(); ev.stopPropagation(); return; }
+    }
+    if (onMenu(ev)) return;
+    var ch = findCont(ev);
+    if (!ch) return;
+    var wx = ev.deltaX * d0, wy = ev.deltaY * d0;
+    if (ev.shiftKey && !wx) { wx = wy; wy = 0; }               // shift + wheel scrolls sideways
+    if (!ch.lim.y && !wx) { wx = wy; wy = 0; }                 // only sideways to go: the wheel scrolls sideways
+    if (moveCont(ch, wx / ch.scale, wy / ch.scale)) { ev.preventDefault(); ev.stopPropagation(); }
   }, { passive: false });
   var drag = null;
   root.addEventListener('pointerdown', function (ev) {
     drag = null;
     if (!live() || ev.button) return;
     var hit = find(ev);
-    if (hit) drag = { st: hit.st, scale: hit.scale, x: ev.clientX, y: ev.clientY, on: false };
+    if (hit) { drag = { st: hit.st, scale: hit.scale, x: ev.clientX, y: ev.clientY, on: false }; return; }
+    if (onMenu(ev)) return;
+    var ch = findCont(ev);
+    if (ch) drag = { cont: ch, scale: ch.scale, x: ev.clientX, y: ev.clientY, on: false };
   });
   root.addEventListener('pointermove', function (ev) {
     if (!drag) return;
+    if (drag.cont) {
+      var cdx = drag.x - ev.clientX, cdy = drag.y - ev.clientY;
+      if (!drag.on && Math.abs(cdx) < 5 && Math.abs(cdy) < 5) return;
+      drag.on = true; drag.x = ev.clientX; drag.y = ev.clientY;
+      if (moveCont(drag.cont, cdx / drag.scale, cdy / drag.scale)) ev.preventDefault();
+      return;
+    }
     var x = drag.st.getAttribute('data-rpt-axis') === 'x', d = x ? drag.x - ev.clientX : drag.y - ev.clientY;
     if (!drag.on && Math.abs(d) < 5) return;
     drag.on = true; drag.x = ev.clientX; drag.y = ev.clientY;

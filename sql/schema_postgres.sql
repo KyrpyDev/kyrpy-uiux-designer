@@ -365,6 +365,34 @@ CREATE TABLE IF NOT EXISTS trash_items (
   deleted_at TEXT NOT NULL DEFAULT '',
   snapshot TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS images (
+  id INTEGER PRIMARY KEY,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'images',
+  tags TEXT NOT NULL DEFAULT '[]',
+  description_dev TEXT NOT NULL DEFAULT '',
+  mime TEXT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT NOT NULL,
+  data TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'upload',
+  source_id TEXT,
+  source_url TEXT,
+  author TEXT,
+  author_url TEXT,
+  license TEXT,
+  license_url TEXT,
+  project_id INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'project',
+  creator_id INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, key)
+);
 
 CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 

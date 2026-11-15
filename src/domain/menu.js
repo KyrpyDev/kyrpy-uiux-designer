@@ -11,6 +11,7 @@
 import { DEFAULT_MENU, menuItemAction } from './entities.js';
 import { esc, attrString } from './svg-util.js';
 import { roleAttrs, resolveTokens } from './theme.js';
+import { pressSlideConfig, pressSlideDirs, pressSlideSpec } from './press-slide.js';
 
 export function effectiveMenuLayout(cfg = {}) {
   return cfg.layout || (
@@ -106,6 +107,27 @@ export function normalizeItemScroll(v) {
     out[k] = { on, targetId: t || null, mode: s.mode === 'scroll' ? 'scroll' : 'focus' };   // default slide mode: focus
   }
   return out;
+}
+
+/**
+ * Normalises cfg.itemPressSlide: { [menuItemId]: { on, holdMs, u|d|l|r: { on, action } } } (see press-slide.js).
+ * Press & slide is a per item setting: only the items switched on react to it and draw the direction paths.
+ */
+export function normalizeItemPressSlide(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  for (const [k, s] of Object.entries(v)) {
+    if (!/^\d+$/.test(k) || !s || typeof s !== 'object') continue;
+    const c = pressSlideConfig({ pressSlide: s }, { all: true });
+    if (c.on) out[k] = c;
+  }
+  return out;
+}
+
+/** The press & slide settings of one menu item, or null. */
+export function itemPressSlide(cfg, itemId) {
+  const raw = cfg && cfg.itemPressSlide && itemId != null ? cfg.itemPressSlide[String(itemId)] : null;
+  return raw ? pressSlideConfig({ pressSlide: raw }) : null;
 }
 
 /** Gesture actions a menu item can have besides its click: long press and double click / tap. */
@@ -347,7 +369,7 @@ export function menuLabelMetrics(text, r, { isHubRoot = false, pos = 'over', sid
  * Every level is pre-rendered (hidden); the runtime only toggles classes.
  * @param {object} p {button:{key,width,height}, cfg, tree, ctx, iconKey(id)->key|null}
  */
-export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = null, hostButtonId = null, iconFrac = null }) {
+export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = null, hostButtonId = null, iconFrac = null, pressSlideMarkup = null }) {
   const w = button.width, h = button.height, cx = w / 2, cy = h / 2, size = Math.min(w, h);
   const surface = roleAttrs(ctx.theme, 'button');
   const itemAttrs = a => attrString({ ...surface, ...a });
@@ -409,12 +431,26 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
     return `<use href="#i-${esc(key)}" x="${round(x - sz / 2)}" y="${round(y - sz / 2)}" width="${round(sz)}" height="${round(sz)}" fill="none" stroke="url(#lgS)" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" class="rm-icon" style="transform-origin:${round(x)}px ${round(y)}px"/>`;
   };
   // body of one item, drawn around its own centre (0,0): a referenced library button (its own icon unless the item has one), else circle + icon
-  const itemBody = (it, r, iconSz) => {
+  const itemBodyPlain = (it, r, iconSz) => {
     // the slot shows the item's own library button; without one it shows this menu button's own body (never a bare placeholder shell)
     const slotButton = it.refButtonId ?? cfg.itemButtonId ?? hostButtonId;
     const btn = slotButton != null && renderButton ? renderButton(slotButton, r * 2, Boolean(it.iconId) || slotButton === hostButtonId) : '';
     if (btn) return `${btn}<circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
     return `<circle r="${round(r)}"${itemAttrs({})}/><circle r="${round(r)}" fill="transparent"/>${iconUse(it.iconId, 0, 0, iconSz)}`;
+  };
+  // press & slide (per item): only the items switched on get the runtime contract and the direction paths over their glyph
+  const psDirsOf = it => pressSlideDirs(itemPressSlide(cfg, it.id));
+  const psAttr = (it, r) => {
+    const ps = itemPressSlide(cfg, it.id), dirs = pressSlideDirs(ps);
+    return dirs.length ? ` data-press-slide="${esc(pressSlideSpec(ps))}" data-ps-hold="${ps.holdMs}" data-ps-size="${round(r * 2)}"` : '';
+  };
+  const psClass = it => psDirsOf(it).length ? ' ud-ps' : '';
+  const itemBody = (it, r, iconSz) => {
+    const body = itemBodyPlain(it, r, iconSz), dirs = psDirsOf(it);
+    if (!dirs.length || !pressSlideMarkup) return body;
+    // the arrows snap to the item button's edges (over its icon), lines as thick as the icon's
+    const g = iconSz > 0 ? iconSz : r * 1.24;
+    return `<g class="ud-ps-body">${body}${pressSlideMarkup(dirs, { x: -r, y: -r, w: r * 2, h: r * 2 }, { cx: 0, cy: 0, size: r * 2 }, ctx, g)}</g>`;
   };
   // static picture (previews, thumbnails, exports without the runtime): the default centre item sits on the button, the others are hidden;
   // the runtime's CSS transform / opacity override these presentation attributes as soon as it runs
@@ -433,7 +469,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
           ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
           : '';
         const rptAttr = scrollAttr(it);
-        return `<g class="rm-item rm-hub-item" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0" ${hubStaticAttrs(i)}>`
+        return `<g class="rm-item rm-hub-item${psClass(it)}" data-item="${esc(it.path)}" data-hub-index="${i}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${psAttr(it, r)}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx)}px;--y:${round(cy)}px;--k:0;--o:0" ${hubStaticAttrs(i)}>`
           + `<title>${esc(it.label || it.name)}</title>${ctx.editor ? `<g class="rm-item-body">${itemBody(it, r, hubIcon)}</g>` : itemBody(it, r, hubIcon)}${lbl.svg}</g>`;
       }
       const p = pos[i], r = p.s / 2;
@@ -442,7 +478,7 @@ export function renderMenu({ button, cfg, tree, ctx, iconKey, renderButton = nul
         ? ` data-popup-element="${esc(it.targetElementKey || it.targetElementId)}" data-popup-element-id="${esc(it.targetElementId || '')}"`
         : '';
       const rptAttr = scrollAttr(it);
-      return `<g class="rm-item" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
+      return `<g class="rm-item${psClass(it)}" data-item="${esc(it.path)}" data-r="${round(r)}" data-children="${it.children.length ? 1 : 0}" data-action="${esc(it.action || '')}" data-target="${esc(it.targetKey || (it.targetScreenId != null ? String(it.targetScreenId) : ''))}"${popupAttr}${rptAttr}${psAttr(it, r)}${lbl.attr}${ctx.editor ? ` data-menu-id="${it.id}"` : ''} style="--x:${round(cx + p.x)}px;--y:${round(cy + p.y)}px;--i:${i}">`
         + `<title>${esc(it.label || it.name)}</title>${itemBody(it, r, iconSize)}${lbl.svg}</g>`;
     });
     const innerItems = isCarousel

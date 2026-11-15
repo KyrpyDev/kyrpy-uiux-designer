@@ -221,6 +221,35 @@ CREATE TABLE "icons" (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , project_id INTEGER NOT NULL DEFAULT 1, visibility TEXT NOT NULL DEFAULT 'public', creator_id INTEGER NOT NULL DEFAULT 1, cloned_from_id INTEGER, root_item_id INTEGER, root_owner_id INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, mcp_context TEXT NOT NULL DEFAULT '{}', uid TEXT, content_hash TEXT);
 
+CREATE TABLE images (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  key            TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  label          TEXT NOT NULL DEFAULT '',
+  category       TEXT NOT NULL DEFAULT 'images',
+  tags           TEXT NOT NULL DEFAULT '[]',
+  description_dev TEXT NOT NULL DEFAULT '',
+  mime           TEXT NOT NULL,
+  width          INTEGER,
+  height         INTEGER,
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  sha256         TEXT NOT NULL,
+  data           TEXT NOT NULL,
+  source         TEXT NOT NULL DEFAULT 'upload',
+  source_id      TEXT,
+  source_url     TEXT,
+  author         TEXT,
+  author_url     TEXT,
+  license        TEXT,
+  license_url    TEXT,
+  project_id     INTEGER NOT NULL DEFAULT 1 REFERENCES projects(id) ON DELETE CASCADE,
+  visibility     TEXT NOT NULL DEFAULT 'project',
+  creator_id     INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now')), mcp_context TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (project_id, key)
+);
+
 CREATE TABLE item_requests (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   uid                 TEXT NOT NULL UNIQUE,
@@ -605,6 +634,10 @@ CREATE INDEX idx_icons_creator ON icons(creator_id);
 CREATE INDEX idx_icons_order ON icons(position, name);
 
 CREATE INDEX idx_icons_scope ON icons(visibility, project_id);
+
+CREATE INDEX idx_images_project ON images(project_id, visibility);
+
+CREATE INDEX idx_images_sha ON images(sha256);
 
 CREATE INDEX idx_item_requests_project ON item_requests(project_id, status);
 

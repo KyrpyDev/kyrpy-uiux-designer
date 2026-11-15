@@ -9,6 +9,7 @@ import { nodeBBox, isContainerNode, isCarouselContainerNode, getContainerConfig,
 import { esc, attrString, SAFE_TAGS } from './svg-util.js';
 import { imageMarkup, isPhotoPlaceholder, photoInPlaceholderMarkup } from './image.js';
 import { renderMenu, buildMenuTree, menuConfig, MENU_CSS } from './menu.js';
+import { pressSlideConfig, pressSlideDirs, pressSlideSpec, findPressSlidePath, PRESS_SLIDE_FALLBACK, PRESS_SLIDE_CSS } from './press-slide.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterMarkup, repeaterTemplate, repeaterTemplates, assignRepeaterItems, repeaterTotal } from './repeater.js';
 
 export const CAROUSEL_CSS = [
@@ -42,7 +43,7 @@ export function createContext({ theme, lib = {}, animations = [], editor = false
   }
   const L = { path: new Map(), icon: new Map(), button: new Map(), element: new Map(), ...lib };
   // imageHref(id): the URL / data URI of a library image (default: its file URL on this server; exports pass data URIs)
-  return { theme, lib: L, anims, editor, emitIds, imageHref, depth: 0, activeInstances: new Set(), usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, inHub: false,
+  return { theme, lib: L, anims, editor, emitIds, imageHref, depth: 0, activeInstances: new Set(), usedIcons: new Set(), usedAnimNodes: new Set(), seenIds: new Set(), hasMenu: false, hasCarousel: false, hasPressSlide: false, inHub: false,
     // repeaters: 'animate' (canvas preview), 'static' (first frame, svg export) or 'runtime' (template once + data for the html runtime)
     repeaterMode: ['animate', 'static', 'runtime'].includes(repeaterMode) ? repeaterMode : 'animate', repeaterCss: new Set(), hasRepeaterRuntime: false };
 }
@@ -213,12 +214,27 @@ function renderInstance(el, a, ctx, all) {
   const menu = el.refType === 'button' && target.menu?.items?.length ? target.menu : null;
   const attrs = commonAttrs(el, { ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
   if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs['data-btn-id'] = el.refId; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
+  // press & slide: the runtime contract on the button, its body wrapped so the slide can nudge it, the direction paths over its icon
+  // (a button with menu items sets it per item instead: cfg.itemPressSlide, drawn by the menu)
+  const ps = el.refType === 'button' && !menu ? target.pressSlide || null : null;
+  const psDirs = ps ? pressSlideDirs(ps) : [];
+  if (psDirs.length) {
+    ctx.hasPressSlide = true;
+    attrs.class = [attrs.class, 'ud-ps'].filter(Boolean).join(' ');
+    attrs['data-press-slide'] = pressSlideSpec(ps);
+    attrs['data-ps-hold'] = ps.holdMs;
+    attrs['data-ps-size'] = round(Math.min(Number(target.width) || 48, Number(target.height) || 48));
+    attrs['data-btn-id'] = el.refId;
+    if (!attrs['data-btn-key']) attrs['data-btn-key'] = target.key;
+    attrs.style = [attrs.style, `--ps-hold:${ps.holdMs}ms`].filter(Boolean).join(';');
+  }
   ctx.depth++;
   ctx.activeInstances?.add(instKey);
   const wasHub = ctx.inHub, wasHubItems = ctx.hubHasItems; ctx.inHub = !!menu; ctx.hubHasItems = !!(menu && menu.cfg?.kind === 'hub' && (menu.items || []).some(m => m.parentId == null && m.visible !== false));   // the button's own icons turn while open and are hidden while a sub level shows its icon
   const wasPhoto = ctx.photo; ctx.photo = el.refType === 'element' ? target.photo || null : null;
-  const inner = renderTree(target.nodes, ctx);
+  let inner = renderTree(target.nodes, ctx);
   ctx.inHub = wasHub; ctx.hubHasItems = wasHubItems; ctx.photo = wasPhoto;
+  if (psDirs.length) inner = `<g class="ud-ps-body">${inner}${pressSlideOverlay(target, psDirs, ctx)}</g>`;
   let menuMarkup = '';
   if (menu) {
     ctx.hasMenu = true;
@@ -245,11 +261,54 @@ function renderInstance(el, a, ctx, all) {
     const ownIcon = (target.nodes || []).find(n => n.kind === 'instance' && n.refType === 'icon' && n.parentId == null);
     const iw = Number(ownIcon?.attrs?.width), ih = Number(ownIcon?.attrs?.height);
     const iconFrac = iw > 0 && ih > 0 ? Math.min(iw, ih) / Math.min(target.width, target.height) : null;
-    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId, iconFrac });
+    menuMarkup = renderMenu({ button: target, cfg: menu.cfg, tree: buildMenuTree(menu.items), ctx, iconKey, renderButton, hostButtonId: el.refId, iconFrac, pressSlideMarkup });
   }
   ctx.activeInstances?.delete(instKey);
   ctx.depth--;
   return `<g${attrString(attrs)}>${inner}${menuMarkup}</g>`;
+}
+
+/**
+ * The enabled directions of a press & slide button drawn over its icon: each one the public path press-and-slide-<dir>
+ * (24 grid, scaled into the icon box), a plain chevron when the path is not in the library. Plus the hold ring.
+ * Never selectable on the canvas (no node ids, pointer-events none).
+ */
+function pressSlideOverlay(target, dirs, ctx) {
+  const icon = (target.nodes || []).find(n => n.kind === 'instance' && n.refType === 'icon' && n.parentId == null && n.visible !== false && n.visible !== 0);
+  const W = Number(target.width) || 24, H = Number(target.height) || 24, m = Math.min(W, H);
+  const iw = Math.min(parseFloat(icon?.attrs?.width) || 0, parseFloat(icon?.attrs?.height) || 0) || m * 0.6;
+  // the arrows snap to the button's own edges (its box), over the button's current icon; their lines are as thick as the icon's
+  return pressSlideMarkup(dirs, { x: 0, y: 0, w: W, h: H }, { cx: W / 2, cy: H / 2, size: m }, ctx, iw);
+}
+
+/**
+ * The direction paths drawn into `box` (the button's box: each path is a 24 grid whose chevron sits at its edge) plus the hold ring
+ * around `ring` ({ cx, cy, size }). `iconPx`: the icon's size, so the arrow lines are as thick as the icon's. Menu items use it too.
+ */
+export function pressSlideMarkup(dirs, box, ring, ctx, iconPx = null) {
+  const bx = box.x, by = box.y, bw = box.w, bh = box.h, m = ring.size, RX = ring.cx, RY = ring.cy;
+  ctx.hasPressSlide = true;
+  const libPaths = [...(ctx.lib.path?.values?.() || [])];
+  const wasEditor = ctx.editor, wasIds = ctx.emitIds;
+  ctx.editor = false; ctx.emitIds = false;
+  let body = '';
+  try {
+    for (const k of dirs) {
+      const p = findPressSlidePath(libPaths, k);
+      const pw = Number(p?.width) || 24, ph = Number(p?.height) || 24;
+      const glyph = p?.nodes?.length && ctx.depth <= 5 ? renderTree(p.nodes, ctx) : `<path d="${PRESS_SLIDE_FALLBACK[k]}"/>`;
+      const sx = p?.nodes?.length ? pw : 24, sy = p?.nodes?.length ? ph : 24;
+      body += `<g class="ud-ps-dir" data-dir="${k}" transform="translate(${round(bx)} ${round(by)}) scale(${round(bw / sx)} ${round(bh / sy)})">${glyph}</g>`;
+    }
+  } finally {
+    ctx.editor = wasEditor; ctx.emitIds = wasIds;
+  }
+  const r = round(m / 2 - 1.5);
+  const ringEl = `<circle class="ud-ps-ring"${attrString({ cx: round(RX), cy: round(RY), r, pathLength: 100, 'stroke-dasharray': 100, stroke: resolvedIconDefaults(ctx).stroke, 'stroke-width': round(Math.max(1.5, m * 0.035)), transform: `rotate(-90 ${round(RX)} ${round(RY)})` })}/>`;
+  const defs = resolvedIconDefaults(ctx);
+  const sw = parseFloat(defs['stroke-width']) || 2, k = iconPx > 0 && bw > 0 ? Math.min(bw, bh) / iconPx : 1;
+  const psw = round(sw / (k || 1));
+  return `<g class="ud-ps-overlay" pointer-events="none"${attrString({ ...defs, 'stroke-width': psw, style: `--ps-sw:${psw}` })}>${body}</g>${ringEl}`;
 }
 
 function placeholder(el, a, ctx, all) {
@@ -289,7 +348,7 @@ function usedAnimationCss(ctx) {
 /** Wraps rendered content into a complete <svg>. */
 function assemble(ctx, { width, height, viewBox, body, standalone = true, fontFamily, label, background }) {
   const symbols = collectDefs(ctx);
-  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '') + (ctx.hasCarousel ? CAROUSEL_CSS : '') + [...(ctx.repeaterCss || [])].join('');
+  const css = usedAnimationCss(ctx) + (ctx.hasMenu ? MENU_CSS : '') + (ctx.hasCarousel ? CAROUSEL_CSS : '') + (ctx.hasPressSlide ? PRESS_SLIDE_CSS : '') + [...(ctx.repeaterCss || [])].join('');
   const reduced = css ? '@media (prefers-reduced-motion:reduce){[class*="ud-e"]{animation:none!important}}' : '';
   const attrs = {
     xmlns: standalone ? 'http://www.w3.org/2000/svg' : null,
@@ -376,7 +435,7 @@ export function indexLibrary({ paths = [], icons = [], buttons = [], elements = 
   return {
     path: new Map(paths.map(d => one(d))),
     icon: new Map(icons.map(d => one(d))),
-    button: new Map(buttons.map(d => one(d, { menu: menus.get(d.id)?.length ? { cfg: menuConfig(d.meta), items: menus.get(d.id) } : null }))),
+    button: new Map(buttons.map(d => one(d, { menu: menus.get(d.id)?.length ? { cfg: menuConfig(d.meta), items: menus.get(d.id) } : null, pressSlide: pressSlideConfig(d.meta) }))),
     element: new Map(elements.map(d => one(d)))
   };
 }

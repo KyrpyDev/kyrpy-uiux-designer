@@ -20,6 +20,7 @@ import { scriptPhotoUri } from '/domain/image.js';
 import { TRANSITION_EFFECTS, TRANSITION_EFFECT_LABELS, TRANSITION_EVENTS, TRANSITION_EVENT_LABELS, MAX_TRANSITION_SECONDS, transitionsOf, normalizeTransitions, transitionSeconds } from '/domain/transition.js';
 import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
+import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath } from '/domain/press-slide.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
 
 
@@ -186,6 +187,7 @@ export class Inspector {
     if (sel.length === 1) root.append(...this.nodeSections(sel[0]));
     else if (sel.length > 1) root.append(this.multiSection(sel));
     if (d.type === 'button') root.append(this.menuSection(d.doc.id));
+    if (d.type === 'button') root.append(this.pressSlideSection());
     // a red divider line between the selected item's sections and the open design's own sections
     if (sel.length) root.append(h('hr', { class: 'insp-divider', 'aria-hidden': 'true', style: { border: '0', borderTop: '2px solid #EF4444', margin: '10px 0 4px', opacity: '1' } }));
     root.append(this.designSection());
@@ -699,7 +701,15 @@ export class Inspector {
         h('span', { class: 'muted', style: { fontSize: '11px' } }, ed?.hint || '')),
       this.field('Variable name', this.text('el-name', e.name, v => patch({ name: v.trim() }), { mono: true })),
       h('div', { class: 'grid2' },
-        this.field('Surface role', this.select('el-role', e.role || '', [['', '(none)'], ...SURFACE_ROLES], v => patch({ role: v || null }))),
+        this.field('Surface role', this.select('el-role', e.role || '', [['', '(none)'], ...SURFACE_ROLES], async v => {
+          const was = e.role;
+          await patch({ role: v || null });
+          // a scrollable container wraps the content drawn over it
+          if (v === 'container' && was !== 'container') {
+            const n = await d.wrapIntoContainer(e.id);
+            if (n) toast(`The container now holds ${n} element${n === 1 ? '' : 's'}; overflowing content scrolls vertically and horizontally`, 'ok', 2200);
+          }
+        })),
         this.field('Rotation °', this.num('el-rot', e.rotation, v => patch({ rotation: v })))),
       e.role === 'popup' ? this.field('Auto close after (sec, 0 = never)', this.num('el-autoclose', Number(e.attrs?.['data-autoclose']) || 0, v => patch({ attrs: { ...(e.attrs || {}), 'data-autoclose': v > 0 ? String(v) : null } }))) : null,
       e.role ? h('div', { class: 'muted', style: { fontSize: '11px' } }, 'The theme draws this element (fill, border, shadow). Setting colours below overrides the theme.') : null,
@@ -909,7 +919,7 @@ export class Inspector {
     const out = [
       this.section(`Container Shell · ${cfg.sizeMode.toUpperCase()}`,
         h('div', { class: 'muted', style: { fontSize: '11px' } },
-          `Outer shell box that limits child max size to ${Math.round(ib.w)}×${Math.round(ib.h)}px. Drop any element inside this container on the canvas.`),
+          `Outer shell box with a ${Math.round(ib.w)}×${Math.round(ib.h)}px content area. Content larger than it scrolls on the axes ticked below (an unticked axis limits the child size). Drop any element inside this container on the canvas.`),
         h('div', { class: 'row wrap', style: { gap: '14px' }, title: 'Content larger than the container scrolls (by drag / wheel, or by a menu item set to slide-scroll this container). On by default.' },
           ...[['data-scroll-y', 'Scroll vertical'], ['data-scroll-x', 'Scroll horizontal']].map(([k, l]) => h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
             h('input', { type: 'checkbox', 'data-f': `ct-${k}-${e.id}`, checked: e.attrs?.[k] !== 'false', onchange: ev => setContainerAttrs({ [k]: ev.target.checked ? 'true' : 'false' }) }), h('span', {}, l))),
@@ -1166,6 +1176,50 @@ export class Inspector {
    * Transitions of the open screen / element: an effect and a duration (seconds) for each navigation event, played in the
    * test view and in exported prototypes (go to screen, go back, open next element, close).
    */
+  /**
+   * Press & slide (visual joystick) of the open button: hold 1 s, then slide up / down / left / right to run that direction's
+   * action. Each enabled direction draws its public path (press-and-slide-u / d / l / r) over the button's icon.
+   */
+  pressSlideSection() {
+    const d = this.d, doc = d.doc;
+    // a button with menu items: press & slide is set per menu item (its edit window), never for all items at once
+    const rows = doc.menuItems || [];
+    if (rows.length) {
+      const its = menuConfig(doc.meta).itemPressSlide || {};
+      const on = rows.filter(r => its[String(r.id)]?.on);
+      return this.section('Press & slide',
+        h('div', { class: 'muted', style: { fontSize: '11px' } }, 'This button has menu items: press & slide is set per item. Open a menu item (✎) and switch on "Press & slide (joystick) for this item"; only that item reacts and shows the direction paths.'),
+        h('div', { style: { fontSize: '12px', marginTop: '4px' }, 'data-f': 'ps-items' }, on.length ? `On for: ${on.map(r => r.label || r.name).join(', ')}` : 'No menu item uses it yet.'));
+    }
+    const cur = pressSlideConfig(doc.meta, { all: true });
+    const save = patch => {
+      const next = { ...cur, ...patch };
+      d.updateDoc({ meta: { ...(doc.meta || {}), pressSlide: next } });
+    };
+    const onBox = h('input', { type: 'checkbox', checked: cur.on, 'data-f': 'ps-on', onchange: e => save({ on: e.target.checked }) });
+    const kids = [
+      h('label', { class: 'row', title: 'Press the button 1 second, then slide it like a joystick' }, onBox, h('span', {}, 'Press & slide (joystick)')),
+      h('div', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 6px' } },
+        'Hold the button (1 s), then slide it: each direction runs its own action and the button moves a little that way. Every direction that is on draws its press-and-slide path over the button\'s icon.')
+    ];
+    if (cur.on) {
+      const pathOf = k => findPressSlidePath(state.library.paths, k);
+      for (const k of PRESS_SLIDE_DIRS) {
+        const p = pathOf(k);
+        const chk = h('input', { type: 'checkbox', checked: cur[k].on, 'data-f': `ps-${k}-on`, title: `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}: on / off`, onchange: e => save({ [k]: { ...cur[k], on: e.target.checked } }) });
+        const sel = h('select', { 'data-f': `ps-${k}-action`, disabled: !cur[k].on, style: { flex: '1 1 auto', minWidth: '0', width: '100%' }, onchange: e => save({ [k]: { ...cur[k], action: e.target.value } }) },
+          ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: cur[k].action === v }, l)));
+        const thumb = p ? h('img', { class: 'thumb small', alt: p.key, title: p.key, src: api.svgUrl('path', p.id, { theme: state.themeKey, animated: 0 }), style: { width: '22px', height: '22px', objectFit: 'contain', flex: 'none' } }) : null;
+        kids.push(h('div', { class: 'field' }, h('span', {}, `Slide ${PRESS_SLIDE_DIR_LABELS[k].toLowerCase()}`),
+          h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', flexWrap: 'nowrap' } }, chk, thumb, sel)));
+      }
+      kids.push(this.field('Hold before sliding (seconds)', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: cur.holdMs / 1000, 'data-f': 'ps-hold',
+        onchange: e => { const v = Number(e.target.value); save({ holdMs: Number.isFinite(v) && v >= 0 ? Math.min(5000, Math.round(v * 1000)) : cur.holdMs }); } })));
+      kids.push(h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Try it in the test view (▶). Scroll moves the red focus frame through the list (or the content) of the screen\'s container; Enter opens the focused item; Back goes back.'));
+    }
+    return this.section('Press & slide', ...kids);
+  }
+
   transitionSection() {
     const d = this.d, doc = d.doc, type = d.type;
     const cur = transitionsOf(doc, type);
