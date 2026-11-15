@@ -580,7 +580,7 @@ export const menuActions = {
       d.doc.menuItems = m.items;
       d.doc.meta = { ...d.doc.meta, menu: m.config };
     }
-    const libBtn = d.instanceEdit ? null : findDesign('button', bid);   // a placed copy's menu settings are not the library button's
+    const libBtn = findDesign('button', bid);
     if (libBtn) {
       libBtn.menuItems = m.items;
       libBtn.meta = { ...libBtn.meta, menu: m.config };

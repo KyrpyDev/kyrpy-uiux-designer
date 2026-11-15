@@ -22,7 +22,7 @@ import { DEVICES, VISIBILITY_LEVELS } from '/domain/entities.js';
 import { isValidKey } from '/domain/naming.js';
 import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, PRESS_SLIDE_PATH_KEYS, pressSlideConfig, findPressSlidePath, nodePressSlideConfig, NODE_PRESS_SLIDE_ATTR } from '/domain/press-slide.js';
 import { openEventsModal, openLineageModal } from './collab-modals.js';
-import { ownDesignOf, OWN_DESIGN_ATTR, OWN_DESIGN_TYPES } from '/domain/instance-design.js';
+import { INSTANCE_ICON_ATTR, INSTANCE_LABEL_ATTR, INSTANCE_STYLE_ATTR, INSTANCE_CONTENT_TYPES, iconNodeOf, labelNodeOf, instanceIconId, instanceLabel, instanceStyle, buttonStyleOf } from '/domain/instance-content.js';
 
 
 const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
@@ -187,10 +187,13 @@ export class Inspector {
     const d = this.d, root = this.root;
     if (!d.doc) { clear(root); return; }
     const focusKey = document.activeElement?.dataset?.f, wasIn = root.contains(document.activeElement);
-    const scroll = root.scrollTop;
+    const sel = d.selectedNodes();
+    // another item selected: start at the top, where its own settings are
+    const selKey = `${d.type}:${d.doc.id}:${sel.map(n => n.id).join(',')}`;
+    const scroll = selKey === this.lastSelKey ? root.scrollTop : 0;
+    this.lastSelKey = selKey;
     this.tokenList();
     clear(root);
-    const sel = d.selectedNodes();
     this.lowSections = [];
     if (d.type === 'button') root.append(this.buttonStyleSection());
     if (sel.length === 1) root.append(...this.nodeSections(sel[0]));
@@ -199,29 +202,14 @@ export class Inspector {
     if (d.type === 'button') root.append(this.pressSlideSection());
     // a red divider line between the selected item's sections and the open design's own sections
     if (sel.length) root.append(h('hr', { class: 'insp-divider', 'aria-hidden': 'true', style: { border: '0', borderTop: '2px solid #EF4444', margin: '10px 0 4px', opacity: '1' } }));
-    // a placed copy (✎ on a placed item): its name, key, library and script stay the library item's
-    if (d.instanceEdit) root.append(this.placedCopySection());
-    else {
-      root.append(this.designSection());
-      if (d.type === 'screen' || d.type === 'element') root.append(this.transitionSection());
-      if (d.type === 'element') root.append(this.elementScriptSection());
-    }
+    root.append(this.designSection());
+    if (d.type === 'screen' || d.type === 'element') root.append(this.transitionSection());
+    if (d.type === 'element') root.append(this.elementScriptSection());
     root.append(this.nodesList());
     if (this.lowSections.length) root.append(...this.lowSections);
     root.scrollTop = scroll;
     if (wasIn && focusKey) { const f = root.querySelector(`[data-f="${focusKey}"]`); f?.focus(); f?.select?.(); }
     d.fitInspectorToContent?.();   // first render only: fit the panel to its content
-  }
-
-  /** The designer shows one placed copy of a library item: where its changes go, and the way back to the library item. */
-  placedCopySection() {
-    const d = this.d, s = d.instanceEdit, what = (TYPES[d.type]?.label || d.type).toLowerCase();
-    return this.section(`Placed copy · ${d.doc.label || d.doc.name}`,
-      h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'inst-copy-note' },
-        `Every change here is kept on this placed copy of ${s.host.type} “${s.host.name}”. The library ${what} and its other uses stay as they are; no library item is created.`),
-      h('div', { class: 'row wrap' },
-        ibtn('back', `Done: back to ${s.host.type} “${s.host.name}”`, () => d.closePlacedCopy(), { cls: 'primary' }),
-        ibtn('pencil', `Edit the library ${what} (every use)`, async () => { const t = d.instanceEdit; if (!t || !(await d.confirmLeave())) return; d.editLibraryItem({ kind: 'instance', refType: t.type, refId: t.id }); })));
   }
 
   /** Top of the button inspector: change the button style (shape) of the open button. */
@@ -536,7 +524,6 @@ export class Inspector {
           ? 'These settings belong to this placed button only (the library button is unchanged). Show / hide items here (👁); add, edit, reorder or remove items in the button itself (✎ Edit).'
           : 'Changes here apply to this placed button only; the library button stays as it is. To change the button everywhere it is used, open it with ✎ Edit.'),
         h('div', { class: 'row wrap' },
-          ibtn('pencil', 'Edit the library button (every screen)', () => d.editLibraryItem(inst), { desc: 'Open the library button in its own designer: changes there apply wherever it is used' }),
           changed ? ibtn('undo', 'Use the button\'s settings', () => writeOwn({}), { desc: 'Drop this placed button\'s own menu settings', dataset: { f: 'mc-inst-reset' } }) : null),
         ...settings,
         h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')));
@@ -716,6 +703,19 @@ export class Inspector {
     };
     const secs = [];
 
+    // a placed library button / element: ITS OWN inspector first (style, icon, label, click, menu, press & slide),
+    // every change kept on this placed copy only; "Edit the original" opens the library item in its own designer
+    const placed = e.kind === 'instance' && INSTANCE_CONTENT_TYPES.has(e.refType) && e.refId ? this.placedItemSection(e, setAttr) : null;
+    if (placed) {
+      secs.push(placed);
+      if (e.refType === 'button') {
+        secs.push(this.menuSection(e.refId, e));
+        const psSec = this.pressSlideInstanceSection(e);
+        if (psSec) secs.push(psSec);
+      }
+      secs.push(h('div', { class: 'muted', 'data-f': 'pi-divider', style: { borderTop: '2px solid var(--accent, #3B82F6)', margin: '10px 0 2px', padding: '4px 0 0', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.04em' } }, 'On this screen · name, place and size of this copy'));
+    }
+
     // library icon at the very top: shows the icon in use and opens the searchable icon picker to change it
     if (e.kind === 'instance' && e.refType === 'icon') {
       const cur = findDesign('icon', e.refId);
@@ -760,13 +760,8 @@ export class Inspector {
     // identity (placed at the very top of the inspector panel when any element is selected, with dynamic element type title)
     const ed = d.editorFor(e);
     secs.push(this.section(elementTypeTitle(e),
-      h('div', { class: 'row wrap' }, ibtn('pencil', ed?.label || 'Open editor', () => d.openEditor(e), { desc: ed?.hint || '', disabled: !ed || ed.disabled, cls: 'primary', dataset: { f: 'el-open-editor' } }),
+      placed ? null : h('div', { class: 'row wrap' }, ibtn('pencil', ed?.label || 'Open editor', () => d.openEditor(e), { desc: ed?.hint || '', disabled: !ed || ed.disabled, cls: 'primary' }),
         h('span', { class: 'muted', style: { fontSize: '11px' } }, ed?.hint || '')),
-      // a placed button / element: ✎ above edits this copy only; the library item has its own way in
-      e.kind === 'instance' && OWN_DESIGN_TYPES.has(e.refType) && !d.instanceEdit ? h('div', { class: 'row wrap' },
-        ibtn('template', `Edit the library ${(TYPES[e.refType]?.label || e.refType).toLowerCase()} (every use)`, () => d.editLibraryItem(e), { desc: 'Opens the library item itself: changes there apply wherever it is used', dataset: { f: 'el-edit-library' } }),
-        ownDesignOf(e) ? ibtn('undo', 'Use the library design', () => setAttr(OWN_DESIGN_ATTR, null), { desc: 'Drop the design kept on this placed copy: it follows the library item again', dataset: { f: 'el-drop-own' } }) : null,
-        ownDesignOf(e) ? h('span', { class: 'muted', style: { fontSize: '11px' } }, 'This placed copy has its own design.') : null) : null,
       this.field('Variable name', this.text('el-name', e.name, v => patch({ name: v.trim() }), { mono: true })),
       h('div', { class: 'grid2' },
         this.field('Surface role', this.select('el-role', e.role || '', [['', '(none)'], ...SURFACE_ROLES], async v => {
@@ -786,7 +781,7 @@ export class Inspector {
     const roleSec = this.roleSettingsSection(e, setAttr);
     if (roleSec) secs.push(roleSec);
 
-    if (e.kind === 'instance' && e.refType === 'button' && e.refId) {
+    if (!placed && e.kind === 'instance' && e.refType === 'button' && e.refId) {
       secs.push(this.menuSection(e.refId, e));
       const psSec = this.pressSlideInstanceSection(e);
       if (psSec) secs.push(psSec);
@@ -862,8 +857,55 @@ export class Inspector {
 
     // events & click action (every element on any design can have click, mouseover, release, drag&drop events)
     // (shown at the bottom of the inspector, below the design / menu / layers sections)
-    this.lowSections = [this.clickSection(e), this.animationSection(e)];
+    this.lowSections = placed ? [this.animationSection(e)] : [this.clickSection(e), this.animationSection(e)];   // a placed item shows its click action at the top
     return secs;
+  }
+
+  /**
+   * A library button / element placed on this design: its icon, label and click action for this placed copy only
+   * (node attrs data-inst-icon / data-inst-label and the node's own onClick). The library item is not changed.
+   */
+  placedItemSection(e, setAttr) {
+    const lib = findDesign(e.refType, e.refId);
+    if (!lib) return null;
+    const d = this.d, what = (TYPES[e.refType]?.label || e.refType).toLowerCase(), nodes = lib.nodes || [];
+    const kids = [
+      h('div', { class: 'row wrap', style: { gap: '8px', alignItems: 'center' } },
+        ibtn('pencil', `Edit the original ${what}`, () => d.openEditor(e), { cls: 'primary', desc: `Open the library ${what} “${lib.label || lib.key}” in its own designer: changes there are saved on the library ${what} and apply wherever it is used`, dataset: { f: 'pi-edit-original' } }),
+        h('span', { class: 'muted', style: { fontSize: '11px' } }, `${lib.label || lib.key} (${lib.key})`)),
+      h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'pi-note' }, `Changes in this panel apply to this placed ${what} only; the library ${what} stays as it is. Use ✎ Edit the original ${what} to change it everywhere.`)];
+    // button style (shape of the button body)
+    if (e.refType === 'button') {
+      const libStyle = buttonStyleOf(lib), ownStyle = instanceStyle(e);
+      kids.push(this.field('Button style', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
+        h('div', { class: 'grow' }, this.select('pi-style', ownStyle ?? libStyle, BUTTON_STYLES.map(b => [b.key, b.label]), v => setAttr(INSTANCE_STYLE_ATTR, v === libStyle ? null : v))),
+        ownStyle != null ? ibtn('undo', `Use the library ${what}'s style`, () => setAttr(INSTANCE_STYLE_ATTR, null), { dataset: { f: 'pi-style-reset' } }) : null)));
+    }
+    // icon
+    const libIcon = iconNodeOf(nodes), ownIcon = instanceIconId(e), iconId = ownIcon ?? libIcon?.refId ?? null, ic = iconId != null ? findDesign('icon', iconId) : null;
+    if (libIcon) {
+      kids.push(h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+        ic ? h('img', { class: 'thumb small', alt: ic.label || ic.key, src: api.svgUrl('icon', ic.id, { theme: state.themeKey, animated: 0 }), style: { width: '36px', height: '36px', objectFit: 'contain' } }) : null,
+        h('div', { class: 'grow', style: { minWidth: 0 } },
+          h('div', { style: { fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, 'data-f': 'pi-icon-name' }, ic ? ic.label || ic.key : `icon #${iconId}`),
+          h('div', { class: 'muted', style: { fontSize: '11px' } }, ownIcon != null ? 'Icon of this placed copy' : `Icon of the library ${what}`)),
+        ibtn('search', 'Change icon…', () => openIconPicker(iconId, async icon => {
+          await setAttr(INSTANCE_ICON_ATTR, Number(icon.id) === Number(libIcon.refId) ? null : String(icon.id));
+          toast(`Icon of this placed ${what}: “${icon.label || icon.key}”`, 'ok', 1400);
+        }), { cls: 'primary', desc: `Pick another icon for this placed ${what} only`, dataset: { f: 'pi-icon' } }),
+        ownIcon != null ? ibtn('undo', `Use the library ${what}'s icon`, () => setAttr(INSTANCE_ICON_ATTR, null), { dataset: { f: 'pi-icon-reset' } }) : null));
+    }
+    // label
+    const libLabel = labelNodeOf(nodes), ownLabel = instanceLabel(e);
+    if (libLabel) {
+      kids.push(h('div', { class: 'row', style: { gap: '6px', alignItems: 'flex-end' } },
+        h('div', { class: 'grow' }, this.field('Label', this.text('pi-label', ownLabel ?? libLabel.text ?? '', v => setAttr(INSTANCE_LABEL_ATTR, v === (libLabel.text ?? '') ? null : v)))),
+        ownLabel != null ? ibtn('undo', `Use the library ${what}'s label`, () => setAttr(INSTANCE_LABEL_ATTR, null), { dataset: { f: 'pi-label-reset' } }) : null));
+    }
+    // click action (this node's own)
+    const click = this.clickSection(e);
+    kids.push(h('div', { class: 'insp-sub', style: { marginTop: '6px' } }, ...[...click.childNodes].filter(n => n.tagName !== 'H4')));
+    return this.section(`${TYPES[e.refType]?.label || e.refType} · ${lib.name || lib.key} · this placed copy`, ...kids);
   }
 
   /**

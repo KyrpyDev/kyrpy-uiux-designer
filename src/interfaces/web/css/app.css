@@ -980,8 +980,6 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
 .dz-preview-banner { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 10px;
   padding: 5px 6px 5px 12px; border-radius: 999px; background: rgba(245, 158, 11, .16); border: 1px solid #f59e0b; color: #fde68a; font-size: 12px; white-space: nowrap; }
 .dz-preview-banner[hidden] { display: none; }
-.dz-inplace-banner { white-space: normal; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px); border-radius: 14px; }
-.dz-inplace-banner > span { flex: 1 1 260px; }
 .device-preview .dz-viewport { cursor: grab; }
 .device-preview .dz-inspector, .device-preview .dz-bar, .device-preview .dz-pathbar { pointer-events: none; opacity: .5; }
 .device-preview .dz-overlay { visibility: hidden; }

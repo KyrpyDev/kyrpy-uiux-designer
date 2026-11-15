@@ -57,17 +57,36 @@ test('a placed press & slide button uses its own settings when it has them', () 
   assert.match(render(btn(8, {}), place(8, { [NODE_PRESS_SLIDE_ATTR]: JSON.stringify({ on: true }) })), /class="ud-ps"/);
 });
 
-test('a placed copy with its own design draws its own nodes and size; the attribute never reaches the markup', async () => {
-  const { OWN_DESIGN_ATTR, ownDesignAttr, ownDesignOf, ownDesignNodes } = await import('../domain/instance-design.js');
-  const b = btn(5, {});
-  const lib = render(b, place(5));
-  assert.match(lib, /<circle[^>]*r="24"/);
-  const own = ownDesignAttr({ nodes: [{ id: 1, kind: 'shape', tag: 'rect', parentId: null, ord: 0, attrs: { width: 96, height: 48, fill: '#f00' } }], width: 96, height: 48, meta: {} });
-  const svg = render(b, place(5, { [OWN_DESIGN_ATTR]: own }));
-  assert.doesNotMatch(svg, /<circle[^>]*r="24"/);
-  assert.match(svg, /<rect[^>]*fill="#f00"/);
-  assert.match(svg, /scale\(0\.5 1\)/);                 // 48 box / own width 96
-  assert.doesNotMatch(svg, /data-own-design/);
-  assert.equal(ownDesignOf({ attrs: { [OWN_DESIGN_ATTR]: 'broken' } }), null);
-  assert.equal(ownDesignNodes([{ kind: 'instance', attrs: { [OWN_DESIGN_ATTR]: own } }]).length, 1);
+test('a placed copy shows its own icon and label; the library nodes and the markup stay clean', async () => {
+  const { INSTANCE_ICON_ATTR, INSTANCE_LABEL_ATTR, applyInstanceContent } = await import('../domain/instance-content.js');
+  const nodes = [
+    { id: 1, kind: 'shape', tag: 'rect', parentId: null, ord: 0, attrs: { width: 48, height: 48 } },
+    { id: 2, kind: 'instance', tag: 'use', refType: 'icon', refId: 5, parentId: null, ord: 1, attrs: { x: 12, y: 4, width: 24, height: 24 } },
+    { id: 3, kind: 'shape', tag: 'text', text: 'Save', parentId: null, ord: 2, attrs: { x: 24, y: 40 } }
+  ];
+  const b = { id: 4, key: 'b4', width: 48, height: 48, meta: {}, nodes };
+  const lib = indexLibrary({ buttons: [b], icons: [{ id: 5, key: 'ic-a', width: 24, height: 24, nodes: [] }, { id: 6, key: 'ic-b', width: 24, height: 24, nodes: [] }] });
+  const draw = attrs => renderDocument({ owner: b, nodes: [place(4, attrs)], ctx: createContext({ theme, lib }) });
+  const plain = draw();
+  assert.match(plain, /href="#i-ic-a"/); assert.match(plain, />Save</);
+  const own = draw({ [INSTANCE_ICON_ATTR]: '6', [INSTANCE_LABEL_ATTR]: 'Kaydet' });
+  assert.match(own, /href="#i-ic-b"/); assert.doesNotMatch(own, /href="#i-ic-a"/);
+  assert.match(own, />Kaydet</); assert.doesNotMatch(own, />Save</);
+  assert.doesNotMatch(own, /data-inst-/);
+  assert.equal(nodes[1].refId, 5); assert.equal(nodes[2].text, 'Save');   // the library item is untouched
+  assert.equal(applyInstanceContent(nodes, { attrs: {} }), nodes);
+});
+
+test('a placed button can take its own button style; the library button keeps its shape', async () => {
+  const { INSTANCE_STYLE_ATTR, applyInstanceContent, buttonStyleOf } = await import('../domain/instance-content.js');
+  const nodes = [{ id: 1, kind: 'shape', tag: 'rect', role: 'button', parentId: null, ord: 0, attrs: { x: 0, y: 0, width: 48, height: 48, rx: 24 } }];
+  const b = { id: 5, key: 'b5', width: 48, height: 48, meta: {}, nodes };
+  assert.equal(buttonStyleOf(b), 'circle');
+  const lib = indexLibrary({ buttons: [b] });
+  const draw = attrs => renderDocument({ owner: b, nodes: [place(5, attrs)], ctx: createContext({ theme, lib }) });
+  assert.match(draw(), /rx="24"/);
+  const own = draw({ [INSTANCE_STYLE_ATTR]: 'square' });
+  assert.match(own, /rx="4.8"/); assert.doesNotMatch(own, /data-inst-style/);
+  assert.equal(nodes[0].attrs.rx, 24);                                         // the library item is untouched
+  assert.equal(applyInstanceContent(nodes, { refType: 'button', attrs: { [INSTANCE_STYLE_ATTR]: 'nope' } }, b), nodes);
 });

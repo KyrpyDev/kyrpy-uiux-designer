@@ -80,10 +80,8 @@ const app = {
    * If the design that is open has unsaved changes the user is asked first. `push`: true = new history entry, 'replace', false = from history.
    * Resolves true when the design is open.
    */
-  async openDesign(type, id, { push = true, instance = false } = {}) {
-    // the same item open as a placed copy (✎ on a placed item) is not the library item: reload it
-    const same = this.current && this.current.type === type && Number(this.current.id) === Number(id) && this.designer.doc;
-    if (same && !instance && !this.designer.instanceEdit) { state.mode = 'screen'; renderMode(); return true; }
+  async openDesign(type, id, { push = true } = {}) {
+    if (this.current && this.current.type === type && Number(this.current.id) === Number(id) && this.designer.doc) { state.mode = 'screen'; renderMode(); return true; }
     if (!(await this.designer.confirmLeave())) return false;
     state.mode = 'screen'; renderMode();
     try {
@@ -129,13 +127,13 @@ const app = {
     // closing (✕, Esc, Close) asks about unsaved changes first
     const m = modal({ title, full: true, content: root, beforeClose: () => d.confirmLeave(), onClose: () => { this.modals = this.modals.filter(x => x !== d); onClose?.(); } });
     d = new Designer(root, { modal: true, onClose: () => m.requestClose(), openTest: (t, i) => openTestRunner(this, { type: t, id: i }),
-      openDesign: async (t, i, o) => {
+      openDesign: async (t, i) => {
         if (d.actionsLive && t === 'screen') {
           d._keepActionsLive = true;
           await d.load('screen', i);
           return;
         }
-        if (await d.confirmLeave()) { m.close(); await this.openDesign(t, i, o); }
+        if (await d.confirmLeave()) { m.close(); this.openDesign(t, i); }
       }
     });
     this.modals.push(d);
@@ -978,7 +976,7 @@ async function boot() {
   await reloadLibrary({ silent: true });
   app.designer = new Designer($('#dz-root'), {
     openPage: t => openPageType(t).catch(err => toast(err.message, 'error')),
-    openDesign: (t, i, o) => app.openDesign(t, i, o),
+    openDesign: (t, i) => app.openDesign(t, i),
     onBack: () => app.back(),
     canBack: app.canBack,
     backTarget: app.backTarget,

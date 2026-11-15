@@ -9,8 +9,6 @@ import { popupAutoCloseSecs } from '/domain/theme.js';
 import { h, clear, toast, promptBox, confirmBox, choiceBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { api } from '../api.js';
-import { instanceSession, isInstanceDoc, startInstanceEdit, endInstanceEdit, claimInstanceLoad } from '../instance-edit.js';
-import { OWN_DESIGN_TYPES } from '/domain/instance-design.js';
 import { markEdited, sessionEdited, lastEdited, rememberName, editedName, forgetSessionEdited } from '../edited.js';
 import { state, emit, renderContext, currentTheme, findDesign, libOf, projectLabel, canEditOwned, ownerLabel, isPublicLibraryItem } from '../state.js';
 import { prefixedVariableName } from '/domain/naming.js';
@@ -148,8 +146,6 @@ export class Designer {
 
   async load(type, id) {
     if (this.menu) { this.menu.pinned = null; this.menu.hideToolbar(); }   // no menu toolbar left over from the previous document
-    // a placed copy opened with ✎ keeps its session; opening anything else goes back to the library items
-    claimInstanceLoad(type, id);
     const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
     this._loadingTarget = { type, id: Number(id), seq };
     let rec;
@@ -634,12 +630,6 @@ export class Designer {
 
   async save() {
     if (!this.doc) return false;
-    if (this.instanceEdit) {   // a placed copy: every change is already kept on its screen node
-      await this.settle();
-      this.markBaseline();
-      toast(`Kept in the placed copy on ${this.instanceEdit.host.type} “${this.instanceEdit.host.name}”`, 'ok', 2200);
-      return true;
-    }
     if (!this.isOwnedByCurrentUser(this.doc)) {
       toast('This item is owned by another user — Save is disabled. Please use "Save as…".', 'error');
       return false;
@@ -1116,7 +1106,7 @@ export class Designer {
 
       this.hoverBar.append(...[
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
-        ibtn('pencil', 'Open Editor (Double-click)', e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
+        ibtn('pencil', `${this.editorFor(target)?.label || 'Open editor'} (Double-click)`, e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
         this.type === 'screen' || this.type === 'element' ? (() => {
           const ct = clickTargetOf(target), on = ct.screenId != null || ct.elementId != null;
           const what = ct.screenId != null ? `go to “${findDesign('screen', ct.screenId)?.label || 'screen ' + ct.screenId}”` : ct.elementId != null ? `show “${findDesign('element', ct.elementId)?.label || 'element ' + ct.elementId}” as popup` : 'nothing set';
@@ -1446,19 +1436,10 @@ export class Designer {
   }
 
   syncInPlaceUi() {
-    const ip = this.inPlace, inst = this.instanceEdit;
+    const ip = this.inPlace;
     if (!this.inPlaceBanner) return;
-    this.inPlaceBanner.hidden = !ip && !inst;
+    this.inPlaceBanner.hidden = !ip;
     if (this.frame) this.frame.style.visibility = ip ? 'hidden' : '';
-    if (!ip && inst) {
-      const what = (TYPES[this.type]?.label || this.type).toLowerCase();
-      clear(this.inPlaceBanner);
-      this.inPlaceBanner.append(
-        h('span', { dataset: { f: 'inst-banner' } }, `Editing the placed copy on ${inst.host.type} “${inst.host.name}”: changes stay on that ${inst.host.type}; the library ${what} is unchanged`),
-        h('button', { class: 'btn small', dataset: { act: 'inst-library' }, title: `Open the library ${what} itself: changes there apply wherever it is used`, onclick: async () => { const s = this.instanceEdit; if (!s || (this.confirmLeave && !(await this.confirmLeave()))) return; this.opts.openDesign?.(s.type, s.id); } }, `Edit the library ${what}`),
-        h('button', { class: 'btn small primary', dataset: { act: 'inst-done' }, onclick: () => this.closePlacedCopy() }, 'Done'));
-      return;
-    }
     if (!ip) return;
     clear(this.inPlaceBanner);
     this.inPlaceBanner.append(
@@ -1595,14 +1576,9 @@ export class Designer {
   editorFor(e) {
     if (!e) return null;
     if (e.tag === 'text') return { label: 'Edit text', hint: 'change the words', run: () => this.editText(e) };
-    if (e.kind === 'instance' && OWN_DESIGN_TYPES.has(e.refType) && this.doc && !isInstanceDoc(this.type, this.doc.id)) {
-      const lib = findDesign(e.refType, e.refId), what = (TYPES[e.refType]?.label || e.refType).toLowerCase();
-      return { label: `Edit this placed ${what}`, hint: lib ? `${lib.label || lib.key}: this copy only, the library ${what} stays as it is` : 'this design no longer exists',
-        disabled: !lib, run: () => this.editPlacedCopy(e) };
-    }
     if (e.kind === 'instance') {
       const lib = findDesign(e.refType, e.refId), what = (TYPES[e.refType]?.label || e.refType).toLowerCase();
-      return { label: `Open ${what} designer`, hint: lib ? `${lib.label} (${lib.key}) in its own designer` : 'this design no longer exists', disabled: !lib || !this.opts.openDesign, run: () => this.opts.openDesign(e.refType, e.refId) };
+      return { label: `Edit the original ${what}`, hint: lib ? `${lib.label} (${lib.key}) in its own designer; changes there apply wherever it is used` : 'this design no longer exists', disabled: !lib || !this.opts.openDesign, run: () => this.opts.openDesign(e.refType, e.refId) };
     }
     if (e.tag === 'g') return { label: 'Enter group', hint: 'select the items inside the group', run: () => { const kids = this.nodes.filter(n => n.parentId === e.id); if (kids.length) { this.enteredGroupId = e.id; this.select(kids.map(k => k.id)); } else toast('This group is empty'); } };
     if (this.vtx.canEdit(e)) return { label: 'Edit vertices', hint: 'drag the points and bezier handles (Enter)', run: () => this.vtx.enter(e) };
@@ -1617,40 +1593,6 @@ export class Designer {
       if (cur) await this.patchNode(cur.id, { refId: icon.id }); else await this.addInstance('icon', icon.id);
       toast(`Button icon: "${icon.label || icon.key}"`, 'ok', 1400);
     });
-  }
-
-  /** The placed copy being edited (✎ on a placed button / element), or null. */
-  get instanceEdit() { return this.doc && isInstanceDoc(this.type, this.doc.id) ? instanceSession() : null; }
-
-  /**
-   * ✎ on a placed button / element: its designer opens on a copy and every change is kept in this placed node
-   * (attr data-own-design); the library item is not changed and no library item is created.
-   */
-  async editPlacedCopy(e) {
-    if (!e || e.kind !== 'instance' || !OWN_DESIGN_TYPES.has(e.refType)) return;
-    if (this.confirmLeave && !(await this.confirmLeave())) return;
-    const host = { type: this.type, id: this.doc.id, name: this.doc.name };
-    try { await startInstanceEdit(host, e); } catch (err) { return toast(err.message, 'error'); }
-    if (this.opts.openDesign) await this.opts.openDesign(e.refType, e.refId, { instance: true });
-    else await this.load(e.refType, e.refId);
-    if (instanceSession()?.pending) endInstanceEdit();   // the copy did not open (unsaved changes kept, cancelled)
-    if (this.instanceEdit) toast(`Editing this placed copy: changes stay on ${host.type} “${host.name}”`, 'info', 2600);
-  }
-
-  /** The library item behind a placed node, in its own designer (changes apply wherever it is used). */
-  editLibraryItem(e) {
-    if (!e || e.kind !== 'instance' || !this.opts.openDesign) return;
-    return this.opts.openDesign(e.refType, e.refId);
-  }
-
-  /** Done in a placed copy: back to its screen with the placed item selected. */
-  async closePlacedCopy() {
-    const s = this.instanceEdit;
-    if (!s) return;
-    if (this.confirmLeave && !(await this.confirmLeave())) return;
-    endInstanceEdit();
-    if (this.opts.openDesign) await this.opts.openDesign(s.host.type, s.host.id); else await this.load(s.host.type, s.host.id);
-    if (this.byId(s.host.nodeId)) this.select([s.host.nodeId]);
   }
 
   openEditor(e = this.selectedNodes()[0]) {
