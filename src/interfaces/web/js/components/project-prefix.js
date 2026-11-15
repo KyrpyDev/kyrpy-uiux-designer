@@ -52,11 +52,13 @@ export function openCreateProjectDialog({ title = 'New project', name = '', desc
       h('option', { value: 'public', selected: visibility === 'public' }, 'Public (items visible to all projects)')) : null;
     const keyNote = h('small', { class: 'muted', 'data-f': 'np-key-note', style: { fontSize: '11px' } });
     const prefixNote = h('small', { class: 'muted', 'data-f': 'np-prefix-note', style: { fontSize: '11px' } });
-    const taken = (field, v) => (state.projects || []).some(p => field === 'key' ? p.key === v : p.settings?.prefix === v);
+    // project variables are global; prefixes are unique among the signed-in user's own projects
+    const taken = (field, v) => (state.projects || []).some(p => field === 'key' ? p.key === v
+      : Number(p.ownerId) === Number(state.user?.id) && p.settings?.prefix === v);
     const check = () => {
       const k = keyIn.value.trim(), p = prefixIn.value.trim().toLowerCase();
       const keyBad = !isValidKey(k) ? 'Dashed lowercase words (a-z, 0-9, -), starting with a letter' : taken('key', k) ? `"${k}" is already used by another project` : '';
-      const prefixBad = !isValidProjectPrefix(p) ? '2-16 lowercase letters or digits, starting with a letter' : taken('prefix', p) ? `"${p}" is already used by another project` : '';
+      const prefixBad = !isValidProjectPrefix(p) ? '2-16 lowercase letters or digits, starting with a letter' : taken('prefix', p) ? `"${p}" is already used by another of your projects` : '';
       keyNote.textContent = keyBad || 'Used by MCP tools (uiux_init, uiux_edit_project…), the API and exports to address this project.';
       keyNote.style.color = keyBad ? 'var(--danger, #EF4444)' : '';
       prefixNote.textContent = prefixBad || `Set once, cannot be changed: public items dropped here are named ${p || 'prefix'}-[itemtype]-name.`;

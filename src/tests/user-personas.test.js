@@ -1072,7 +1072,10 @@ test('Persona 10 (@kyrpy-uiux-designer): Container & Carousel Container basic el
         'data-size-mode': 'responsive',
         'data-outer-margin': 16,
         'data-inner-margin': 14,
-        'data-fit-screen': 'width'
+        'data-fit-screen': 'width',
+        // scrolling off on both axes: the container limits its children's size (a scrollable one lets them overflow)
+        'data-scroll-x': 'false',
+        'data-scroll-y': 'false'
       }
     });
     assert.equal(cont1Res.status, 200);

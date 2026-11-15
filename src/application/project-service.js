@@ -107,14 +107,17 @@ export class ProjectService {
     const key = input.key ? String(input.key).trim() : uniqueKey(slugify(name), k => this.projects.keyExists(k));
     if (!isValidKey(key)) throw new ValidationError('Project key must be dashed lowercase words');
     if (this.projects.keyExists(key)) throw new ConflictError(`Project key "${key}" already exists`);
-    // a project created by a user needs its global prefix (set once here, used for every dropped public item)
+    // a project created by a user needs its prefix (unique per owner, set once here, used for every dropped public item)
     let prefix = null;
     if (input.prefix !== undefined && input.prefix !== null) {
       prefix = String(input.prefix ?? '').trim().toLowerCase();
       if (!isValidProjectPrefix(prefix)) throw new ValidationError('Project prefix is required: 2-16 lowercase letters or digits, starting with a letter');
-      if (this.list({ includePublic: true }).some(p => p.settings?.prefix === prefix)) throw new ConflictError(`Project prefix "${prefix}" is already used by another project`);
     }
     const ownerId = actor?.id ?? Number(input.ownerId || fallbackOwnerId(this));
+    // prefixes are unique in the owner's scope: two users may both have an "app" project, one user may not
+    if (prefix && this.projects.list().some(p => Number(p.ownerId) === Number(ownerId) && p.settings?.prefix === prefix)) {
+      throw new ConflictError(`Project prefix "${prefix}" is already used by another of your projects`);
+    }
     if (isSystemUser(this.users.get(ownerId))) throw new ValidationError('A system account cannot own a project');
     const rawVis = input.visibility === 'project' ? 'private' : input.visibility;
     const visibility = ['public', 'private'].includes(rawVis) ? rawVis : 'public';

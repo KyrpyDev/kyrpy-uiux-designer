@@ -3,6 +3,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../domain/errors.
 import { restoreBody, workflowRestoreBody } from '../domain/doc-fingerprint.js';
 import { fallbackOwnerId } from './default-owner.js';
 import { noteSkipped, ForbiddenError } from './service-shared.js';
+import { AGENT_USERNAME } from '../mcp/domain/agent-user.js';
 
 export class CollaborationService {
   constructor({ changes, projects, users, auth, services = {}, workflows = null, transaction = null }) {
@@ -27,8 +28,13 @@ export class CollaborationService {
       try { reviewer = Number(this.projects?.get(1)?.ownerId || fallbackOwnerId(this)); } catch { /* no default project */ }
       return { ownerId: reviewer };
     }
-    const isCollaborator = actorId != null && Number(actorId) !== ownerId;
-    return force || isCollaborator ? { ownerId } : null;
+    // an item the AI agent created (it cannot review anything): its project's owner reviews member edits instead
+    let reviewerId = ownerId;
+    if (this.users?.get(ownerId)?.username === AGENT_USERNAME) {
+      try { reviewerId = Number(this.projects?.get(Number(doc.projectId ?? 1))?.ownerId ?? ownerId); } catch { /* project gone */ }
+    }
+    const isCollaborator = actorId != null && Number(actorId) !== ownerId && Number(actorId) !== reviewerId;
+    return force || isCollaborator ? { ownerId: reviewerId } : null;
   }
 
   /**

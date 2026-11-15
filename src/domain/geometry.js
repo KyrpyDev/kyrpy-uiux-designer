@@ -330,12 +330,35 @@ export function containerInnerBox(containerNode, allNodes = [], libElements = nu
  * 1. Its width `w` and height `h` never exceed the container's inner width/height (`outerBox - 2*innerMargin`).
  * 2. Its position `(x, y)` stays inside the container's inner content area.
  */
+/**
+ * The axes a plain (scrollable) container scrolls: `data-scroll-x` / `data-scroll-y`, both on unless set to "false".
+ * Carousels and repeaters lay out their own items and never scroll this way.
+ */
+export function containerScrollAxes(containerNode, libElements = null) {
+  const a = containerNode?.attrs || {};
+  if (!isContainerNode(containerNode, libElements) || isCarouselContainerNode(containerNode, libElements)) return { x: false, y: false };
+  if (containerNode.role === 'repeater-container' || a['data-container'] === 'repeater') return { x: false, y: false };
+  if (containerNode.kind === 'instance' && containerNode.refType === 'element' && libElements) {
+    const t = typeof libElements.get === 'function' ? libElements.get(containerNode.refId)
+      : Array.isArray(libElements) ? libElements.find(x => x.id === containerNode.refId) : null;
+    if (t && (t.key === 'html-repeater' || t.meta?.containerType === 'repeater')) return { x: false, y: false };
+  }
+  const on = v => v !== 'false' && v !== false;
+  return { x: on(a['data-scroll-x']), y: on(a['data-scroll-y']) };
+}
+
+/**
+ * Fits a child box into a container's inner box. Along an axis the container scrolls, the child only has to start inside
+ * the inner box: it may be larger and run past the far edge (that part scrolls into view at run time).
+ */
 export function clampBoxToContainer(childBox, containerNode, allNodes = [], libElements = null) {
   const inner = containerInnerBox(containerNode, allNodes, libElements);
-  const w = round(Math.max(4, Math.min(num(childBox.w, 24), inner.w)));
-  const h = round(Math.max(4, Math.min(num(childBox.h, 24), inner.h)));
-  const x = round(Math.max(inner.x, Math.min(num(childBox.x, inner.x), inner.x + inner.w - w)));
-  const y = round(Math.max(inner.y, Math.min(num(childBox.y, inner.y), inner.y + inner.h - h)));
+  const scroll = containerScrollAxes(containerNode, libElements);
+  const cw = Math.max(4, num(childBox.w, 24)), chh = Math.max(4, num(childBox.h, 24));
+  const w = round(scroll.x ? cw : Math.min(cw, inner.w));
+  const h = round(scroll.y ? chh : Math.min(chh, inner.h));
+  const x = round(scroll.x ? Math.max(inner.x, num(childBox.x, inner.x)) : Math.max(inner.x, Math.min(num(childBox.x, inner.x), inner.x + inner.w - w)));
+  const y = round(scroll.y ? Math.max(inner.y, num(childBox.y, inner.y)) : Math.max(inner.y, Math.min(num(childBox.y, inner.y), inner.y + inner.h - h)));
   return { x, y, w, h };
 }
 

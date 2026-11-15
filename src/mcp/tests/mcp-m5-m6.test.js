@@ -1,6 +1,6 @@
 /**
  * Milestones M5 (item requests) and M6 (code bindings, react-tsx adapter), plus the project-scope rule
- * (used foreign items are cloned into the project) and the kyrpy-agent-designer attribution.
+ * (used foreign items are cloned into the project) and the attribution of AI-created items to the key's user.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -78,7 +78,7 @@ test('M5 exit sensor: request → designer agent fulfils → approve → consume
     const pull = await w.ok('coder', 'uiux_get_manifest', { sinceVersion: v0 });
     assert.deepEqual(pull.added.map(a => a.key), ['ada-bell-unread'], 'the consumer pull sees the new item');
     const bell = w.c.icon.get('ada-bell-unread');
-    assert.equal(w.c.users.get(bell.creatorId).username, 'kyrpy-agent-designer', 'AI-created items belong to the agent user');
+    assert.equal(w.c.users.get(bell.creatorId).username, 'ada', 'AI-created items belong to the user whose API key created them');
     const item = await w.ok('coder', 'uiux_get_item', { type: 'icon', ref: 'ada-bell-unread' });
     assert.equal(item.untrusted, false, 'approved agent items of the own project are trusted');
     assert.deepEqual(item.bindings.map(b => b.file), ['src/icons/BellUnread.tsx'], 'binding recorded on approval');
@@ -119,7 +119,7 @@ test('project scope: a used public item is cloned into the project and reference
     assert.equal(clone.key, 'bob-filter', 'per-project keys: the clone keeps the key');
     assert.equal(clone.projectId, w.p.id);
     assert.equal(clone.visibility, 'project');
-    assert.equal(w.c.users.get(clone.creatorId).username, 'kyrpy-agent-designer');
+    assert.equal(w.c.users.get(clone.creatorId).username, 'ada', 'the clone belongs to the API key user');
     const b = w.c.button.get('ada-filter-btn');
     assert.equal(b.nodes.find(n => n.kind === 'instance').refId, clone.id, 'the button uses the clone');
     assert.equal(w.c.mcp.query.reads.findInProject('icon', 'bob-filter', w.bp.id).visibility, 'public', 'the public original is untouched');

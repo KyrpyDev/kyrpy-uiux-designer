@@ -22,6 +22,7 @@ import { cleanFilePath } from './binding-service.js';
 import { fromPortableAction } from '../domain/portable-actions.js';
 import { normalizeClickAction, normalizeEventBinding } from '../../domain/entities.js';
 import { isUid } from '../domain/uid.js';
+import { prefixedVariableName, isValidKey } from '../../domain/naming.js';
 
 const HIER = ITEM_TYPES;   // path → icon → button → element → screen → workflow
 const OPEN = ['open', 'conflicted'];
@@ -57,6 +58,26 @@ export class ChangesetService {
     const p = this.projects.get(Number(projectId));
     if (!p) throw new NotFoundError('project', projectId);
     return p;
+  }
+
+  /** The focused project's prefix (set once when the project is created), or null. */
+  #prefix(principal) { return this.projects.get(Number(principal.project.id))?.settings?.prefix || null; }
+
+  /** `key` named the project way: `prefix-[itemtype]-key` (unchanged without a prefix, or when it is already prefixed). */
+  #prefixedKey(principal, type, key) {
+    const prefix = this.#prefix(principal);
+    return prefix && ITEM_TYPES.includes(type) && isValidKey(key) ? prefixedVariableName(prefix, type, key) : key;
+  }
+
+  /**
+   * AI-created items are named with the project prefix, like items created in the designer. An item already in the
+   * project (found by uid or by the key as given) keeps its key; restores keep their old keys.
+   */
+  #withPrefix(principal, item, restore) {
+    if (restore || !item?.key || !ITEM_TYPES.includes(item.type)) return item;
+    const key = this.#prefixedKey(principal, item.type, item.key);
+    if (key === item.key || this.#target(principal, item.type, item).row) return item;
+    return { ...item, key };
   }
 
   #mayCreatePublic(projectId) { return this.projects.get(Number(projectId))?.settings?.ai?.mayCreatePublicItems === true; }
@@ -99,11 +120,12 @@ export class ChangesetService {
   #resolveRef(principal, ref, path) {
     const type = ref.type;
     if (!ITEM_TYPES.includes(type)) throw new ValidationError(`${path}: unknown type "${type}"`);
-    const row = (ref.uid && this.reads.find(type, ref.uid)) || (ref.key && this.reads.find(type, ref.key, principal.project.id));
+    const row = (ref.uid && this.reads.find(type, ref.uid)) || (ref.key && this.reads.find(type, ref.key, principal.project.id))
+      || (ref.key && this.reads.find(type, this.#prefixedKey(principal, type, ref.key), principal.project.id));   // the key before the project prefix
     if (!row) throw new DomainError(`${path}: ${type} "${ref.uid || ref.key}" not found; search for it first or stage it in the same changeset`, 'REF', 422);
     if (!this.#readable(principal, row)) throw new DomainError(`${path}: ${type} "${row.key}" is not visible to this project`, 'REF', 422);
     // project scope: a used item from another library is cloned into the project and referenced there
-    return row.project_id === principal.project.id || !this.library ? row.id : this.library.adopt(principal.project.id, type, row.id);
+    return row.project_id === principal.project.id || !this.library ? row.id : this.library.adopt(principal.project.id, type, row.id, new Set(), principal.user.id);
   }
 
   /* ---------- payload → core ---------- */
@@ -247,7 +269,7 @@ export class ChangesetService {
 
     if (type === 'workflow') {
       let id = row?.id;
-      if (op === 'create') id = this.workflows.create({ ...rec, projectId: principal.project.id, visibility: 'project', creatorId: this.agentUserId?.() ?? principal.user.id }).id;
+      if (op === 'create') id = this.workflows.create({ ...rec, projectId: principal.project.id, visibility: 'project', creatorId: principal.user.id }).id;
       else this.workflows.update(id, rec);
       if (op === 'create' || item.screens !== undefined || item.links !== undefined) {
         const cur = op === 'create' ? { nodes: [], links: [] } : this.workflows.get(id);
@@ -276,7 +298,7 @@ export class ChangesetService {
     let id;
     if (op === 'create') {
       const visibility = item.visibility === 'public' && this.#mayCreatePublic(principal.project.id) ? 'public' : 'project';
-      id = svc.create({ ...rec, projectId: principal.project.id, visibility, creatorId: this.agentUserId?.() ?? principal.user.id }, { nodes: conv?.nodes || [] }).id;
+      id = svc.create({ ...rec, projectId: principal.project.id, visibility, creatorId: principal.user.id }, { nodes: conv?.nodes || [] }).id;
     } else {
       id = row.id;
       const d = svc.get(id);
@@ -294,7 +316,7 @@ export class ChangesetService {
       if (item.script === null) {
         this.elementScripts.remove(id, { checkEditable: false });
       } else {
-        this.elementScripts.setSync(id, item.script, { actorId: this.agentUserId?.() ?? principal.user.id });
+        this.elementScripts.setSync(id, item.script, { actorId: principal.user.id });
       }
     }
     this.#setColumns(type, id, { uid: op === 'create' ? itemUid : null, mcpContext: item.mcpContext });
@@ -302,13 +324,14 @@ export class ChangesetService {
   }
 
   /** Staged creates this item references (transitively), in apply order. */
-  #depOps(item, ops, seen = new Set()) {
+  #depOps(principal, item, ops, seen = new Set()) {
     const out = [];
     for (const r of itemRefs(item)) {
-      const dep = ops.find(o => o.op === 'create' && o.type === r.type && (o.itemUid === r.uid || o.key === r.key));
+      const pk = r.key ? this.#prefixedKey(principal, r.type, r.key) : null;   // a reference may use the key before the project prefix
+      const dep = ops.find(o => o.op === 'create' && o.type === r.type && (o.itemUid === r.uid || o.key === r.key || (pk && o.key === pk)));
       if (!dep || seen.has(dep.uid)) continue;
       seen.add(dep.uid);
-      out.push(...this.#depOps(dep.payload.item || {}, ops, seen), dep);
+      out.push(...this.#depOps(principal, dep.payload.item || {}, ops, seen), dep);
     }
     return out;
   }
@@ -371,7 +394,7 @@ export class ChangesetService {
     try {
       const res = this.#dryRun(() => {
         const { result: id, unresolved } = this.#withFixups(principal, () => {
-          for (const dep of this.#depOps(item, ops.filter(o => o.key !== item.key || o.type !== type))) this.#applyOne(principal, dep);
+          for (const dep of this.#depOps(principal, item, ops.filter(o => o.key !== item.key || o.type !== type))) this.#applyOne(principal, dep);
           return this.#applyOne(principal, { op, type, itemUid: out.itemUid, key: item.key, payload: { item, svg } });
         });
         for (const f of unresolved) {
@@ -436,13 +459,14 @@ export class ChangesetService {
 
   validate(principal, { item, svg, changeset, allowDuplicate } = {}) {
     const cs = changeset ? this.#changeset(principal, changeset) : null;
-    const ev = this.#evaluate(principal, cs, { item, svg, allowDuplicate });
+    const ev = this.#evaluate(principal, cs, { item: this.#withPrefix(principal, item, false), svg, allowDuplicate });
     return { valid: ev.errors.length === 0, op: ev.op, type: ev.type, key: ev.key, uid: ev.itemUid ?? ev.row?.uid ?? null,
       proposedHash: ev.proposedHash, currentHash: ev.liveHash, unchanged: ev.unchanged, errors: ev.errors, warnings: ev.warnings, fixes: ev.fixes };
   }
 
   stage(principal, { changeset, item, svg, baseHash, allowDuplicate, binding, restore = false } = {}) {
     const cs = this.#open(principal, changeset);
+    item = this.#withPrefix(principal, item, restore);
     const existing = item?.type && item?.key ? this.repo.findOp(cs.id, item.type, item.key) : null;
     if (!existing && this.repo.countOps(cs.id) >= LIMITS.opsPerChangeset) throw new ValidationFailed(`a changeset holds at most ${LIMITS.opsPerChangeset} operations; submit this one and begin another`);
     const ev = this.#evaluate(principal, cs, { item, svg, allowDuplicate, restore });
@@ -474,12 +498,13 @@ export class ChangesetService {
   stageDelete(principal, { changeset, type, ref, baseHash } = {}) {
     const cs = this.#open(principal, changeset);
     if (!ITEM_TYPES.includes(type)) throw new ValidationError(`type must be one of ${ITEM_TYPES.join(', ')}`);
-    const stagedCreate = this.repo.ops(cs.id).find(o => o.op === 'create' && o.type === type && (o.key === ref || o.itemUid === ref));
+    const prefixedRef = this.#prefixedKey(principal, type, ref);
+    const stagedCreate = this.repo.ops(cs.id).find(o => o.op === 'create' && o.type === type && (o.key === ref || o.key === prefixedRef || o.itemUid === ref));
     if (stagedCreate) {
       this.repo.deleteOp(stagedCreate.id);
       return { changeset: cs.uid, unstaged: true, type, key: stagedCreate.key, staged: this.repo.countOps(cs.id) };
     }
-    const row = this.reads.find(type, ref, principal.project.id);
+    const row = this.reads.find(type, ref, principal.project.id) || (prefixedRef !== ref ? this.reads.find(type, prefixedRef, principal.project.id) : null);
     if (!row || row.project_id !== principal.project.id) throw new NotFoundError(`project ${type}`, ref);
     const live = this.hashes.get(type, row.id);
     const base = this.repo.version(cs.baseVersionId);
@@ -793,7 +818,7 @@ export class ChangesetService {
       else {
         try {
           after = this.#dryRun(() => svg(this.#withFixups(principal, () => {
-            for (const dep of this.#depOps(o.payload.item || {}, ops.filter(x => x.uid !== o.uid))) this.#applyOne(principal, dep);
+            for (const dep of this.#depOps(principal, o.payload.item || {}, ops.filter(x => x.uid !== o.uid))) this.#applyOne(principal, dep);
             return this.#applyOne(principal, o);
           }).result));
         } catch (e) { if (!(e instanceof DomainError)) throw e; after = null; }

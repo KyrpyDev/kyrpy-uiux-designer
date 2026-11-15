@@ -1,7 +1,7 @@
 /**
  * Project scope: a project's design system is self-contained. Every item a project item uses that lives
  * in another library (public, another project, someone's private library) is cloned into the project
- * (visibility `project`, creator `kyrpy-agent-designer`) and the references are pointed at the clone.
+ * (visibility `project`, creator: the user whose API key used it, else `kyrpy-agent-designer`) and the references are pointed at the clone.
  *
  * Clones are found again through `cloned_from_id`, so adopting is idempotent. Clone keys are
  * `<project-key>-<original-key>` (keys are still unique across the whole table).
@@ -24,8 +24,11 @@ export class ProjectLibraryService {
 
   #projectKey(projectId) { return this.projects.get(Number(projectId))?.key || `p${projectId}`; }
 
-  /** The project's clone of a foreign item (creating it, and adopting its own dependencies, when missing). */
-  adopt(projectId, type, srcId, seen = new Set()) {
+  /**
+   * The project's clone of a foreign item (creating it, and adopting its own dependencies, when missing).
+   * `creatorId`: the user whose API key used the item (the clone is theirs); the agent user otherwise.
+   */
+  adopt(projectId, type, srcId, seen = new Set(), creatorId = null) {
     const table = TYPE_TO_TABLE[type];
     const src = this.db.prepare(`SELECT id, uid, key, name, label, project_id FROM ${table} WHERE id = ?`).get(Number(srcId));
     if (!src) return null;
@@ -34,7 +37,7 @@ export class ProjectLibraryService {
     let cloneId = existing?.id;
     if (!cloneId) {
       const svc = type === 'workflow' ? this.workflows : this.services[type];
-      cloneId = svc.clone(src.id, { name: src.name, projectId: Number(projectId), visibility: 'project', creatorId: this.agentUserId() }).id;
+      cloneId = svc.clone(src.id, { name: src.name, projectId: Number(projectId), visibility: 'project', creatorId: creatorId ?? this.agentUserId() }).id;
       // keys are unique per project: the clone keeps the original key unless the project already uses it
       const key = uniqueKey(src.key, k => !!this.db.prepare(`SELECT 1 FROM ${table} WHERE key = ? AND project_id = ? AND id <> ?`).get(k, Number(projectId), cloneId));
       const uid = cloneUid(this.#projectKey(projectId), src.uid);
@@ -45,14 +48,14 @@ export class ProjectLibraryService {
     }
     this.#repoint(projectId, type, src.id, cloneId);
     const k = `${type}:${cloneId}`;
-    if (!seen.has(k)) { seen.add(k); this.#adoptDepsOf(projectId, type, cloneId, seen); }
+    if (!seen.has(k)) { seen.add(k); this.#adoptDepsOf(projectId, type, cloneId, seen, creatorId); }
     return cloneId;
   }
 
-  #adoptDepsOf(projectId, type, id, seen) {
+  #adoptDepsOf(projectId, type, id, seen, creatorId = null) {
     for (const dep of this.reads.dependencies(type, id)) {
       const row = this.reads.find(dep.type, dep.id);
-      if (row && row.project_id !== Number(projectId)) this.adopt(projectId, dep.type, dep.id, seen);
+      if (row && row.project_id !== Number(projectId)) this.adopt(projectId, dep.type, dep.id, seen, creatorId);
     }
   }
 
