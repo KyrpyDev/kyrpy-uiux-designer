@@ -240,7 +240,7 @@ test('openMenuItemsModal: drag & drop reorder, toolbars (target, visible, up, do
 
   // Verify designer.js integrates openMenuItemsModal
   assert.match(des, /import \{[^}]*openMenuItemsModal[^}]*\} from '\.\/menu-editor\.js'/);
-  assert.match(des, /await openMenuItemsModal\(this, menuBtnId\);/);
+  assert.match(des, /await openMenuItemsModal\(this, menuBtnId/);
 
   // Verify CSS styles for drag and drop & toolbar
   assert.match(css, /\.choice-item\.mi-row/);

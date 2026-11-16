@@ -24,7 +24,7 @@ import { defaultAnimation } from '/domain/animation.js';
 import { reorderLayer, stepLayer, extractNodes } from '/domain/node-ops.js';
 import { isRepeaterNode, repeaterConfig, repeaterPlan, repeaterTemplateOps, repeaterAdoptOps, repeaterDefaultAttrs, repeaterTemplate, repeaterTemplates, repeaterFitBox, bindRepeaterScroll, repeaterCountAfterAdd, REPEATER_ATTR, REPEATER_KEY } from '/domain/repeater.js';
 import { DEVICES, TYPES, canContain } from '/domain/entities.js';
-import { menuConfig, buildMenuTree, menuExtent } from '/domain/menu.js';
+import { menuConfig, buildMenuTree, menuExtent, instanceMenu, NODE_MENU_ATTR } from '/domain/menu.js';
 import { updateSettings, openGuide, reloadLibrary, revealInLibrary, createEmptyItem, deleteDesign, resetLibraryIconCache, ensureDesignDeps } from '../actions.js';
 import { VertexEditor } from './vertex-editor.js';
 import { openIconPicker } from './inspector.js';
@@ -961,6 +961,21 @@ export class Designer {
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
 
+  /** World-space bounding box of a node as actually rendered on the stage (accounts for ancestor transforms), falling back to nodeBBox. */
+  renderedBBox(e) {
+    if (!e) return { x: 0, y: 0, w: 0, h: 0 };
+    if (!e.rotation && this.stage) {
+      const domEl = this.stage.querySelector(`[data-el="${e.id}"]`);
+      const r = domEl?.getBoundingClientRect?.();
+      if (r && (r.width > 0 || r.height > 0)) {
+        const p0 = this.worldPoint({ clientX: r.left, clientY: r.top });
+        const p1 = this.worldPoint({ clientX: r.right, clientY: r.bottom });
+        return { x: p0.x, y: p0.y, w: Math.max(0.01, p1.x - p0.x), h: Math.max(0.01, p1.y - p0.y) };
+      }
+    }
+    return nodeBBox(e, this.nodes);
+  }
+
   renderOverlay() {
     if (!this.doc) return;
     const { z } = this.view, W = this.doc.width, H = this.doc.height;
@@ -983,7 +998,7 @@ export class Designer {
     const sel = this.selectedNodes();
     const hovNode = this.hoveredNodeId && !this.selected.has(this.hoveredNodeId) ? this.byId(this.hoveredNodeId) : null;
     if (hovNode && hovNode.role !== 'bg' && hovNode.role !== 'bg-glow') {
-      const hb = nodeBBox(hovNode, this.nodes);
+      const hb = this.renderedBBox(hovNode);
       const hr = mk('rect', {
         x: hb.x,
         y: hb.y,
@@ -995,7 +1010,7 @@ export class Designer {
       if (hovNode.rotation) hr.setAttribute('transform', `rotate(${hovNode.rotation} ${hb.x + hb.w / 2} ${hb.y + hb.h / 2})`);
     }
     for (const e of sel) {
-      const b = nodeBBox(e, this.nodes);
+      const b = this.renderedBBox(e);
       const r = mk('rect', {
         x: b.x,
         y: b.y,
@@ -1020,7 +1035,7 @@ export class Designer {
         });
       }
     }
-    const box = this.selectionBox(sel);
+    const box = sel.length === 1 ? this.renderedBBox(sel[0]) : this.selectionBox(sel);
     if (box && sel.length === 1 && !sel[0].rotation && !sel[0].locked && !this.vtx.active) {
       const s = 8 / z, pts = [['nw', box.x, box.y], ['n', box.x + box.w / 2, box.y], ['ne', box.x + box.w, box.y], ['e', box.x + box.w, box.y + box.h / 2],
         ['se', box.x + box.w, box.y + box.h], ['s', box.x + box.w / 2, box.y + box.h], ['sw', box.x, box.y + box.h], ['w', box.x, box.y + box.h / 2]];
@@ -1068,9 +1083,9 @@ export class Designer {
     return this.byId(id) || null;
   }
 
-  /** A plain click (no drag) on an element toggles its quick toolbar; a click on another element moves it there. */
-  toggleToolbarFor(id, { shift = false, wasOpen = false } = {}) {
-    this.toolbarNodeId = shift || wasOpen ? null : id;
+  /** A plain click (no drag) on an element opens its quick toolbar. */
+  toggleToolbarFor(id, { shift = false } = {}) {
+    this.toolbarNodeId = shift ? null : id;
     this.updateHoverToolbar();
   }
 
@@ -1085,34 +1100,51 @@ export class Designer {
       this.hoverBar.hidden = true;
       return;
     }
-    const b = nodeBBox(target, this.nodes);
-    const sx = this.view.tx + (b.x + b.w / 2) * this.view.z;
-    // sit above the bounding box with a 20px gap so the top-edge vertices stay clickable
-    const barH = this.hoverBar.offsetHeight || 34;
-    const sy = Math.max(4, this.view.ty + b.y * this.view.z * this.ay() - barH - 20);
+    const b = this.renderedBBox(target);
+    this.hoverBar.hidden = false;
+    const vpW = this.viewport.clientWidth || 0, vpH = this.viewport.clientHeight || 0;
+    const barW = this.hoverBar.offsetWidth || 0, barH = this.hoverBar.offsetHeight || 34;
+    const rawSx = this.view.tx + (b.x + b.w / 2) * this.view.z;
+    const halfW = barW / 2;
+    const sx = vpW > barW + 12 ? Math.max(halfW + 6, Math.min(vpW - halfW - 6, rawSx)) : (vpW ? vpW / 2 : rawSx);
+    // sit above the bounding box with a 20px gap so the top-edge vertices stay clickable, clamped inside viewport
+    const rawSy = this.view.ty + b.y * this.view.z * this.ay() - barH - 20;
+    const sy = vpH ? Math.max(4, Math.min(Math.max(4, vpH - barH - 4), rawSy)) : Math.max(4, rawSy);
     this.hoverBar.style.left = `${Math.round(sx)}px`;
     this.hoverBar.style.top = `${Math.round(sy)}px`;
 
-    if (this.hoverBar.dataset.nodeId !== `${target.id}-${target.locked}-${(target.events || []).length}`) {
-      this.hoverBar.dataset.nodeId = `${target.id}-${target.locked}-${(target.events || []).length}`;
+    const menuTag = target.attrs?.[NODE_MENU_ATTR] || '';
+    if (this.hoverBar.dataset.nodeId !== `${target.id}-${target.locked}-${(target.events || []).length}-${menuTag}`) {
+      this.hoverBar.dataset.nodeId = `${target.id}-${target.locked}-${(target.events || []).length}-${menuTag}`;
       clear(this.hoverBar);
       const evCount = (target.events?.length || (target.onClick ? 1 : 0));
       const isMenuButton = (target.kind === 'instance' && target.refType === 'button' && target.refId) || this.type === 'button';
       const menuBtnId = (target.kind === 'instance' && target.refType === 'button') ? target.refId : (this.type === 'button' ? this.doc.id : null);
+      const btnDoc = menuBtnId ? (this.type === 'button' && this.doc.id === menuBtnId ? this.doc : findDesign('button', menuBtnId)) : null;
       const menuBtnItems = menuBtnId
-        ? (this.type === 'button' && this.doc.id === menuBtnId ? (this.doc.menuItems || []) : (findDesign('button', menuBtnId)?.menuItems || []))
+        ? (target.kind === 'instance' && target.refType === 'button'
+            ? instanceMenu({ cfg: menuConfig(btnDoc?.meta), items: btnDoc?.menuItems || [] }, target).items
+            : (btnDoc?.menuItems || []))
         : [];
       const isMenuItemRole = target.role === 'menu-item' || /menu/i.test(target.name || '') || isMenuButton;
+      const isPlacedInst = target.kind === 'instance' && target.refId;
 
       this.hoverBar.append(...[
         h('span', { class: 'hb-title', title: `${target.name || target.tag} (#${target.id})` }, target.name || target.tag),
-        ibtn('pencil', `${this.editorFor(target)?.label || 'Open editor'} (Double-click)`, e => { e.stopPropagation(); this.select([target.id]); this.openEditor(target); }, { cls: 'hb-btn' }),
+        ibtn('pencil', isPlacedInst ? 'Edit this placed copy (changes stay on this copy only)' : `${this.editorFor(target)?.label || 'Open editor'} (Double-click)`, e => {
+          e.stopPropagation();
+          this.select([target.id]);
+          if (isPlacedInst) this.focusInstanceInspector(target);
+          else this.openEditor(target);
+        }, { cls: 'hb-btn' }),
         this.type === 'screen' || this.type === 'element' ? (() => {
           const ct = clickTargetOf(target), on = ct.screenId != null || ct.elementId != null;
           const what = ct.screenId != null ? `go to “${findDesign('screen', ct.screenId)?.label || 'screen ' + ct.screenId}”` : ct.elementId != null ? `show “${findDesign('element', ct.elementId)?.label || 'element ' + ct.elementId}” as popup` : 'nothing set';
           return ibtn('monitor', `When clicked: go to a screen or show a popup (now: ${what})`, e => { e.stopPropagation(); this.select([target.id]); this.pickClickTarget(target); }, { cls: `hb-btn${on ? ' active' : ''}` });
         })() : null,
         this.type === 'button' ? ibtn('search', 'Change the icon of this button', e => { e.stopPropagation(); this.changeButtonIcon(target); }, { cls: 'hb-btn' }) : null,
+        this.type === 'icon' ? ibtn('breakApart', 'Explode selected element into paths', async e => { e.stopPropagation(); this.select([target.id]); await this.explodeIcon(); }, { cls: 'hb-btn' }) : null,
+        this.type === 'icon' ? ibtn('export', 'Export selected as path (save to library)', async e => { e.stopPropagation(); this.select([target.id]); await this.savePathsToLibrary(); }, { cls: 'hb-btn' }) : null,
         isMenuItemRole ? h('button', {
           class: `hb-btn${menuBtnItems.length ? ' active' : ''}`,
           'aria-label': 'Menu items',
@@ -1122,7 +1154,7 @@ export class Designer {
             e.stopPropagation();
             this.select([target.id]);
             if (menuBtnId) {
-              await openMenuItemsModal(this, menuBtnId);
+              await openMenuItemsModal(this, menuBtnId, target.kind === 'instance' && target.refType === 'button' ? target : null);
             } else {
               openEventsModal({ node: target, docType: this.type, docId: this.doc.id, onSave: patch => this.patchNode(target.id, patch) });
             }
@@ -1160,32 +1192,16 @@ export class Designer {
           this.updateHoverToolbar();
           toast(target.locked ? '🔒 Position locked' : '🔓 Position unlocked', 'ok', 1200);
         }, { cls: 'hb-btn', active: !!target.locked }),
-        ibtn('import', 'Copy item (and sub-items) to project(s)', e => {
-            e.stopPropagation();
-            const refItem = (target.kind === 'instance' && target.refType && target.refId)
-              ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name })
-              : this.doc;
-            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
-              ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
-              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
-            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'copy' });
+        ibtn('arrowUp', 'Bring forward (display order)', async e => {
+          e.stopPropagation();
+          this.select([target.id]);
+          await this.reorder('up');
         }, { cls: 'hb-btn' }),
-        (() => {
-          const refItem = (target.kind === 'instance' && target.refType && target.refId)
-            ? (findDesign(target.refType, target.refId) || { id: target.refId, name: target.name, creatorId: this.doc.creatorId })
-            : this.doc;
-          const canMoveRef = this.canMoveRecord(refItem);
-          return ibtn('export', canMoveRef
-              ? 'Move item (and sub-items) to your project(s)'
-              : 'Default basic items and items owned by other users cannot be moved (only copied)', e => {
-            e.stopPropagation();
-            if (!canMoveRef) return;
-            const itemRef = (target.kind === 'instance' && target.refType && target.refId)
-              ? { type: target.refType, id: target.refId, name: target.name, builtin: refItem?.builtin, creatorId: refItem?.creatorId }
-              : { type: this.type, id: this.doc.id, name: this.doc.name, key: this.doc.key, builtin: this.doc.builtin, creatorId: this.doc.creatorId };
-            openCopyMoveToProjectsModal({ items: [itemRef], mode: 'move' });
-          }, { cls: 'hb-btn', disabled: !canMoveRef });
-        })(),
+        ibtn('arrowDown', 'Send backward (display order)', async e => {
+          e.stopPropagation();
+          this.select([target.id]);
+          await this.reorder('down');
+        }, { cls: 'hb-btn' }),
         // labelled: the export / download glyphs are already used by "copy / move to project" on this toolbar
         ['screen', 'element'].includes(this.type) ? h('button', { type: 'button', class: 'hb-btn hb-extract', 'data-act': 'extract-element', title: 'Extract as element: save this shape (with what is drawn inside it) as a new element in the library', 'aria-label': 'Extract as element',
           onclick: async e => { e.stopPropagation(); await this.extractAsElement(target); } }, iconEl('template', { size: 15 }), h('span', { style: { fontSize: '11px', fontWeight: 700, marginLeft: '3px' } }, 'Extract')) : null,
@@ -1248,8 +1264,8 @@ export class Designer {
   select(ids, { add = false } = {}) {
     if (!add) this.selected = new Set();
     for (const id of ids) this.selected.add(id);
-    // the quick toolbar belongs to its clicked element only while it stays the single selection; only a canvas click reopens it
-    if (this.toolbarNodeId != null && !(this.selected.size === 1 && this.selected.has(this.toolbarNodeId))) this.toolbarNodeId = null;
+    this.toolbarNodeId = this.selected.size === 1 ? [...this.selected][0] : null;
+    this.updateHoverToolbar();
     if (this.vtx.active && !(ids.length === 1 && ids[0] === this.vtx.node?.id)) this.vtx.exit();
     this.renderOverlay();
     this.emit('selection', this.selectedNodes());
@@ -1566,6 +1582,7 @@ export class Designer {
     const e = exact || top;
     if (!e) return;
     this.select([e.id]);
+    if (e.kind === 'instance' && e.refId) return this.focusInstanceInspector(e);
     return this.openEditor(e);
   }
 
@@ -1593,6 +1610,24 @@ export class Designer {
       if (cur) await this.patchNode(cur.id, { refId: icon.id }); else await this.addInstance('icon', icon.id);
       toast(`Button icon: "${icon.label || icon.key}"`, 'ok', 1400);
     });
+  }
+
+  /** Edits a placed instance in-place in the inspector (or swaps its icon) without opening the original library item. */
+  focusInstanceInspector(target) {
+    if (!target) return;
+    if (target.kind === 'instance' && target.refType === 'icon') {
+      return openIconPicker(target.refId, async icon => {
+        if (icon.id === target.refId) return;
+        await this.patchNode(target.id, { refId: icon.id });
+        toast(`Icon changed to "${icon.label || icon.key}"`, 'ok', 1400);
+      });
+    }
+    const insp = this.wrap?.parentElement?.querySelector('.insp') || document.querySelector('.insp');
+    if (insp) {
+      insp.scrollTop = 0;
+      const first = insp.querySelector('[data-f="pi-style"], [data-f="pi-label"], [data-f="el-name"], input, select, textarea');
+      first?.focus?.();
+    }
   }
 
   openEditor(e = this.selectedNodes()[0]) {
@@ -1881,13 +1916,13 @@ export class Designer {
     const boxH = ev.target.dataset?.b;
     if (boxH && !this.doc.locked) {
       this.op = { kind: 'box', handle: boxH, start: p, w: this.doc.width, h: this.doc.height, nodes0: deep(this.nodes), snap: this.snapshot() };
-      capture(this.viewport, ev); return;
+      capture(this.viewport, ev); ev.preventDefault(); return;
     }
     const handle = ev.target.dataset?.h;
     if (handle && !this.doc.locked) {
       const e = this.selectedNodes()[0];
       this.op = { kind: 'resize', handle, el: e, from: nodeBBox(e, this.nodes), start: p, orig: deep(e.attrs), snap: this.snapshot() };
-      capture(this.viewport, ev); return;
+      capture(this.viewport, ev); ev.preventDefault(); return;
     }
     if (this.tool !== 'select') {
       const q = this.snapPoint(p);
@@ -1899,7 +1934,15 @@ export class Designer {
     }
     // leave an entered group when the click lands outside it
     if (this.enteredGroupId != null) { let c = this.hitNode(ev.target, true); while (c && c.id !== this.enteredGroupId) c = c.parentId != null ? this.byId(c.parentId) : null; if (!c) this.enteredGroupId = null; }
-    const hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
+    let hit = this.hitNode(ev.target, ev.altKey) || this.hitBoundaryNode(p);
+    // if nothing was directly hit (e.g. clicking between letters of a selected text element), fall back to the selected node's box
+    if (!hit && !ev.shiftKey && !ev.altKey) {
+      hit = this.selectedNodes().find(s => {
+        if (s.locked) return false;
+        const b = this.renderedBBox(s);
+        return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+      }) || null;
+    }
     const isBg = hit && (hit.role === 'bg' || hit.role === 'bg-glow');
     if (hit && !isBg) {
       const gs = !ev.shiftKey && !ev.altKey ? this.groupSubHit(ev.target) : null;
@@ -1919,11 +1962,11 @@ export class Designer {
       };
       for (const sNode of sel) collectWithContainerKids(sNode);
       this.op = { kind: 'move', start: p, els: [...moveSet.values()], box: this.selectionBox(sel), snap: this.snapshot(), moved: false };
-      capture(this.viewport, ev);
+      capture(this.viewport, ev); ev.preventDefault();
     } else {
       if (!ev.shiftKey) { this.toolbarNodeId = null; this.clearSelection(); }
       this.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add: ev.shiftKey };
-      capture(this.viewport, ev);
+      capture(this.viewport, ev); ev.preventDefault();
     }
   }
 

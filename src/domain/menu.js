@@ -172,41 +172,93 @@ export function menuConfig(buttonMeta) {
 
 /**
  * A library button placed on a screen keeps its own menu settings in this node attribute (JSON):
- * { cfg: { ...menu config keys that differ for this placed button }, items: { [itemId]: { visible } } }.
+ * { cfg: { ...menu config keys that differ for this placed button }, items: { [itemId]: { ...overrides or deleted } }, added: [ ...new items ] }.
  * The library button stays as it is; only its own designer (✎ Edit) changes it for every screen. Never written into markup.
  */
 export const NODE_MENU_ATTR = 'data-menu-config';
 
-/** The per-instance menu override of a placed button node: { cfg, items } (both objects, possibly empty). */
+const ITEM_OVERRIDE_KEYS = ['visible', 'deleted', 'parentId', 'ord', 'name', 'label', 'iconId', 'refButtonId', 'action', 'targetScreenId', 'targetElementId', 'descriptionDev', 'targetKey', 'targetElementKey'];
+
+function pickItemOverride(src) {
+  const out = {};
+  for (const k of ITEM_OVERRIDE_KEYS) if (src[k] !== undefined) out[k] = src[k];
+  return out;
+}
+
+/** The per-instance menu override of a placed button node: { cfg, items, added }. */
 export function nodeMenuOverride(node) {
   let raw = node?.attrs?.[NODE_MENU_ATTR];
   if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
   const cfg = raw && typeof raw.cfg === 'object' && raw.cfg && !Array.isArray(raw.cfg) ? raw.cfg : {};
   const items = {};
   if (raw && raw.items && typeof raw.items === 'object') {
-    for (const [k, v] of Object.entries(raw.items)) if (/^\d+$/.test(k) && v && typeof v === 'object' && typeof v.visible === 'boolean') items[k] = { visible: v.visible };
+    for (const [k, v] of Object.entries(raw.items)) {
+      if (/^-?\d+$/.test(k) && v && typeof v === 'object' && !Array.isArray(v)) {
+        const picked = pickItemOverride(v);
+        if (Object.keys(picked).length) items[k] = picked;
+      }
+    }
   }
-  return { cfg, items };
+  const added = Array.isArray(raw?.added)
+    ? raw.added.filter(it => it && typeof it === 'object' && Number.isInteger(Number(it.id)) && Number(it.id) < 0)
+        .map(it => ({ ...pickItemOverride(it), id: Number(it.id), parentId: it.parentId ?? null, ord: Number(it.ord) || 0, visible: it.visible !== false }))
+    : [];
+  return { cfg, items, added };
 }
 
 /** True when the node changes anything of its button's menu. */
 export function hasNodeMenuOverride(node) {
   const o = nodeMenuOverride(node);
-  return Object.keys(o.cfg).length > 0 || Object.keys(o.items).length > 0;
+  return Object.keys(o.cfg).length > 0 || Object.keys(o.items).length > 0 || o.added.length > 0;
 }
 
-/** The attribute value for an override ({ cfg, items }), or null when it changes nothing. */
-export function nodeMenuAttr({ cfg = {}, items = {} } = {}) {
-  return Object.keys(cfg).length || Object.keys(items).length ? JSON.stringify({ cfg, items }) : null;
+/** The attribute value for an override ({ cfg, items, added }), or null when it changes nothing. */
+export function nodeMenuAttr({ cfg = {}, items = {}, added = [] } = {}) {
+  const out = {};
+  if (Object.keys(cfg).length) out.cfg = cfg;
+  if (Object.keys(items).length) out.items = items;
+  if (added.length) out.added = added;
+  return Object.keys(out).length ? JSON.stringify(out) : null;
 }
 
 /** The menu a placed button shows: the library button's menu ({ cfg, items }) with the node's own settings over it. */
 export function instanceMenu(menu, node) {
   if (!menu) return menu;
   const o = nodeMenuOverride(node);
-  if (!Object.keys(o.cfg).length && !Object.keys(o.items).length) return menu;
+  if (!Object.keys(o.cfg).length && !Object.keys(o.items).length && !o.added.length) return menu;
   const cfg = { ...menu.cfg, ...o.cfg };
-  const items = (menu.items || []).map(it => o.items[String(it.id)] ? { ...it, visible: o.items[String(it.id)].visible } : it);
+  for (const mapKey of ['itemScroll', 'itemGestures', 'itemPressSlide']) {
+    if (o.cfg[mapKey] && typeof o.cfg[mapKey] === 'object') {
+      cfg[mapKey] = { ...(menu.cfg?.[mapKey] || {}), ...o.cfg[mapKey] };
+    }
+  }
+  const deletedIds = new Set();
+  const merged = [];
+  for (const it of (menu.items || [])) {
+    const ov = o.items[String(it.id)];
+    if (ov?.deleted) { deletedIds.add(it.id); continue; }
+    merged.push(ov ? { ...it, ...ov } : it);
+  }
+  for (const it of o.added) {
+    const ov = o.items[String(it.id)];
+    if (ov?.deleted) { deletedIds.add(it.id); continue; }
+    merged.push(ov ? { ...it, ...ov } : it);
+  }
+  // drop descendants of deleted items so removing a parent removes its subtree
+  let items = merged;
+  if (deletedIds.size) {
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const it of items) {
+        if (!deletedIds.has(it.id) && it.parentId != null && deletedIds.has(it.parentId)) {
+          deletedIds.add(it.id);
+          grew = true;
+        }
+      }
+    }
+    items = items.filter(it => !deletedIds.has(it.id));
+  }
   return { ...menu, cfg, items };
 }
 

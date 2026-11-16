@@ -465,7 +465,7 @@ test('menu item UI: edit dialog has the parent tree, inspector tree rows are dra
   const rd = f => readFileSync(new URL(`../interfaces/web/js/${f}`, import.meta.url), 'utf8');
   const ed = rd('components/menu-editor.js'), ins = rd('components/inspector.js'), api = rd('api.js');
   assert.match(ed, /mi-parent-tree/); assert.match(ed, /api\.moveMenuItem\(buttonId, item\.id, \{ parentId \}\)/);
-  assert.match(ins, /draggable: inst \? 'false' : 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/);
+  assert.match(ins, /draggable: 'true'/); assert.match(ins, /menuActions\.moveTo\(d, id, n\.id, where, bid\)/); assert.match(ins, /instOps\.moveTo\(id, n\.id, where\)/);
   assert.match(api, /menu\/items\/\$\{iid\}\/move/);
 });
 
@@ -643,7 +643,7 @@ test('test runner: modal for buttons / screens (routes announced) and workflows 
   const des = readFileSync(new URL('../interfaces/web/js/components/designer.js', import.meta.url), 'utf8');
   assert.match(src, /mode: isWf \? 'navigate' : 'notify'/);
   assert.match(src, /rec\.links = \(wf\.links \|\| \[\]\)\.filter\(l => l\.fromScreenId === rec\.id\)/);
-  assert.match(ta, /if \(tr\?\.mode === 'notify'\) return toast\(/, 'design tests announce routes');
+  assert.match(ta, /if \(tr\?\.mode === 'notify' && this\.type !== 'screen'\) return toast\(/, 'button design tests announce routes; screen tests follow them');
   assert.match(ta, /no target screen set/);
   // the toolbar button starts on the screen selected on the canvas (undefined = the workflow's first screen)
   assert.match(wfd, /openTestRunner\(this\.app, \{ type: 'workflow', id: this\.wf\.id, startScreenId: this\.testStartScreenId\(\) \}\)/);

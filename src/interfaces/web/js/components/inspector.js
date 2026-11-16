@@ -4,7 +4,7 @@ import { h, clear, toast, confirmBox, modal } from '../dom.js';
 import { ibtn, iconEl } from '../icons.js';
 import { state, currentTheme, findDesign } from '../state.js';
 import { api } from '../api.js';
-import { menuActions, pickButton, libraryBrowseButton, pressSlideTargetLabel } from './menu-editor.js';
+import { menuActions, createInstanceMenuOps, pickButton, libraryBrowseButton, pressSlideTargetLabel } from './menu-editor.js';
 import { MENU_LAYOUTS, MENU_KINDS, DEFAULT_MENU, TYPES, DRAWER_SIDES, BUTTON_STYLES, applyButtonStyleAndIconSizeToNodes } from '/domain/entities.js';
 import { buildMenuTree, hubDirectionPatch, hubCount, menuConfig, instanceMenu, nodeMenuOverride, nodeMenuAttr, hasNodeMenuOverride, NODE_MENU_ATTR, menuOrientation, menuOrientationPatch, resolveMenuLabelPlacement, showLabelsEnabled } from '/domain/menu.js';
 import { isVertexEditable } from '/domain/path-data.js';
@@ -304,15 +304,16 @@ export class Inspector {
   }
 
   /** Button style tool: one library button used as the frame of EVERY menu item (items with their own button can be reset to follow it). */
-  menuStyleTool(bid, cfg, rows, set, { instance = false } = {}) {
+  menuStyleTool(bid, cfg, rows, set, { instance = false, onApplyAll = null } = {}) {
     const cur = cfg.itemButtonId ? findDesign('button', cfg.itemButtonId) : null;
-    const own = instance ? 0 : rows.filter(r => r.refButtonId).length;   // item rows belong to the button: only its designer clears them
+    const own = rows.filter(r => r.refButtonId).length;
     return h('div', { class: 'row wrap', style: { gap: '6px', alignItems: 'center' } },
       cur ? h('img', { class: 'thumb small', alt: cur.label || cur.key, src: api.svgUrl('button', cur.id, { theme: state.themeKey, animated: 0, size: 48 }), style: { width: '36px', height: '36px', objectFit: 'contain' } }) : null,
       h('span', { class: 'grow', style: { fontSize: '12px' } }, cur ? `Item style: ${cur.label || cur.key}` : 'Item style: this button\'s own body'),
       ibtn('search', 'Pick the button style of all menu items', async () => { const r = await pickButton(cfg.itemButtonId, bid); if (r !== null) await set({ itemButtonId: r || null }); }, { desc: 'Every menu item is drawn with this button (items keep their own icon)', cls: 'primary' }),
       cur ? ibtn('close', 'Back to the default style', () => set({ itemButtonId: null })) : null,
       own ? ibtn('copy', `Apply to all items (clears ${own} item button${own === 1 ? '' : 's'})`, async () => {
+        if (instance && onApplyAll) { await onApplyAll(); return; }
         for (const r of rows.filter(x => x.refButtonId)) await api.updateMenuItem(bid, r.id, { refButtonId: null });
         await menuActions.refresh(this.d, bid); toast('All items now follow the menu button style', 'ok', 1600);
       }, { desc: 'Items that picked their own button switch to the menu button style' }) : null);
@@ -327,23 +328,11 @@ export class Inspector {
     // a button placed on a screen (inst = its node): every setting here is kept on that node, the library button is unchanged
     // (its own designer, opened with ✎ Edit, is the only place that changes it for every screen)
     const baseRows = btnDoc.menuItems || [];
-    const own = inst ? instanceMenu({ cfg: menuConfig(btnDoc.meta), items: baseRows }, inst) : null;
-    const cfg = own ? own.cfg : menuConfig(btnDoc.meta), rows = own ? own.items : baseRows;
-    const writeOwn = o => { const a = { ...(inst.attrs || {}) }, v = nodeMenuAttr(o); if (v) a[NODE_MENU_ATTR] = v; else delete a[NODE_MENU_ATTR]; return d.patchNode(inst.id, { attrs: a }); };
-    const set = inst
-      ? async patch => {
-        const o = nodeMenuOverride(inst);
-        await writeOwn({ ...o, cfg: { ...o.cfg, ...patch } });
-        if (patch && (patch.hubCount !== undefined || patch.kind !== undefined || patch.hubFixedPositions !== undefined)) d.fit?.();
-      }
-      : patch => menuActions.config(d, patch, bid);
-    const toggleVisible = id => {
-      if (!inst) return menuActions.toggleVisible(d, id, bid);
-      const o = nodeMenuOverride(inst), base = baseRows.find(r => r.id === id), cur = rows.find(r => r.id === id);
-      const next = !(cur?.visible !== false), items = { ...o.items };
-      if (next === (base?.visible !== false)) delete items[String(id)]; else items[String(id)] = { visible: next };
-      return writeOwn({ ...o, items });
-    };
+    const instOps = inst ? createInstanceMenuOps(d, inst, bid) : null;
+    const cfg = instOps ? instOps.cfg : menuConfig(btnDoc.meta), rows = instOps ? instOps.rows : baseRows;
+    const writeOwn = instOps ? instOps.writeOwn : null;
+    const set = instOps ? instOps.config : patch => menuActions.config(d, patch, bid);
+    const toggleVisible = id => instOps ? instOps.toggleVisible(id) : menuActions.toggleVisible(d, id, bid);
     const num = (k, label, step = 0.05) => this.field(label, this.num(`mc-${bid}-${k}`, cfg[k], v => set({ [k]: v }), { step }));
     const els = [...(state.library.elements || [])].sort((a, b) => a.name.localeCompare(b.name));
     const curOrient = menuOrientation(cfg);
@@ -455,7 +444,7 @@ export class Inspector {
             ['top-left', 'Radial fan · top left corner of the screen']
           ], v => set({ fanCorner: v })))
         : null,
-      this.menuStyleTool(bid, cfg, rows, set, { instance: !!inst }),
+      this.menuStyleTool(bid, cfg, rows, set, { instance: !!inst, onApplyAll: instOps?.applyAll }),
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center' }, title: 'When the opened menu would leave the device screen it is shifted back inside' },
         h('input', { type: 'checkbox', checked: cfg.keepInside !== false, 'data-f': `mc-${bid}-keep`, onchange: e => set({ keepInside: e.target.checked }) }), h('span', {}, 'Keep the menu inside the device screen')),
       this.field('Centre icon turns while open (°, 0 = off)', this.num(`mc-${bid}-rot`, cfg.rotateOnOpen, v => set({ rotateOnOpen: v }), { step: 5 }))
@@ -469,7 +458,7 @@ export class Inspector {
       const isVisible = n.visible !== false, offByParent = !!n.hiddenByParent;   // a hidden parent disables its whole sub tree
       const canFocus = d.menu?.focusItem && d.doc?.id === bid;
       lines.push(h('div', {
-        draggable: inst ? 'false' : 'true', dataset: { menuItem: String(n.id) },
+        draggable: 'true', dataset: { menuItem: String(n.id) },
         ondragstart: e => { e.dataTransfer.setData('text/plain', String(n.id)); e.dataTransfer.effectAllowed = 'move'; this.dragMenuItem = n.id; },
         ondragend: () => { this.dragMenuItem = null; document.querySelectorAll('.mi-drop-before,.mi-drop-after,.mi-drop-inside').forEach(x => x.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside')); },
         ondragover: e => {
@@ -486,7 +475,7 @@ export class Inspector {
           const where = el.classList.contains('mi-drop-before') ? 'before' : el.classList.contains('mi-drop-after') ? 'after' : 'inside';
           el.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-inside');
           this.dragMenuItem = null;
-          if (id != null) await menuActions.moveTo(d, id, n.id, where, bid);
+          if (id != null) await (inst ? instOps.moveTo(id, n.id, where) : menuActions.moveTo(d, id, n.id, where, bid));
         },
         class: `el-row${canFocus ? ' mi-focusable' : ''}${canFocus && d.menu.focusedId === n.id ? ' on' : ''}`, style: { paddingLeft: `${7 + depth * 14}px`, opacity: isVisible && !offByParent ? 1 : 0.45, fontStyle: offByParent ? 'italic' : '' },
         title: offByParent ? 'Hidden because a parent item is hidden (shows again with it)' : canFocus ? 'Click to show this item on the canvas' : undefined,
@@ -504,16 +493,15 @@ export class Inspector {
           scr ? h('span', { class: 'badge', style: { marginLeft: '4px' }, title: `Routes to screen: ${scr.name}` }, `➜ ${scr.name}`) : null
         ),
         ibtn(isVisible ? 'view' : 'close', isVisible ? 'Visible' : 'Hidden', () => toggleVisible(n.id), { desc: inst ? (isVisible ? 'Hide this item on this placed button only' : 'Show this item on this placed button only') : isVisible ? 'Click to hide this item' : 'Click to show this item' }),
-        inst ? null : ibtn('plus', 'Add sub item', () => menuActions.add(d, n.id, bid)),
+        ibtn('plus', 'Add sub item', () => inst ? instOps.add(n.id) : menuActions.add(d, n.id, bid)),
         // hub: the top-level item the bar starts with in the centre (first visible item when none is set)
         cfg.kind === 'hub' && depth === 0
           ? ibtn('target', 'Default centre button', () => !inst && d.menu?.setDefaultCentre ? d.menu.setDefaultCentre(n.id, bid, tree.filter(x => x.visible !== false).findIndex(x => x.id === n.id)) : set({ hubCenterItemId: n.id }), { active: Number(cfg.hubCenterItemId) === n.id || (cfg.hubCenterItemId == null && tree.find(x => x.visible !== false)?.id === n.id), desc: 'The hub menu starts with this item in the centre, between its neighbours' })
           : null,
-        ...(inst ? [] : [
-          ibtn('pencil', 'Edit menu item', () => menuActions.edit(d, n.id, bid)),
-          ibtn('arrowUp', 'Move earlier', () => menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
-          ibtn('arrowDown', 'Move later', () => menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),
-          ibtn('trash', 'Remove menu item', () => menuActions.remove(d, n.id, bid))])));
+        ibtn('pencil', 'Edit menu item', () => inst ? instOps.edit(n.id) : menuActions.edit(d, n.id, bid)),
+        ibtn('arrowUp', 'Move earlier', () => inst ? instOps.move(n.id, -1) : menuActions.move(d, n.id, -1, bid), { desc: 'Order up' }),
+        ibtn('arrowDown', 'Move later', () => inst ? instOps.move(n.id, 1) : menuActions.move(d, n.id, 1, bid), { desc: 'Order down' }),
+        ibtn('trash', 'Remove menu item', () => inst ? instOps.remove(n.id) : menuActions.remove(d, n.id, bid))));
       walk(n.children, depth + 1);
     });
     walk(tree, 0);
@@ -521,12 +509,16 @@ export class Inspector {
       const changed = hasNodeMenuOverride(inst);
       return this.section(`Menu · this placed button · ${rows.length} item(s)`,
         h('div', { class: 'muted', style: { fontSize: '11px' }, 'data-f': 'mc-inst-note' }, changed
-          ? 'These settings belong to this placed button only (the library button is unchanged). Show / hide items here (👁); add, edit, reorder or remove items in the button itself (✎ Edit).'
-          : 'Changes here apply to this placed button only; the library button stays as it is. To change the button everywhere it is used, open it with ✎ Edit.'),
+          ? 'These settings and menu items belong to this placed button only (the library button is unchanged). Order items (↑/↓) or drag them, add (＋), edit (✎), toggle visible (👁), or remove (🗑).'
+          : 'Changes here (including adding, editing, reordering, hiding and removing items) apply to this placed button only; the library button stays as it is. To change the button everywhere it is used, open it with ✎ Edit.'),
         h('div', { class: 'row wrap' },
           changed ? ibtn('undo', 'Use the button\'s settings', () => writeOwn({}), { desc: 'Drop this placed button\'s own menu settings', dataset: { f: 'mc-inst-reset' } }) : null),
         ...settings,
-        h('div', { class: 'el-list' }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')));
+        h('div', { class: 'el-list',
+          ondragover: e => { if (this.dragMenuItem != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } },
+          ondrop: async e => { e.preventDefault(); const id = this.dragMenuItem; this.dragMenuItem = null; if (id != null) await instOps.moveTo(id, null, 'after'); }
+        }, lines.length ? lines : h('div', { class: 'empty' }, 'No menu items yet.')),
+        ibtn('plus', 'Add menu item', () => instOps.add(null), { cls: 'primary', dataset: { f: 'mc-inst-add' } }));
     }
     return this.section(`Menu Items · ${rows.length} item(s)`,
       h('div', { class: 'muted', style: { fontSize: '11px' } }, 'Order items (↑/↓) or drag them (top / bottom edge = before / after, middle = inside), add (＋), edit (✎, also changes the parent), toggle visible (👁), or remove (🗑). Each item can route to a screen or show an element as a popup/modal box.'),
@@ -877,9 +869,29 @@ export class Inspector {
     // button style (shape of the button body)
     if (e.refType === 'button') {
       const libStyle = buttonStyleOf(lib), ownStyle = instanceStyle(e);
+      const baseRows = lib.menuItems || [];
+      const instMenu = instanceMenu({ cfg: menuConfig(lib.meta), items: baseRows }, e);
+      const applyStyleAll = instMenu.items.length ? ibtn('check', 'Apply this button style to all menu items', async () => {
+        const o = nodeMenuOverride(e);
+        let cleared = 0;
+        o.added = o.added.map(x => { if (x.refButtonId != null) cleared++; return { ...x, refButtonId: null }; });
+        for (const r of instMenu.items.filter(x => x.id > 0 && x.refButtonId != null)) {
+          cleared++;
+          const base = baseRows.find(b => b.id === r.id), prev = { ...(o.items[String(r.id)] || {}) };
+          if (base?.refButtonId != null) prev.refButtonId = null; else delete prev.refButtonId;
+          if (Object.keys(prev).length) o.items[String(r.id)] = prev; else delete o.items[String(r.id)];
+        }
+        if (instMenu.cfg?.itemButtonId != null) { o.cfg = { ...o.cfg, itemButtonId: null }; }
+        const v = nodeMenuAttr(o), a = { ...(e.attrs || {}) };
+        if (v) a[NODE_MENU_ATTR] = v; else delete a[NODE_MENU_ATTR];
+        if (!cleared && instMenu.cfg?.itemButtonId == null) return toast('All menu items already use this button style', 'ok', 1600);
+        await d.patchNode(e.id, { attrs: a });
+        toast(`Button style applied to all menu items${cleared ? ` (${cleared} reset)` : ''}`, 'ok', 1600);
+      }, { desc: 'Every menu item on this placed button is drawn with this button\'s style; items keep their own icon', cls: 'primary', dataset: { f: 'pi-style-apply-all' } }) : null;
       kids.push(this.field('Button style', h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } },
         h('div', { class: 'grow' }, this.select('pi-style', ownStyle ?? libStyle, BUTTON_STYLES.map(b => [b.key, b.label]), v => setAttr(INSTANCE_STYLE_ATTR, v === libStyle ? null : v))),
-        ownStyle != null ? ibtn('undo', `Use the library ${what}'s style`, () => setAttr(INSTANCE_STYLE_ATTR, null), { dataset: { f: 'pi-style-reset' } }) : null)));
+        ownStyle != null ? ibtn('undo', `Use the library ${what}'s style`, () => setAttr(INSTANCE_STYLE_ATTR, null), { dataset: { f: 'pi-style-reset' } }) : null,
+        applyStyleAll)));
     }
     // icon
     const libIcon = iconNodeOf(nodes), ownIcon = instanceIconId(e), iconId = ownIcon ?? libIcon?.refId ?? null, ic = iconId != null ? findDesign('icon', iconId) : null;

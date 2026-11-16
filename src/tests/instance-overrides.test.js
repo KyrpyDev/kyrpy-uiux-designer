@@ -18,8 +18,8 @@ const render = (b, node, menu = null) => {
 };
 
 test('per-instance menu override: parse, serialise, merge over the button menu without touching it', () => {
-  assert.deepEqual(nodeMenuOverride({ attrs: {} }), { cfg: {}, items: {} });
-  assert.deepEqual(nodeMenuOverride({ attrs: { [NODE_MENU_ATTR]: 'not json' } }), { cfg: {}, items: {} });
+  assert.deepEqual(nodeMenuOverride({ attrs: {} }), { cfg: {}, items: {}, added: [] });
+  assert.deepEqual(nodeMenuOverride({ attrs: { [NODE_MENU_ATTR]: 'not json' } }), { cfg: {}, items: {}, added: [] });
   assert.equal(nodeMenuAttr({}), null);
   const attr = nodeMenuAttr({ cfg: { kind: 'radial' }, items: { 12: { visible: false } } });
   const node = { attrs: { [NODE_MENU_ATTR]: attr } };
@@ -89,4 +89,45 @@ test('a placed button can take its own button style; the library button keeps it
   assert.match(own, /rx="4.8"/); assert.doesNotMatch(own, /data-inst-style/);
   assert.equal(nodes[0].attrs.rx, 24);                                         // the library item is untouched
   assert.equal(applyInstanceContent(nodes, { refType: 'button', attrs: { [INSTANCE_STYLE_ATTR]: 'nope' } }, b), nodes);
+});
+
+test('per-instance menu override: add, edit, reorder and delete menu items without touching the library button', () => {
+  const b = btn(10, { menu: { kind: 'popup', itemScroll: { 11: { on: true, targetId: '5', mode: 'focus' } } } });
+  const base = { cfg: menuConfig(b.meta), items };
+  const added = [
+    { id: -1, parentId: null, ord: 2, name: 'settings', label: 'Settings', visible: true },
+    { id: -2, parentId: -1, ord: 0, name: 'profile', label: 'Profile', visible: true }
+  ];
+  const ov = nodeMenuAttr({
+    cfg: { itemScroll: { '-1': { on: true, targetId: '6', mode: 'scroll' } } },
+    items: { 11: { label: 'Start', ord: 1 }, 12: { deleted: true } },
+    added
+  });
+  const node = place(10, { [NODE_MENU_ATTR]: ov });
+  const m = instanceMenu(base, node);
+  assert.equal(m.items.find(i => i.id === 11).label, 'Start');
+  assert.equal(m.items.find(i => i.id === 12), undefined);                     // deleted on this instance
+  assert.equal(m.items.find(i => i.id === -1).label, 'Settings');
+  assert.equal(m.items.find(i => i.id === -2).parentId, -1);
+  assert.deepEqual(m.cfg.itemScroll['11'], { on: true, targetId: '5', mode: 'focus' });
+  assert.deepEqual(m.cfg.itemScroll['-1'], { on: true, targetId: '6', mode: 'scroll' });
+  // library items stay untouched
+  assert.equal(items[0].label, 'Home');
+  assert.equal(items.length, 2);
+  // rendering a button with 0 library menu items still renders its instance-added menu items
+  const emptyBtn = btn(11, { menu: { kind: 'popup' } });
+  const rendered = render(emptyBtn, place(11, { [NODE_MENU_ATTR]: nodeMenuAttr({ added: [{ id: -1, parentId: null, ord: 0, name: 'solo', label: 'Solo', visible: true }] }) }), []);
+  assert.match(rendered, /data-item="solo"/);
+  assert.doesNotMatch(rendered, /data-menu-config/);
+});
+
+test('per-instance menu override: deleting a parent item drops its descendants on the instance only', () => {
+  const nested = [
+    { id: 21, name: 'parent', label: 'Parent', parentId: null, ord: 0, visible: true },
+    { id: 22, name: 'child', label: 'Child', parentId: 21, ord: 0, visible: true }
+  ];
+  const node = place(12, { [NODE_MENU_ATTR]: nodeMenuAttr({ items: { 21: { deleted: true } } }) });
+  const m = instanceMenu({ cfg: menuConfig({}), items: nested }, node);
+  assert.equal(m.items.length, 0);
+  assert.equal(nested.length, 2);
 });

@@ -95,8 +95,8 @@ export function installTestActions(Designer) {
     const screens = await api.list('screen');
     const s = screens.find(x => Number(x.id) === Number(targetScreenId) || x.key === String(targetScreenId));
     if (!s) return toast('Target screen no longer exists', 'error');
-    // design test (button / screen): the route is announced, the screen stays; workflow test: it is followed
-    if (tr?.mode === 'notify') return toast(`🔗 ${label ? `${label} → ` : ''}would go to “${s.name}” (test the workflow to follow routes)`, 'info', 2600);
+    // button test: the route is announced, the button stays; screen / workflow test: it is followed
+    if (tr?.mode === 'notify' && this.type !== 'screen') return toast(`🔗 ${label ? `${label} → ` : ''}would go to “${s.name}” (test the workflow to follow routes)`, 'info', 2600);
     toast(`🔗 ${label ? `${label} → ` : '→ '}${s.name}`, 'ok', 1800);
     this._keepActionsLive = true;
     return this.transitionTo('goto', () => this.opts.openDesign?.('screen', s.id));

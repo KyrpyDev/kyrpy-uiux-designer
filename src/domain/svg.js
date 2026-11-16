@@ -235,8 +235,10 @@ function renderInstance(el, a, ctx, all) {
   const tw = w || target.width, th = h || target.height;
   const { x: _x, y: _y, width: _w, height: _h, ...rest } = a;
   // a placed button keeps its own menu settings (node attribute); the library button only changes in its own designer
-  const menu = el.refType === 'button' && target.menu?.items?.length ? instanceMenu(target.menu, el) : null;
-  const attrs = commonAttrs(el, { ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
+  const rawMenu = el.refType === 'button' && target.menu ? instanceMenu(target.menu, el) : null;
+  const menu = rawMenu?.items?.length ? rawMenu : null;
+  const pathDefaults = el.refType === 'path' ? resolvedIconDefaults(ctx) : {};
+  const attrs = commonAttrs(el, { ...pathDefaults, ...rest, transform: `translate(${x} ${y}) scale(${round(tw / target.width)} ${round(th / target.height)})` }, ctx, all);
   if (menu) { attrs.class = [attrs.class, 'ud-btn'].filter(Boolean).join(' '); attrs['data-menu'] = target.key; attrs['data-btn-id'] = el.refId; attrs.style = `--rot:${Number(menu.cfg.rotateOnOpen) || 0}deg`; }
   // press & slide: the runtime contract on the button, its body wrapped so the slide can nudge it, the direction paths over its icon
   // (a button with menu items sets it per item instead: cfg.itemPressSlide, drawn by the menu)
@@ -474,7 +476,7 @@ export function indexLibrary({ paths = [], icons = [], buttons = [], elements = 
   return {
     path: new Map(paths.map(d => one(d))),
     icon: new Map(icons.map(d => one(d))),
-    button: new Map(buttons.map(d => one(d, { menu: menus.get(d.id)?.length ? { cfg: menuConfig(d.meta), items: menus.get(d.id) } : null, pressSlide: pressSlideConfig(d.meta) }))),
+    button: new Map(buttons.map(d => one(d, { menu: { cfg: menuConfig(d.meta), items: menus.get(d.id) || [] }, pressSlide: pressSlideConfig(d.meta) }))),
     element: new Map(elements.map(d => one(d)))
   };
 }

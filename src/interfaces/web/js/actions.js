@@ -1,5 +1,6 @@
 /** App-level actions shared by menus, panels and the designers. Components call these instead of each other. */
 import { instanceIconId } from '/domain/instance-content.js';
+import { nodeMenuOverride } from '/domain/menu.js';
 import { api } from './api.js';
 import { state, emit, on, isSuperadminUser, currentTheme, renderContext, TYPE_LIST, PLURAL, findDesign, addExtraDesign } from './state.js';
 import { syncIconVersion, cachedIcon, resetSprite, appendSymbols, markSymbols, loadIcons } from './icon-store.js';
@@ -23,6 +24,14 @@ export async function ensureDesignDeps(rec) {
     for (const n of d?.nodes || []) {
       if (n.kind === 'instance' && ['path', 'icon', 'button', 'element'].includes(n.refType) && n.refId) out.push([n.refType, Number(n.refId)]);
       const ic = instanceIconId(n); if (ic != null) out.push(['icon', ic]);   // a placed copy's own icon
+      if (n.kind === 'instance' && n.refType === 'button') {
+        const o = nodeMenuOverride(n);
+        if (o.cfg.itemButtonId) out.push(['button', Number(o.cfg.itemButtonId)]);
+        for (const it of [...o.added, ...Object.values(o.items)]) {
+          if (it.iconId != null) out.push(['icon', Number(it.iconId)]);
+          if (it.refButtonId != null) out.push(['button', Number(it.refButtonId)]);
+        }
+      }
     }
     for (const m of d?.menuItems || []) { if (m.refButtonId) out.push(['button', Number(m.refButtonId)]); if (m.iconId) out.push(['icon', Number(m.iconId)]); }
     return out;

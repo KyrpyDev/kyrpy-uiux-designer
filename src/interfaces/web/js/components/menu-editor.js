@@ -8,13 +8,13 @@ import { matchesSearch, searchTerms, itemSearchFields } from '/domain/search.js'
 import { h, modal, toast, confirmBox, clear, promptBox } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign, libOf, isPublicLibraryItem } from '../state.js';
-import { reloadLibrary } from '../actions.js';
+import { reloadLibrary, ensureDesignDeps } from '../actions.js';
 import { ensureIconSymbols } from '../icon-store.js';
 import { iconEl, ibtn } from '../icons.js';
 
 import { bindMenus } from '/domain/menu-runtime.js';
 import { slugify } from '/domain/naming.js';
-import { buildMenuTree, menuConfig, dropTarget } from '/domain/menu.js';
+import { buildMenuTree, menuConfig, dropTarget, instanceMenu, nodeMenuOverride, nodeMenuAttr, NODE_MENU_ATTR } from '/domain/menu.js';
 import { menuItemAction } from '/domain/entities.js';
 import { isContainerNode } from '/domain/geometry.js';
 import { isRepeaterNode } from '/domain/repeater.js';
@@ -267,8 +267,8 @@ export function targetSummary(screenId, elementId, recs = {}, action = '') {
   return 'Choose screen, popup element or repeater…';
 }
 
-export async function menuItemDialog({ buttonId, item = null, parentId: initialParentId = null, d = null }) {
-  const menuNow = await api.menu(buttonId).catch(() => null);
+export async function menuItemDialog({ buttonId, item = null, parentId: initialParentId = null, d = null, menuContext = null, onSave = null }) {
+  const menuNow = menuContext || await api.menu(buttonId).catch(() => null);
   // the menu's button: from the library, else the open document, else fetched (a button of another project is not in the
   // loaded library, and its project decides the prefix of new variable names and where picked items are copied to)
   const host = findDesign('button', buttonId) || (Number(d?.doc?.id) === Number(buttonId) && d?.type === 'button' ? d.doc : null)
@@ -352,7 +352,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     const scrollCfg = (menuNow?.config?.itemScroll && item) ? menuNow.config.itemScroll[String(item.id)] : null;
     const slideCheck = h('input', { type: 'checkbox', 'data-f': 'mi-slide', checked: !!scrollCfg?.on });
     // only repeaters and scrollable containers can be the slide target (no other elements)
-    const scrNodes = (d?.type === 'screen' ? (d.nodes || []) : []).filter(n => (n.kind !== 'instance' || n.refType !== 'button')
+    const scrNodes = (d?.type === 'screen' || d?.type === 'element' ? (d.nodes || []) : []).filter(n => (n.kind !== 'instance' || n.refType !== 'button')
       && (isRepeaterNode(n, state.library?.elements) || isContainerNode(n, state.library?.elements)));
     const scrLabel = n => `${isContainerNode(n, state.library?.elements) ? '▣ ' : ''}${n.name || n.label || n.key || n.kind} · ${n.id}`;
     const scrollSel = h('select', { 'data-f': 'mi-scroll-target', style: { width: '100%' } },
@@ -368,7 +368,7 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
     slideCheck.addEventListener('change', paintSlide); paintSlide();
     const slideBox = h('div', { class: 'field', title: 'Only this item scrolls: press it while it is the centred hub button and slide up / down (or left / right).' },
       h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } }, slideCheck, h('span', {}, 'Slide this item (when centred) to scroll a container')),
-      h('span', { class: 'muted' }, d?.type === 'screen' ? 'Scrollable container on this screen' : 'Scrollable container (open the item from a screen to list its elements)'),
+      h('span', { class: 'muted' }, (d?.type === 'screen' || d?.type === 'element') ? 'Scrollable container on this design' : 'Scrollable container (open the item from a screen to list its elements)'),
       h('div', { class: 'row', style: { gap: '6px', alignItems: 'center' } }, scrollSel,
         libraryBrowseButton({
           currentAction: 'scroll-repeater', projectId: host?.projectId ?? state.activeProjectId, dataF: 'mi-scroll-browse',
@@ -476,14 +476,11 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
         visible: visCheck.checked,
         descriptionDev: dev.value
       };
-      try {
-        let saved = item ? await api.updateMenuItem(buttonId, item.id, body) : await api.addMenuItem(buttonId, { ...body, parentId });
-        if (item && (parentId ?? null) !== (item.parentId ?? null)) { await api.moveMenuItem(buttonId, item.id, { parentId }); saved = { ...saved, parentId }; }
-        const sid = saved?.id ?? item?.id;
+      const buildCfgPatch = sid => {
+        const patch = {};
         const prevMap = menuNow?.config?.itemScroll || {};
         const wantOn = slideCheck.checked, wantT = scrollSel.value || null, wantMode = modeSel.value;
         const had = prevMap[String(sid)];
-        const patch = {};
         if (sid != null && (wantOn || had) && (!had || !!had.on !== wantOn || String(had.targetId ?? '') !== String(wantT ?? '') || (had.mode || 'focus') !== wantMode)) {
           // the first per item setting switches the menu from the old menu-wide rule to per item rules
           patch.itemScroll = { ...prevMap, [String(sid)]: { on: wantOn, targetId: wantT, mode: wantMode } };
@@ -498,6 +495,20 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
           if (psWant.on) next[String(sid)] = psWant; else delete next[String(sid)];
           if (JSON.stringify(next) !== JSON.stringify(psPrev)) patch.itemPressSlide = next;
         }
+        return patch;
+      };
+      try {
+        if (onSave) {
+          const targetKey = targetScreenId != null ? (targetRecs.screen?.key || findDesign('screen', targetScreenId)?.key || '') : '';
+          const targetElementKey = targetElementId != null ? (targetRecs.element?.key || findDesign('element', targetElementId)?.key || '') : '';
+          const saved = await onSave({ body: { ...body, targetKey, targetElementKey }, parentId, buildCfgPatch });
+          fin(saved); m.close();
+          return;
+        }
+        let saved = item ? await api.updateMenuItem(buttonId, item.id, body) : await api.addMenuItem(buttonId, { ...body, parentId });
+        if (item && (parentId ?? null) !== (item.parentId ?? null)) { await api.moveMenuItem(buttonId, item.id, { parentId }); saved = { ...saved, parentId }; }
+        const sid = saved?.id ?? item?.id;
+        const patch = buildCfgPatch(sid);
         if (Object.keys(patch).length) await api.menuConfig(buttonId, patch);
         fin(saved); m.close();
       } catch (e) { toast(e.message, 'error'); }
@@ -691,13 +702,178 @@ export const menuActions = {
 };
 
 /**
+ * Per-instance menu operations for a placed library button (`inst`): every change is saved
+ * to `inst.attrs['data-menu-config']` only; the library button stays untouched.
+ */
+export function createInstanceMenuOps(d, inst, bid) {
+  const btnDoc = (d.type === 'button' && d.doc?.id === bid) ? d.doc : findDesign('button', bid);
+  const baseRows = btnDoc?.menuItems || [];
+  const own = instanceMenu({ cfg: menuConfig(btnDoc?.meta), items: baseRows }, inst);
+  const cfg = own.cfg, rows = own.items;
+  const writeOwn = o => {
+    const a = { ...(inst.attrs || {}) }, v = nodeMenuAttr(o);
+    if (v) a[NODE_MENU_ATTR] = v; else delete a[NODE_MENU_ATTR];
+    return d.patchNode(inst.id, { attrs: a });
+  };
+  const setOrdOn = (o, item, ord, parentId) => {
+    if (item.id < 0) {
+      o.added = o.added.map(x => x.id === item.id ? { ...x, ord, ...(parentId !== undefined ? { parentId } : {}) } : x);
+    } else {
+      const prev = o.items[String(item.id)] || {};
+      o.items[String(item.id)] = { ...prev, ord, ...(parentId !== undefined ? { parentId } : {}) };
+    }
+  };
+  return {
+    cfg,
+    rows,
+    baseRows,
+    writeOwn,
+    config: async patch => {
+      const o = nodeMenuOverride(inst);
+      await writeOwn({ ...o, cfg: { ...o.cfg, ...patch } });
+      if (patch && (patch.hubCount !== undefined || patch.kind !== undefined || patch.hubFixedPositions !== undefined)) d.fit?.();
+    },
+    toggleVisible: id => {
+      const o = nodeMenuOverride(inst), cur = rows.find(r => r.id === id);
+      if (!cur) return;
+      const next = !(cur.visible !== false);
+      if (id < 0) {
+        o.added = o.added.map(x => x.id === id ? { ...x, visible: next } : x);
+      } else {
+        const base = baseRows.find(r => r.id === id), prev = { ...(o.items[String(id)] || {}) };
+        if (next === (base?.visible !== false)) delete prev.visible; else prev.visible = next;
+        if (Object.keys(prev).length) o.items[String(id)] = prev; else delete o.items[String(id)];
+      }
+      return writeOwn(o);
+    },
+    add: async (parentId = null) => {
+      const curO = nodeMenuOverride(inst);
+      const newId = Math.min(0, ...curO.added.map(x => Number(x.id) || 0)) - 1;
+      const sibs = rows.filter(r => (r.parentId ?? null) === (parentId ?? null));
+      const nextOrd = sibs.reduce((m, r) => Math.max(m, Number(r.ord) || 0), -1) + 1;
+      return menuItemDialog({
+        buttonId: bid, parentId, d, menuContext: { config: cfg, items: rows },
+        onSave: async ({ body, parentId: pid, buildCfgPatch }) => {
+          await ensureDesignDeps({ menuItems: [body] }).catch(() => {});
+          const o = nodeMenuOverride(inst);
+          const created = { id: newId, parentId: pid ?? null, ord: nextOrd, ...body };
+          o.added = [...o.added, created];
+          const cfgPatch = buildCfgPatch(newId);
+          if (Object.keys(cfgPatch).length) o.cfg = { ...o.cfg, ...cfgPatch };
+          await writeOwn(o);
+          return created;
+        }
+      });
+    },
+    edit: async id => {
+      const item = rows.find(r => r.id === id);
+      if (!item) return;
+      return menuItemDialog({
+        buttonId: bid, item, d, menuContext: { config: cfg, items: rows },
+        onSave: async ({ body, parentId: pid, buildCfgPatch }) => {
+          await ensureDesignDeps({ menuItems: [body] }).catch(() => {});
+          const o = nodeMenuOverride(inst);
+          if (id < 0) {
+            o.added = o.added.map(x => x.id === id ? { ...x, ...body, parentId: pid ?? null } : x);
+          } else {
+            const prev = o.items[String(id)] || {};
+            o.items[String(id)] = { ...prev, ...body, parentId: pid ?? null };
+          }
+          const cfgPatch = buildCfgPatch(id);
+          if (Object.keys(cfgPatch).length) o.cfg = { ...o.cfg, ...cfgPatch };
+          await writeOwn(o);
+          return { ...item, ...body, parentId: pid ?? null };
+        }
+      });
+    },
+    linkTarget: async id => {
+      const it = rows.find(r => r.id === id);
+      if (!it) return;
+      const projectId = d.doc?.projectId ?? btnDoc?.projectId ?? state.activeProjectId;
+      const r = await pickTarget({ currentScreenId: it.targetScreenId ?? null, currentElementId: it.targetElementId ?? null, projectId, allowCreate: false });
+      if (!r) return;
+      const p = await targetPatch(r, projectId);
+      if (!p) return;
+      const patch = {
+        targetScreenId: p.targetScreenId,
+        targetElementId: p.targetElementId,
+        targetKey: p.type === 'screen' ? (p.target?.key || '') : '',
+        targetElementKey: p.type === 'element' ? (p.target?.key || '') : ''
+      };
+      const o = nodeMenuOverride(inst);
+      if (id < 0) {
+        o.added = o.added.map(x => x.id === id ? { ...x, ...patch } : x);
+      } else {
+        o.items[String(id)] = { ...(o.items[String(id)] || {}), ...patch };
+      }
+      await writeOwn(o);
+      const who = it.label || it.name;
+      toast(p.type === 'screen' ? `“${who}” → ${p.target.name}` : p.type === 'element' ? `“${who}” shows ${p.target.name} as a popup` : `“${who}” goes nowhere`, 'ok', 1800);
+    },
+    remove: async id => {
+      const item = rows.find(r => r.id === id);
+      if (!item || !await confirmBox(`Delete “${item.label || item.name}” and all its sub items?`)) return;
+      const gone = new Set([id]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const r of rows) if (!gone.has(r.id) && gone.has(r.parentId)) { gone.add(r.id); grew = true; }
+      }
+      const o = nodeMenuOverride(inst);
+      o.added = o.added.filter(x => !gone.has(x.id));
+      for (const gid of gone) {
+        if (gid > 0) o.items[String(gid)] = { deleted: true };
+        else delete o.items[String(gid)];
+      }
+      return writeOwn(o);
+    },
+    move: (id, dir) => {
+      const it = rows.find(r => r.id === id);
+      if (!it) return;
+      const sibs = rows.filter(r => (r.parentId ?? null) === (it.parentId ?? null)).sort((a, b) => a.ord - b.ord || a.id - b.id);
+      const i = sibs.indexOf(it), j = i + dir;
+      if (j < 0 || j >= sibs.length) return;
+      const other = sibs[j], o = nodeMenuOverride(inst);
+      setOrdOn(o, it, other.ord === it.ord ? other.ord + dir : other.ord);
+      setOrdOn(o, other, it.ord === other.ord ? it.ord - dir : it.ord);
+      return writeOwn(o);
+    },
+    moveTo: (id, targetId, where) => {
+      if (id === targetId) return false;
+      const it = rows.find(r => r.id === id), tg = rows.find(r => r.id === targetId);
+      if (!it || (targetId != null && !tg)) return false;
+      const to = dropTarget(rows, it, tg, where);
+      if (!to) return false;
+      for (let p = to.parentId, guard = 0; p != null && guard < 64; p = rows.find(r => r.id === p)?.parentId, guard++) {
+        if (p === it.id) { toast('Cannot move an item inside itself', 'error'); return false; }
+      }
+      const sibs = rows.filter(r => (r.parentId ?? null) === (to.parentId ?? null) && r.id !== it.id).sort((a, b) => a.ord - b.ord || a.id - b.id);
+      sibs.splice(to.index == null ? sibs.length : to.index, 0, it);
+      const o = nodeMenuOverride(inst);
+      sibs.forEach((s, idx) => setOrdOn(o, s, idx, s.id === it.id ? (to.parentId ?? null) : undefined));
+      return writeOwn(o);
+    },
+    applyAll: async () => {
+      const o = nodeMenuOverride(inst);
+      o.added = o.added.map(x => ({ ...x, refButtonId: null }));
+      for (const r of rows.filter(x => x.id > 0 && x.refButtonId)) {
+        const base = baseRows.find(b => b.id === r.id), prev = { ...(o.items[String(r.id)] || {}) };
+        if (base?.refButtonId) prev.refButtonId = null; else delete prev.refButtonId;
+        if (Object.keys(prev).length) o.items[String(r.id)] = prev; else delete o.items[String(r.id)];
+      }
+      await writeOwn(o);
+      toast('All items now follow the menu button style', 'ok', 1600);
+    }
+  };
+}
+
+/**
  * Dedicated interactive modal for editing menu items:
  * - Shows all items on the menu with icon, label and action/target summary
  * - Right-side toolbar for each item: Target (🖥), Visibility (👁/—), Move Up (↑), Move Down (↓), Default Centre (◎ for hub), Edit (✎), Delete (🗑)
  * - Drag-and-drop to reorder items inside the modal (with live indicator and moveTo)
  * - "＋ Add new menu item" at the bottom
  */
-export async function openMenuItemsModal(d, buttonId) {
+export async function openMenuItemsModal(d, buttonId, inst = null) {
   const bid = resolveButtonId(d, buttonId);
   if (!bid) return;
 
@@ -707,9 +883,11 @@ export async function openMenuItemsModal(d, buttonId) {
     api.list('screen', '', { includePublic: true }).then(r => { screens = new Map(r.map(s => [Number(s.id), s])); if (m && dragId == null) paint(); }).catch(() => {});
 
     const paint = () => {
-      const rows = getButtonRows(d, bid);
+      const liveInst = inst ? (d.byId?.(inst.id) || inst) : null;
+      const ops = liveInst ? createInstanceMenuOps(d, liveInst, bid) : null;
+      const rows = ops ? ops.rows : getButtonRows(d, bid);
       const host = d.type === 'button' && d.doc?.id === bid ? d.doc : findDesign('button', bid);
-      const cfg = menuConfig(host?.meta);
+      const cfg = ops ? ops.cfg : menuConfig(host?.meta);
       const isHub = cfg.kind === 'hub';
 
       const itemsList = h('div', {
@@ -726,7 +904,7 @@ export async function openMenuItemsModal(d, buttonId) {
           dragId = null;
           document.querySelectorAll('.mi-drop-before, .mi-drop-after').forEach(el => el.classList.remove('mi-drop-before', 'mi-drop-after'));
           if (id != null) {
-            await menuActions.moveTo(d, id, null, 'after', bid);
+            await (ops ? ops.moveTo(id, null, 'after') : menuActions.moveTo(d, id, null, 'after', bid));
             paint();
           }
         }
@@ -785,13 +963,13 @@ export async function openMenuItemsModal(d, buttonId) {
             row.classList.remove('mi-drop-before', 'mi-drop-after');
             dragId = null;
             if (id != null && id !== it.id) {
-              await menuActions.moveTo(d, id, it.id, where, bid);
+              await (ops ? ops.moveTo(id, it.id, where) : menuActions.moveTo(d, id, it.id, where, bid));
               paint();
             }
           },
           onclick: async e => {
             if (e.target.closest('button, input, select, a, .mi-toolbar')) return;
-            await menuActions.edit(d, it.id, bid);
+            await (ops ? ops.edit(it.id) : menuActions.edit(d, it.id, bid));
             paint();
           }
         });
@@ -820,7 +998,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: 'Choose target screen, popup element or repeater scroll',
           'aria-label': 'Target picker',
           onclick: async () => {
-            await menuActions.linkTarget(d, it.id, bid);
+            await (ops ? ops.linkTarget(it.id) : menuActions.linkTarget(d, it.id, bid));
             paint();
           }
         }, iconEl('monitor', { size: 14 })));
@@ -832,7 +1010,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: isHidden ? 'Show menu item' : 'Hide menu item',
           'aria-label': 'Toggle visibility',
           onclick: async () => {
-            await menuActions.toggleVisible(d, it.id, bid);
+            await (ops ? ops.toggleVisible(it.id) : menuActions.toggleVisible(d, it.id, bid));
             paint();
           }
         }, iconEl(isHidden ? 'close' : 'view', { size: 14 })));
@@ -844,7 +1022,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: 'Move up (earlier)',
           'aria-label': 'Move up',
           onclick: async () => {
-            await menuActions.move(d, it.id, -1, bid);
+            await (ops ? ops.move(it.id, -1) : menuActions.move(d, it.id, -1, bid));
             paint();
           }
         }, iconEl('arrowUp', { size: 14 })));
@@ -856,7 +1034,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: 'Move down (later)',
           'aria-label': 'Move down',
           onclick: async () => {
-            await menuActions.move(d, it.id, 1, bid);
+            await (ops ? ops.move(it.id, 1) : menuActions.move(d, it.id, 1, bid));
             paint();
           }
         }, iconEl('arrowDown', { size: 14 })));
@@ -868,7 +1046,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: `Add a sub item under “${it.label || it.name}”`,
           'aria-label': 'Add sub item',
           onclick: async () => {
-            await menuActions.add(d, it.id, bid);
+            await (ops ? ops.add(it.id) : menuActions.add(d, it.id, bid));
             paint();
           }
         }, iconEl('plus', { size: 14 })));
@@ -881,7 +1059,7 @@ export async function openMenuItemsModal(d, buttonId) {
             title: isDefault ? 'Default centre button' : `Set "${it.label || it.name}" as default centre`,
             'aria-label': 'Default centre',
             onclick: async () => {
-              await menuActions.config(d, { hubCenterItemId: it.id }, bid);
+              await (ops ? ops.config({ hubCenterItemId: it.id }) : menuActions.config(d, { hubCenterItemId: it.id }, bid));
               toast('Default centre button set', 'ok', 1400);
               paint();
             }
@@ -895,7 +1073,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: 'Edit menu item',
           'aria-label': 'Edit item',
           onclick: async () => {
-            await menuActions.edit(d, it.id, bid);
+            await (ops ? ops.edit(it.id) : menuActions.edit(d, it.id, bid));
             paint();
           }
         }, iconEl('pencil', { size: 14 })));
@@ -907,7 +1085,7 @@ export async function openMenuItemsModal(d, buttonId) {
           title: 'Delete this item',
           'aria-label': 'Delete item',
           onclick: async () => {
-            await menuActions.remove(d, it.id, bid);
+            await (ops ? ops.remove(it.id) : menuActions.remove(d, it.id, bid));
             paint();
           }
         }, iconEl('trash', { size: 14 })));
@@ -922,7 +1100,7 @@ export async function openMenuItemsModal(d, buttonId) {
         class: 'choice-item primary mi-add-row',
         type: 'button',
         onclick: async () => {
-          await menuActions.add(d, null, bid);
+          await (ops ? ops.add(null) : menuActions.add(d, null, bid));
           paint();
         }
       },

@@ -414,9 +414,16 @@ const methods = {
     if (hit && hit.role !== 'bg' && hit.role !== 'bg-glow') this.toolbarNodeId = hit.id;   // right-click also opens the quick toolbar
     if (hit && !this.selected.has(hit.id)) this.select([hit.id]); else this.updateHoverToolbar();
     const sel = this.selectedNodes(), one = sel.length === 1 ? sel[0] : null, editor = one ? this.editorFor(one) : null, vec = this.vectorNodes(), many = vec.length > 1 && vec.length === sel.length, has = sel.length > 0;
+    const isPlacedInst = one?.kind === 'instance' && one.refId;
     contextMenu(ev.clientX, ev.clientY, [
-      { label: '✎ Open editor', kbd: editor ? editor.label : '', disabled: !editor || editor.disabled, fn: () => this.openEditor(one) },
+      isPlacedInst
+        ? { label: '✎ Edit this placed copy', kbd: 'Inspector', fn: () => this.focusInstanceInspector(one) }
+        : { label: '✎ Open editor', kbd: editor ? editor.label : '', disabled: !editor || editor.disabled, fn: () => this.openEditor(one) },
       { label: '✦ Edit vertices', kbd: 'Enter', disabled: !(one && this.vtx.canEdit(one)), fn: () => this.vtx.enter(one) },
+      ...(this.type === 'icon' ? [
+        { label: '❖ Explode into paths', disabled: !this.nodes.length, fn: () => this.explodeIcon() },
+        { label: '↗ Export as path (save to library)', disabled: !this.nodes.length, fn: () => this.savePathsToLibrary() }
+      ] : []),
       '-',
       {
         label: '⚡ Configure Events (click, mouseover, release, drag&drop)…',

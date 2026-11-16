@@ -1,7 +1,7 @@
 import { instanceIconId } from '../domain/instance-content.js';
 import { NotFoundError } from '../domain/errors.js';
 import { createContext, renderDocument, renderIconDocument, renderSprite } from '../domain/svg.js';
-import { buildMenuTree, menuConfig, menuExtent } from '../domain/menu.js';
+import { buildMenuTree, menuConfig, menuExtent, nodeMenuOverride } from '../domain/menu.js';
 import { scriptPhotoUri } from '../domain/image.js';
 import { pressSlideConfig, pressSlideDirs, PRESS_SLIDE_PATH_ALIASES } from '../domain/press-slide.js';
 
@@ -51,7 +51,9 @@ export class RenderService {
           targetKey: m.targetScreenId != null ? this.designs.screen.get(m.targetScreenId)?.key ?? '' : '',
           targetElementKey: m.targetElementId != null ? this.designs.element.get(m.targetElementId)?.key ?? '' : ''
         }));
-        if (items.length) { entry.menu = { cfg: menuConfig(d.meta), items }; for (const m of items) if (m.iconId != null) need('icon', m.iconId); }
+        entry.menu = { cfg: menuConfig(d.meta), items };
+        if (entry.menu.cfg.itemButtonId) need('button', Number(entry.menu.cfg.itemButtonId));
+        for (const m of items) { if (m.iconId != null) need('icon', m.iconId); if (m.refButtonId != null) need('button', m.refButtonId); }
         // press & slide: the public direction paths drawn over the icon
         const ps = pressSlideConfig(d.meta);
         if (ps) entry.pressSlide = ps;
@@ -65,7 +67,18 @@ export class RenderService {
     };
     for (let guard = 0; queue.length && guard < 20000; guard++) {
       const n = queue.pop();
-      if (n.kind === 'instance' && n.refType) { need(n.refType, n.refId); const ic = instanceIconId(n); if (ic != null) need('icon', ic); }   // a placed copy's own icon
+      if (n.kind === 'instance' && n.refType) {
+        need(n.refType, n.refId);
+        const ic = instanceIconId(n); if (ic != null) need('icon', ic);   // a placed copy's own icon
+        if (n.refType === 'button') {
+          const o = nodeMenuOverride(n);
+          if (o.cfg.itemButtonId) need('button', Number(o.cfg.itemButtonId));
+          for (const it of [...o.added, ...Object.values(o.items)]) {
+            if (it.iconId != null) need('icon', Number(it.iconId));
+            if (it.refButtonId != null) need('button', Number(it.refButtonId));
+          }
+        }
+      }
     }
     // image nodes: server-side SVG (exports, <img> previews) cannot load files, so pictures are embedded as data URIs
     return createContext({ theme, lib, animations: this.animations.listAll(), editor, emitIds, repeaterMode, imageHref: this.imageHref || null });
