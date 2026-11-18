@@ -59,7 +59,7 @@ const TOOLS = [
   ['crop', 'X', '⛶', 'Crop: drag a rectangle, the selected shapes keep only what is inside it'],
   ['path', 'P', '✎', 'New path (enter the d attribute)']
 ];
-const TAB_GLYPH = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow' };
+const TAB_GLYPH = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow', flowchart: 'flowchart' };
 const MIN_Z = 0.04, MAX_Z = 80;
 const GLYPH = new Set(['path', 'icon']);
 const deep = o => JSON.parse(JSON.stringify(o));
@@ -541,6 +541,7 @@ export class Designer {
       lockDocBtn,
       copyToProjBtn,
       lineageBtn,
+      ibtn('sparkles', 'AI Studio', () => emit('ai-studio:open', { tab: 'ui', targetType: this.type, preferRefine: Boolean(this.doc?.nodes?.length) }), { desc: '✨ AI Studio — Generate or refine this design at runtime in your browser (Gemini BYOK, Chrome Gemini Nano, Local Ollama, WebGPU, or Live MCP)', dataset: { act: 'dz-ai-studio' } }),
       this.type === 'screen' ? ibtn('workflow', 'Generate workflow', () => this.generateWorkflow(), { desc: 'New workflow from this screen: follows every menu item and click action that goes to another screen, screen after screen, and links them all as routes' }) : null
     ].filter(Boolean)); // Element.append() would render a null slot (no back button / device menu) as the text "null"
     emit('topbar:refresh');
@@ -586,9 +587,9 @@ export class Designer {
     const label = h('span', { class: 'text-menu-label' }, short);
     if (!this.opts.openPage) { label.className = 'badge'; label.style.marginLeft = '6px'; return label; }
     const btn = this.toolMenu(TAB_GLYPH[this.type] || 'dot', 'Switch designer: opens the item of that type you edited last', () =>
-      ['path', 'icon', 'button', 'element', 'screen', 'workflow'].map(t => {
+      ['path', 'icon', 'button', 'element', 'screen', 'workflow', 'flowchart'].map(t => {
         const id = lastEdited(t), name = id != null ? (findDesign(t, id)?.name || editedName(t, id)) : '';
-        const title = t === 'workflow' ? 'Workflow designer' : NAMES[t];
+        const title = t === 'workflow' ? 'Workflow designer' : t === 'flowchart' ? 'FlowChart designer' : NAMES[t];
         return [TAB_GLYPH[t] || 'dot', `${title}${t === this.type ? '  ·  current' : name ? `  ·  ${name}` : ''}`, () => { if (t !== this.type) this.opts.openPage(t); }, name ? `Open the ${t} edited last: "${name}"` : `Open the ${t} designer`];
       }));
     btn.classList.add('type-switch', 'text-menu'); btn.dataset.act = 'type-switch'; btn.style.marginLeft = '6px';
@@ -1072,7 +1073,7 @@ export class Designer {
     el.style.width = 'max-content';
     const natural = el.getBoundingClientRect().width;
     el.style.width = '';
-    this.setInspectorWidth(Math.min(natural + 16, 270));
+    this.setInspectorWidth(Math.max(375, Math.min(natural + 16, 405)));
     this.fitted = false;
   }
 

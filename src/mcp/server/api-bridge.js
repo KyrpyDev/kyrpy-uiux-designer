@@ -32,10 +32,11 @@ function normalizePluralTypes(raw) {
 
 function normalizeSingularType(raw) {
   const s = String(raw || '').trim().toLowerCase();
-  if (ITEM_TYPES.has(s)) return s;
+  if (ITEM_TYPES.has(s) || s === 'flowchart') return s;
   if (PLURAL_TO_TYPE[s]) return PLURAL_TO_TYPE[s];
   if (s === 'workflows') return 'workflow';
-  throw new ValidationError(`Invalid item type "${raw}"; expected path, icon, button, element, screen, or workflow`);
+  if (s === 'flowcharts') return 'flowchart';
+  throw new ValidationError(`Invalid item type "${raw}"; expected path, icon, button, element, screen, workflow, or flowchart`);
 }
 
 export class ApiBridge {
@@ -159,7 +160,11 @@ export class ApiBridge {
     const cleanType = normalizeSingularType(type);
     const raw = String(ref ?? '').trim();
     if (!raw) throw new ValidationError(`Missing ${cleanType} reference`);
-    const repo = cleanType === 'workflow' ? c.workflows.workflows : c.services[cleanType]?.designs;
+    const repo = cleanType === 'workflow'
+      ? c.workflows.workflows
+      : cleanType === 'flowchart'
+        ? c.flowcharts?.flowcharts
+        : c.services[cleanType]?.designs;
     if (!repo) throw new ValidationError(`Unsupported item type "${cleanType}"`);
     if (/^\d+$/.test(raw)) {
       const rec = repo.get(intId(raw, 'id'));
@@ -167,7 +172,7 @@ export class ApiBridge {
       return rec;
     }
     // Check uid first when UUID-shaped, then project-aware key
-    const table = cleanType === 'workflow' ? 'workflows' : TYPE_TO_PLURAL[cleanType];
+    const table = cleanType === 'workflow' ? 'workflows' : cleanType === 'flowchart' ? 'flowcharts' : TYPE_TO_PLURAL[cleanType];
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(raw)) {
       const row = c.db.prepare(`SELECT id FROM ${table} WHERE uid = ?`).get(raw);
       if (row?.id) {
@@ -218,6 +223,7 @@ export class ApiBridge {
       if (op.action === 'getLineage') {
         const t = String(rawParams.type || rawParams.types || body?.type || '').toLowerCase();
         if (t === 'workflow' || t === 'workflows') pattern = '/api/workflows/:id/lineage';
+        else if (t === 'flowchart' || t === 'flowcharts') pattern = '/api/flowcharts/:id/lineage';
       } else if (op.action === 'saveTemplateDevice') {
         const devId = rawParams.id ?? body?.id;
         if (devId !== undefined && devId !== null && String(devId).trim() !== '') {
@@ -447,7 +453,7 @@ export class ApiBridge {
           throw deny(`Query projectIds must only contain the bound project (${boundProjectId}).`);
         }
       }
-      if (['library', 'list', 'iconSearch', 'catalogSearch', 'workflows', 'changes', 'changeCounts', 'trashList', 'trashEmpty', 'exportProjectHtml', 'translations', 'templateDevices', 'templateButtons'].includes(op.action)) {
+      if (['library', 'list', 'iconSearch', 'catalogSearch', 'workflows', 'flowcharts', 'changes', 'changeCounts', 'trashList', 'trashEmpty', 'exportProjectHtml', 'translations', 'templateDevices', 'templateButtons'].includes(op.action)) {
         parsedUrl.searchParams.set('projectId', String(boundProjectId));
       }
     }
@@ -512,6 +518,14 @@ export class ApiBridge {
         this.#assertItemReadable(c, sRec, 'screen', bound, actor, boundProjectId);
         hit.params.sid = String(sRec.id);
       }
+    } else if (hit.pattern.startsWith('/api/flowcharts/:id')) {
+      const rec = this.#findItem(c, 'flowchart', hit.params.id, boundProjectId);
+      if (op.action === 'cloneFlowchart' || !isMutation) {
+        this.#assertItemReadable(c, rec, 'flowchart', bound, actor, boundProjectId);
+      } else {
+        this.#assertItemEditableInProject(c, rec, 'flowchart', boundProjectId);
+      }
+      hit.params.id = String(rec.id);
     }
 
     // Create / import item isolation: bind to boundProjectId, enforce visibility rules, resolve body key refs
@@ -521,7 +535,7 @@ export class ApiBridge {
       }
       body.projectId = boundProjectId;
 
-      if (['createDesign', 'cloneDesign', 'createWorkflow', 'cloneWorkflow', 'workflowFromScreen', 'onlineImport', 'onlineImportSet', 'importSvg', 'importFolder', 'importFont', 'importLibraryItems', 'instantiateTemplateButton'].includes(op.action)) {
+      if (['createDesign', 'cloneDesign', 'createWorkflow', 'cloneWorkflow', 'workflowFromScreen', 'createFlowchart', 'cloneFlowchart', 'reverseEngineerFlowchart', 'onlineImport', 'onlineImportSet', 'importSvg', 'importFolder', 'importFont', 'importLibraryItems', 'instantiateTemplateButton'].includes(op.action)) {
         if (op.action === 'importSvg') {
           if (!body.svg && typeof body.svgText === 'string') body.svg = body.svgText;
           if (!body.as && typeof body.targetType === 'string') body.as = body.targetType;

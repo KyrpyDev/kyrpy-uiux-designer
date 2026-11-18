@@ -31,13 +31,15 @@ import { iconPack, expandIconSummary } from '/domain/icon-summary.js';
 import { ensureIconSymbols, loadIcons } from '../icon-store.js';
 import { editedIndex, clearEdited, editedKeys } from '../edited.js';
 import { libraryMenuTools } from './menu-editor.js';
+import { openNewFlowchartModal, openEditFlowchartMetaModal, openReverseEngineerModal, openProjectDefinitionModal } from './flowchart-designer.js';
+import { FLOWCHART_DOMAINS } from '/domain/flowchart.js';
 
 /** Above this many icons the icons tab searches on the server (the grid itself is always virtualized). */
 const LARGE_ICON_LIBRARY = 1500;
 /** Known icon packs (scripts/import-icon-packs.js) in chip order; any other pack gets a chip after them. */
 const ICON_PACKS = [['lucide', 'Lucide'], ['tabler', 'Tabler'], ['heroicons', 'Heroicons'], ['phosphor', 'Phosphor'], ['bootstrap', 'Bootstrap']];
-const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows'], ['image', 'Images']];
-const TAB_ICONS = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow', image: 'image' };
+const TABS = [['path', 'Paths'], ['icon', 'Icons'], ['button', 'Buttons'], ['element', 'Elements'], ['screen', 'Screens'], ['workflow', 'Workflows'], ['flowchart', 'FlowCharts'], ['image', 'Images']];
+const TAB_ICONS = { path: 'bezier', icon: 'star', button: 'circle', element: 'rect', screen: 'monitor', workflow: 'workflow', flowchart: 'flowchart', image: 'image' };
 const TOOLS_COLLAPSED_KEY = 'ud_lib_tools_collapsed';
 const HINT = {
   path: 'Reusable vector path groups. Drag into an icon.',
@@ -51,9 +53,13 @@ export class LibraryPanel {
     this.root = root; this.app = app;
     this.q = {}; this.cat = {};
     this.workflows = [];
+    this.flowcharts = [];
+    this.fcDomainFilter = 'all';
+    this.fcStatusFilter = 'all';
     // sync events arrive on every write (also our own edits): re-render only when what this tab shows really changed
     on('library:changed', () => { this.loadWorkflows(); this.softRefresh(); });
-    on('project:changed', () => { this.screensList = null; this.loadWorkflows(); this.renderBody(); });
+    on('library:changed', () => this.loadFlowcharts());
+    on('project:changed', () => { this.screensList = null; this.loadWorkflows(); this.loadFlowcharts(); this.renderBody(); });
     on('theme:changed', () => this.renderBody());
     on('screen:saved', () => { this.screensList = null; this.renderBody(); });
     on('item:saved', ({ type, doc }) => {
@@ -62,8 +68,10 @@ export class LibraryPanel {
       this.renderBody();
     });
     on('workflows:changed', () => this.loadWorkflows());
+    on('flowcharts:changed', () => this.loadFlowcharts());
     this.render();
     this.loadWorkflows();
+    this.loadFlowcharts();
   }
 
   render() {
@@ -82,6 +90,8 @@ export class LibraryPanel {
         ? (this.imageCount ?? '')
         : k === 'workflow'
         ? this.workflows.length
+        : k === 'flowchart'
+        ? this.flowcharts.length
         : k === 'screen'
           ? (this.screensList?.length ?? state.counts?.screens ?? '')
           : (libOf(k)?.length ?? '');
@@ -94,9 +104,11 @@ export class LibraryPanel {
         // the canvas follows the item type: its designer opens with the item of that type edited last (each type keeps its own history)
         onclick: e => {
           state.tab = k; this.renderTabs(); this.renderBody();
-          // the open item stays (drag library items into it); the designer only follows the tab when nothing is open yet, or with Ctrl/⌘+click
+          // the open item stays (drag library items into it); the designer only follows the tab when nothing is open yet, or with Ctrl/⌘+click, or when clicking FlowCharts tab
           const open = window.__app?.current || window.__app?.designer?.doc;
-          if (k !== 'image' && (!open || e.ctrlKey || e.metaKey)) window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
+          if (k === 'flowchart' || (k !== 'image' && (!open || e.ctrlKey || e.metaKey))) {
+            window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: k, fromTab: true } }));
+          }
         }
       }, iconEl(TAB_ICONS[k], { size: 18 }), h('span', { class: 'lib-tab-count' }, String(count))));
     }
@@ -109,11 +121,18 @@ export class LibraryPanel {
     if (state.tab === 'workflow') this.renderBody();
   }
 
+  async loadFlowcharts() {
+    try { this.flowcharts = await api.flowcharts({ includePublic: true }); } catch { this.flowcharts = []; }
+    if (state.counts) state.counts.flowcharts = this.flowcharts.length;
+    this.renderTabs();
+    if (state.tab === 'flowchart') this.renderBody();
+  }
+
   /** What the open tab shows (rows + edit marks + filters): equal signatures mean the list on screen is still right. */
   bodySig() {
     const tab = state.tab;
     if (tab === 'image') return `image#${state.activeProjectId}`;   // the image browser loads and refreshes itself
-    const rows = tab === 'screen' ? this.screensList : tab === 'workflow' ? this.workflows : state.library?.[PLURAL[tab]];
+    const rows = tab === 'screen' ? this.screensList : tab === 'workflow' ? this.workflows : tab === 'flowchart' ? this.flowcharts : state.library?.[PLURAL[tab]];
     if (!rows) return null;
     const rowSig = tab === 'icon' ? `${rows.length}:${state.library?.iconsVersion || ''}` : rows.map(r => `${r.id}:${r.updatedAt || ''}:${r.name}:${r.visibility || ''}`).join('|');
     return `${tab}#${state.themeKey}#${state.visibilityFilter}#${state.activeProjectId}#${editedKeys().join(',')}#${rowSig}`;
@@ -136,6 +155,7 @@ export class LibraryPanel {
     if (state.tab === 'screen') this.screensTab();
     else if (state.tab === 'image') this.imagesTab();
     else if (state.tab === 'workflow') this.workflowsTab();
+    else if (state.tab === 'flowchart') this.flowchartsTab();
     else if (state.tab === 'icon') this.iconsTab();
     else this.thumbTab(state.tab);
     this.decorateTools();
@@ -969,6 +989,211 @@ export class LibraryPanel {
               }
           }, { desc: 'Create a workflow and open it' })
         ], this.workflows.length)
+      ),
+      box
+    );
+    fill();
+  }
+
+  /** Left FlowChart Browser with descriptions, domain/status filters, and compact CRUD toolbars. */
+  flowchartsTab() {
+    const box = h('div', { class: 'lib-scroll fc-browser-list' });
+    const selSet = state.libSel.flowchart;
+    const rowsMap = new Map();
+    const visible = () => this.filtered('flowchart', this.flowcharts).filter(fc => {
+      if (this.fcDomainFilter !== 'all' && fc.domain !== this.fcDomainFilter) return false;
+      if (this.fcStatusFilter !== 'all' && fc.status !== this.fcStatusFilter) return false;
+      return true;
+    });
+    const syncRows = () => {
+      rowsMap.forEach((rowEl, id) => {
+        const onChk = selSet.has(id);
+        rowEl.classList.toggle('sel', onChk);
+        const inp = rowEl.querySelector('input.fc-chk');
+        if (inp) inp.checked = onChk;
+      });
+    };
+    const selBar = this.selectionBar('flowchart', visible, syncRows);
+
+    const fill = () => {
+      clear(box);
+      rowsMap.clear();
+      const rows = visible();
+      if (!rows.length) {
+        box.append(h('div', { class: 'empty' },
+          this.flowcharts.length ? 'No flowcharts match filter.' : 'No flowcharts yet. Click + to create a conceptual FlowChart or ⚡ to reverse-engineer your app.'
+        ));
+      }
+      for (const fc of rows) {
+        const chk = h('input', {
+          type: 'checkbox',
+          class: 'fc-chk',
+          checked: selSet.has(fc.id),
+          onclick: e => {
+            e.stopPropagation();
+            if (e.target.checked) selSet.add(fc.id);
+            else selSet.delete(fc.id);
+            selBar._updateInfo?.();
+          }
+        });
+        const domBadge = FLOWCHART_DOMAINS.find(d => d.key === fc.domain)?.badge || fc.domain || 'Full-Stack';
+        const statusLabel = fc.status === 'approved' ? '✓ Approved' : fc.status === 'in_review' ? '⏳ Review' : '✎ Draft';
+        const descText = (fc.description || fc.descriptionDev || '').trim();
+
+        const miniCrud = h('div', { class: 'fc-mini-crud', role: 'toolbar', 'aria-label': `CRUD actions for ${fc.name}` },
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: 'Edit title, domain, approval & description',
+            onclick: e => {
+              e.stopPropagation();
+              openEditFlowchartMetaModal(fc, {
+                onSaved: async updated => {
+                  await this.loadFlowcharts();
+                  if (state.flowchartId === updated.id && this.app.flowchart) await this.app.flowchart.refresh();
+                }
+              });
+            }
+          }, '✎'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: fc.status === 'approved' ? 'Revert to Draft' : 'Approve FlowChart (Ready for AI UI & Backend Build)',
+            onclick: async e => {
+              e.stopPropagation();
+              try {
+                const nextStatus = fc.status === 'approved' ? 'draft' : 'approved';
+                await api.setFlowchartStatus(fc.id, { status: nextStatus });
+                await this.loadFlowcharts();
+                if (state.flowchartId === fc.id && this.app.flowchart) await this.app.flowchart.refresh();
+                toast(`"${fc.name}" marked ${nextStatus}`, 'ok');
+              } catch (err) { toast(err.message, 'error'); }
+            }
+          }, fc.status === 'approved' ? '✓' : '☆'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: 'Clone FlowChart',
+            onclick: async e => {
+              e.stopPropagation();
+              try {
+                const cloned = await api.cloneFlowchart(fc.id, { projectId: state.activeProjectId || fc.projectId || 1 });
+                await this.loadFlowcharts();
+                this.app.openFlowchart(cloned.id);
+                toast(`Cloned "${cloned.name}"`, 'ok');
+              } catch (err) { toast(err.message, 'error'); }
+            }
+          }, '⧉'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: 'Copy FlowChart to project(s)…',
+            onclick: e => {
+              e.stopPropagation();
+              openCopyMoveToProjectsModal({
+                items: [{ type: 'flowchart', id: fc.id, name: fc.name, key: fc.key, creatorId: fc.creatorId }],
+                mode: 'copy',
+                onDone: () => this.loadFlowcharts()
+              });
+            }
+          }, '📥'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            disabled: !canEditOwned(fc),
+            title: canEditOwned(fc) ? 'Move FlowChart to your project(s)…' : 'Owned by another user (copy only)',
+            onclick: e => {
+              e.stopPropagation();
+              if (!canEditOwned(fc)) return;
+              openCopyMoveToProjectsModal({
+                items: [{ type: 'flowchart', id: fc.id, name: fc.name, key: fc.key, creatorId: fc.creatorId }],
+                mode: 'move',
+                onDone: () => this.loadFlowcharts()
+              });
+            }
+          }, '📤'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: 'Lineage & Root Owner',
+            onclick: e => { e.stopPropagation(); openLineageModal('flowchart', fc.id); }
+          }, '🌳'),
+          h('button', {
+            type: 'button',
+            class: 'icon-btn',
+            title: 'Move FlowChart to Trash',
+            onclick: async e => {
+              e.stopPropagation();
+              if (!(await confirmBox(`Move FlowChart "${fc.name}" to Trash?`, { okLabel: 'Move to Trash' }))) return;
+              try {
+                await api.deleteFlowchart(fc.id);
+                if (state.flowchartId === fc.id) {
+                  state.flowchartId = null;
+                  if (this.app.flowchart) { this.app.flowchart.fc = null; this.app.flowchart.render(); }
+                }
+                await refreshGlobalLibraryAndCounts();
+                await this.loadFlowcharts();
+                toast(`Moved FlowChart "${fc.name}" to Trash`, 'ok');
+              } catch (err) { toast(err.message, 'error'); }
+            }
+          }, '🗑')
+        );
+
+        const rowEl = h('div', {
+          class: `list-row fc-browser-card${state.flowchartId === fc.id ? ' on' : ''}${selSet.has(fc.id) ? ' sel' : ''}${visClass(fc, usedSet(), 'flowchart', editedIndex(), libScope())}`,
+          onclick: () => this.app.openFlowchart(fc.id)
+        },
+          h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', width: '100%' } },
+            chk,
+            h('b', { class: 'grow', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, fc.name),
+            h('span', { class: `badge fc-status-pill status-${fc.status || 'draft'}` }, statusLabel)
+          ),
+          descText
+            ? h('div', { class: 'fc-browser-desc', title: descText }, descText)
+            : h('div', { class: 'fc-browser-desc muted' }, 'Click ✎ to add a conceptual description…'),
+          h('div', { class: 'row', style: { gap: '6px', alignItems: 'center', justifyContent: 'space-between', width: '100%' } },
+            h('span', { class: 'dim' }, `${domBadge} · ${fc.nodeCount ?? 0} nodes · ${fc.edgeCount ?? 0} links · ${fc.roleCount ?? 5} roles`),
+            h('span', { class: 'badge' }, fc.visibility === 'project' ? '📁' : fc.visibility === 'private' ? '🗂' : '🌐')
+          ),
+          miniCrud
+        );
+        rowsMap.set(fc.id, rowEl);
+        box.append(rowEl);
+      }
+      selBar._updateInfo?.();
+    };
+
+    const filterRow = h('div', { class: 'row', style: { gap: '6px', marginTop: '4px' } },
+      h('select', {
+        style: { flex: '1' },
+        title: 'Filter by FlowChart domain',
+        onchange: e => { this.fcDomainFilter = e.target.value; fill(); }
+      },
+        h('option', { value: 'all', selected: this.fcDomainFilter === 'all' }, 'All Domains'),
+        ...FLOWCHART_DOMAINS.map(d => h('option', { value: d.key, selected: this.fcDomainFilter === d.key }, d.badge))
+      ),
+      h('select', {
+        style: { flex: '1' },
+        title: 'Filter by Approval Status',
+        onchange: e => { this.fcStatusFilter = e.target.value; fill(); }
+      },
+        h('option', { value: 'all', selected: this.fcStatusFilter === 'all' }, 'All Statuses'),
+        h('option', { value: 'draft', selected: this.fcStatusFilter === 'draft' }, 'Draft'),
+        h('option', { value: 'in_review', selected: this.fcStatusFilter === 'in_review' }, 'In Review'),
+        h('option', { value: 'approved', selected: this.fcStatusFilter === 'approved' }, 'Approved ✓')
+      )
+    );
+
+    this.bodyEl.append(
+      h('div', { class: 'lib-tools' },
+        this.searchBox('flowchart', fill),
+        filterRow,
+        this.visBar(() => this.renderBody()),
+        this.libTools('flowchart', selBar, [
+          ibtn('plus', 'New FlowChart', () => openNewFlowchartModal({ onCreated: fc => this.app.openFlowchart(fc.id) }), { desc: 'Create a new conceptual FlowChart with description & domain' }),
+          ibtn('zap', 'Reverse Engineer App', () => openReverseEngineerModal({ onCreated: fc => this.app.openFlowchart(fc.id) }), { desc: 'Reverse-engineer project screens or external app specs into FlowCharts' }),
+          ibtn('export', 'Export Project Definition', () => openProjectDefinitionModal(), { desc: 'Export complete project-definition.md & JSON documentation for AI coders' })
+        ], this.flowcharts.length)
       ),
       box
     );

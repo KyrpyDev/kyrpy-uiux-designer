@@ -394,6 +394,79 @@ CREATE TABLE IF NOT EXISTS images (
   UNIQUE (project_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS flowcharts (
+  id INTEGER PRIMARY KEY,
+  uid TEXT NOT NULL UNIQUE,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  description_dev TEXT NOT NULL DEFAULT '',
+  domain TEXT NOT NULL DEFAULT 'fullstack',
+  status TEXT NOT NULL DEFAULT 'draft',
+  approved_by INTEGER,
+  approved_at TEXT,
+  approval_note TEXT NOT NULL DEFAULT '',
+  access_levels_json TEXT NOT NULL DEFAULT '[]',
+  spec_json TEXT NOT NULL DEFAULT '{}',
+  start_node_key TEXT,
+  linked_workflow_id INTEGER,
+  project_id INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'project',
+  creator_id INTEGER NOT NULL DEFAULT 1,
+  cloned_from_id INTEGER,
+  root_item_id INTEGER,
+  root_owner_id INTEGER NOT NULL DEFAULT 1,
+  locked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_nodes (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  node_key TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'screen',
+  subtype TEXT NOT NULL DEFAULT 'ui-screen',
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  x REAL NOT NULL DEFAULT 80,
+  y REAL NOT NULL DEFAULT 80,
+  width REAL NOT NULL DEFAULT 300,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  ports_json TEXT NOT NULL DEFAULT '[]',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  linked_screen_id INTEGER,
+  linked_flowchart_id INTEGER,
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, node_key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_edges (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  edge_key TEXT NOT NULL,
+  from_node_key TEXT NOT NULL,
+  from_port_key TEXT NOT NULL DEFAULT 'out',
+  to_node_key TEXT NOT NULL,
+  to_port_key TEXT NOT NULL DEFAULT 'home',
+  label TEXT NOT NULL DEFAULT '',
+  transition_text TEXT NOT NULL DEFAULT '',
+  condition_expr TEXT NOT NULL DEFAULT '',
+  style TEXT NOT NULL DEFAULT 'bezier',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  waypoints_json TEXT NOT NULL DEFAULT '[]',
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, edge_key)
+);
+
 CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 
 -- ===== kyrpy-uiux-mcp (M0): schema_registry, mcp_context on every table, uid + content_hash =====
@@ -422,6 +495,9 @@ ALTER TABLE IF EXISTS "menu_items" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT
 ALTER TABLE IF EXISTS "workflows" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "workflow_screens" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "workflow_links" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowcharts" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowchart_nodes" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowchart_edges" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "change_requests" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "template_buttons" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';

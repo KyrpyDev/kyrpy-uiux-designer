@@ -259,7 +259,7 @@ export function designRoutes(router, c) {
         user: null, currentUser: null, publicUserId: null, authenticated: false, authConfig, projects: [], activeProjectId: 1,
         pendingChangesCount: 0, syncStatus: { enabled: false }, userRoles: USER_ROLES, projectRoles: PROJECT_ROLES,
         visibilityLevels: VISIBILITY_LEVELS, eventTriggers: EVENT_TRIGGERS, eventActions: CLICK_ACTIONS, toolbarPositions: TOOLBAR_POSITIONS,
-        counts: { paths: 0, icons: 0, buttons: 0, elements: 0, screens: 0, workflows: 0, projects: 0, users: 0, pendingChanges: 0, trash: 0 }, trashCount: 0
+        counts: { paths: 0, icons: 0, buttons: 0, elements: 0, screens: 0, workflows: 0, flowcharts: 0, projects: 0, users: 0, pendingChanges: 0, trash: 0 }, trashCount: 0
       };
     }
     return {
@@ -289,6 +289,7 @@ export function designRoutes(router, c) {
       counts: {
         ...Object.fromEntries(Object.entries(TYPES).map(([t, v]) => [v.plural, c.services[t].designs.count()])),
         workflows: c.workflows.list().length,
+        flowcharts: c.flowcharts ? c.flowcharts.list().length : 0,
         projects: projects.length,
         users: c.auth ? c.auth.listUsers({ includeSystem: false }).length : 1,
         pendingChanges: pendingChangesCount,

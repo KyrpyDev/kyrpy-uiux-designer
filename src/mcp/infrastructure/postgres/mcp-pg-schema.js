@@ -43,7 +43,8 @@ const MCP_PG_TABLES_SQL = MCP_MIGRATIONS.filter(m => m.id !== 'm0-001-schema-reg
 /** Tables that exist in the PostgreSQL schema (sessions, sync_outbox, sync_state and mcp_migrations stay local). */
 export const PG_TABLES = [
   'users', 'projects', 'project_members', 'themes', 'paths', 'icons', 'buttons', 'elements', 'screens',
-  'nodes', 'animations', 'menu_items', 'workflows', 'workflow_screens', 'workflow_links', 'change_requests',
+  'nodes', 'animations', 'menu_items', 'workflows', 'workflow_screens', 'workflow_links',
+  'flowcharts', 'flowchart_nodes', 'flowchart_edges', 'change_requests',
   'template_devices', 'template_buttons', 'translations', 'settings', 'trash_items'
 ];
 

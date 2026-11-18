@@ -458,6 +458,79 @@ CREATE TABLE IF NOT EXISTS images (
   updated_at TEXT NOT NULL DEFAULT '',
   UNIQUE (project_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS flowcharts (
+  id INTEGER PRIMARY KEY,
+  uid TEXT NOT NULL UNIQUE,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  description_dev TEXT NOT NULL DEFAULT '',
+  domain TEXT NOT NULL DEFAULT 'fullstack',
+  status TEXT NOT NULL DEFAULT 'draft',
+  approved_by INTEGER,
+  approved_at TEXT,
+  approval_note TEXT NOT NULL DEFAULT '',
+  access_levels_json TEXT NOT NULL DEFAULT '[]',
+  spec_json TEXT NOT NULL DEFAULT '{}',
+  start_node_key TEXT,
+  linked_workflow_id INTEGER,
+  project_id INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'project',
+  creator_id INTEGER NOT NULL DEFAULT 1,
+  cloned_from_id INTEGER,
+  root_item_id INTEGER,
+  root_owner_id INTEGER NOT NULL DEFAULT 1,
+  locked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_nodes (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  node_key TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'screen',
+  subtype TEXT NOT NULL DEFAULT 'ui-screen',
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  x REAL NOT NULL DEFAULT 80,
+  y REAL NOT NULL DEFAULT 80,
+  width REAL NOT NULL DEFAULT 300,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  ports_json TEXT NOT NULL DEFAULT '[]',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  linked_screen_id INTEGER,
+  linked_flowchart_id INTEGER,
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, node_key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_edges (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  edge_key TEXT NOT NULL,
+  from_node_key TEXT NOT NULL,
+  from_port_key TEXT NOT NULL DEFAULT 'out',
+  to_node_key TEXT NOT NULL,
+  to_port_key TEXT NOT NULL DEFAULT 'home',
+  label TEXT NOT NULL DEFAULT '',
+  transition_text TEXT NOT NULL DEFAULT '',
+  condition_expr TEXT NOT NULL DEFAULT '',
+  style TEXT NOT NULL DEFAULT 'bezier',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  waypoints_json TEXT NOT NULL DEFAULT '[]',
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, edge_key)
+);
 `;
 
 /** Core DDL + the MCP layer's additions (mcp_context, uid, content_hash, schema_registry). */
@@ -483,6 +556,9 @@ export const SYNC_TABLES = [
   { name: 'workflows', pk: ['id'], conflict: 'id', uniqueTuple: ['project_id', 'key'] },
   { name: 'workflow_screens', pk: ['workflow_id', 'screen_id'], conflict: 'workflow_id, screen_id' },
   { name: 'workflow_links', pk: ['id'], conflict: 'id' },
+  { name: 'flowcharts', pk: ['id'], conflict: 'id', uniqueCols: ['uid'], uniqueTuple: ['project_id', 'key'] },
+  { name: 'flowchart_nodes', pk: ['id'], conflict: 'id', uniqueTuple: ['flowchart_id', 'node_key'] },
+  { name: 'flowchart_edges', pk: ['id'], conflict: 'id', uniqueTuple: ['flowchart_id', 'edge_key'] },
   { name: 'change_requests', pk: ['id'], conflict: 'id' },
   { name: 'template_devices', pk: ['id'], conflict: 'id', uniqueCols: ['key'] },
   { name: 'template_buttons', pk: ['id'], conflict: 'id', uniqueCols: ['key'] },
@@ -495,7 +571,8 @@ export const SYNC_TABLES = [
 ];
 
 const USER_REFS = [
-  ...['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'trash_items'].flatMap(t => [[t, 'creator_id'], [t, 'root_owner_id']]),
+  ...['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'flowcharts', 'trash_items'].flatMap(t => [[t, 'creator_id'], [t, 'root_owner_id']]),
+  ['flowcharts', 'approved_by'],
   ['images', 'creator_id'],
   ['trash_items', 'deleted_by'], ['projects', 'owner_id'], ['project_members', 'user_id'], ['project_members', 'invited_by'],
   ['change_requests', 'author_id'], ['change_requests', 'owner_id'], ['change_requests', 'reviewer_id'],
@@ -503,26 +580,27 @@ const USER_REFS = [
   ['api_keys', 'user_id'], ['api_keys', 'revoked_by'], ['changesets', 'user_id'], ['changesets', 'reviewed_by'],
   ['mcp_audit_log', 'user_id'], ['ai_artifacts', 'updated_by'], ['project_versions', 'approved_by']
 ];
-const PROJECT_REF_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'images', 'project_members', 'change_requests',
+const PROJECT_REF_TABLES = ['paths', 'icons', 'buttons', 'elements', 'screens', 'workflows', 'flowcharts', 'images', 'project_members', 'change_requests',
   'trash_items', 'mcp_audit_log', 'ai_artifacts', 'project_versions', 'changesets', 'item_requests', 'code_bindings',
   'version_items', 'api_keys', 'design_focus'];
 const ITEM_REFS = {
   icons: [['menu_items', 'icon_id']],
   buttons: [['menu_items', 'button_id'], ['menu_items', 'ref_button_id']],
   elements: [['menu_items', 'target_element_id']],
-  screens: [['menu_items', 'target_screen_id'], ['workflow_screens', 'screen_id'], ['workflow_links', 'from_screen_id'], ['workflow_links', 'to_screen_id'], ['workflows', 'start_screen_id']],
-  workflows: [['workflow_screens', 'workflow_id'], ['workflow_links', 'workflow_id']]
+  screens: [['menu_items', 'target_screen_id'], ['workflow_screens', 'screen_id'], ['workflow_links', 'from_screen_id'], ['workflow_links', 'to_screen_id'], ['workflows', 'start_screen_id'], ['flowchart_nodes', 'linked_screen_id']],
+  workflows: [['workflow_screens', 'workflow_id'], ['workflow_links', 'workflow_id'], ['flowcharts', 'linked_workflow_id']],
+  flowcharts: [['flowchart_nodes', 'flowchart_id'], ['flowchart_nodes', 'linked_flowchart_id'], ['flowchart_edges', 'flowchart_id']]
 };
 /** Columns that hold an id of `target`: `[table, column, typeColumn?, typeValue?]` (declared and undeclared references). */
 function referencesTo(target) {
   if (target === 'users') return USER_REFS;
   if (target === 'projects') return PROJECT_REF_TABLES.map(t => [t, 'project_id']);
-  const type = { paths: 'path', icons: 'icon', buttons: 'button', elements: 'element', screens: 'screen', workflows: 'workflow' }[target];
+  const type = { paths: 'path', icons: 'icon', buttons: 'button', elements: 'element', screens: 'screen', workflows: 'workflow', flowcharts: 'flowchart' }[target];
   if (!type) return [];
   return [
     [target, 'cloned_from_id'], [target, 'root_item_id'],
     ...(ITEM_REFS[target] || []),
-    ...(type === 'workflow' ? [] : [['nodes', 'ref_id', 'ref_type', type]]),
+    ...(type === 'workflow' || type === 'flowchart' ? [] : [['nodes', 'ref_id', 'ref_type', type]]),
     ['change_requests', 'target_id', 'target_type', type]
   ];
 }

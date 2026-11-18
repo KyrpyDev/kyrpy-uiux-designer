@@ -18,8 +18,8 @@ import { noteSkipped, parentsFirst, ForbiddenError } from './service-shared.js';
  *    to Trash while rejecting attempts to empty immutable default/public libraries.
  */
 export class LibraryTransferService {
-  constructor({ services, workflows, menus, elementScripts = null, projects, auth, transaction, render = null, parseSvg = null }) {
-    Object.assign(this, { services, workflows, menus, elementScripts, projects, auth, transaction, render, parseSvg });
+  constructor({ services, workflows, flowcharts = null, menus, elementScripts = null, projects, auth, transaction, render = null, parseSvg = null }) {
+    Object.assign(this, { services, workflows, flowcharts, menus, elementScripts, projects, auth, transaction, render, parseSvg });
   }
 
   #normalizeTargetProjects(projectIds, { allowEmpty = false } = {}) {
@@ -39,7 +39,7 @@ export class LibraryTransferService {
     return items.map(it => {
       const type = String(it.type || it.itemType || '').trim().replace(/s$/, '');
       const id = Number(it.id ?? it.itemId);
-      if (!['path', 'icon', 'button', 'element', 'screen', 'workflow'].includes(type) || !id) {
+      if (!['path', 'icon', 'button', 'element', 'screen', 'workflow', 'flowchart'].includes(type) || !id) {
         throw new ValidationError(`Invalid library item reference: ${JSON.stringify(it)}`);
       }
       return { type, id };
@@ -124,6 +124,17 @@ export class LibraryTransferService {
       const fullWf = this.workflows.get(createdWf.id);
       memo.set(cacheKey, fullWf);
       return fullWf;
+    }
+
+    if (type === 'flowchart' && this.flowcharts) {
+      const cloned = this.flowcharts.clone(Number(id), {
+        name: overrideName || undefined,
+        projectId: targetProjectId,
+        visibility: effVis,
+        keepApproval: true
+      }, { actor });
+      memo.set(cacheKey, cloned);
+      return cloned;
     }
 
     const svc = this.services[type];
@@ -359,7 +370,7 @@ export class LibraryTransferService {
   } = {}) {
     const cleanType = String(type || '').trim().replace(/s$/, '');
     const cleanId = Number(id);
-    if (!['path', 'icon', 'button', 'element', 'screen', 'workflow'].includes(cleanType) || !cleanId) {
+    if (!['path', 'icon', 'button', 'element', 'screen', 'workflow', 'flowchart'].includes(cleanType) || !cleanId) {
       throw new ValidationError('Valid item type and id are required for saveAsToTargets');
     }
     return this.transaction(() => {
@@ -374,6 +385,8 @@ export class LibraryTransferService {
       if (restoreBaseline && typeof restoreBaseline === 'object') {
         if (cleanType === 'workflow') {
           this.workflows.restore(cleanId, restoreBaseline);
+        } else if (cleanType === 'flowchart' && this.flowcharts) {
+          this.flowcharts.restore(cleanId, restoreBaseline);
         } else if (this.services[cleanType]) {
           this.services[cleanType].restore(cleanId, restoreBaseline);
         }
@@ -403,7 +416,9 @@ export class LibraryTransferService {
     const sources = cleanItems.map(it => {
       const record = it.type === 'workflow'
         ? this.workflows.get(it.id)
-        : this.services[it.type].get(it.id);
+        : it.type === 'flowchart'
+          ? this.flowcharts.get(it.id)
+          : this.services[it.type].get(it.id);
       if (record.builtin) {
         throw new ForbiddenError(`Default basic item "${record.name || record.key}" cannot be moved; it can only be copied`);
       }
@@ -424,6 +439,8 @@ export class LibraryTransferService {
         if (src.keepSource) { keptSourceIds.push({ type: src.type, id: src.id }); continue; }
         if (src.type === 'workflow') {
           this.workflows.remove(src.id, { actor, permanent: true });
+        } else if (src.type === 'flowchart') {
+          this.flowcharts.remove(src.id, { actor, permanent: true });
         } else {
           this.services[src.type].remove(src.id, { actor, permanent: true });
         }

@@ -450,6 +450,46 @@
   <div class="tip"><b>Export workflow screens…</b> opens the export dialog with exactly the screens of this workflow selected. The links become clickable areas and navigation in the exported pages.</div>
 </section>
 
+<!-- ===================================================== FLOWCHART -->
+<section id="flowchart" data-title="FlowChart designer" data-group="Designers">
+  <h3>Conceptual FlowChart designer</h3>
+  <p class="lead">Architect Frontend UI screens, Backend API steps, Business Logic, Decision Routers, and Per-Role feature overrides on an interactive ComfyUI-style node canvas — and export a complete <code>project-definition.md</code> blueprint for AI coders.</p>
+  <ol>
+    <li>Open <b>FlowChart</b> from the top menu bar, the designer switcher dropdown, or the left <b>FlowCharts</b> tab (with inline <kbd>+</kbd>, <kbd>✎</kbd>, <kbd>⧉</kbd>, <kbd>📄</kbd>, <kbd>🗑</kbd> CRUD buttons).</li>
+    <li>Place <b>Screen</b>, <b>Step / Backend Logic</b> (<code>api-endpoint</code>, <code>db-query</code>, <code>validation</code>, <code>service-logic</code>, <code>background-job</code>, <code>webhook-out</code>), <b>Decision</b> (multi-scenario routers), <b>Trigger</b>, <b>Subflow</b>, and <b>End</b> nodes.</li>
+    <li>Every connectable node has a left <b>Home (◉)</b> input socket and unlimited right <b>output sockets</b> (menu items, buttons, form submits, API outcomes, decision cases). Drag from any right ◉ port to a target ◉ Home port (or drop on empty canvas to quick-create).</li>
+    <li>Click <b>📝</b> over any connection wire to write what happens during the transition (validation, HTTP call, state update, error handling), or click <b>◇</b> to split a wire into a multi-scenario <b>Decision</b> node.</li>
+    <li>Configure <b>⚙ Roles</b> (<code>guest</code>, <code>user</code>, <code>pro</code>, <code>editor</code>, <code>admin</code>, or custom access levels), set per-role feature variants on the same Screen (<i>added features</i>, <i>hidden features</i>, <i>role summary</i>), and preview the graph as any role.</li>
+    <li>Click <b>✓ Approve</b> when ready, then use <b>🎨 Build UIs</b> (or <b>✨ AI UI</b> directly on any Screen node) to materialize linked visual Screen designs &amp; Workflow routes, <b>⚡ Reverse Eng.</b> to import existing screens/apps into FlowCharts, or <b>📄 Project Spec</b> to export <code>project-definition.md</code> + JSON.</li>
+  </ol>
+</section>
+
+<!-- ===================================================== AI STUDIO -->
+<section id="ai-studio" data-title="✨ AI Studio (Browser Runtime & MCP)" data-group="Concepts">
+  <h3>✨ AI Studio — Client-Side Runtime &amp; Subscription MCP Bridge</h3>
+  <p class="lead">Generate or refine theme-adaptive UI Screens, Elements, Buttons, Icons, Paths, and Conceptual FlowCharts at runtime in your browser — or drive live canvas updates from your AI coding CLI/IDE.</p>
+  <table>
+    <tr><th>Pathway</th><th>How it runs</th></tr>
+    <tr><td><b>1. Google Gemini API (BYOK)</b></td><td>Direct browser HTTPS call to <code>generativelanguage.googleapis.com</code> via <code>x-goog-api-key</code> header (<code>gemini-2.5-flash</code>, <code>gemini-2.5-pro</code>, <code>gemini-2.5-flash-lite</code>). Stored in browser <code>sessionStorage</code> by default (never sent to <code>/api/*</code>).</td></tr>
+    <tr><td><b>2. Chrome Built-in AI (Gemini Nano)</b></td><td>Zero-key, zero-cost on-device inference inside Chrome 138+ via <code>window.LanguageModel</code>.</td></tr>
+    <tr><td><b>3. Local Ollama / OpenAI / WebGPU</b></td><td>Direct calls to <code>127.0.0.1:11434/v1</code> (Ollama), LM Studio (<code>:1234</code>), OpenRouter, Groq, or OpenAI — plus in-tab WebGPU quantized models via <code>@mlc-ai/web-llm</code>.</td></tr>
+    <tr><td><b>4. Subscription MCP Bridge</b></td><td>One-click <b>AI Access Keys</b> setup + context-aware prompts for <b>Gemini CLI</b>, <b>Antigravity</b>, <b>Claude Code</b>, and <b>Cursor</b> subscriptions streaming live SSE updates via <code>/mcp</code>.</td></tr>
+  </table>
+</section>
+
+<!-- ===================================================== INSTANCES, PRESS & SLIDE, REPEATERS & IMAGES -->
+<section id="instances" data-title="Placed copies, Press & Slide, Repeaters & Images" data-group="Concepts">
+  <h3>Placed copies, Press &amp; Slide, Repeaters &amp; Images</h3>
+  <ul>
+    <li><b>Project Prefixes</b>: New projects define a title, MCP variable name, description, and short prefix (<code>prefix-*</code> auto-applied to new items, menu items, and AI-created MCP items, with prefix-first library ordering).</li>
+    <li><b>Per-Instance Editing (<kbd>✎</kbd> vs Edit Original)</b>: Selecting a placed icon, button, or element edits <b>only that placed copy's</b> label, colours, role settings, menu items, and click/press-slide actions in place. Click <b>Edit the original</b> in the Inspector when you want to change the shared library master.</li>
+    <li><b>Press &amp; Slide Joystick &amp; Hub Focus</b>: Configure 4/8-direction Press &amp; Slide gestures on buttons or menu items (arrow size <code>0.5–1.6×</code>, repeater scroll targets, continuous red focus-frame stepping in hub menus, and directional screen/popup triggers).</li>
+    <li><b>Fixed-Size Repeaters &amp; Nested Scrollable Containers</b>: Repeaters keep their Inspector dimensions fixed, support drag-to-reorder in the Inspector, render every sub-item at least once, and fill extra slots randomly. Nested overflowing containers chain mouse-wheel and drag scrolling smoothly.</li>
+    <li><b>Images &amp; Free Stock Photos</b>: Open the <b>Images</b> library tab to upload PNG/JPEG/GIF/WebP pictures or search/import free stock photos from <b>Openverse</b> (no key), <b>Pexels</b>, and <b>Pixabay</b>, and drag them onto designs as <code>&lt;image&gt;</code> nodes (rectangle, rounded, or circle clip).</li>
+    <li><b>Screen/Element Transitions &amp; Auto-Close Popups</b>: Set transition durations (seconds) for <i>go to screen</i>, <i>go back</i>, <i>open next element</i>, and <i>close</i>, or assign surface role <code>popup</code> with an auto-close timer.</li>
+  </ul>
+</section>
+
 <!-- ===================================================== THEMES -->
 <section id="themes" data-title="Themes, 15 design styles & surface roles" data-group="Concepts">
   <h3>Themes, 15 design styles (Dark &amp; Light) and surface roles</h3>

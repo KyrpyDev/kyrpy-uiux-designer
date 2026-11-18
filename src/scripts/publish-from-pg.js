@@ -56,10 +56,12 @@ export function purgeToPublic(db) {
   db.exec('PRAGMA foreign_keys = OFF;');
   db.exec('BEGIN;');
   try {
-    for (const t of DESIGN_TABLES) {
+    for (const t of [...DESIGN_TABLES, 'flowcharts']) {
       if (!hasTable(db, t)) continue;
       db.prepare(`DELETE FROM "${t}" WHERE visibility IS NOT 'public' OR COALESCE(project_id, 1) != 1 OR creator_id IS NOT ? OR root_owner_id IS NOT ?`).run(PUB, PUB);
     }
+    if (hasTable(db, 'flowchart_nodes')) db.exec('DELETE FROM flowchart_nodes WHERE flowchart_id NOT IN (SELECT id FROM flowcharts);');
+    if (hasTable(db, 'flowchart_edges')) db.exec('DELETE FROM flowchart_edges WHERE flowchart_id NOT IN (SELECT id FROM flowcharts);');
     for (const t of PRIVATE_TABLES) if (hasTable(db, t)) db.exec(`DELETE FROM "${t}";`);
     db.prepare('DELETE FROM users WHERE username NOT IN (?, ?, ?, ?, ?)').run('superadmin', 'kyrpy', 'admin', 'user', PUBLIC_USERNAME);
     if (hasTable(db, 'projects')) db.exec('DELETE FROM projects WHERE id != 1;');
@@ -89,17 +91,17 @@ export function checkPublicDb(file) {
     }
     if (n(`SELECT COUNT(*) AS n FROM users WHERE username = 'public' AND password_hash = '' AND status = 'suspended'`) !== 1) problems.push('public user is not the suspended passwordless system account');
     const pubId = `(SELECT id FROM users WHERE username = 'public')`;
-    const designs = DESIGN_TABLES.filter(t => hasTable(db, t)).map(t => `SELECT creator_id, root_owner_id, visibility, project_id FROM ${t}`).join(' UNION ALL ');
+    const designs = [...DESIGN_TABLES, 'flowcharts'].filter(t => hasTable(db, t)).map(t => `SELECT creator_id, root_owner_id, visibility, project_id FROM ${t}`).join(' UNION ALL ');
     if (n(`SELECT COUNT(*) AS n FROM (${designs}) d WHERE d.visibility IS NOT 'public' OR d.project_id != 1 OR d.creator_id IS NOT ${pubId} OR d.root_owner_id IS NOT ${pubId}`)) problems.push('design rows not owned by public / not public');
     for (const t of PRIVATE_TABLES) if (hasTable(db, t) && n(`SELECT COUNT(*) AS n FROM ${t}`)) problems.push(`rows left in ${t}`);
     if (hasTable(db, 'images') && n(`SELECT COUNT(*) AS n FROM images WHERE visibility IS NOT 'public' OR project_id != 1 OR creator_id IS NOT ${pubId}`)) problems.push('image rows not owned by public / not public');
     // the public library is generic: app-specific (Untrap) names must live in the owner's own projects
-    for (const t of DESIGN_TABLES) if (hasTable(db, t) && n(`SELECT COUNT(*) AS n FROM ${t} WHERE key LIKE '%untrap%' OR name LIKE '%untrap%' OR label LIKE '%untrap%' OR description_dev LIKE '%untrap%'`)) problems.push(`app-specific "untrap" content in public ${t}`);
+    for (const t of [...DESIGN_TABLES, 'flowcharts']) if (hasTable(db, t) && n(`SELECT COUNT(*) AS n FROM ${t} WHERE key LIKE '%untrap%' OR name LIKE '%untrap%' OR label LIKE '%untrap%' OR description_dev LIKE '%untrap%'`)) problems.push(`app-specific "untrap" content in public ${t}`);
     if (n('SELECT COUNT(*) AS n FROM themes WHERE builtin IS NOT 1')) problems.push('custom themes');
     for (const t of ['template_devices', 'template_buttons']) {
       if (n(`SELECT COUNT(*) AS n FROM ${t} WHERE builtin IS NOT 1 OR created_by IS NOT ${pubId}`)) problems.push(`non-built-in ${t}`);
     }
-    const tr = [...DESIGN_TABLES, 'themes', 'template_devices', 'template_buttons'].map(t => `'${t}'`).join(',');
+    const tr = [...DESIGN_TABLES, 'flowcharts', 'themes', 'template_devices', 'template_buttons'].map(t => `'${t}'`).join(',');
     if (n(`SELECT COUNT(*) AS n FROM translations WHERE table_name NOT IN (${tr})`)) problems.push('stray translations');
   } finally {
     db.close();

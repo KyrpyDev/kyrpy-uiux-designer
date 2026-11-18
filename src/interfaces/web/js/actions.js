@@ -721,7 +721,7 @@ export function downloadGuide() {
   toast('usage-and-guide.html saved', 'ok');
 }
 
-/** "+ New" for the open designer: creates an empty item of the given type (workflows get an empty workflow). */
+/** "+ New" for the open designer: creates an empty item of the given type (workflows / flowcharts get a starter canvas). */
 export async function createEmptyItem(type) {
   if (type === 'workflow') {
     const name = `New workflow ${(state.library.workflows?.length || 0) + 1}`;
@@ -730,6 +730,22 @@ export async function createEmptyItem(type) {
       await reloadLibrary({ silent: true });
       toast(`Workflow "${w.name}" created`, 'ok');
       return w;
+    } catch (e) { toast(e.message, 'error'); return null; }
+  }
+  if (type === 'flowchart') {
+    const name = `New flowchart ${(state.counts?.flowcharts || 0) + 1}`;
+    try {
+      const fc = await api.createFlowchart({
+        name,
+        description: 'Conceptual workflow specification for screens, backend steps, decisions, and access levels.',
+        domain: 'fullstack',
+        projectId: state.activeProjectId || 1,
+        visibility: (state.activeProjectId || 1) === 1 && isSuperadminUser() ? 'public' : 'project'
+      });
+      await reloadLibrary({ silent: true });
+      emit('flowcharts:changed');
+      toast(`FlowChart "${fc.name}" created`, 'ok');
+      return fc;
     } catch (e) { toast(e.message, 'error'); return null; }
   }
   return newDesign(type, { silent: true });

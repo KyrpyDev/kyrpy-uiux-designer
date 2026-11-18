@@ -307,6 +307,7 @@ function accountInit(ctx, args) {
     data.selection = { mode: 'clone', source: { key: src.key, name: src.name, version: head }, project: created.project, copiedItems: created.copiedItems };
     data.steps = [...data.steps,
       `This repository now works on the NEW project "${created.project.key}" (a copy of "${src.key}" v${head}). Pass "project": "${created.project.key}" on every uiux_* call.`,
+      `Use approved workflows (meta.approved = true) and their screens/related sub-items when integrating designs into the app.`,
       `Push what the app adds or changes: uiux_begin_changeset { project: "${created.project.key}" } → uiux_stage_item … → uiux_submit_changeset; the human approves in the designer.`];
     return { summary: `Cloned "${src.key}" v${head} into the new project "${created.project.key}" (${created.copiedItems} item(s)). Install plan: ${data.summary.create} file(s), bundle: ${data.summary.bundle}. Follow steps[].`, data };
   }
@@ -1499,6 +1500,350 @@ export const TOOLS = [
       return {
         summary: `Saved sandboxed script on element "${data.item.key}" in project "${data.project.key}" (${data.script.imports.length} import(s), reviewStatus: ${data.script.reviewStatus})${data.copiedFromForeign ? ' (cloned into project first)' : ''}.`,
         data
+      };
+    }
+  },
+  {
+    name: 'uiux_list_flowcharts',
+    title: 'List conceptual flowcharts',
+    description: 'Lists conceptual FlowCharts (Frontend UI, Backend API, Full-Stack, Business Logic, Auth/ACL) visible to the project, including descriptions, approval status (`draft`, `in_review`, `approved`), and node/connection/role counts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: str('Optional search filter over name, key, and description.', { maxLength: 200 }),
+        domain: { type: 'string', enum: ['all', 'fullstack', 'frontend', 'backend', 'business-logic', 'auth-acl'], description: 'Filter by flowchart domain.' },
+        status: { type: 'string', enum: ['all', 'draft', 'in_review', 'approved'], description: 'Filter by approval status.' },
+        includePublic: { type: 'boolean', description: 'Include public-library flowcharts (default true for non-strict keys).' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const svc = flowcharts || resolveContainer?.()?.flowcharts;
+      const pid = principal.project.id;
+      const rows = svc.list({
+        q: args.query || '',
+        domain: args.domain || '',
+        status: args.status || '',
+        projectId: pid,
+        actorId: principal.user.id,
+        includePublic: principal.strict ? false : (args.includePublic !== false),
+        includePrivate: false
+      });
+      return {
+        summary: `${rows.length} flowchart(s) in "${principal.project.key}" (${rows.filter(r => r.status === 'approved').length} approved).`,
+        data: { project: principal.project, flowcharts: rows }
+      };
+    }
+  },
+  {
+    name: 'uiux_get_flowchart',
+    title: 'Read a conceptual flowchart in full',
+    description: 'Returns a conceptual FlowChart with its full ComfyUI-style node graph (`screen`, `step`, `decision`, `trigger`, `subflow`, `end`), `home` input sockets, output menu/action/scenario ports, inline textual specifications, transition wire definitions, per-access-level feature variants, validation report, and Mermaid diagram.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Flowchart key, uid, or numeric id.', { minLength: 1, maxLength: 140 }),
+        rolePreview: str('Optional access-level key (e.g. "guest", "user", "admin") to evaluate effective role visibility and feature overrides for every node.', { maxLength: 40 }),
+        includeMermaid: { type: 'boolean', description: 'Include Mermaid flowchart LR diagram (default true).' }
+      },
+      required: ['ref'],
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const fc = svc.get(args.ref, {
+        projectId: principal.project.id,
+        includeMermaid: args.includeMermaid !== false,
+        includeValidation: true
+      });
+      if (principal.strict && Number(fc.projectId) !== Number(principal.project.id) && fc.visibility !== 'public') {
+        throw new DomainError(`Flowchart "${args.ref}" not found`, 'NOT_FOUND', 404);
+      }
+      svc.assertCanRead(fc, actor);
+      let roleEvaluatedNodes = null;
+      if (args.rolePreview) {
+        const rk = String(args.rolePreview).trim().toLowerCase();
+        roleEvaluatedNodes = fc.nodes.map(n => {
+          const v = n.roleSettings?.variants?.[rk] || null;
+          const allowed = !n.roleSettings?.allowedRoles?.length || n.roleSettings.allowedRoles.includes(rk);
+          return {
+            nodeKey: n.nodeKey,
+            title: n.title,
+            accessible: allowed,
+            deniedBehavior: n.roleSettings?.deniedBehavior || 'hide',
+            effectiveDescription: v?.summary ? `${v.summary}${v.addedFeatures ? `\n+ ${v.addedFeatures}` : ''}${v.hiddenFeatures ? `\n- Hidden: ${v.hiddenFeatures}` : ''}` : n.description,
+            visiblePorts: (n.ports || []).filter(p => allowed && (!p.allowedRoles?.length || p.allowedRoles.includes(rk)))
+          };
+        });
+      }
+      return {
+        summary: `Flowchart "${fc.name}" (${fc.key}) [${fc.status}] · ${fc.nodes.length} node(s), ${fc.edges.length} transition(s), ${fc.accessLevels.length} access level(s).`,
+        data: { flowchart: fc, ...(roleEvaluatedNodes ? { rolePreview: args.rolePreview, roleEvaluatedNodes } : {}) }
+      };
+    }
+  },
+  {
+    name: 'uiux_create_flowchart',
+    title: 'Create a conceptual flowchart',
+    description: 'Creates a new conceptual FlowChart for Frontend UI, Backend API, Full-Stack, or Business Logic workflows. Accepts optional `accessLevels`, `spec`, `nodes` (with `ports`, `roleSettings`, `techSpec`), `edges` (connecting `fromNodeKey[fromPortKey]` to `toNodeKey["home"]` with `transitionText`), and `autoLayout: true`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: str('Human-readable flowchart title.', { minLength: 1, maxLength: 140 }),
+        key: str('Optional dashed key (auto-prefixed in prefixed projects when omitted).', { maxLength: 140 }),
+        description: str('Detailed conceptual description of what this workflow accomplishes.', { maxLength: 20000 }),
+        domain: { type: 'string', enum: ['fullstack', 'frontend', 'backend', 'business-logic', 'auth-acl'], description: 'Flowchart scope (default "fullstack").' },
+        status: { type: 'string', enum: ['draft', 'in_review', 'approved'], description: 'Initial status (default "draft").' },
+        accessLevels: { type: 'array', maxItems: 30, items: { type: 'object' }, description: 'Custom access levels (`[{ key, name, color, description }]`).' },
+        spec: { type: 'object', description: 'Optional high-level specification (`{ overview, architectureNotes, businessRules, dataModels, apiConventions, globalConstraints }`).' },
+        nodes: { type: 'array', maxItems: 500, items: { type: 'object' }, description: 'Initial nodes (`[{ nodeKey?, kind: "screen"|"step"|"decision"|"trigger"|"subflow"|"end", subtype?, title, description, ports?, roleSettings?, techSpec?, x?, y? }]`).' },
+        edges: { type: 'array', maxItems: 1000, items: { type: 'object' }, description: 'Initial connections (`[{ fromNodeKey, fromPortKey, toNodeKey, label?, transitionText, conditionExpr?, roleSettings? }]`).' },
+        startNodeKey: str('Optional entry nodeKey.', { maxLength: 80 }),
+        seedStarter: { type: 'boolean', description: 'When `nodes` is omitted, create 1 starter node (default true; pass false for an empty canvas).' },
+        autoLayout: { type: 'boolean', description: 'Automatically arrange nodes cleanly in a left-to-right DAG (default true when nodes are supplied).' }
+      },
+      required: ['name'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const created = svc.create({
+        ...args,
+        projectId: principal.project.id,
+        visibility: 'project',
+        autoLayout: args.autoLayout ?? Boolean(args.nodes?.length)
+      }, { actor });
+      c?.notifySync?.('/api/flowcharts', 'POST');
+      return {
+        summary: `Created flowchart "${created.name}" (${created.key}) with ${created.nodes.length} node(s) and ${created.edges.length} connection(s).`,
+        data: { flowchart: created }
+      };
+    }
+  },
+  {
+    name: 'uiux_update_flowchart',
+    title: 'Update a conceptual flowchart',
+    description: 'Updates a flowchart\'s title, description, domain, approval status, accessLevels, spec, and/or replaces its full `nodes` and `edges` graph.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Target flowchart key, uid, or id.', { minLength: 1, maxLength: 140 }),
+        name: str('Updated title.', { minLength: 1, maxLength: 140 }),
+        description: str('Updated conceptual description.', { maxLength: 20000 }),
+        domain: { type: 'string', enum: ['fullstack', 'frontend', 'backend', 'business-logic', 'auth-acl'] },
+        status: { type: 'string', enum: ['draft', 'in_review', 'approved'] },
+        approvalNote: str('Optional approval or review note.', { maxLength: 4000 }),
+        startNodeKey: str('Entry nodeKey.', { maxLength: 80 }),
+        accessLevels: { type: 'array', maxItems: 30, items: { type: 'object' } },
+        spec: { type: 'object' },
+        nodes: { type: 'array', maxItems: 500, items: { type: 'object' } },
+        edges: { type: 'array', maxItems: 1000, items: { type: 'object' } },
+        autoLayout: { type: 'boolean' }
+      },
+      required: ['ref'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const target = svc.get(args.ref, { projectId: principal.project.id });
+      if (Number(target.projectId) !== Number(principal.project.id)) {
+        throw new DomainError(`Flowchart "${target.key}" belongs to another project; clone it first.`, 'FORBIDDEN', 403);
+      }
+      const { ref, ...patch } = args;
+      const updated = svc.update(target.id, patch, { actor, projectId: principal.project.id });
+      c?.notifySync?.(`/api/flowcharts/${target.id}`, 'PUT');
+      return {
+        summary: `Updated flowchart "${updated.name}" (${updated.key}) [${updated.status}] · ${updated.nodes.length} node(s), ${updated.edges.length} connection(s).`,
+        data: { flowchart: updated }
+      };
+    }
+  },
+  {
+    name: 'uiux_flowchart_op',
+    title: 'Interactive ComfyUI-style flowchart graph operations',
+    description: 'Applies one or more atomic graph operations on a flowchart: `add_node` (Screen, Step, Decision, Trigger, Subflow, End — with optional `connectFrom`), `update_node`, `remove_node`, `add_port` (menu item / sub-action / scenario case), `update_port`, `remove_port`, `reorder_ports`, `connect` (wire output port to target `home` input with `transitionText`), `update_edge`, `disconnect`, `insert_decision_on_edge` (splits a multi-scenario connection into a Decision router node with scenario ports), `set_role_variant` (configure per-access-level allowedRoles & feature differences on a node/port/edge), `set_access_levels`, `set_start_node`, `auto_layout`, `validate`, or `approve`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Target flowchart key, uid, or id.', { minLength: 1, maxLength: 140 }),
+        ops: {
+          type: 'array',
+          maxItems: 200,
+          items: { type: 'object' },
+          description: 'Ordered list of operations (`[{ op: "add_node"|"update_node"|"remove_node"|"add_port"|"update_port"|"remove_port"|"reorder_ports"|"connect"|"update_edge"|"disconnect"|"insert_decision_on_edge"|"set_role_variant"|"set_access_levels"|"set_start_node"|"auto_layout"|"validate"|"approve", ...fields }]`).'
+        }
+      },
+      required: ['ref', 'ops'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const target = svc.get(args.ref, { projectId: principal.project.id });
+      if (Number(target.projectId) !== Number(principal.project.id)) {
+        throw new DomainError(`Flowchart "${target.key}" belongs to another project; clone it first.`, 'FORBIDDEN', 403);
+      }
+      const res = svc.applyOps(target.id, args.ops, { actor, projectId: principal.project.id });
+      c?.notifySync?.(`/api/flowcharts/${target.id}/ops`, 'POST');
+      return {
+        summary: `Executed ${res.results.length} operation(s) on flowchart "${res.flowchart.name}" (${res.flowchart.nodes.length} node(s), ${res.flowchart.edges.length} connection(s)).`,
+        data: res
+      };
+    }
+  },
+  {
+    name: 'uiux_delete_flowchart',
+    title: 'Move a flowchart to Trash or restore from Trash',
+    description: 'Moves a project flowchart to Trash (preserving a full snapshot for restore), or restores a trashed flowchart when `restore: true` and `trashId` are passed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Flowchart key, uid, or id (for delete).', { maxLength: 140 }),
+        trashId: { type: 'integer', minimum: 1, description: 'Trash entry id when `restore: true`.' },
+        restore: { type: 'boolean', description: 'Pass true with `trashId` to restore a trashed flowchart.' }
+      },
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    destructive: true,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      if (args.restore && args.trashId) {
+        const restored = c.trash.restore(args.trashId, { actor });
+        c?.notifySync?.(`/api/trash/${args.trashId}/restore`, 'POST');
+        return { summary: `Restored flowchart "${restored.item?.name}" from Trash.`, data: restored };
+      }
+      const target = svc.get(args.ref, { projectId: principal.project.id });
+      if (Number(target.projectId) !== Number(principal.project.id)) {
+        throw new DomainError(`Flowchart "${target.key}" belongs to another project.`, 'FORBIDDEN', 403);
+      }
+      const out = svc.remove(target.id, { actor, projectId: principal.project.id, permanent: false });
+      c?.notifySync?.(`/api/flowcharts/${target.id}`, 'DELETE');
+      return { summary: `Moved flowchart "${target.name}" (${target.key}) to Trash (trashId: ${out.trashId}).`, data: out };
+    }
+  },
+  {
+    name: 'uiux_materialize_flowchart',
+    title: 'Materialize approved flowchart screens into visual UI Screens & Workflow',
+    description: 'Once a conceptual flowchart is approved by the user (or when `allowUnapproved: true`), generates or synchronizes visual `Screen` items (populated with rich `descriptionDev` from the node textual spec, menu items, and access-level variants) and builds/updates a visual `Workflow` connecting them, so the AI coder can immediately compose visual UIs using library elements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('Flowchart key, uid, or id.', { minLength: 1, maxLength: 140 }),
+        allowUnapproved: { type: 'boolean', description: 'Allow materializing even while status is draft/in_review (default false).' },
+        syncDescriptions: { type: 'boolean', description: 'Update `descriptionDev` on already-linked screens (default true).' },
+        syncWorkflow: { type: 'boolean', description: 'Also create/update a visual Screen Workflow with navigation links (default true).' },
+        deviceWidth: { type: 'number', minimum: 120, maximum: 4096, description: 'Width in px for newly created screens (default 390).' },
+        deviceHeight: { type: 'number', minimum: 120, maximum: 8192, description: 'Height in px for newly created screens (default 844).' }
+      },
+      required: ['ref'],
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const target = svc.get(args.ref, { projectId: principal.project.id });
+      if (Number(target.projectId) !== Number(principal.project.id)) {
+        throw new DomainError(`Flowchart "${target.key}" belongs to another project.`, 'FORBIDDEN', 403);
+      }
+      const { ref, ...opts } = args;
+      const out = svc.materializeToScreens(target.id, { ...opts, projectId: principal.project.id }, { actor });
+      c?.notifySync?.(`/api/flowcharts/${target.id}/materialize`, 'POST');
+      return {
+        summary: `Materialized flowchart "${out.flowchart.name}": ${out.createdScreens.length} new screen(s), ${out.updatedScreens.length} updated screen(s)${out.workflow ? `, synced workflow "${out.workflow.key}"` : ''}.`,
+        data: out
+      };
+    }
+  },
+  {
+    name: 'uiux_reverse_engineer_flowchart',
+    title: 'Reverse-engineer an app or project into conceptual FlowCharts',
+    description: 'Generates a conceptual ComfyUI-style FlowChart either from existing visual Screens/Buttons/Menus/Workflows in the project (`mode: "project"`) OR from an external codebase/app specification (`mode: "app-spec"`, accepting `screens`, `endpoints`, `steps`, `decisions`, `transitions`, `accessLevels`, or plain-text `rawText` route/flow lines).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['project', 'app-spec'], description: '"project" scans visual screens/workflows in this project; "app-spec" imports external app screens/APIs/routes.' },
+        name: str('Name for the generated flowchart.', { maxLength: 140 }),
+        description: str('Conceptual overview of the reverse-engineered workflow.', { maxLength: 20000 }),
+        domain: { type: 'string', enum: ['fullstack', 'frontend', 'backend', 'business-logic', 'auth-acl'] },
+        workflowId: { type: 'integer', minimum: 1, description: 'For `mode: "project"`: optional visual workflow id to reverse-engineer.' },
+        screenIds: { type: 'array', maxItems: 200, items: { type: 'integer', minimum: 1 }, description: 'For `mode: "project"`: optional subset of screen ids.' },
+        includeBackendSteps: { type: 'boolean', description: 'For `mode: "project"`: synthesize validation decisions and backend API steps for form screens (default true).' },
+        accessLevels: { type: 'array', maxItems: 30, items: { type: 'object' }, description: 'For `mode: "app-spec"`: app roles/access levels.' },
+        screens: { type: 'array', maxItems: 300, items: { type: 'object' }, description: 'For `mode: "app-spec"`: app screens (`[{ key?, title, route?, description?, actions?, roles?, roleVariants? }]`).' },
+        endpoints: { type: 'array', maxItems: 300, items: { type: 'object' }, description: 'For `mode: "app-spec"`: backend endpoints (`[{ key?, method, path, title?, description?, requestSchema?, responseSchema?, dbTables?, roles? }]`).' },
+        steps: { type: 'array', maxItems: 300, items: { type: 'object' }, description: 'For `mode: "app-spec"`: business logic / background steps.' },
+        decisions: { type: 'array', maxItems: 200, items: { type: 'object' }, description: 'For `mode: "app-spec"`: decision nodes (`[{ key?, title, description?, cases: [...] }]`).' },
+        transitions: { type: 'array', maxItems: 1000, items: { type: 'object' }, description: 'For `mode: "app-spec"`: directed flow edges (`[{ from, port?, to, label?, transitionText?, condition?, roles? }]`).' },
+        rawText: str('For `mode: "app-spec"`: plain-text or Markdown route/flow lines (e.g. `Login --[Submit]--> POST /api/login : Validates credentials`).', { maxLength: 50000 })
+      },
+      additionalProperties: false
+    },
+    scope: 'propose',
+    readOnly: false,
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const mode = args.mode || ((args.screens || args.endpoints || args.steps || args.rawText || args.transitions) ? 'app-spec' : 'project');
+      const fc = mode === 'app-spec'
+        ? svc.reverseEngineerFromAppSpec({ ...args, projectId: principal.project.id, visibility: 'project' }, { actor })
+        : svc.reverseEngineerFromProject({ ...args, projectId: principal.project.id, visibility: 'project' }, { actor });
+      c?.notifySync?.('/api/flowcharts/reverse-engineer', 'POST');
+      return {
+        summary: `Reverse-engineered flowchart "${fc.name}" (${fc.key}) via mode "${mode}" (${fc.nodes.length} node(s), ${fc.edges.length} connection(s)).`,
+        data: { mode, flowchart: fc }
+      };
+    }
+  },
+  {
+    name: 'uiux_export_project_definition',
+    title: 'Export full project-definition.md blueprint for AI coders',
+    description: 'Exports the complete documentation of the project (`project-definition.md` and/or structured JSON) combining project architecture, unified Access-Level & Role Matrix, FlowChart Mermaid diagrams, screen-by-screen UI/UX definitions with role feature overrides, step-by-step backend API & business logic contracts, decision scenario tables, transition specifications, and visual library assets so any AI coding agent can implement or recreate the full project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['both', 'markdown', 'json'], description: 'Output format (default "both").' },
+        onlyApproved: { type: 'boolean', description: 'Include only approved flowcharts (default false).' },
+        flowchartRefs: { type: 'array', maxItems: 100, items: str('Flowchart key, uid, or id.', { maxLength: 140 }), description: 'Optional subset of flowcharts to export.' }
+      },
+      additionalProperties: false
+    },
+    scope: 'read',
+    run: ({ principal, flowcharts, resolveContainer }, args) => {
+      const c = resolveContainer?.();
+      const svc = flowcharts || c?.flowcharts;
+      const actor = c?.users?.get?.(principal.user.id) || principal.user;
+      const out = svc.buildProjectDefinition({
+        projectId: principal.project.id,
+        flowchartIds: args.flowchartRefs || null,
+        onlyApproved: Boolean(args.onlyApproved),
+        format: args.format || 'both'
+      }, { actor });
+      return {
+        summary: `Exported project definition "${out.filename}" for project "${principal.project.key}".`,
+        data: out
       };
     }
   }

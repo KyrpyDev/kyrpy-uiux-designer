@@ -13,7 +13,8 @@ import { h, toast } from '../dom.js';
 import { api } from '../api.js';
 import { state, findDesign } from '../state.js';
 import { ensureDesignDeps } from '../actions.js';
-import { pickIcon, pickButton, pickTarget, targetPatch, targetSummary } from './menu-editor.js';
+import { pickIcon, pickButton, pickTarget, targetPatch, targetSummary, pressSlideTargetLabel } from './menu-editor.js';
+import { PRESS_SLIDE_DIRS, PRESS_SLIDE_DIR_LABELS, PRESS_SLIDE_ACTIONS, pressSlideConfig } from '/domain/press-slide.js';
 import { clickTargetOf, withClickTarget, changedKeys, placeBox } from '/domain/quick-edit.js';
 
 const TIP_ATTR = 'data-tip';
@@ -93,10 +94,10 @@ function nodeModel(d, { nodeId }) {
             const rec = (saved?.links || []).find(x => x.fromScreenId === d.doc.id && x.fromNodeId === nodeId && x.toScreenId === v.target.screenId) || saved;
             if (l && rec?.id != null) l.id = rec.id;
           }
-        } else if (!l) { patch.events = n.events; patch.onClick = null; }
+        } else if (!l || wfId == null) { patch.events = n.events; patch.onClick = null; }
         else toast('This item is a route of the workflow: pick a screen, or remove the link on the workflow canvas', 'info', 3200);
       }
-      if (Object.keys(patch).length) await api.patchNode(d.type, d.doc.id, nodeId, patch);
+      if (Object.keys(patch).length) Object.assign(n, await api.patchNode(d.type, d.doc.id, nodeId, patch));
       const stored = libLabel0.get(v.refId);
       if (stored !== undefined && stored !== v.label) { await api.updateDesign(refType, v.refId, { label: v.label }); libLabel0.set(v.refId, v.label); }
       const nn = node();
@@ -113,17 +114,25 @@ function itemModel(d, { buttonId, itemId }) {
     title: () => `menu item “${item()?.label || item()?.name || `#${itemId}`}”`,
     projectId: () => menuHost(d, buttonId)?.projectId ?? state.activeProjectId,
     typeKind: 'item',
-    fields: ['label', 'name', 'type', 'target', 'descriptionDev'],
+    fields: ['label', 'name', 'type', 'target', 'pressSlide', 'descriptionDev'],
     tipNote: 'The mouse-over text of a menu item is its label',
     otherAction: () => '',
     read() {
-      const it = item();
+      const it = item(), host = menuHost(d, buttonId);
+      const ps = pressSlideConfig({ pressSlide: host?.meta?.menu?.itemPressSlide?.[String(itemId)] || null }, { all: true });
       return { label: it.label || '', name: it.name || '', iconId: it.iconId ?? null, refButtonId: it.refButtonId ?? null, action: it.action || '', descriptionDev: it.descriptionDev || '',
-        target: { screenId: it.targetScreenId ?? null, elementId: it.targetScreenId ? null : it.targetElementId ?? null } };
+        target: { screenId: it.targetScreenId ?? null, elementId: it.targetScreenId ? null : it.targetElementId ?? null }, pressSlide: ps };
     },
     async apply(v) {
-      const it = item(); if (!it) return;
+      const it = item(), host = menuHost(d, buttonId); if (!it) return;
       Object.assign(it, { label: v.label, name: v.name, iconId: v.iconId, refButtonId: v.refButtonId, action: v.action, descriptionDev: v.descriptionDev, targetScreenId: v.target.screenId, targetElementId: v.target.elementId });
+      if (host && v.pressSlide) {
+        host.meta = { ...(host.meta || {}), menu: { ...(host.meta?.menu || {}) } };
+        const prev = { ...(host.meta.menu.itemPressSlide || {}) };
+        if (v.pressSlide.on) prev[String(itemId)] = JSON.parse(JSON.stringify(v.pressSlide));
+        else delete prev[String(itemId)];
+        host.meta.menu.itemPressSlide = prev;
+      }
       await ensureDesignDeps({ menuItems: [it] }).catch(() => {});
       d.menu?.afterChange?.();
     },
@@ -132,6 +141,13 @@ function itemModel(d, { buttonId, itemId }) {
       const diff = changedKeys(base, v);
       const patch = Object.fromEntries(Object.entries(body).filter(([k]) => diff.includes(k) || (diff.includes('target') && k.startsWith('target'))));
       if (Object.keys(patch).length) await api.updateMenuItem(buttonId, itemId, patch);
+      if (diff.includes('pressSlide')) {
+        const host = menuHost(d, buttonId);
+        const prev = { ...(host?.meta?.menu?.itemPressSlide || {}) };
+        if (v.pressSlide.on) prev[String(itemId)] = v.pressSlide;
+        else delete prev[String(itemId)];
+        await api.menuConfig(buttonId, { itemPressSlide: prev });
+      }
     },
     fullEdit: () => d.editInNewTab('button', buttonId, { item: itemId })
   };
@@ -248,6 +264,7 @@ export function openQuickEdit(d, anchor, subject, { focus = '' } = {}) {
       await applying;
       await model.save(draft, base);
       base = JSON.parse(JSON.stringify(draft));
+      d.changed?.();
       toast(`Saved ${model.title()}`, 'ok', 1600);
     } catch (e) { toast(e.message, 'error'); }
     busy = false; paint();
@@ -272,6 +289,48 @@ export function openQuickEdit(d, anchor, subject, { focus = '' } = {}) {
       has('type') && model.typeKind === 'item' ? h('div', { class: 'qe-field' }, h('span', {}, 'Icon / button type'), h('div', { class: 'qe-row' }, iconBtn, typeBtn)) : null,
       has('type') && model.typeKind && model.typeKind !== 'item' ? h('div', { class: 'qe-field' }, h('span', {}, `${model.typeKind === 'icon' ? 'Icon' : 'Button'} type`), typeBtn) : null,
       has('target') ? h('div', { class: 'qe-field' }, h('span', {}, 'When clicked (screen or popup)'), targetBtn) : null,
+      has('pressSlide') && draft.pressSlide ? (() => {
+        const psOn = h('input', { type: 'checkbox', checked: !!draft.pressSlide.on });
+        const dirBox = h('div', { style: { display: draft.pressSlide.on ? 'flex' : 'none', flexDirection: 'column', gap: '4px', marginTop: '4px' } });
+        psOn.addEventListener('change', () => {
+          dirBox.style.display = psOn.checked ? 'flex' : 'none';
+          change({ pressSlide: { ...draft.pressSlide, on: psOn.checked } });
+        });
+        for (const k of PRESS_SLIDE_DIRS) {
+          const cur = draft.pressSlide[k] || { on: false, action: 'enter', target: '' };
+          const chk = h('input', { type: 'checkbox', checked: !!cur.on });
+          const sel = h('select', { class: 'grow' }, ...PRESS_SLIDE_ACTIONS.map(([v, l]) => h('option', { value: v, selected: cur.action === v }, l)));
+          const tBtn = h('button', { class: 'btn sm', type: 'button', title: 'Pick target screen or element' }, '🗂');
+          const cBtn = h('button', { class: 'btn sm', type: 'button', title: 'Clear target' }, '✕');
+          const syncRow = () => {
+            const dCur = draft.pressSlide[k] || cur;
+            sel.disabled = !dCur.on;
+            const open = dCur.on && sel.value === 'enter';
+            tBtn.hidden = !open;
+            cBtn.hidden = !open || !dCur.target;
+            tBtn.title = dCur.target ? pressSlideTargetLabel(dCur.target) : 'Pick target screen or element';
+          };
+          chk.addEventListener('change', () => { const next = { ...draft.pressSlide, [k]: { ...draft.pressSlide[k], on: chk.checked } }; change({ pressSlide: next }); syncRow(); });
+          sel.addEventListener('change', () => { const next = { ...draft.pressSlide, [k]: { ...draft.pressSlide[k], action: sel.value } }; change({ pressSlide: next }); syncRow(); });
+          tBtn.addEventListener('click', async () => {
+            const t = draft.pressSlide[k]?.target || '';
+            const r = await pickTarget({
+              currentScreenId: /^s-\d+$/.test(t) ? Number(t.slice(2)) : null,
+              currentElementId: /^e-\d+$/.test(t) ? Number(t.slice(2)) : null,
+              projectId: model.projectId(), allowCreate: false
+            });
+            const p = await targetPatch(r, model.projectId());
+            if (!p) return;
+            const nt = p.targetScreenId ? `s-${p.targetScreenId}` : p.targetElementId ? `e-${p.targetElementId}` : '';
+            const next = { ...draft.pressSlide, [k]: { ...draft.pressSlide[k], target: nt } };
+            await change({ pressSlide: next }); syncRow();
+          });
+          cBtn.addEventListener('click', () => { const next = { ...draft.pressSlide, [k]: { ...draft.pressSlide[k], target: '' } }; change({ pressSlide: next }); syncRow(); });
+          syncRow();
+          dirBox.append(h('div', { class: 'row', style: { gap: '4px', alignItems: 'center' } }, chk, h('span', { style: { width: '48px', fontSize: '11px' } }, PRESS_SLIDE_DIR_LABELS[k]), sel, tBtn, cBtn));
+        }
+        return h('div', { class: 'qe-field' }, h('span', {}, 'Press & slide (joystick)'), h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } }, psOn, h('span', {}, 'Enable for this item')), dirBox);
+      })() : null,
       has('tip') ? field('tip', 'Mouse-over label', text('tip', 'Shown on hover')) : model.tipNote ? h('div', { class: 'qe-note' }, model.tipNote) : null,
       has('descriptionDev') ? h('label', { class: 'qe-field' }, h('span', {}, 'description-dev'), dev) : null),
     h('div', { class: 'qe-foot' }, status, h('span', { class: 'grow' }), resetBtn, saveBtn));

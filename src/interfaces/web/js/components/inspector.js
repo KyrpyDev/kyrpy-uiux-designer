@@ -250,7 +250,20 @@ export class Inspector {
       if (!isValidKey(v)) { toast('Variable name: dashed lowercase words (a-z, 0-9, -)', 'error'); return this.render(); }
       d.updateDoc({ key: v });
     }, { mono: true });
+    const isFav = Boolean(doc.meta?.favorite);
+    const favBtn = h('button', {
+      type: 'button',
+      class: `btn small${isFav ? ' primary' : ''}`,
+      'data-f': 'doc-favorite',
+      title: isFav ? 'Remove from favorites' : 'Add to favorites',
+      onclick: () => d.updateDoc({ meta: { ...(doc.meta || {}), favorite: !isFav } })
+    }, isFav ? '★ Favorite' : '☆ Favorite');
+    const isApproved = Boolean(doc.meta?.approved);
+    const screenApprove = type === 'screen' ? h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } },
+      h('input', { type: 'checkbox', checked: isApproved, 'data-f': 'screen-approved', onchange: e => d.updateDoc({ meta: { ...(doc.meta || {}), approved: e.target.checked } }) }),
+      h('span', {}, isApproved ? '✓ Approved' : 'Approve screen')) : null;
     const kids = [
+      h('div', { class: 'row wrap', style: { gap: '8px', alignItems: 'center' } }, favBtn, screenApprove),
       this.field('Name', this.text('doc-name', doc.name, v => v.trim() && d.updateDoc({ name: v.trim() }))),
       this.field('Variable name (code)', keyInput),
       this.field('Label (shown to users)', this.text('doc-label', doc.label, v => d.updateDoc({ label: v }))),

@@ -41,9 +41,9 @@ export class CollaborationService {
    * Second half of the wiring: the design services, the workflow service and the library transfer need this service
    * and are built after it. Called by the composition root; `libraryTransfer` follows in a second call.
    */
-  bind({ services = this.services, workflows = this.workflows, libraryTransfer = this.libraryTransfer } = {}) {
+  bind({ services = this.services, workflows = this.workflows, flowcharts = this.flowcharts, libraryTransfer = this.libraryTransfer } = {}) {
     if (!services || !Object.keys(services).length || !workflows) throw new Error('CollaborationService.bind needs services and workflows');
-    Object.assign(this, { services, workflows, libraryTransfer });
+    Object.assign(this, { services, workflows, flowcharts, libraryTransfer });
     return this;
   }
 
@@ -109,8 +109,9 @@ export class CollaborationService {
    */
   recordEdit({ projectId = 1, targetType, targetId, targetKey = '', targetName = '', authorId = 1, ownerId = 1, action = 'update', summary = '', beforeDoc, afterDoc }) {
     const isWf = targetType === 'workflow';
-    const beforeSnapshot = isWf ? (beforeDoc ? workflowRestoreBody(beforeDoc) : {}) : (beforeDoc ? restoreBody(beforeDoc) : {});
-    const afterSnapshot = isWf ? (afterDoc ? workflowRestoreBody(afterDoc) : {}) : (afterDoc ? restoreBody(afterDoc) : {});
+    const isFc = targetType === 'flowchart';
+    const beforeSnapshot = isFc ? (beforeDoc || {}) : isWf ? (beforeDoc ? workflowRestoreBody(beforeDoc) : {}) : (beforeDoc ? restoreBody(beforeDoc) : {});
+    const afterSnapshot = isFc ? (afterDoc || {}) : isWf ? (afterDoc ? workflowRestoreBody(afterDoc) : {}) : (afterDoc ? restoreBody(afterDoc) : {});
     // one open request per author and item: further edits extend it (its "before" is the state a reject restores)
     const open = action !== 'publish' && typeof this.changes.openEdit === 'function'
       ? this.changes.openEdit({ authorId: authorId ?? fallbackOwnerId(this), targetType, targetId }) : null;
@@ -207,6 +208,8 @@ export class CollaborationService {
     if (ch.afterSnapshot && Array.isArray(ch.afterSnapshot.nodes) && !this.#editIsLive(ch)) {
       if (ch.targetType === 'workflow' && this.workflows) {
         try { this.workflows.restore(ch.targetId, ch.afterSnapshot); } catch (e) { noteSkipped('approve: re-applying the approved snapshot', e); }
+      } else if (ch.targetType === 'flowchart' && this.flowcharts) {
+        try { this.flowcharts.restore(ch.targetId, ch.afterSnapshot); } catch (e) { noteSkipped('approve: re-applying the approved snapshot', e); }
       } else if (this.services[ch.targetType]) {
         try { this.services[ch.targetType].restore(ch.targetId, ch.afterSnapshot); } catch (e) { noteSkipped('approve: re-applying the approved snapshot', e); }
       }
@@ -217,7 +220,7 @@ export class CollaborationService {
   /** True when the target item was modified at or after the change was recorded (or no longer exists): nothing to re-apply. */
   #editIsLive(ch) {
     try {
-      const svc = ch.targetType === 'workflow' ? this.workflows : this.services?.[ch.targetType];
+      const svc = ch.targetType === 'workflow' ? this.workflows : ch.targetType === 'flowchart' ? this.flowcharts : this.services?.[ch.targetType];
       const cur = svc?.designs?.get ? svc.designs.get(ch.targetId) : svc?.get?.(ch.targetId);
       if (!cur) return true;                                        // deleted: nothing to apply
       const at = v => (v ? Date.parse(String(v).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? '' : 'Z')) : NaN);
@@ -250,6 +253,7 @@ export class CollaborationService {
       // a failed restore is reported (the request stays pending); an item that no longer exists has nothing to restore
       try {
         if (ch.targetType === 'workflow' && this.workflows) this.workflows.restore(ch.targetId, ch.beforeSnapshot);
+        else if (ch.targetType === 'flowchart' && this.flowcharts) this.flowcharts.restore(ch.targetId, ch.beforeSnapshot);
         else if (this.services[ch.targetType]) this.services[ch.targetType].restore(ch.targetId, ch.beforeSnapshot);
       } catch (e) {
         if (e?.status !== 404) throw new ConflictError(`Change #${ch.id} could not be undone: ${e.message}`);

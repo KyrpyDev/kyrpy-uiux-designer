@@ -398,6 +398,79 @@ CREATE TABLE IF NOT EXISTS images (
   UNIQUE (project_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS flowcharts (
+  id INTEGER PRIMARY KEY,
+  uid TEXT NOT NULL UNIQUE,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  description_dev TEXT NOT NULL DEFAULT '',
+  domain TEXT NOT NULL DEFAULT 'fullstack',
+  status TEXT NOT NULL DEFAULT 'draft',
+  approved_by INTEGER,
+  approved_at TEXT,
+  approval_note TEXT NOT NULL DEFAULT '',
+  access_levels_json TEXT NOT NULL DEFAULT '[]',
+  spec_json TEXT NOT NULL DEFAULT '{}',
+  start_node_key TEXT,
+  linked_workflow_id INTEGER,
+  project_id INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'project',
+  creator_id INTEGER NOT NULL DEFAULT 1,
+  cloned_from_id INTEGER,
+  root_item_id INTEGER,
+  root_owner_id INTEGER NOT NULL DEFAULT 1,
+  locked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_nodes (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  node_key TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'screen',
+  subtype TEXT NOT NULL DEFAULT 'ui-screen',
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  x REAL NOT NULL DEFAULT 80,
+  y REAL NOT NULL DEFAULT 80,
+  width REAL NOT NULL DEFAULT 300,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  ports_json TEXT NOT NULL DEFAULT '[]',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  linked_screen_id INTEGER,
+  linked_flowchart_id INTEGER,
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, node_key)
+);
+
+CREATE TABLE IF NOT EXISTS flowchart_edges (
+  id INTEGER PRIMARY KEY,
+  flowchart_id INTEGER NOT NULL,
+  edge_key TEXT NOT NULL,
+  from_node_key TEXT NOT NULL,
+  from_port_key TEXT NOT NULL DEFAULT 'out',
+  to_node_key TEXT NOT NULL,
+  to_port_key TEXT NOT NULL DEFAULT 'home',
+  label TEXT NOT NULL DEFAULT '',
+  transition_text TEXT NOT NULL DEFAULT '',
+  condition_expr TEXT NOT NULL DEFAULT '',
+  style TEXT NOT NULL DEFAULT 'bezier',
+  role_settings_json TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json TEXT NOT NULL DEFAULT '{}',
+  waypoints_json TEXT NOT NULL DEFAULT '[]',
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT '',
+  UNIQUE (flowchart_id, edge_key)
+);
+
 CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 
 -- ===== kyrpy-uiux-mcp (M0): schema_registry, mcp_context on every table, uid + content_hash =====
@@ -426,6 +499,9 @@ ALTER TABLE IF EXISTS "menu_items" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT
 ALTER TABLE IF EXISTS "workflows" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "workflow_screens" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "workflow_links" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowcharts" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowchart_nodes" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE IF EXISTS "flowchart_edges" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "change_requests" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "template_devices" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE IF EXISTS "template_buttons" ADD COLUMN IF NOT EXISTS mcp_context TEXT NOT NULL DEFAULT '{}';
@@ -681,7 +757,7 @@ CREATE INDEX IF NOT EXISTS idx_element_scripts_element ON element_scripts(elemen
 -- ===== account (user-wide) API keys (m11): kind + project_id nullable for kind = 'account' =====
 ALTER TABLE IF EXISTS api_keys ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'project';
 ALTER TABLE IF EXISTS api_keys ALTER COLUMN project_id DROP NOT NULL;
-TRUNCATE TABLE users, projects, project_members, themes, paths, icons, buttons, elements, screens, nodes, animations, menu_items, workflows, workflow_screens, workflow_links, change_requests, template_devices, template_buttons, translations, settings, trash_items RESTART IDENTITY CASCADE;
+TRUNCATE TABLE users, projects, project_members, themes, paths, icons, buttons, elements, screens, nodes, animations, menu_items, workflows, workflow_screens, workflow_links, flowcharts, flowchart_nodes, flowchart_edges, change_requests, template_devices, template_buttons, translations, settings, trash_items RESTART IDENTITY CASCADE;
 -- Table: users (4 rows)
 INSERT INTO "users" ("id", "username", "email", "password_hash", "salt", "display_name", "role", "status", "permissions", "avatar_color", "created_at", "updated_at", "last_login_at", "mcp_context") VALUES (1, 'superadmin', 'superadmin@local.dev', '640551e5d63c811e0da2cba418b75902d28eb8a799693944cdc9bd4d07825f7b4c8c8867e2e838d05a2d4c1e4808e64ba5fd79490163d8a1a79eae2150e8860f', 'superadmin_salt_v1', 'Superadmin', 'superadmin', 'active', '["*"]', '#2e9bff', '2026-11-05 00:00:00', '2026-11-05 00:00:00', NULL, '{}') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "username", "email", "password_hash", "salt", "display_name", "role", "status", "permissions", "avatar_color", "created_at", "updated_at", "last_login_at", "mcp_context") VALUES (2, 'admin', 'admin@local.dev', 'b33ffb8d32f70f4af58c44b26fa71349ff471d722d472252400f7f1cb57d59c08043bcf1483fc4e1b940c2cb2ceb2d55fe44a8eb695e7f434ab5e12ab5d8cd80', 'admin_salt_v1', 'Administrator', 'admin', 'active', '["*"]', '#10b981', '2026-11-05 00:00:00', '2026-11-05 00:00:00', NULL, '{}') ON CONFLICT DO NOTHING;
@@ -104771,6 +104847,9 @@ INSERT INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_
 INSERT INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (395, 25, 175, NULL, 177, 'Configure Project', 'Opens setup wizard', 'curved', 'click', '{}') ON CONFLICT DO NOTHING;
 INSERT INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (396, 25, 175, NULL, 178, 'View Sprint Board', 'Opens agile kanban board', 'curved', 'click', '{}') ON CONFLICT DO NOTHING;
 INSERT INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (397, 25, 174, NULL, 176, 'Inspect Artifact', 'Pushes generated UI to canvas', 'curved', 'click', '{}') ON CONFLICT DO NOTHING;
+-- Table: flowcharts (0 rows)
+-- Table: flowchart_nodes (0 rows)
+-- Table: flowchart_edges (0 rows)
 -- Table: change_requests (0 rows)
 -- Table: template_devices (12 rows)
 INSERT INTO "template_devices" ("id", "key", "name", "category", "width", "height", "corner_radius", "grid", "locked", "meta", "builtin", "created_by", "created_at", "mcp_context", "uid", "content_hash") VALUES (1, 'iphone-15', 'iPhone 15', 'mobile', 390, 844, 44, 24, 0, '{"modes":["dark","light"],"defaultMode":"dark","darkTheme":"liquid","lightTheme":"liquid-light"}', 1, 15, '2026-11-04 21:45:16', '{}', '05d97551-8bf0-4998-9b04-5c63c4859502', NULL) ON CONFLICT DO NOTHING;

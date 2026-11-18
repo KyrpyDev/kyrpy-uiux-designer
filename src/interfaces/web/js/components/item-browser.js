@@ -964,7 +964,8 @@ export async function openTrashModal() {
     }
   },
   h('option', { value: '' }, 'All Item Types'),
-  ...ALL_ITEM_TYPES.map(t => h('option', { value: t }, TYPE_LABELS[t] || t))
+  ...ALL_ITEM_TYPES.map(t => h('option', { value: t }, TYPE_LABELS[t] || t)),
+  h('option', { value: 'flowchart' }, 'FlowCharts')
   );
 
   const searchBox = h('input', {
@@ -1019,6 +1020,7 @@ export async function openTrashModal() {
                 try {
                   const res = await api.trashRestore(it.id);
                   await refreshGlobalLibraryAndCounts();
+                  if (res.itemType === 'flowchart') emit('flowcharts:changed');
                   await loadTrash();
                   if (res.partial) toast(`Restored ${res.itemType} "${res.item?.name || it.itemKey}", but ${res.skipped.length} part(s) could not be put back: ${res.skipped[0]}`, 'err');
                   else toast(`Restored ${res.itemType} "${res.item?.name || it.itemKey}"`, 'ok');

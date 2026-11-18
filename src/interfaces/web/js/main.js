@@ -9,6 +9,8 @@ import { lastEdited, setEditedSessionUser } from './edited.js';
 import { Designer } from './components/designer.js';
 import { Inspector } from './components/inspector.js';
 import { WorkflowDesigner } from './components/workflow-designer.js';
+import { FlowChartDesigner, openNewFlowchartModal, openReverseEngineerModal, openProjectDefinitionModal } from './components/flowchart-designer.js';
+import { openAiStudioModal } from './components/ai-studio-modal.js';
 import { openExportDialog } from './components/export-dialog.js';
 import { openThemePicker } from './components/theme-picker.js';
 import { pairThemeKey } from '/domain/theme.js';
@@ -16,7 +18,7 @@ import { iconEl, iconForLabel, ibtn } from './icons.js';
 import { healthIndicators } from './health-status.js';
 
 // icon for each top-level menu header (tooltip = the menu name)
-const MENU_ICONS = { Project: 'file', Design: 'design', Edit: 'edit', Insert: 'insert', Tools: 'tools', Path: 'path', 'Events & Anim': 'events', Collaborate: 'collab', View: 'view', Theme: 'theme', Export: 'export', Trash: 'trash', Help: 'help' };
+const MENU_ICONS = { Project: 'file', Design: 'design', FlowChart: 'flowchart', AI: 'sparkles', Edit: 'edit', Insert: 'insert', Tools: 'tools', Path: 'path', 'Events & Anim': 'events', Collaborate: 'collab', View: 'view', Theme: 'theme', Export: 'export', Trash: 'trash', Help: 'help' };
 // icon-only topbar button with a hover tooltip and optional count badge
 /** Profile → AI Access Keys (MCP layer module, loaded on demand from src/mcp/interfaces/web). */
 /** Topbar profile icon → My Profile page (details, password, sessions, activity). */
@@ -62,10 +64,10 @@ function recordView(mode, view, label) {
   history[mode === 'replace' ? 'replaceState' : 'pushState']({ view, idx: nav.idx, label }, '');
   updateBackButtons();
 }
-function updateBackButtons() { app.designer?.refreshBack(); app.workflow?.refreshBack(); }
+function updateBackButtons() { app.designer?.refreshBack(); app.workflow?.refreshBack(); app.flowchart?.refreshBack(); }
 
 const app = {
-  designer: null, library: null, workflow: null, current: null,
+  designer: null, library: null, workflow: null, flowchart: null, current: null,
   modals: [],     // designers open in dialogs (the last one is the active one)
 
   canBack: () => nav.idx > 0,
@@ -73,7 +75,10 @@ const app = {
   back() { if (nav.idx > 0) history.back(); else toast('There is no previous page'); },
 
   /** The document the Save / Save as / Reset commands act on: the dialog on top, else what the right panel shows. */
-  activeDoc() { return this.modals.at(-1) || (state.mode === 'workflow' ? this.workflow : this.designer); },
+  activeDoc() { return this.modals.at(-1) || (state.mode === 'workflow' ? this.workflow : state.mode === 'flowchart' ? this.flowchart : this.designer); },
+
+  /** Opens the Client-Side AI Studio & Runtime Generator modal (Gemini BYOK, Chrome Gemini Nano, Ollama, WebGPU, MCP Bridge). */
+  openAiStudio(opts = {}) { return openAiStudioModal(this, opts); },
 
   /**
    * Opens a design (path, icon, button, element or screen) in the main designer; the libraries on the left stay available for drag & drop.
@@ -106,11 +111,27 @@ const app = {
     } catch (e) { toast(e.message, 'error'); return false; }
   },
 
+  async openFlowchart(id, { push = true } = {}) {
+    id = Number(id);
+    const same = this.flowchart.fc?.id === id;
+    if (!same && !(await this.flowchart.confirmLeave())) return false;
+    state.mode = 'flowchart'; state.flowchartId = id; state.tab = 'flowchart'; renderMode();
+    this.library.renderTabs(); this.library.renderBody();
+    try {
+      if (same) await this.flowchart.refresh(); else await this.flowchart.load(id);
+      if (push && !same) recordView(push === 'replace' ? 'replace' : 'push', { k: 'flowchart', id }, `flowchart "${this.flowchart.fc.name}"`);
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false; }
+  },
+
   /** Goes to a history entry. Leaving the page that is on screen (even for the other kind of page) asks about its unsaved changes first. */
   async openView(view, opts) {
-    const visible = state.mode === 'workflow' ? this.workflow : this.designer, target = view.k === 'workflow' ? this.workflow : this.designer;
+    const visible = state.mode === 'workflow' ? this.workflow : state.mode === 'flowchart' ? this.flowchart : this.designer;
+    const target = view.k === 'workflow' ? this.workflow : view.k === 'flowchart' ? this.flowchart : this.designer;
     if (visible !== target && !(await visible.confirmLeave())) return false;
-    return view.k === 'workflow' ? this.openWorkflow(view.id, opts) : this.openDesign(view.type, view.id, opts);
+    if (view.k === 'workflow') return this.openWorkflow(view.id, opts);
+    if (view.k === 'flowchart') return this.openFlowchart(view.id, opts);
+    return this.openDesign(view.type, view.id, opts);
   },
 
   addInstance(type, id) {
@@ -147,8 +168,8 @@ const app = {
   }
 };
 
-/** The guide topic that matches what is open: the designer's type, or the workflow designer. */
-function guideTab() { return state.mode === 'workflow' ? 'workflow' : (app.designer?.doc ? app.designer.type : 'start'); }
+/** The guide topic that matches what is open: the designer's type, flowchart designer, or workflow designer. */
+function guideTab() { return state.mode === 'workflow' ? 'workflow' : state.mode === 'flowchart' ? 'flowchart' : (app.designer?.doc ? app.designer.type : 'start'); }
 
 function setStatus(msg) { const s = $('#status-msg'); if (s) s.textContent = msg; }
 
@@ -379,6 +400,7 @@ function menuDef() {
       ['New element…', async () => { const r = await newDesign('element'); if (r) app.openDesign('element', r.id); }],
       ['New screen (from device template)…', async () => { const r = await newDesign('screen'); if (r) app.openDesign('screen', r.id); }],
       ['New workflow…', async () => { state.tab = 'workflow'; app.library.renderTabs(); app.library.renderBody(); toast('Use “+ New workflow” in the Workflows tab'); }],
+      ['New flowchart (Conceptual UI & Backend)…', () => openNewFlowchartModal({ onCreated: fc => app.openFlowchart(fc.id) })],
       '-',
       ['Import from SVG Folder to Current Library…', async () => { const r = await importFolderOrFontDialog(state.tab, 'folder'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
       ['Import from Fonts (.svg / .ttf / .woff / Glyphs) to Current Library…', async () => { const r = await importFolderOrFontDialog(state.tab, 'font'); if (r?.rec) app.openDesign(r.type, r.rec.id); }],
@@ -399,6 +421,36 @@ function menuDef() {
       ['Reset to the last saved version', () => app.activeDoc()?.reset()],
       ['Close edited item', () => app.designer?.closeDoc?.()],
       ['Back to the previous page', () => app.back(), 'Alt+←']
+    ]],
+    ['FlowChart', [
+      ['Open FlowChart Designer', () => openPageType('flowchart')],
+      ['New Conceptual FlowChart (Frontend / Backend / Full-Stack)…', () => openNewFlowchartModal({ onCreated: fc => app.openFlowchart(fc.id) })],
+      '-',
+      ['+ Add Screen Node (Home + Menu Outputs)', async () => { await openPageType('flowchart'); app.flowchart?.addNodeOfKind('screen'); }],
+      ['+ Add Step / Backend Logic Node', async () => { await openPageType('flowchart'); app.flowchart?.addNodeOfKind('step'); }],
+      ['+ Add Decision / Scenario Router Node', async () => { await openPageType('flowchart'); app.flowchart?.addNodeOfKind('decision'); }],
+      ['+ Add Trigger / Entry Node', async () => { await openPageType('flowchart'); app.flowchart?.addNodeOfKind('trigger'); }],
+      '-',
+      ['Configure Access Levels & Role Matrix…', async () => { await openPageType('flowchart'); app.flowchart?.openRolesModal(); }],
+      ['Validate FlowChart & Gap Check…', async () => { await openPageType('flowchart'); app.flowchart?.openValidationModal(); }],
+      ['Approve / Sign Off Open FlowChart (Ready for AI Coder)', async () => { await openPageType('flowchart'); app.flowchart?.toggleApproval(); }],
+      ['Materialize Approved Screens & Workflow (for Visual UI Design)…', async () => { await openPageType('flowchart'); app.flowchart?.openMaterializeModal(); }],
+      '-',
+      ['Reverse Engineer App / Screens → FlowChart…', () => openReverseEngineerModal({ onCreated: fc => app.openFlowchart(fc.id) })],
+      ['Export Full Project Definition (project-definition.md)…', () => openProjectDefinitionModal()]
+    ]],
+    ['AI', [
+      ['✨ Open AI Studio (Browser Runtime Generator)…', () => app.openAiStudio()],
+      ['✨ AI Generate UI Screen / Element / Button / Icon…', () => app.openAiStudio({ tab: 'ui', mode: 'create' })],
+      ['✨ AI Refine Currently Open Design…', () => app.openAiStudio({ tab: 'ui', preferRefine: true })],
+      '-',
+      ['🔀 AI Generate Conceptual FlowChart…', () => app.openAiStudio({ tab: 'flowchart', fcMode: 'create' })],
+      ['🔀 AI Expand Open FlowChart…', () => app.openAiStudio({ tab: 'flowchart', fcMode: 'expand' })],
+      ['🎨 AI-Build Visual Screens from FlowChart…', () => app.openAiStudio({ tab: 'flowchart', fcMode: 'design-screens' })],
+      '-',
+      ['⚙ Configure Browser AI Runtime (Gemini BYOK / Nano / Ollama / WebGPU)…', () => app.openAiStudio({ tab: 'settings' })],
+      ['🔌 Subscription MCP Bridge (Gemini CLI / Antigravity / Claude / Cursor)…', () => app.openAiStudio({ tab: 'mcp' })],
+      ['🔑 AI Access Keys (MCP)…', () => openAiKeys()]
     ]],
     ['Edit', [
       ['Undo', () => d().undo(), 'Ctrl+Z'], ['Redo', () => d().redo(), 'Ctrl+Y'], '-',
@@ -547,6 +599,7 @@ function menuDef() {
       ['Export selected screens…', () => openExportDialog({ screenIds: state.catalogSel.size ? [...state.catalogSel] : 'all' })],
       ['Export all screens…', () => openExportDialog({ screenIds: 'all' })],
       '-',
+      ['Export full project definition (project-definition.md)…', () => openProjectDefinitionModal()],
       ['Export all project (one browsable html)', () => downloadProjectHtml()]
     ]],
     ['Trash', [
@@ -565,7 +618,7 @@ function menuDef() {
         }
       }]
     ]],
-    ['Help', [['Usage and guide…', () => openGuide(guideTab()), 'F1'], ['Download usage-and-guide.html', () => downloadGuide()], '-', ['Keyboard shortcuts', () => showShortcuts()], ['About', () => modal({ title: 'About', content: h('div', {}, h('p', {}, 'Kyrpy UI/UX App Designer · Offline-First SQLite + PostgreSQL Collaborative Edition.'), h('p', { class: 'muted' }, 'Project-based designs (public & project visibility), User & ACL Management (default root owner @superadmin), Root Lineage tracking, Collaborative Change Approval/Rejection, Multi-Events (click, mouseover, release, drag&drop), Small Element Toolbars, Editable Templates, and bi-directional PostgreSQL sync (kyrpy-uiux-designer-db).')) })]]]
+    ['Help', [['Usage and guide…', () => openGuide(guideTab()), 'F1'], ['Download usage-and-guide.html', () => downloadGuide()], '-', ['Keyboard shortcuts', () => showShortcuts()], ['About', () => modal({ title: 'About', content: h('div', {}, h('p', {}, 'Kyrpy UI/UX App Designer · Offline-First SQLite + PostgreSQL + AI-Native Edition.'), h('p', { class: 'muted' }, 'Composable Path → Icon → Button → Element → Screen → Workflow ⇄ Conceptual FlowChart studio, Client-Side Browser AI Studio (Gemini BYOK, Chrome Gemini Nano, Local Ollama, WebGPU & Live MCP Subscription Bridge), Per-Instance Overrides, Press & Slide Joysticks, Fixed-Size Repeaters, Image Library, 30 Dark/Light Themes, and bi-directional PostgreSQL sync.')) })]]]
   ];
 }
 
@@ -766,8 +819,11 @@ function renderTopbar() {
   // Theme style button sits in the top-left slot, right after the menu heads
   // API / MCP health dots (links to /docs/api and /docs/mcp in a new tab; polling lives in health-status.js)
   const healthGroup = h('div', { class: 'tb-health-group', role: 'group', 'aria-label': 'Service health' }, healthIndicators());
+  const aiStudioBtn = tbIcon('topbar-ai-btn', 'sparkles',
+    '✨ AI Studio — Client-side Gemini BYOK, Chrome Gemini Nano, Local Ollama, WebGPU & Live MCP Subscription Bridge',
+    () => app.openAiStudio());
   bar.append(h('div', { class: 'top-center' }, projDropdown));
-  bar.append(h('div', { class: 'top-right' }, healthGroup, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
+  bar.append(h('div', { class: 'top-right' }, healthGroup, aiStudioBtn, trashBtn, changesBtn, syncBtn, userBtn, modeToggleBtn));
   buildTypeBar();
 }
 /* Designer-page section: switch between path / icon / button / element / screen / workflow / item browser,
@@ -781,13 +837,31 @@ const TYPE_NAV = [
 ];
 /** The item that was open last in each designer (this page load): its type tab comes back to it. */
 const lastOpened = {};
-function currentPageType() { return state.mode === 'workflow' ? 'workflow' : state.mode === 'screen' ? (app.current?.type || state.tab) : null; }
+function currentPageType() {
+  if (state.mode === 'workflow') return 'workflow';
+  if (state.mode === 'flowchart') return 'flowchart';
+  return state.mode === 'screen' ? (app.current?.type || state.tab) : null;
+}
 async function openPageType(type, { quiet = false } = {}) {
   if (type === 'workflow') {
     const lastWf = lastEdited('workflow');
     const id = (lastWf != null && app.library.workflows.find(w => Number(w.id) === lastWf)?.id) || state.workflowId || app.library.workflows[0]?.id;
     if (!id) { if (!quiet) toast('Create a workflow first (+ New in this page)'); return; }
     await app.openWorkflow(id);
+  } else if (type === 'flowchart') {
+    state.tab = 'flowchart';
+    if (!app.library.flowcharts?.length) await app.library.loadFlowcharts();
+    const lastFc = lastEdited('flowchart');
+    let id = (lastFc != null && app.library.flowcharts.find(f => Number(f.id) === lastFc)?.id)
+      || state.flowchartId
+      || app.library.flowcharts.find(f => Number(f.projectId) === Number(state.activeProjectId || 1))?.id
+      || app.library.flowcharts[0]?.id;
+    if (!id && !quiet) {
+      const created = await createEmptyItem('flowchart');
+      if (created?.id) id = created.id;
+    }
+    if (id) await app.openFlowchart(id);
+    else { state.mode = 'flowchart'; renderMode(); app.library.renderTabs(); app.library.renderBody(); app.flowchart?.render(); }
   } else {
     state.mode = 'screen'; state.tab = type;
     const list = type === 'screen' ? await api.list('screen') : (state.library[TYPE_NAV.find(t => t[0] === type)[3]] || []);
@@ -804,21 +878,23 @@ function buildTypeBar() {
   const nav = $('#typebar'); if (!nav) return;
   clear(nav);
   const page = currentPageType();
-  // "+" opens a pop-up menu: New Path / Icon / Button / Element / Screen / Workflow (each creates an empty item and opens it)
-  const NEW_ITEMS = [['path', 'New Path', 'bezier'], ['icon', 'New Icon', 'star'], ['button', 'New Button', 'circle'], ['element', 'New Element', 'rect'], ['screen', 'New Screen', 'monitor'], ['workflow', 'New Workflow', 'workflow']];
+  // "+" opens a pop-up menu: New Path / Icon / Button / Element / Screen / Workflow / FlowChart (each creates an empty item and opens it)
+  const NEW_ITEMS = [['path', 'New Path', 'bezier'], ['icon', 'New Icon', 'star'], ['button', 'New Button', 'circle'], ['element', 'New Element', 'rect'], ['screen', 'New Screen', 'monitor'], ['workflow', 'New Workflow', 'workflow'], ['flowchart', 'New FlowChart', 'flowchart']];
   const createNew = async type => {
     closeMenus();
     const r = await createEmptyItem(type);
     if (!r) return;
-    if (type === 'workflow') await app.openWorkflow(r.id); else await app.openDesign(type, r.id);
+    if (type === 'workflow') await app.openWorkflow(r.id);
+    else if (type === 'flowchart') await app.openFlowchart(r.id);
+    else await app.openDesign(type, r.id);
     buildTopbar();
   };
   const newPanel = h('div', { class: 'menu-panel new-menu', role: 'menu' },
     NEW_ITEMS.map(([type, label, icon]) => h('button', { class: 'menu-item', role: 'menuitem', 'data-new-type': type, onclick: e => { e.stopPropagation(); createNew(type).catch(err => toast(err.message, 'error')); } },
       h('span', { class: 'ico' }, iconEl(icon, { size: 16 })), h('span', { class: 'mi-label' }, label))));
   const newBtn = h('div', { class: 'menu new-menu-wrap' },
-    ibtn('plus', 'New — path, icon, button, element, screen or workflow', e => { e.stopPropagation(); const open = !newBtn.classList.contains('open'); closeMenus(); if (open) newBtn.classList.add('open'); },
-      { desc: 'Open the New menu: path, icon, button, element, screen, workflow', cls: 'new-empty' }),
+    ibtn('plus', 'New — path, icon, button, element, screen, workflow or flowchart', e => { e.stopPropagation(); const open = !newBtn.classList.contains('open'); closeMenus(); if (open) newBtn.classList.add('open'); },
+      { desc: 'Open the New menu: path, icon, button, element, screen, workflow, flowchart', cls: 'new-empty' }),
     newPanel);
   // the designer's doc bar (back, save, targets, visibility, status, new) and canvas toggles live in this row
   const designer = app.designer;
@@ -826,6 +902,8 @@ function buildTypeBar() {
   // the workflow designer's doc bar and tools live in this row too (otherwise the row looked empty on workflow pages)
   const wfd = app.workflow;
   const inWorkflow = state.mode === 'workflow' && wfd?.wf && wfd.docbar && wfd.toolbar;
+  const fcd = app.flowchart;
+  const inFlowchart = state.mode === 'flowchart' && fcd?.fc && fcd.docbar && fcd.toolbar;
   // the ownership / save status sits in the top centre, next to the project button
   const tc = $('#topbar .top-center');
   if (tc) { tc.querySelector(':scope > .doc-state')?.remove(); if (inDesigner && designer.docState) tc.append(designer.docState); }
@@ -843,12 +921,16 @@ function buildTypeBar() {
     inWorkflow ? wfd.docbar : null,
     inWorkflow ? h('span', { class: 'sep-v' }) : null,
     inWorkflow ? wfd.toolbar : null,
+    inFlowchart ? h('span', { class: 'sep-v' }) : null,
+    inFlowchart ? fcd.docbar : null,
+    inFlowchart ? h('span', { class: 'sep-v' }) : null,
+    inFlowchart ? fcd.toolbar : null,
     ...(inDesigner ? (designer.pathGroups || []) : []),
     inDesigner && designer.barTools?.length ? h('span', { class: 'sep-v' }) : null,
     ...(inDesigner ? (designer.barTools || []) : []),
     ...(inDesigner ? (designer.toolToggles || []) : []),
     h('span', { class: 'grow' }),
-    h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page === 'workflow' ? 'workflow' : page}` : 'Item Browser'),
+    h('span', { class: 'muted typebar-hint' }, page ? `Editing: ${page}` : 'Item Browser'),
     // one unbreakable group: the last view buttons never drop alone onto a second row
     inDesigner && designer.viewControls?.length ? h('div', { class: 'tb-view-group' }, designer.viewControls) : null
   ].filter(Boolean));
@@ -857,7 +939,7 @@ window.addEventListener('ud:open-page', e => {
   const t = typeof e.detail === 'string' ? e.detail : e.detail?.type;
   if (!t) return;
   // a library tab click: nothing to do when that designer is already on screen with an item
-  if (e.detail?.fromTab && currentPageType() === t && (t === 'workflow' ? app.workflow?.wf : app.designer?.doc && app.designer.type === t)) return;
+  if (e.detail?.fromTab && currentPageType() === t && (t === 'workflow' ? app.workflow?.wf : t === 'flowchart' ? app.flowchart?.fc : app.designer?.doc && app.designer.type === t)) return;
   openPageType(t, { quiet: !!e.detail?.fromTab }).catch(err => toast(err.message, 'error'));
 });
 const closeMenus = () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
@@ -866,7 +948,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'F1') { e.preventDefault(); openGuide(guideTab()); }
   else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); app.activeDoc()?.save(); }   // Alt+← is the browser's own Back, handled by the history
 });
-window.addEventListener('beforeunload', e => { if (app.designer?.dirty || app.workflow?.dirty || app.modals.some(d => d.dirty)) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if (app.designer?.dirty || app.workflow?.dirty || app.flowchart?.dirty || app.modals.some(d => d.dirty)) { e.preventDefault(); e.returnValue = ''; } });
 window.addEventListener('popstate', async e => {
   if (nav.restoring) { nav.restoring = false; return; }
   const st = e.state;
@@ -909,14 +991,16 @@ function bindSplitter() {
 }
 
 function renderMode() {
-  const dz = $('#dz-root'), wf = $('#wf-root'), br = $('#browser-root');
+  const dz = $('#dz-root'), wf = $('#wf-root'), fc = $('#fc-root'), br = $('#browser-root');
   dz.style.display = state.mode === 'screen' ? 'flex' : 'none';
   wf.style.display = state.mode === 'workflow' ? 'flex' : 'none';
+  if (fc) fc.style.display = state.mode === 'flowchart' ? 'flex' : 'none';
   if (br) {
     br.style.display = state.mode === 'browser' ? 'flex' : 'none';
     if (state.mode === 'browser') app.browser?.refresh();
   }
   if (state.mode === 'screen') requestAnimationFrame(() => app.designer?.fit?.());
+  else if (state.mode === 'flowchart') requestAnimationFrame(() => app.flowchart?.drawEdges?.());
   buildTopbar();
 }
 
@@ -970,6 +1054,7 @@ async function boot() {
   right.append(
     h('div', { id: 'dz-root', class: 'dz', style: { display: 'flex' } }),
     h('div', { id: 'wf-root', class: 'wf', style: { display: 'none' } }),
+    h('div', { id: 'fc-root', class: 'fc-designer', style: { display: 'none' } }),
     h('div', { id: 'browser-root', class: 'ib-root', style: { display: 'none', flex: '1', flexDirection: 'column', padding: '12px', overflow: 'hidden' } })
   );
   $('#statusbar').append(h('span', { id: 'status-msg' }, 'ready'), h('span', { id: 'statusbar-xy', class: 'dim' }), h('span', { class: 'grow' }), h('span', { id: 'status-counts', class: 'dim' }));
@@ -1000,6 +1085,7 @@ async function boot() {
   });
   new Inspector(app.designer.inspectorEl, app.designer);
   app.workflow = new WorkflowDesigner($('#wf-root'), app);
+  app.flowchart = new FlowChartDesigner($('#fc-root'), app);
   app.browser = new ItemBrowserView($('#browser-root'));
   app.library = new LibraryPanel($('#left'), app);
   buildTopbar(); bindSplitter();
@@ -1007,7 +1093,7 @@ async function boot() {
   const refreshCounts = () => {
     const c = state.counts;
     const pName = (state.projects || []).find(p => Number(p.id) === Number(state.activeProjectId))?.name || 'Default';
-    $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'superadmin'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
+    $('#status-counts').textContent = `project: ${pName} · user: @${state.user?.username || 'superadmin'} (${state.user?.role || 'admin'}) · ${c.paths} paths · ${c.icons} icons · ${c.buttons} buttons · ${c.elements} elements · ${c.screens} screens · ${c.workflows} workflows · ${c.flowcharts ?? 0} flowcharts · trash: ${state.trashCount || 0} · pending changes: ${state.pendingChangesCount || 0} · theme: ${state.themeKey}`;
   };
   on('library:changed', () => {
     refreshCounts(); buildTopbar();
@@ -1019,6 +1105,7 @@ async function boot() {
   on('project:list-changed', () => { refreshCounts(); buildTopbar(); });
   on('mode:set', m => { state.mode = m; renderMode(); });
   on('designer:open', ({ type, id }) => app.openDesign(type, id));
+  on('ai-studio:open', opts => app.openAiStudio(opts || {}));
   on('workflow:select', id => app.openWorkflow(id));
   on('auth:changed', () => { setEditedSessionUser(state.user?.id); refreshCounts(); buildTopbar(); });
   setEditedSessionUser(state.user?.id);
@@ -1032,6 +1119,7 @@ async function boot() {
   });
   on('theme:changed', () => { refreshCounts(); buildTopbar(); app.designer.doc && app.designer.renderAll(); if (state.mode === 'workflow' && app.workflow.wf) app.workflow.refresh(); });
   on('workflows:changed', async () => { await app.library.loadWorkflows(); refreshCounts(); });
+  on('flowcharts:changed', async () => { await app.library.loadFlowcharts(); refreshCounts(); buildTopbar(); });
   on('settings:changed', () => app.designer.renderOverlay());
   // icon geometry fetched lazily (large libraries): redraw open canvases that drew those icons as placeholders
   on('icons:loaded', debounce(() => { for (const d of [app.designer, ...app.modals]) if (d?.doc && d.renderStage) d.renderStage(); }, 60));

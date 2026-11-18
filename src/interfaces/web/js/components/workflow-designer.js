@@ -14,6 +14,7 @@ import { distributeLevels, workflowStartScreen } from '/domain/screen-routes.js'
 import { openExportDialog } from './export-dialog.js';
 import { openGuide } from '../actions.js';
 import { openTestRunner } from './test-runner.js';
+import { buildDesignerSwitchDropdown } from './flowchart-designer.js';
 import { openLineageModal } from './collab-modals.js';
 import { openCopyMoveToProjectsModal } from './item-browser.js';
 
@@ -464,7 +465,8 @@ export class WorkflowDesigner {
       fitName();
     });
     const bar = h('div', { class: 'dz-bar wf-bar', role: 'toolbar', 'aria-label': 'Workflow tools' },
-      h('span', { class: 'wf-title' }, h('b', {}, 'Workflow:'), nameIn),
+      buildDesignerSwitchDropdown('workflow', t => window.dispatchEvent(new CustomEvent('ud:open-page', { detail: { type: t } }))),
+      h('span', { class: 'wf-title' }, nameIn),
       h('span', { class: 'sep-v' }),
       ibtn('undo', 'Undo', () => this.undo(), { kbd: 'Ctrl+Z' }),
       ibtn('redo', 'Redo', () => this.redo(), { kbd: 'Ctrl+Y' }),
@@ -954,7 +956,19 @@ export class WorkflowDesigner {
     const visSel = h('select', {}, h('option', { value: 'public' }, '🌐 Public (all projects)'), h('option', { value: 'project' }, '📁 Project-only'));
     visSel.value = wf.visibility || 'public';
     visSel.addEventListener('change', async () => { await api.updateWorkflow(wf.id, { visibility: visSel.value, projectId: state.currentProjectId || wf.projectId || 1 }); wf.visibility = visSel.value; this.checkDirty(); emit('workflows:changed'); });
-    root.append(sec(`Workflow · ${wf.key}`,
+    const approved = Boolean(wf.meta?.approved);
+    const approveBox = h('label', { class: 'row', style: { gap: '6px', alignItems: 'center', cursor: 'pointer' } },
+      h('input', { type: 'checkbox', checked: approved, 'data-f': 'wf-approved', onchange: async e => {
+        const nextMeta = { ...(wf.meta || {}), approved: e.target.checked };
+        await api.updateWorkflow(wf.id, { meta: nextMeta });
+        wf.meta = nextMeta;
+        this.checkDirty();
+        emit('workflows:changed');
+        toast(e.target.checked ? 'Workflow approved for app integration' : 'Workflow approval removed', 'ok', 1600);
+      } }),
+      h('span', {}, approved ? '✓ Approved for app integration' : 'Approve workflow for app integration'));
+    root.append(sec(`Workflow · ${wf.key}${wf.meta?.version ? ` · v${wf.meta.version}` : ''}`,
+      approveBox,
       fld('Name', txt(wf.name, async v => { if (await this.rename(v, { syncInspector: false }) && this.titleInput) { this.titleInput.value = this.wf.name; this.titleInput.dispatchEvent(new Event('input')); } })),
       fld('Label', txt(wf.label, async v => { await api.updateWorkflow(wf.id, { label: v }); wf.label = v; this.checkDirty(); })),
       fld('Visibility', visSel),

@@ -18,7 +18,12 @@ const HEAL_STEPS = [
   ['menu_items.target_screen_id cleared', 'UPDATE menu_items SET target_screen_id = NULL WHERE target_screen_id IS NOT NULL AND target_screen_id NOT IN (SELECT id FROM screens)'],
   ['project_members without project or user', 'DELETE FROM project_members WHERE project_id NOT IN (SELECT id FROM projects) OR user_id NOT IN (SELECT id FROM users)'],
   ['menu_items.target_element_id cleared', 'UPDATE menu_items SET target_element_id = NULL WHERE target_element_id IS NOT NULL AND target_element_id NOT IN (SELECT id FROM elements)'],
-  ['menu_items.ref_button_id cleared', 'UPDATE menu_items SET ref_button_id = NULL WHERE ref_button_id IS NOT NULL AND ref_button_id NOT IN (SELECT id FROM buttons)']
+  ['menu_items.ref_button_id cleared', 'UPDATE menu_items SET ref_button_id = NULL WHERE ref_button_id IS NOT NULL AND ref_button_id NOT IN (SELECT id FROM buttons)'],
+  ['flowchart_nodes without flowchart', 'DELETE FROM flowchart_nodes WHERE flowchart_id NOT IN (SELECT id FROM flowcharts)'],
+  ['flowchart_edges without flowchart', 'DELETE FROM flowchart_edges WHERE flowchart_id NOT IN (SELECT id FROM flowcharts)'],
+  ['flowchart_nodes.linked_screen_id cleared', 'UPDATE flowchart_nodes SET linked_screen_id = NULL WHERE linked_screen_id IS NOT NULL AND linked_screen_id NOT IN (SELECT id FROM screens)'],
+  ['flowchart_nodes.linked_flowchart_id cleared', 'UPDATE flowchart_nodes SET linked_flowchart_id = NULL WHERE linked_flowchart_id IS NOT NULL AND linked_flowchart_id NOT IN (SELECT id FROM flowcharts)'],
+  ['flowcharts.linked_workflow_id cleared', 'UPDATE flowcharts SET linked_workflow_id = NULL WHERE linked_workflow_id IS NOT NULL AND linked_workflow_id NOT IN (SELECT id FROM workflows)']
 ];
 
 /**

@@ -104092,6 +104092,9 @@ INSERT OR REPLACE INTO "workflow_links" ("id", "workflow_id", "from_screen_id", 
 INSERT OR REPLACE INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (395, 25, 175, NULL, 177, 'Configure Project', 'Opens setup wizard', 'curved', 'click', '{}');
 INSERT OR REPLACE INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (396, 25, 175, NULL, 178, 'View Sprint Board', 'Opens agile kanban board', 'curved', 'click', '{}');
 INSERT OR REPLACE INTO "workflow_links" ("id", "workflow_id", "from_screen_id", "from_node_id", "to_screen_id", "name", "description_dev", "style", "trigger", "mcp_context") VALUES (397, 25, 174, NULL, 176, 'Inspect Artifact', 'Pushes generated UI to canvas', 'curved', 'click', '{}');
+-- Table: flowcharts (0 rows)
+-- Table: flowchart_nodes (0 rows)
+-- Table: flowchart_edges (0 rows)
 -- Table: change_requests (0 rows)
 -- Table: template_devices (12 rows)
 INSERT OR REPLACE INTO "template_devices" ("id", "key", "name", "category", "width", "height", "corner_radius", "grid", "locked", "meta", "builtin", "created_by", "created_at", "mcp_context", "uid", "content_hash") VALUES (1, 'iphone-15', 'iPhone 15', 'mobile', 390, 844, 44, 24, 0, '{"modes":["dark","light"],"defaultMode":"dark","darkTheme":"liquid","lightTheme":"liquid-light"}', 1, 15, '2026-11-04 21:45:16', '{}', '05d97551-8bf0-4998-9b04-5c63c4859502', NULL);

@@ -8,7 +8,7 @@
  *
  * Bump `SEED_VERSION` when you change any text; rows edited by users (`source != 'seed'`) are never overwritten.
  */
-export const SEED_VERSION = 11;
+export const SEED_VERSION = 12;
 
 /* ---------- shared column descriptions ---------- */
 
@@ -314,6 +314,74 @@ export const SCHEMA_REGISTRY_SEED = {
       source: 'upload, svg-import, openverse, pexels or pixabay.', source_id: 'Photo id at the stock provider.', source_url: 'Source page of a stock photo.',
       author: 'Photographer / creator.', author_url: 'Author page.', license: 'License name (CC BY 4.0, Pexels License, …).', license_url: 'License text.',
       project_id: C.project_id, visibility: C.visibility, creator_id: C.creator_id, created_at: C.created_at, updated_at: C.updated_at, mcp_context: C.mcp_context
+    }
+  },
+  flowcharts: {
+    purpose: 'Conceptual FlowChart specifications (Frontend UI, Backend API, Full-Stack & Business Logic) with descriptions, approval status, and role/access-level definitions.',
+    usage: 'Read and written through uiux_list_flowcharts, uiux_get_flowchart, uiux_create_flowchart, uiux_update_flowchart, uiux_flowchart_op, uiux_reverse_engineer_flowchart, uiux_materialize_flowchart, and uiux_export_project_definition.',
+    constraints: ['status is draft, in_review, or approved.', 'domain is fullstack, frontend, backend, business-logic, or auth-acl.', 'Once approved, screen nodes can materialize into visual screens and workflow routes.'],
+    columns: {
+      id: C.id, uid: C.uid, key: C.key, name: C.name, label: C.label,
+      description_dev: 'Detailed conceptual description of the flowchart purpose, actors, and scope.',
+      domain: 'fullstack | frontend | backend | business-logic | auth-acl.',
+      status: 'Approval lifecycle: draft | in_review | approved.',
+      approved_by: 'User who approved this flowchart (`users.id`).',
+      approved_at: 'UTC timestamp when approved.',
+      approval_note: 'Sign-off note or implementation instructions for AI coders.',
+      access_levels_json: 'JSON array of access levels / user roles (`[{ key, name, color, description, inheritsFrom }]`).',
+      spec_json: 'JSON object with project/flowchart-level overview, architectureNotes, businessRules, dataModels, apiConventions, globalConstraints.',
+      start_node_key: 'node_key of the primary entry node in `flowchart_nodes`.',
+      linked_workflow_id: 'Visual workflow (`workflows.id`) materialized or synchronized from this flowchart.',
+      project_id: C.project_id, visibility: C.visibility, creator_id: C.creator_id,
+      cloned_from_id: C.cloned_from_id, root_item_id: C.root_item_id, root_owner_id: C.root_owner_id,
+      locked: C.locked, created_at: C.created_at, updated_at: C.updated_at, mcp_context: C.mcp_context
+    }
+  },
+  flowchart_nodes: {
+    purpose: 'ComfyUI-style conceptual nodes inside a flowchart: screens, backend/business steps, decision routers, triggers, subflows, and terminal ends.',
+    usage: 'Every non-trigger node exposes an input `home` port (`to_port_key = "home"`) and zero or more output ports (`ports_json`: menu items, buttons, actions, or decision scenario cases) plus per-access-level feature variants (`role_settings_json`).',
+    columns: {
+      id: C.id,
+      flowchart_id: 'Owning flowchart (`flowcharts.id`).',
+      node_key: 'Stable dashed key unique inside the flowchart.',
+      kind: 'screen | step | decision | trigger | subflow | end.',
+      subtype: 'Domain subtype (ui-screen, modal-dialog, api-endpoint, business-rule, db-operation, scenario-switch, auth-guard, …).',
+      title: 'Human-readable node header title.',
+      description: 'Textual definition of what happens inside this screen or step.',
+      x: 'Canvas X coordinate in world px.',
+      y: 'Canvas Y coordinate in world px.',
+      width: 'Node card width in px.',
+      collapsed: '1 = body collapsed to compact header + ports.',
+      locked: C.locked,
+      ports_json: 'JSON array of output sockets (`[{ key, label, kind, description, allowedRoles, deniedBehavior, payloadHint, icon }]`).',
+      role_settings_json: 'JSON object defining allowedRoles, deniedBehavior, and per-role textual feature overrides (`variants[roleKey]`).',
+      tech_spec_json: 'JSON object with optional backend/UI technical details (method, endpoint, requestSchema, responseSchema, dbTables, stateReads, stateWrites, eventsEmitted, errorCases, acceptanceCriteria).',
+      linked_screen_id: 'Optional visual screen (`screens.id`) bound to or materialized from this conceptual screen node.',
+      linked_flowchart_id: 'Optional target flowchart (`flowcharts.id`) for `kind = "subflow"`.',
+      ord: 'Display/execution order.',
+      created_at: C.created_at, updated_at: C.updated_at, mcp_context: C.mcp_context
+    }
+  },
+  flowchart_edges: {
+    purpose: 'Directed connections from a node output port (`from_node_key` + `from_port_key`) to a target node input (`to_node_key` + `to_port_key`, default `home`) with inline transition flow text.',
+    usage: 'Each edge carries `transition_text` explaining what happens during the transition; multi-scenario edges can be split into a `decision` node via `insertDecisionOnEdge`.',
+    columns: {
+      id: C.id,
+      flowchart_id: 'Owning flowchart (`flowcharts.id`).',
+      edge_key: 'Stable dashed key unique inside the flowchart.',
+      from_node_key: 'Source node (`flowchart_nodes.node_key`).',
+      from_port_key: 'Output port key on the source node.',
+      to_node_key: 'Target node (`flowchart_nodes.node_key`).',
+      to_port_key: 'Target input port key (default `home`).',
+      label: 'Short badge label shown over the connection wire.',
+      transition_text: 'Textual definition of what happens through the flow while transitioning to the next node.',
+      condition_expr: 'Optional guard condition or expression.',
+      style: 'Wire routing style: bezier | orthogonal | straight.',
+      role_settings_json: 'JSON access-level restrictions on this transition.',
+      tech_spec_json: 'JSON technical payload / HTTP / event details of the transition.',
+      waypoints_json: 'JSON array of intermediate `{x, y}` control points.',
+      ord: 'Order of the connection.',
+      created_at: C.created_at, updated_at: C.updated_at, mcp_context: C.mcp_context
     }
   },
   translations: {

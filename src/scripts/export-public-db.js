@@ -159,7 +159,7 @@ try {
   // 3c. Keep ONLY the `public` user's public library (`visibility = 'public' AND project_id = 1 AND
   //     creator_id = root_owner_id = <public>`). Private, project-scoped and other users' items are excluded.
   //     Owners are NOT rewritten; only lineage pointers to excluded rows are cut.
-  for (const table of designTables) {
+  for (const table of [...designTables, ...(hasTable('flowcharts') ? ['flowcharts'] : [])]) {
     db.prepare(`
       DELETE FROM "${table}"
       WHERE visibility IS NOT 'public'
@@ -209,6 +209,22 @@ try {
     DELETE FROM workflow_screens WHERE workflow_id NOT IN (SELECT id FROM workflows) OR screen_id NOT IN (SELECT id FROM screens);
     DELETE FROM workflow_links WHERE workflow_id NOT IN (SELECT id FROM workflows) OR from_screen_id NOT IN (SELECT id FROM screens) OR to_screen_id NOT IN (SELECT id FROM screens);
   `);
+  if (hasTable('flowcharts')) {
+    db.exec(`
+      UPDATE flowcharts SET linked_workflow_id = NULL WHERE linked_workflow_id IS NOT NULL AND linked_workflow_id NOT IN (SELECT id FROM workflows);
+      UPDATE flowcharts SET approved_by = NULL WHERE approved_by IS NOT NULL AND approved_by NOT IN (SELECT id FROM users);
+    `);
+    if (hasTable('flowchart_nodes')) {
+      db.exec(`
+        DELETE FROM flowchart_nodes WHERE flowchart_id NOT IN (SELECT id FROM flowcharts);
+        UPDATE flowchart_nodes SET linked_screen_id = NULL WHERE linked_screen_id IS NOT NULL AND linked_screen_id NOT IN (SELECT id FROM screens);
+        UPDATE flowchart_nodes SET linked_flowchart_id = NULL WHERE linked_flowchart_id IS NOT NULL AND linked_flowchart_id NOT IN (SELECT id FROM flowcharts);
+      `);
+    }
+    if (hasTable('flowchart_edges')) {
+      db.exec('DELETE FROM flowchart_edges WHERE flowchart_id NOT IN (SELECT id FROM flowcharts);');
+    }
+  }
   // the image library: only the public user's public images of the shared default project are published
   if (hasTable('images')) {
     db.prepare(`DELETE FROM images WHERE visibility IS NOT 'public' OR COALESCE(project_id, 1) != 1 OR creator_id IS NOT ?`).run(PUB);
@@ -248,7 +264,7 @@ try {
 
   // 3g. HARD LEAK ASSERTIONS — the export must contain nothing but the public user's public library.
   const leaks = [];
-  for (const table of designTables) {
+  for (const table of [...designTables, ...(hasTable('flowcharts') ? ['flowcharts'] : [])]) {
     const n = db.prepare(`SELECT COUNT(*) AS n FROM "${table}" WHERE creator_id IS NOT ? OR root_owner_id IS NOT ? OR visibility IS NOT 'public' OR COALESCE(project_id, 1) != 1`).get(PUB, PUB).n;
     if (n) leaks.push(`${n} ${table} row(s) not owned by "${PUBLIC_USERNAME}" or not public`);
   }
@@ -327,6 +343,9 @@ const EXPORT_TABLES = [
   'workflows',
   'workflow_screens',
   'workflow_links',
+  'flowcharts',
+  'flowchart_nodes',
+  'flowchart_edges',
   'change_requests',
   'template_devices',
   'template_buttons',

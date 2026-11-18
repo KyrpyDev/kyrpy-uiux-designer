@@ -366,7 +366,16 @@ export class WorkflowService {
     if (!s) throw new NotFoundError('screen', screenId);
     if (!this.screenRoutes(s.id).length) throw new ValidationError(`screen "${s.name}" has no menu item or click action that goes to another screen yet`);
     return this.transaction(() => {
-      const wf = this.create({ ...rest, name: String(name || '').trim() || `${s.name} workflow`, descriptionDev: rest.descriptionDev ?? `Generated from the routes of screen "${s.name}".` }, { actor, actorId });
+      const existing = this.list({ projectId: rest.projectId ?? s.projectId }).filter(w => Number(w.meta?.baseScreenId ?? w.startScreenId) === Number(s.id));
+      const nextVer = existing.reduce((m, w) => Math.max(m, Number(w.meta?.version) || 1), 0) + 1;
+      const meta = { ...(rest.meta || {}), baseScreenId: s.id, version: nextVer, approved: Boolean(rest.meta?.approved) };
+      const wf = this.create({
+        ...rest,
+        key: rest.key || `${s.key}-wf-v${nextVer}`,
+        name: String(name || '').trim() || `${s.name} workflow (v${nextVer})`,
+        descriptionDev: rest.descriptionDev ?? `Generated from the routes of screen "${s.name}".`,
+        meta
+      }, { actor, actorId });
       const out = this.importRoutes(wf.id, { screenId: s.id, x: 0, y: 0 });
       this.workflows.update(wf.id, { startScreenId: s.id });
       return { ...out, startScreenId: s.id };

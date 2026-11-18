@@ -264,7 +264,7 @@ export const api = {
   stockImageSources: () => api.get('/api/stock-images/sources'),
   stockImageSearch: (provider, q, page = 1) => api.get(`/api/stock-images/search?${new URLSearchParams({ provider, q, page: String(page) })}`),
   stockImageImport: body => api.post('/api/stock-images/import', body),
-  getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
+  getLineage: (type, id) => api.get(type === 'workflow' ? `/api/workflows/${id}/lineage` : type === 'flowchart' ? `/api/flowcharts/${id}/lineage` : `/api/${PLURAL[type]}/${id}/lineage`),
   createDesign: (type, body) => api.post(`/api/${PLURAL[type]}`, body),
   updateDesign: (type, id, body) => api.put(`/api/${PLURAL[type]}/${id}`, body).then(r => { markEdited(type, id); return r; }),
   /** Display order in the library: mode = front | back | forward | backward. */
@@ -346,6 +346,45 @@ export const api = {
   addLink: (id, b) => api.post(`/api/workflows/${id}/links`, b).then(wfEdited(id)),
   updateLink: (id, lid, b) => api.put(`/api/workflows/${id}/links/${lid}`, b).then(wfEdited(id)),
   deleteLink: (id, lid) => api.del(`/api/workflows/${id}/links/${lid}`),
+
+  // ---- Conceptual FlowCharts & Project Definition ----
+  flowcharts: (opts = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) {
+      if (v === undefined || v === null || v === '') continue;
+      if (k === 'includePublic' || k === 'includePrivate') qs.set(k, v ? '1' : '0');
+      else if (Array.isArray(v)) { if (v.length) qs.set(k, v.join(',')); }
+      else qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/flowcharts${s ? `?${s}` : ''}`);
+  },
+  flowchart: (id, opts = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.mermaid) qs.set('mermaid', '1');
+    if (opts.validate === false) qs.set('validate', '0');
+    const s = qs.toString();
+    return api.get(`/api/flowcharts/${id}${s ? `?${s}` : ''}`);
+  },
+  flowchartLineage: id => api.get(`/api/flowcharts/${id}/lineage`),
+  createFlowchart: b => api.post('/api/flowcharts', b),
+  updateFlowchart: (id, b) => api.put(`/api/flowcharts/${id}`, b).then(r => { markEdited('flowchart', id, r?.name); return r; }),
+  deleteFlowchart: id => api.del(`/api/flowcharts/${id}`),
+  cloneFlowchart: (id, nameOrBody) =>
+    api.post(`/api/flowcharts/${id}/clone`, typeof nameOrBody === 'string' ? { name: nameOrBody } : nameOrBody || {}),
+  restoreFlowchart: (id, snap) => api.post(`/api/flowcharts/${id}/restore`, snap),
+  flowchartOps: (id, ops) => api.post(`/api/flowcharts/${id}/ops`, Array.isArray(ops) ? { ops } : (ops?.ops ? ops : { ops: [ops] })).then(r => { markEdited('flowchart', id, r?.flowchart?.name); return r; }),
+  setFlowchartStatus: (id, body) => api.post(`/api/flowcharts/${id}/status`, body),
+  materializeFlowchart: (id, body = {}) => api.post(`/api/flowcharts/${id}/materialize`, body),
+  reverseEngineerFlowchart: body => api.post('/api/flowcharts/reverse-engineer', body),
+  exportProjectDefinition: (projectId, opts = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) {
+      if (v !== undefined && v !== null && v !== '') qs.set(k, Array.isArray(v) ? v.join(',') : String(v));
+    }
+    const s = qs.toString();
+    return api.get(`/api/projects/${projectId || api.projectId() || 1}/project-definition${s ? `?${s}` : ''}`);
+  },
 
   exportBundle: b => api.post('/api/export/bundle', b),
   exportFolder: b => api.post('/api/export/folder', b),

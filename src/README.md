@@ -9,7 +9,8 @@ npm run import      # seed / refresh from ../v1 + the element presets (idempoten
 npm run reset       # wipe the built-in content and re-import (your own designs are kept)
 npm run export -- --out C:\path\to\folder --themes liquid,glow --screens all
 npm run guide -- --out usage-and-guide.html   # the standalone usage guide (also: Help → Download, Export menu)
-npm test            # 51 tests: domain, use cases + sqlite, hierarchy, menus, vertex + pathfinder maths, migration, export, http, save/reset/save-as, click actions
+npm run db:publish -- --push-first --apply    # push SQLite -> PG, clone PG, purge to public user, leak-check & write designer.db + sql/
+npm test            # 527 tests: domain, use cases + sqlite, hierarchy, menus, press & slide, repeaters, images, flowcharts, client AI studio, MCP M0–M13
 ```
 
 Node ≥ 22.13 (built-in `node:sqlite`): **no npm install, no dependencies**. Options: `--db <file>`, `--port <n>`, `--legacy <v1 folder>`.
@@ -29,8 +30,9 @@ path  →  icon  →  button  →  element  →  screen  →  workflow
 | **Icon** | 24×24 composition | path groups (+ own shapes) | Icon designer |
 | **Button** | themed frame, optional **popup / rotating menu** with nested items | icons | Button designer (+ menu editor) |
 | **Element** | UI building block: HTML elements, forms, cards, navbars… | shapes, icons, buttons, other elements | Element designer (presets) |
-| **Screen** | device-sized composition | icons, buttons, elements | Screen designer |
-| **Workflow** | screens + named links | screens | Workflow designer |
+| **Screen** | device-sized composition (with in-place `✎` per-instance overrides, transitions & `popup` role) | icons, buttons, elements, images | Screen designer |
+| **Workflow** | versioned (`v1`, `v2`…) & approvable screen-routing graph | screens | Workflow designer |
+| **FlowChart** | ComfyUI-style conceptual graph for Frontend Screens, Backend API Steps, Decisions & Role Variants | `screen`, `step`, `decision`, `trigger`, `subflow`, `end` nodes | FlowChart designer (+ `project-definition.md` & Screen materialization) |
 
 The rules are enforced in the domain (a button cannot hold an element, nothing can contain itself) and by the UI (drop is refused with a hint).
 Every level has a variable **name** (dashed words, unique), a **label**, a **description-dev** for the dev team and its own category/search.

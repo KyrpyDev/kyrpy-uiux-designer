@@ -8,6 +8,7 @@ import { NodeRepository, AnimationRepository } from './infrastructure/sqlite/rep
 import { MenuRepository } from './infrastructure/sqlite/repositories/menu-repository.js';
 import { ElementScriptRepository } from './infrastructure/sqlite/repositories/element-script-repository.js';
 import { ThemeRepository, WorkflowRepository, SettingsRepository } from './infrastructure/sqlite/repositories/theme-workflow-settings-repositories.js';
+import { FlowchartRepository } from './infrastructure/sqlite/repositories/flowchart-repository.js';
 import {
   UserRepository,
   ProjectRepository,
@@ -22,6 +23,7 @@ import { DesignService } from './application/design-service.js';
 import { RenderService } from './application/render-service.js';
 import { ThemeService } from './application/theme-service.js';
 import { WorkflowService } from './application/workflow-service.js';
+import { FlowchartService } from './application/flowchart-service.js';
 import { SettingsService } from './application/settings-service.js';
 import { MenuService } from './application/menu-service.js';
 import { ElementScriptService } from './application/element-script-service.js';
@@ -108,6 +110,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   const designs = Object.fromEntries(OWNER_TYPES.map(t => [t, new DesignRepository(db, t, pgSync)]));
   const themeRepo = new ThemeRepository(db, pgSync);
   const workflowRepo = new WorkflowRepository(db, pgSync);
+  const flowchartRepo = new FlowchartRepository(db, pgSync);
   const settingsRepo = new SettingsRepository(db, pgSync);
 
   // `seed: false` builds the services without the start-up writes (default accounts, default project, templates,
@@ -164,12 +167,28 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     projectPrefix,
     transaction
   });
-  collaboration.bind({ services, workflows });
+  const flowcharts = new FlowchartService({
+    flowcharts: flowchartRepo,
+    services,
+    workflows,
+    nodes,
+    menus,
+    elementScripts: elementScriptRepo,
+    projects,
+    themes,
+    users: userRepo,
+    collaboration,
+    trash: trashRepo,
+    projectPrefix,
+    transaction
+  });
+  collaboration.bind({ services, workflows, flowcharts });
 
   const trash = new TrashService({
     trash: trashRepo,
     services,
     workflows,
+    flowcharts,
     designs,
     nodes,
     animations,
@@ -187,6 +206,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
   const libraryTransfer = new LibraryTransferService({
     services,
     workflows,
+    flowcharts,
     menus,
     elementScripts: elementScriptRepo,
     projects,
@@ -221,7 +241,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     getContainer: () => container,
     projectService: projects,
     db, dbFile: resolvedDbFile, projects: projectRepo, users: userRepo, auth, transaction,
-    services, workflows, exporter, settings, collaboration, elementScripts, parseSvg: svgTextToNodes,
+    services, workflows, flowcharts, exporter, settings, collaboration, elementScripts, parseSvg: svgTextToNodes,
     allowedOrigins: [process.env.MCP_ALLOWED_ORIGINS, process.env.ALLOWED_ORIGINS, process.env.PUBLIC_BASE_URL].flatMap(v => String(v || '').split(',')).map(s => s.trim()).filter(Boolean)
   });
 
@@ -250,6 +270,7 @@ export function buildContainer({ dbFile, dbPath, syncEnabled, log = () => {}, se
     ...services,
     themes,
     workflows,
+    flowcharts,
     settings,
     menus: menuService,
     elementScripts,

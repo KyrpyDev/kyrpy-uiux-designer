@@ -26,7 +26,8 @@ export const INSTRUCTIONS = `Kyrpy UI/UX Designer — the design system of one p
 9. Full Backend API mechanism (reverse engineering & advanced design operations): call uiux_api_docs (or read uiux://api/docs) to inspect every backend API function (interfaces/web/js/api.js and /api/*), then call uiux_api_call with action (e.g. saveTemplateDevice, applyProjectButtonSettings, importSvg, createDesign, addNode, patchNode, addAnimation, menuConfig, addMenuItem, workflowFromScreen, importScreenRoutes, saveTranslation, adoptProjectDependencies, snapshotProjectVersion, exportProjectHtml) or { method, path }.
 10. Public elements & Copy-to-Project to edit: call uiux_public_library to search or inspect reusable public elements (cards, containers, carousels, popups, drawers, bars, page-builder blocks), buttons, icons, paths, screens and workflows. Call uiux_use_public_element to copy a public element (with all sub-items) into your project and optionally place it onto a screen/element/button. Call uiux_copy_item_to_project to search across public, private and visible project libraries and copy ANY item into the target project to edit without modifying the source.
 11. Direct Item CRUD & Graphical Editing Tools: use uiux_list_project_items, uiux_create_item, uiux_update_item and uiux_delete_item (including Trash restore) for all 6 item kinds (path, icon, button, element, screen, workflow). Use uiux_graphic_tool for pure-domain vector & canvas operations: add_shape, add_pen_path, place_instance, union/subtract/intersect/exclude pathfinder, crop/crop_to_canvas, convert_to_path, combine_paths, break_apart, join_paths, reverse_path, simplify_path, bake_transform, round_corners, smooth_vertices, sharp_vertices, cut_path, edit_vertices, explode_icon, extract_paths_to_library, extract_as_element, align, distribute, move, resize, fit_to_screen, flip, rotate, group, ungroup, reorder_layer, duplicate_nodes, style_nodes, and delete_nodes.
-12. Sandboxed Custom JS & Public JS Imports on Elements: when a reverse-engineered or interactive UI element needs custom JavaScript behaviour or public JS libraries, keep its visual geometry in SVG nodes and attach its runtime module via uiux_element_script (or item.script in uiux_create_item / uiux_update_item / uiux_stage_item). Only exact x.y.z semver on allowlisted HTTPS ESM CDNs (cdn.jsdelivr.net, esm.sh, unpkg.com) with sha384 SRI (verifyIntegrity: true) and optional lockfilePackages matching is accepted; scripts never execute on the Designer origin and run strictly inside an opaque-origin <iframe sandbox="allow-scripts" referrerpolicy="no-referrer"> with connect-src 'none' CSP.`;
+12. Sandboxed Custom JS & Public JS Imports on Elements: when a reverse-engineered or interactive UI element needs custom JavaScript behaviour or public JS libraries, keep its visual geometry in SVG nodes and attach its runtime module via uiux_element_script (or item.script in uiux_create_item / uiux_update_item / uiux_stage_item). Only exact x.y.z semver on allowlisted HTTPS ESM CDNs (cdn.jsdelivr.net, esm.sh, unpkg.com) with sha384 SRI (verifyIntegrity: true) and optional lockfilePackages matching is accepted; scripts never execute on the Designer origin and run strictly inside an opaque-origin <iframe sandbox="allow-scripts" referrerpolicy="no-referrer"> with connect-src 'none' CSP.
+13. Conceptual FlowChart Designer & Project Definition Blueprint: call uiux_list_flowcharts and uiux_get_flowchart (or read uiux://project/flowcharts and uiux://project/definition) to learn the project's conceptual screens, backend/business-logic steps, decision routers, transition contracts, and per-access-level feature differences. Design or modify flowcharts interactively with uiux_create_flowchart, uiux_update_flowchart, uiux_flowchart_op (add_node, add_port, connect, insert_decision_on_edge, set_role_variant, auto_layout, validate, approve), and uiux_delete_flowchart. Reverse-engineer existing apps or project screens into conceptual flowcharts via uiux_reverse_engineer_flowchart. Once a flowchart is approved by the user, call uiux_materialize_flowchart to create/sync visual Screen items and Workflow routes, then design UIs with public/project elements, or call uiux_export_project_definition to export the complete project-definition.md blueprint.`;
 
 export const RPC = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, INTERNAL: -32603, RESOURCE_NOT_FOUND: -32002 };
 
@@ -121,6 +122,7 @@ export const RESOURCE_TEMPLATES = [
   { uriTemplate: 'uiux://api/docs/{group}', name: 'api-docs-group', title: 'Backend API documentation for one group', mimeType: 'application/json' },
   { uriTemplate: 'uiux://item/{type}/{ref}', name: 'item', title: 'One item as JSON (ref = uid or key)', mimeType: 'application/json' },
   { uriTemplate: 'uiux://item/{type}/{ref}/svg', name: 'item-svg', title: 'One item rendered as SVG in the default style', mimeType: 'image/svg+xml' },
+  { uriTemplate: 'uiux://flowchart/{ref}', name: 'flowchart', title: 'Conceptual FlowChart as JSON (or use uiux://project/flowcharts and uiux://project/definition)', mimeType: 'application/json' },
   { uriTemplate: 'uiux://tokens/{style}', name: 'tokens', title: 'Design tokens of a style (CSS custom properties)', mimeType: 'text/css' }
 ];
 
@@ -255,7 +257,7 @@ export class McpProtocol {
         principal = this.accounts.bind(principal, resolved);
         args = rest;
       }
-      const { summary, data } = await tool.run({ ...ctx, principal, accounts: this.accounts, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings, design: this.design, apiBridge: this.apiBridge, studioTools: this.studioTools, toolCatalog: pr => this.#toolList(pr) }, args);
+      const { summary, data } = await tool.run({ ...ctx, principal, accounts: this.accounts, query: this.query, bundles: this.bundles, limiter: this.limiter, aiPack: this.aiPack, versions: this.versions, changesets: this.changesets, requests: this.requests, bindings: this.bindings, design: this.design, apiBridge: this.apiBridge, studioTools: this.studioTools, flowcharts: this.flowcharts, resolveContainer: this.resolveContainer, toolCatalog: pr => this.#toolList(pr) }, args);
       audit('ok');
       return ok(id, { content: [{ type: 'text', text: `${summary}\n\n${JSON.stringify(data)}` }], structuredContent: data });
     } catch (e) {
@@ -284,6 +286,17 @@ export class McpProtocol {
       return json(data);
     }
     if (u === 'uiux://project/manifest') return json({ ...this.query.manifestPage(principal, { limit: 1000 }), version: this.versions ? this.versions.ensureHead(principal.project.id).number : null });
+    if (u === 'uiux://project/flowcharts' && this.flowcharts) {
+      const list = this.flowcharts.list({ projectId: principal.project.id, visibility: 'project', includePublic: false, includePrivate: false });
+      return json({ project: principal.project, flowcharts: list.map(f => this.flowcharts.get(f.id, { includeMermaid: true, includeValidation: true })) });
+    }
+    if (u === 'uiux://project/definition' && this.flowcharts) {
+      const def = this.flowcharts.buildProjectDefinition({ projectId: principal.project.id, format: 'markdown' });
+      return { contents: [{ uri: u, mimeType: 'text/markdown', text: def.markdown }] };
+    }
+    if ((m = /^uiux:\/\/flowchart\/([^/]+)$/.exec(u)) && this.flowcharts) {
+      return json(this.flowcharts.get(decodeURIComponent(m[1]), { projectId: principal.project.id, includeMermaid: true, includeValidation: true }));
+    }
     if (u === 'uiux://project/versions' && this.versions) return json(this.versions.list(principal.project.id, { limit: 50 }));
     if (u === 'uiux://requests/open' && this.requests) return json({ open: this.requests.list(principal, { status: 'open' }).requests, claimed: this.requests.list(principal, { status: 'claimed' }).requests });
     if ((m = /^uiux:\/\/item\/([a-z]+)\/([^/]+)\/svg$/.exec(u))) {

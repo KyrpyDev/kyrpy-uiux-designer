@@ -45,7 +45,7 @@ const safeEqual = (a, b) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, exporter, settings, collaboration, elementScripts = null, parseSvg, pollMs, getContainer = null, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
+export function buildMcpModule({ db, dbFile, projects, users, auth, transaction, now, services, workflows, flowcharts = null, exporter, settings, collaboration, elementScripts = null, parseSvg, pollMs, getContainer = null, projectService = null, limits = DEFAULT_LIMITS, allowedOrigins = [] }) {
   const { pepper, source: pepperSource } = loadKeyPepper(dbFile);
   const hashKey = plaintext => createHmac('sha256', pepper).update(plaintext).digest('hex');
 
@@ -102,11 +102,11 @@ export function buildMcpModule({ db, dbFile, projects, users, auth, transaction,
       ? new DesignSessionService({ focus: new FocusRepository(db), accounts, projectService, projects, users, versions, changesets, query, versionRepo, services, workflows, db, transaction, ...(now ? { now } : {}) })
       : null;
     const resolveContainer = getContainer || (() => ({
-      db, users, auth, projects: projectService || projects, services, ...services, workflows, exporter, settings, collaboration, elementScripts, mcp: out, publicUserId
+      db, users, auth, projects: projectService || projects, services, ...services, workflows, flowcharts, exporter, settings, collaboration, elementScripts, mcp: out, publicUserId
     }));
     const apiBridge = new ApiBridge({ getContainer: resolveContainer, apiKeys, accounts, design, versions });
     const studioTools = new StudioToolsService({ getContainer: resolveContainer, db, query, reads, hashes: contentHashes, library, versions, parseSvg, transaction, publicUserId, apiKeys, accounts, design });
-    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design, apiBridge, studioTools });
+    const protocol = new McpProtocol({ apiKeys, query, bundles, limiter, aiPack, versions, changesets, requests, bindings, accounts, design, apiBridge, studioTools, flowcharts, resolveContainer });
     const http = createMcpHttpHandler({ apiKeys, protocol, bundles, limiter, allowedOrigins, versions, ...(pollMs ? { pollMs } : {}) });
     // live updates for subscribed sessions (resources/subscribe + GET /mcp event stream)
     versions.onChange = projectId => http.notify(projectId, ['uiux://project/manifest', 'uiux://project/versions']);

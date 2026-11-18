@@ -98,7 +98,17 @@ export function modal({ title, content, wide = false, full = false, w90 = false,
     try { if (await beforeClose()) close(); } finally { asking = false; }
   };
   const onKey = e => { if (e.key === 'Escape' && overlay === root.lastElementChild) { e.stopPropagation(); requestClose(); } };
-  const head = h('div', { class: 'modal-head' }, h('h3', {}, title), h('button', { class: 'icon-btn', title: 'Close', onclick: requestClose }, '✕'));
+  const head = h('div', { class: 'modal-head', style: { cursor: 'move', userSelect: 'none' } }, h('h3', {}, title), h('button', { class: 'icon-btn', title: 'Close', onclick: requestClose }, '✕'));
+  let tx = 0, ty = 0;
+  head.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0 || ev.target.closest('button, input, select, a')) return;
+    ev.preventDefault();
+    const sx = ev.clientX - tx, sy = ev.clientY - ty;
+    const mv = e => { tx = e.clientX - sx; ty = e.clientY - sy; box.style.transform = `translate(${tx}px, ${ty}px)`; };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  });
   box.append(head, h('div', { class: 'modal-body' }, content));
   if (actions) box.append(h('div', { class: 'modal-actions' }, actions(close)));
   const overlay = h('div', { class: 'modal-overlay', onmousedown: e => { if (e.target === overlay) requestClose(); } }, box);

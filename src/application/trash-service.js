@@ -11,8 +11,8 @@ import { noteSkipped, parentsFirst, ForbiddenError } from './service-shared.js';
  * - Only `admin` or `superadmin` can purge `public` or built-in items; public-library (public user) items: superadmin only.
  */
 export class TrashService {
-  constructor({ trash, services, workflows, designs, nodes, animations, menus, elementScripts = null, auth, transaction }) {
-    Object.assign(this, { trash, services, workflows, designs, nodes, animations, menus, elementScripts, auth, transaction });
+  constructor({ trash, services, workflows, flowcharts = null, designs, nodes, animations, menus, elementScripts = null, auth, transaction }) {
+    Object.assign(this, { trash, services, workflows, flowcharts, designs, nodes, animations, menus, elementScripts, auth, transaction });
   }
 
   /** Every user has a trash of their own: with an actor, only the items that actor deleted are visible or actionable. */
@@ -79,6 +79,29 @@ export class TrashService {
         }
         this.trash.delete(item.id);
         return { restored: true, itemType: 'workflow', item: this.workflows.get(created.id), ...(skipped.length ? { partial: true, skipped } : {}) };
+      }
+
+      if (item.itemType === 'flowchart' && this.flowcharts) {
+        const fcRepo = this.flowcharts.flowcharts;
+        const rec = snap.record || {
+          key: item.key ?? item.itemKey,
+          name: item.name || item.itemName || item.key || item.itemKey,
+          description: '',
+          domain: item.category || 'fullstack',
+          status: 'draft',
+          projectId: item.projectId ?? 1,
+          visibility: item.visibility || 'project',
+          creatorId: item.creatorId ?? fallbackOwnerId(this),
+          rootOwnerId: item.rootOwnerId ?? fallbackOwnerId(this)
+        };
+        const freeId = item.originalId && !fcRepo.get(item.originalId);
+        const key = fcRepo.keyExists(rec.key, rec.projectId)
+          ? uniqueKey(rec.key, k => fcRepo.keyExists(k, rec.projectId))
+          : rec.key;
+        const created = fcRepo.create({ ...rec, key }, { id: freeId ? item.originalId : null, uid: snap.uid || null });
+        fcRepo.replaceGraph(created.id, { nodes: snap.nodes || [], edges: snap.edges || [] });
+        this.trash.delete(item.id);
+        return { restored: true, itemType: 'flowchart', item: this.flowcharts.get(created.id) };
       }
 
       const svc = this.services[item.itemType];

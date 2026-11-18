@@ -1,7 +1,6 @@
 # readme-mcp — Kyrpy UI/UX Designer MCP server (`kyrpy-uiux`)
 
-The MCP server turns a Designer project (paths → icons → buttons → elements → screens → workflows, plus themes and
-design/button styles) into something an AI coding agent can read, download, build an app from and push changes back to.
+The MCP server turns a Designer project (paths → icons → buttons → elements → screens → workflows ⇄ **conceptual FlowCharts**, plus images, themes, design/button styles, and full `project-definition.md` blueprints) into something an AI coding agent can read, download, architect, build an app from, and push changes back to in real time.
 Source: `src/mcp/` (details per milestone in [`src/mcp/README.md`](src/mcp/README.md), threat model in `src/mcp/SECURITY.md`).
 
 ## 1. Connect
@@ -138,11 +137,28 @@ When a reverse-engineered or interactive `element` needs custom JavaScript behav
 |---|---|---|
 | `uiux_element_script` | `read` (`policy`, `verify`, `get`) · `propose` (`set`, `verify_sri`, `remove`) | Manages custom ES module code (`mount(container, props, bridge)`) and pinned public JS imports (`imports: [{ package, version, specifier?, subpath?, cdn?, url?, integrity? }]`) on `element` items. Enforces allowlisted HTTPS ESM CDNs (`cdn.jsdelivr.net`, `esm.sh`, `unpkg.com`), exact `x.y.z` semver (rejects `latest`, `*`, `^`, `~`), URL-to-`package@version` binding, `sha384` Subresource Integrity (`verifyIntegrity: true` / `verify_sri`), optional target-repo `lockfilePackages` matching, static security audit (blocks `eval`, `Function`, `document.cookie`, `parent.document`, `localStorage`, undeclared imports), `copyIfForeign: true` clone-on-write for public elements, and opaque-origin `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` HTML with per-render nonce CSP (`connect-src 'none'` unless human-approved in the Designer). |
 
+### Conceptual FlowCharts, Reverse Engineering & `project-definition.md` Blueprint
+
+Before or alongside visual UI design, AI coding agents and humans can architect full-stack workflows as ComfyUI-style conceptual node graphs (`screen`, `step`, `decision`, `trigger`, `subflow`, `end`), define per-role / access-level feature differences on the same Screen, materialize approved conceptual Screens into visual `Screen` records + `Workflow` routes, reverse-engineer apps into FlowCharts, and export a complete `project-definition.md` specification:
+
+| Tool / Resource | Scope | What it does |
+|---|---|---|
+| `uiux_list_flowcharts` | read | Lists conceptual FlowCharts (`fullstack`, `frontend`, `backend`, `business-logic`, `auth-acl`) visible to the project with descriptions, approval status (`draft`, `in_review`, `approved`), and node/connection/role counts. |
+| `uiux_get_flowchart` | read | Reads a FlowChart's full node graph, `home` input sockets, diverging menu/action/scenario output ports, `transitionText` wire definitions, `roleSettings` variants, validation report, Mermaid diagram, and optional `rolePreview` evaluation (e.g. `"guest"`, `"pro"`, `"admin"`). |
+| `uiux_create_flowchart` | propose | Creates a conceptual FlowChart with `accessLevels`, `spec`, `nodes` (`ports`, `roleSettings`, `techSpec`), `edges` (`fromNodeKey[fromPortKey] → toNodeKey["home"]` + `transitionText`), and automatic left-to-right DAG layout (`autoLayout: true`). |
+| `uiux_update_flowchart` | propose | Updates a FlowChart's metadata, approval status (`draft` / `in_review` / `approved`), `accessLevels`, `spec`, or replaces its `nodes` and `edges`. |
+| `uiux_flowchart_op` | propose | Applies atomic ComfyUI-style graph operations (`ops[]`): `add_node` (with `connectFrom`), `update_node`, `remove_node`, `add_port`, `update_port`, `remove_port`, `reorder_ports`, `connect`, `update_edge`, `disconnect`, `insert_decision_on_edge` (splits a wire into a multi-scenario Decision router), `set_role_variant`, `set_access_levels`, `set_start_node`, `auto_layout`, `validate`, and `approve`. |
+| `uiux_delete_flowchart` | propose | Soft-deletes a project FlowChart to Trash (preserving a full snapshot), or restores a trashed FlowChart with `{ restore: true, trashId }`. |
+| `uiux_materialize_flowchart` | propose | Materializes conceptual `screen` nodes into linked visual `Screen` designs (seeded with developer instructions, action ports, and role variants) and syncs a visual `Workflow` routing graph (`allowUnapproved: true` optional). |
+| `uiux_reverse_engineer_flowchart` | propose | Generates a conceptual FlowChart either from existing project Screens/Buttons/Menus/Workflows (`mode: "project"`) OR from an external codebase/app specification (`mode: "app-spec"` accepting `screens`, `endpoints`, `steps`, `decisions`, `transitions`, `accessLevels`, or plain-text `rawText` flow lines). |
+| `uiux_export_project_definition` | read | Compiles the complete `project-definition.md` (and/or structured JSON) combining architecture overview, unified Role & Access-Level Matrix, Mermaid diagrams, screen-by-screen UI/UX specs + role variants, backend API/DB step contracts, decision scenario tables, and visual library inventory. |
+| `uiux://project/flowcharts` · `uiux://project/definition` · `uiux://flowchart/{ref}` | read | MCP resources exposing all project FlowCharts, the live `project-definition.md` blueprint, and individual FlowChart JSON specs. |
+
 ### Backend API Bridge (all allowed Designer API actions)
 
 | Tool / Resource | Scope | What it does |
 |---|---|---|
-| `uiux_api_docs` | read | Queries the canonical catalog of all 174 Designer backend routes (`api.*` actions & `/api/*` endpoints), returning parameters, scopes, `mcpAllowed`, `callableNow`, and blocked reasons. Filter by `group`, `query`, `method`, `scope`, or `includeBlocked`. |
+| `uiux_api_docs` | read | Queries the canonical catalog of all 180+ Designer backend routes (`api.*` actions & `/api/*` endpoints), returning parameters, scopes, `mcpAllowed`, `callableNow`, and blocked reasons. Filter by `group`, `query`, `method`, `scope`, or `includeBlocked`. |
 | `uiux_api_call` | read / propose / request / create (per action) | Invokes any allowed Designer backend API action in-process by `action` (e.g. `saveTemplateDevice`, `applyProjectButtonSettings`, `importSvg`, `importFont`, `onlineSearch`, `onlineImport`, `createDesign`, `addNode`, `patchNode`, `addAnimation`, `menuConfig`, `addMenuItem`, `workflowFromScreen`, `importScreenRoutes`, `saveTranslation`, `copyToProjects`, `adoptProjectDependencies`, `snapshotProjectVersion`, `exportProjectHtml`) or `{ method, path }`. Works identically in embedded `serve` and standalone `mcp` modes while HTTP `/api/*` continues rejecting `kud_…` keys with 401. |
 | `uiux://api/docs` · `uiux://api/docs/{group}` | read | MCP resources exposing the full machine-readable backend API catalog or a single route group (`templates`, `designs`, `nodes`, `menus`, `workflows`, `library`, `import-export`, `translations`, `versions`, `trash`, …). |
 
@@ -187,6 +203,12 @@ Versions are ordinary projects linked to their master (`settings.ai.versionOf`),
 
 ## 5. Typical flows
 
+- **Architect first with Conceptual FlowCharts → Materialize → Build**:
+  1. Design conceptual flows via `uiux_create_flowchart` + `uiux_flowchart_op` (`screen`, `step`, `decision`, `set_role_variant`, `insert_decision_on_edge`), or reverse-engineer an existing codebase via `uiux_reverse_engineer_flowchart { mode: "app-spec", … }`.
+  2. Once approved by the user (`uiux_flowchart_op { ref, ops: [{ op: "approve" }] }` or in the Web FlowChart Designer), call `uiux_materialize_flowchart` to generate linked `Screen` items and a `Workflow`, then design the visual layouts with `uiux_graphic_tool` / `uiux_update_item` (or in the browser's **`✨ AI Studio`**).
+  3. Read `uiux_export_project_definition` (`uiux://project/definition`) as the authoritative full-stack implementation blueprint (`project-definition.md`).
+- **Live Subscription Bridge inside Browser `✨ AI Studio`**: Users with **Gemini CLI, Antigravity, Claude Code, or Cursor** subscriptions can open **`✨ AI Studio → 🔌 Subscription MCP Bridge`** in the browser to copy context-aware prompts targeting their open Screen or FlowChart; every MCP write streams onto the open canvas immediately via SSE (`GET /api/events` & `GET /mcp`).
+- **Project Prefixes**: When a project configures a `prefix` (e.g. `astryx`), AI-created items (`uiux_create_item`, `uiux_stage_item`, `uiux_create_flowchart`) automatically receive `<prefix>-*` keys when no explicit prefixed key is supplied, and belong to the key owner.
 - **Build an app from a design**: `uiux_init` (choose clone or download) → `uiux_get_schema` → `uiux_export_app` (working HTML app + `app/interactions.json` with every action, menu, workflow link and developer note) → implement from `uiux/<style>/` (tokens, icon sprite) → verify.
 - **Use public elements & copy any item into your project to edit**:
   1. Browse curated public elements: `uiux_public_library { type: "element", query: "card" }`.

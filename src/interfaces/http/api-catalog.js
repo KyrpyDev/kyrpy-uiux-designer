@@ -10,6 +10,7 @@ import { Router } from './router.js';
 import { healthRoutes } from './controllers/health-routes.js';
 import { designRoutes } from './controllers/design-routes.js';
 import { miscRoutes } from './controllers/misc-routes.js';
+import { flowchartRoutes } from './controllers/flowchart-routes.js';
 import { collabRoutes } from './controllers/collab-routes.js';
 import { profileRoutes } from './controllers/profile-routes.js';
 import { mcpRoutes } from '../../mcp/interfaces/http/mcp-routes.js';
@@ -24,6 +25,7 @@ export function buildApiRouter(container) {
   healthRoutes(router, container);
   designRoutes(router, container);
   miscRoutes(router, container);
+  flowchartRoutes(router, container);
   collabRoutes(router, container);
   if (container.profile) profileRoutes(router, container);
   if (container.mcp) mcpRoutes(router, container);
@@ -1227,6 +1229,94 @@ export const API_OPERATIONS = [
     scope: 'propose', mcpAllowed: true,
     summary: 'Clones every foreign/public sub-item referenced by the owned project into the project\'s own library.',
     params: { id: 'Project id (defaults to active project)' }
+  },
+
+  // ---- FlowCharts (Conceptual Frontend, Backend, Full-Stack & Business Logic Designer) ----
+  {
+    action: 'flowcharts', aliases: ['listFlowcharts'], group: 'flowcharts', method: 'GET', pattern: '/api/flowcharts',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Lists conceptual flowcharts visible to the project, with domain, approval status, descriptions, and node/edge counts.',
+    query: { q: 'Search filter', domain: 'fullstack | frontend | backend | business-logic | auth-acl', status: 'draft | in_review | approved', projectId: 'Project id', visibility: 'project | private | public', includePublic: '1 | 0' }
+  },
+  {
+    action: 'createFlowchart', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Creates a new conceptual flowchart (optionally populated with accessLevels, nodes, edges, and autoLayout).',
+    body: { name: 'string (required)', description: 'Conceptual description', domain: 'fullstack | frontend | backend | business-logic | auth-acl', accessLevels: 'AccessLevel[]', spec: 'object', nodes: 'FlowchartNode[]', edges: 'FlowchartEdge[]', autoLayout: 'boolean' }
+  },
+  {
+    action: 'reverseEngineerFlowchart', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/reverse-engineer',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Reverse-engineers existing project screens/workflows (`mode: "project"`) or an external app specification (`mode: "app-spec"`) into a conceptual flowchart.',
+    body: { mode: '"project" | "app-spec"', name: 'Optional flowchart name', workflowId: 'Optional workflow id', screenIds: 'Optional screen ids', screens: 'AppScreenSpec[]', endpoints: 'AppEndpointSpec[]', transitions: 'AppTransitionSpec[]', rawText: 'Plain-text route/flow lines' }
+  },
+  {
+    action: 'flowchart', aliases: ['getFlowchart'], group: 'flowcharts', method: 'GET', pattern: '/api/flowcharts/:id',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Reads one conceptual flowchart in full (nodes, output ports, home inputs, transitions, access levels, validation, and optional Mermaid diagram).',
+    params: { id: ID_OR_KEY },
+    query: { mermaid: '1 to include Mermaid diagram', validate: '0 to skip validation' }
+  },
+  {
+    action: 'flowchartLineage', group: 'flowcharts', method: 'GET', pattern: '/api/flowcharts/:id/lineage',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Reads the clone chain and root owner lineage of a flowchart.',
+    params: { id: ID_OR_KEY }
+  },
+  {
+    action: 'updateFlowchart', group: 'flowcharts', method: 'PUT', pattern: '/api/flowcharts/:id',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Updates flowchart metadata, description, domain, status, accessLevels, spec, and/or replaces its nodes and edges.',
+    params: { id: ID_OR_KEY },
+    body: { name: 'string', description: 'string', domain: 'string', status: 'draft | in_review | approved', accessLevels: 'AccessLevel[]', spec: 'object', nodes: 'FlowchartNode[]', edges: 'FlowchartEdge[]' }
+  },
+  {
+    action: 'deleteFlowchart', group: 'flowcharts', method: 'DELETE', pattern: '/api/flowcharts/:id',
+    scope: 'propose', mcpAllowed: true, destructive: true,
+    summary: 'Moves a flowchart to Trash so it can be restored later.',
+    params: { id: ID_OR_KEY }
+  },
+  {
+    action: 'cloneFlowchart', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/:id/clone',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Clones a flowchart (preserving root-owner lineage) into the active or specified project.',
+    params: { id: ID_OR_KEY },
+    body: { name: 'Optional clone name', projectId: 'Target project id' }
+  },
+  {
+    action: 'restoreFlowchart', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/:id/restore',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Restores a flowchart in place from a saved snapshot.',
+    params: { id: ID_OR_KEY },
+    body: { nodes: 'FlowchartNode[]', edges: 'FlowchartEdge[]' }
+  },
+  {
+    action: 'flowchartOps', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/:id/ops',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Applies interactive graph operations (`add_node`, `update_node`, `remove_node`, `add_port`, `update_port`, `remove_port`, `connect`, `update_edge`, `disconnect`, `insert_decision_on_edge`, `set_role_variant`, `auto_layout`, `validate`, `approve`).',
+    params: { id: ID_OR_KEY },
+    body: { ops: 'FlowchartOp[]' }
+  },
+  {
+    action: 'setFlowchartStatus', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/:id/status',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Sets the lifecycle status (`draft`, `in_review`, or `approved`) and optional sign-off note of a flowchart.',
+    params: { id: ID_OR_KEY },
+    body: { status: 'draft | in_review | approved', approvalNote: 'Optional approval note' }
+  },
+  {
+    action: 'materializeFlowchart', group: 'flowcharts', method: 'POST', pattern: '/api/flowcharts/:id/materialize',
+    scope: 'propose', mcpAllowed: true,
+    summary: 'Materializes conceptual `screen` nodes of an approved flowchart into visual `Screen` designs and synchronized `Workflow` routes.',
+    params: { id: ID_OR_KEY },
+    body: { allowUnapproved: 'boolean', syncDescriptions: 'boolean', syncWorkflow: 'boolean', deviceWidth: 'number', deviceHeight: 'number' }
+  },
+  {
+    action: 'exportProjectDefinition', group: 'export', method: 'GET', pattern: '/api/projects/:id/project-definition',
+    scope: 'read', mcpAllowed: true,
+    summary: 'Compiles and exports the complete `project-definition.md` and structured JSON blueprint (flowcharts, screens, backend/business logic, access-level matrices, and UI assets) for AI coders.',
+    params: { id: 'Project id (defaults to active project)' },
+    query: { format: 'both | markdown | json', onlyApproved: '1 | 0', download: '1 | 0', flowchartIds: 'Optional comma-separated flowchart ids/keys' }
   }
 ];
 

@@ -241,7 +241,11 @@ export function libraryBrowseButton({ currentScreenId = null, currentElementId =
   return h('button', {
     class: 'btn sm', type: 'button', title, 'aria-label': title, ...(dataF ? { 'data-f': dataF } : {}),
     onclick: async () => {
-      const r = await pickTarget({ currentScreenId, currentElementId, currentAction, projectId, allowCreate: false });
+      const r = await pickTarget({
+        currentScreenId: typeof currentScreenId === 'function' ? currentScreenId() : currentScreenId,
+        currentElementId: typeof currentElementId === 'function' ? currentElementId() : currentElementId,
+        currentAction, projectId, allowCreate: false
+      });
       if (r?.repeaterAuto) onAuto?.();
       else if (r?.screen) onPick({ screenId: r.screen.id, elementId: null });
       else if (r?.element || r?.repeater) onPick({ screenId: null, elementId: (r.element || r.repeater).id });
@@ -434,6 +438,8 @@ export async function menuItemDialog({ buttonId, item = null, parentId: initialP
       const row = psRows[k] = { chk, sel, target: psNow[k].target || '' };
       const sum = h('div', { class: 'muted', style: { fontSize: '11px', marginLeft: '34px' }, 'data-f': `mi-ps-${k}-target` });
       const browse = libraryBrowseButton({ dataF: `mi-ps-${k}-browse`, title: 'Pick the screen or element this direction opens',
+        currentScreenId: () => /^s-\d+$/.test(row.target) ? Number(row.target.slice(2)) : null,
+        currentElementId: () => /^e-\d+$/.test(row.target) ? Number(row.target.slice(2)) : null,
         onPick: ({ screenId, elementId }) => { row.target = screenId ? `s-${screenId}` : elementId ? `e-${elementId}` : ''; paintRow(); } });
       const clearT = h('button', { class: 'btn sm', type: 'button', title: 'No target: open the focused list item', 'data-f': `mi-ps-${k}-clear`, onclick: () => { row.target = ''; paintRow(); } }, '✕');
       const paintRow = () => {
@@ -1200,16 +1206,18 @@ export class MenuEditor {
         if (a.action === 'scroll-repeater') return;
         const btnEl = designer.stage.querySelector(`.ud-btn[data-menu="${a.menu}"]`) || designer.stage.querySelector('.ud-btn');
         if (btnEl) this.ctl.set(btnEl, { open: false, path: [] });
-        if (a.targetElementId || a.targetElement) {
-          const el = state.library.elements.find(e => String(e.id) === String(a.targetElementId) || e.key === a.targetElement || String(e.id) === String(a.targetElement));
+        const elTarget = a.targetElementId || a.targetElement || (/^e-\d+$/.test(a.target || '') ? a.target.slice(2) : null);
+        if (elTarget) {
+          const el = state.library.elements.find(e => String(e.id) === String(elTarget) || e.key === elTarget);
           if (el) {
             toast(`Menu "${a.item}" → Popup: ${el.name}`, 'ok', 1800);
             return this.d.showPreview('popup', null, el);
           }
         }
         if (a.target) {
+          const tid = /^s-\d+$/.test(a.target) ? a.target.slice(2) : a.target;
           const screens = await api.list('screen');
-          const targetScreen = screens.find(s => s.key === a.target || String(s.id) === String(a.target));
+          const targetScreen = screens.find(s => s.key === tid || String(s.id) === String(tid));
           if (targetScreen) return this.d.navigateLiveToScreen(targetScreen.id, `Menu “${a.item}”`);   // stays in the live test
         }
         toast(`⚡ Menu item “${a.item}”${a.action ? ` fires “${a.action}”` : ''} · no target screen`, 'ok', 2200);

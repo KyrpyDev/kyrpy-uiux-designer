@@ -68,6 +68,15 @@ requests) and its PostgreSQL sync. Date: 2026-11-06. Sensors: `tests/mcp-m7.test
 | Data exfiltration or SSRF via `capabilities.allowNetwork` | Default CSP sets `connect-src 'none'`; `allowedConnectOrigins` rejects non-HTTPS, loopback (`localhost`, `127.0.0.1`), link-local (`169.254.169.254`), and RFC1918 private IPs; MCP calls (`actor.viaMcp === true`) cannot self-approve `allowNetwork: true` (`reviewStatus = 'needs-human-review'` keeps `connect-src 'none'` until a signed-in human approves in a browser session) | `mcp-element-script.test.js` |
 | Cross-tenant or public-library script tampering | `set`, `verify_sri`, and `remove` require `propose` scope and project ownership; immutable public elements reject in-place writes unless `copyIfForeign: true` clones the element into the owned project first | `mcp-element-script.test.js` |
 
+### Conceptual FlowCharts, `project-definition.md` & Client-Side AI Studio (`M13`)
+
+| Threat | Mitigation | Sensor |
+|---|---|---|
+| Cross-tenant FlowChart read/mutation or public-library tampering | `uiux_*_flowchart` tools enforce bound `principal.project.id` ownership on every write (`FORBIDDEN` / `NOT_FOUND` on foreign projects), keep `public` FlowCharts read/clone-only, and purge non-public FlowCharts during `db:publish` / `db:export-public` | `mcp-flowchart.test.js`, `publish-from-pg.test.js` |
+| Client BYOK API key leakage to Designer backend or URL logs | `ai-runtime-engine.js` calls `generativelanguage.googleapis.com` and OpenAI-compatible hosts directly from the user's browser, sends Gemini keys in `x-goog-api-key` headers (never URL query strings), defaults secret storage to tab-scoped `sessionStorage`, and hard-throws (`Security policy violation`) if any target URL starts with `/api/` | `ai-client-runtime.test.js` |
+| Malicious or malformed LLM JSON / XSS payloads in generated designs | `ai-runtime-spec.js` parses responses strictly as data, strips `javascript:` / `data:text/html` / remote color strings, restricts tags to safe `NODE_TAGS` (excluding raw `<script>` / `foreignObject`), and passes every node through `normalizeNode` / `normalizeFlowchartNode` before persistence | `ai-client-runtime.test.js` |
+| Unauthorized consumer subscription OAuth token scraping | Strictly avoided: consumer subscriptions (Gemini CLI, Antigravity, Claude Code, Cursor) connect exclusively through the sanctioned `/mcp` bearer-key protocol via the Subscription MCP Bridge | `ai-studio-modal.js`, `mcp-m1.test.js` |
+
 Residual: the crawl runs on the user's machine with the coding agent's own permissions; the server cannot enforce what the agent does there.
 
 Residual: a design key can still delete or overwrite anything inside the focused project and its own versions (that is its job); the owner restores through the version history (`uiux_restore_version` is applied directly for design keys) or the designer.

@@ -526,7 +526,110 @@ CREATE TABLE IF NOT EXISTS images (
   updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, key)
 );
-CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id, visibility);
+  CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id, visibility);
 CREATE INDEX IF NOT EXISTS idx_images_sha ON images(sha256);
+`,
+
+  /* 15: Conceptual FlowChart Designer (Frontend, Backend, Full-Stack & Business Logic): flowcharts, ComfyUI-style nodes
+     (with Home input, Menu/Sub-Action/Case output ports & per-access-level role settings) and transition edges. */ `
+CREATE TABLE IF NOT EXISTS flowcharts (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid                 TEXT NOT NULL UNIQUE,
+  key                 TEXT NOT NULL,
+  name                TEXT NOT NULL,
+  label               TEXT NOT NULL DEFAULT '',
+  description_dev     TEXT NOT NULL DEFAULT '',
+  domain              TEXT NOT NULL DEFAULT 'fullstack',
+  status              TEXT NOT NULL DEFAULT 'draft',
+  approved_by         INTEGER,
+  approved_at         TEXT,
+  approval_note       TEXT NOT NULL DEFAULT '',
+  access_levels_json  TEXT NOT NULL DEFAULT '[]',
+  spec_json           TEXT NOT NULL DEFAULT '{}',
+  start_node_key      TEXT,
+  linked_workflow_id  INTEGER,
+  project_id          INTEGER NOT NULL DEFAULT 1 REFERENCES projects(id) ON DELETE CASCADE,
+  visibility          TEXT NOT NULL DEFAULT 'project',
+  creator_id          INTEGER NOT NULL DEFAULT 1,
+  cloned_from_id      INTEGER,
+  root_item_id        INTEGER,
+  root_owner_id       INTEGER NOT NULL DEFAULT 1,
+  locked              INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_flowcharts_scope ON flowcharts(visibility, project_id);
+CREATE INDEX IF NOT EXISTS idx_flowcharts_creator ON flowcharts(creator_id);
+
+CREATE TABLE IF NOT EXISTS flowchart_nodes (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  flowchart_id        INTEGER NOT NULL REFERENCES flowcharts(id) ON DELETE CASCADE,
+  node_key            TEXT NOT NULL,
+  kind                TEXT NOT NULL DEFAULT 'screen',
+  subtype             TEXT NOT NULL DEFAULT 'ui-screen',
+  title               TEXT NOT NULL,
+  description         TEXT NOT NULL DEFAULT '',
+  x                   REAL NOT NULL DEFAULT 80,
+  y                   REAL NOT NULL DEFAULT 80,
+  width               REAL NOT NULL DEFAULT 300,
+  collapsed           INTEGER NOT NULL DEFAULT 0,
+  locked              INTEGER NOT NULL DEFAULT 0,
+  ports_json          TEXT NOT NULL DEFAULT '[]',
+  role_settings_json  TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json      TEXT NOT NULL DEFAULT '{}',
+  linked_screen_id    INTEGER,
+  linked_flowchart_id INTEGER,
+  ord                 INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (flowchart_id, node_key)
+);
+CREATE INDEX IF NOT EXISTS idx_flowchart_nodes_fc ON flowchart_nodes(flowchart_id, ord);
+
+CREATE TABLE IF NOT EXISTS flowchart_edges (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  flowchart_id        INTEGER NOT NULL REFERENCES flowcharts(id) ON DELETE CASCADE,
+  edge_key            TEXT NOT NULL,
+  from_node_key       TEXT NOT NULL,
+  from_port_key       TEXT NOT NULL DEFAULT 'out',
+  to_node_key         TEXT NOT NULL,
+  to_port_key         TEXT NOT NULL DEFAULT 'home',
+  label               TEXT NOT NULL DEFAULT '',
+  transition_text     TEXT NOT NULL DEFAULT '',
+  condition_expr      TEXT NOT NULL DEFAULT '',
+  style               TEXT NOT NULL DEFAULT 'bezier',
+  role_settings_json  TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json      TEXT NOT NULL DEFAULT '{}',
+  waypoints_json      TEXT NOT NULL DEFAULT '[]',
+  ord                 INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (flowchart_id, edge_key)
+);
+CREATE INDEX IF NOT EXISTS idx_flowchart_edges_fc ON flowchart_edges(flowchart_id, ord);
+
+CREATE TABLE trash_items_v2 (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_type       TEXT NOT NULL CHECK (item_type IN ('path','icon','button','element','screen','workflow','flowchart')),
+  original_id     INTEGER NOT NULL,
+  item_key        TEXT NOT NULL,
+  item_name       TEXT NOT NULL,
+  label           TEXT NOT NULL DEFAULT '',
+  category        TEXT NOT NULL DEFAULT 'general',
+  project_id      INTEGER NOT NULL DEFAULT 1,
+  visibility      TEXT NOT NULL DEFAULT 'public',
+  builtin         INTEGER NOT NULL DEFAULT 0,
+  creator_id      INTEGER NOT NULL DEFAULT 1,
+  root_owner_id   INTEGER NOT NULL DEFAULT 1,
+  deleted_by      INTEGER NOT NULL DEFAULT 1,
+  deleted_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  snapshot        TEXT NOT NULL DEFAULT '{}'
+);
+INSERT INTO trash_items_v2 (id, item_type, original_id, item_key, item_name, label, category, project_id, visibility, builtin, creator_id, root_owner_id, deleted_by, deleted_at, snapshot)
+  SELECT id, item_type, original_id, item_key, item_name, label, category, project_id, visibility, builtin, creator_id, root_owner_id, deleted_by, deleted_at, snapshot FROM trash_items;
+DROP TABLE trash_items;
+ALTER TABLE trash_items_v2 RENAME TO trash_items;
+CREATE INDEX IF NOT EXISTS idx_trash_type_proj ON trash_items(item_type, project_id, visibility);
 `
 ];

@@ -3,12 +3,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-2e9bff.svg)](./LICENSE)
 [![Runtime: Node.js 22+](https://img.shields.io/badge/Node.js-22%2B%20(Zero%20NPM%20Deps)-3fb950.svg)](https://nodejs.org)
 [![Database: Offline-First SQLite + PostgreSQL](https://img.shields.io/badge/Database-SQLite%20%2B%20PostgreSQL%20Sync-8a5cf6.svg)](./sql/)
-[![Tests: 400 Passing](https://img.shields.io/badge/Tests-400%2F400%20Passing-brightgreen.svg)](./src/tests/)
+[![Tests: 527 Passing](https://img.shields.io/badge/Tests-527%2F527%20Passing-brightgreen.svg)](./src/tests/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](./CONTRIBUTING.md)
 
-**Kyrpy UI/UX App Designer** is a zero-dependency, offline-first, collaborative vector & interactive UI/UX design studio built for **developers, product designers, and AI coding agents**.
+**Kyrpy UI/UX App Designer** is a zero-dependency, offline-first, collaborative vector, interactive UI/UX, and conceptual full-stack architecture studio built for **developers, product designers, and AI coding agents**.
 
-Unlike traditional design tools that trap your layouts in opaque proprietary blobs or export brittle absolute-positioned divs, **Kyrpy UI/UX Designer** models every design as a composable, strictly typed hierarchy—**`Path → Icon → Button → Element → Screen → Workflow`**—backed by an isomorphic SVG/HTML/CSS/TypeScript rendering engine, live interactive runtime testing, multi-project access control, root-owner clone lineage tracking, and bi-directional **SQLite ↔ PostgreSQL** synchronization.
+Unlike traditional design tools that trap your layouts in opaque proprietary blobs or export brittle absolute-positioned divs, **Kyrpy UI/UX Designer** models every design as a composable, strictly typed hierarchy—**`Path → Icon → Button → Element → Screen → Workflow ⇄ Conceptual FlowChart`**—backed by an isomorphic SVG/HTML/CSS/TypeScript rendering engine, a **Client-Side Browser AI Studio (`✨ AI Studio`)**, live interactive runtime testing, multi-project access control, root-owner clone lineage tracking, and bi-directional **SQLite ↔ PostgreSQL** synchronization.
 
 ---
 
@@ -19,10 +19,12 @@ Unlike traditional design tools that trap your layouts in opaque proprietary blo
 - **🧱 Strict Composable Design Hierarchy**:
   - **Paths (`24×24`)**: Reusable vector path primitives with Bezier vertex editing, Boolean pathfinder ops (`unite`, `subtract`, `intersect`, `exclude`), pen tool, crop, and simplify.
   - **Icons (`24×24`)**: Composed from reusable Path groups + custom vector shapes.
-  - **Buttons**: Interactive frames + icons with **per-project Button Style** (`circle` [Default], `pill`, `rounded`, `squircle`, `square`, `sharp`, `outline`, `ghost`) and **per-project Button Icon Size Slider (`50–90%`, default `70%`)** that apply across all buttons in the Buttons library, plus interactive **Radial Menu**, **Drawer Menu**, **Vertical/Horizontal Slider Menu**, **2D/3D Carousel Animated Roll Menu**, and **Show Element** actions.
-  - **Elements, Containers & Sandboxed Custom JS**: Reusable UI building blocks, **Container** shells (fit-to-screen, fixed/responsive, inner/outer margins, child max-size clamping), **Carousel Containers** (2D/3D horizontal & vertical animated roll), 15+ interactive HTML components, and **Sandboxed Custom ES Module JS + Verified Public JS Libraries** (`element_scripts` with exact `x.y.z` semver, allowlisted HTTPS ESM CDNs, `sha384` Subresource Integrity, and opaque-origin `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` previews).
-  - **Screens & 15 Design Style Families (30 Dark & Light Themes)**: Device-framed compositions rendered across **15 design style families** in both **Dark and Light modes** (*Liquid Glass, Glow Lines, Neumorphic, Glassmorphism, Brutalism / Neo-Brutalism, Minimalist, Skeuomorphism, Aurora, Gradient 3D Claymorphism, Cyberpunk, Synthwave, Pastel Minimal / Cozy UI, Cosmic / Space Adventure UI, Flat Playful, Pop & Neon Retro UI*).
-  - **Workflows**: Visual screen-to-screen routing graphs with interactive hotspot links and live routing simulation.
+  - **Buttons**: Interactive frames + icons with **per-project Button Style** (`circle` [Default], `pill`, `rounded`, `squircle`, `square`, `sharp`, `outline`, `ghost`), **per-project Button Icon Size Slider (`50–100%`, default `95%`)**, **Press & Slide Joystick actions** (4/8-direction edge paths, customizable `0.5–1.6×` arrow size, scroll repeater targets, and continuous red focus-frame stepping), plus **Radial / Rotating Hub**, **Drawer**, **Vertical/Horizontal Slider**, **2D/3D Carousel Animated Roll**, and **Show Element** menus.
+  - **Elements, Scrollable Containers, Fixed-Size Repeaters & Sandboxed Custom JS**: Reusable UI building blocks, **Container** shells (nested mouse-wheel/drag scroll chaining, responsive `fitNodesToScreen`, inner/outer margins, child max-size clamping), **Carousel Containers** (2D/3D horizontal & vertical animated roll), **Multi-Item Repeaters** (fixed Inspector size, drag-to-reorder items, every sub-item shown at least once + seeded random fill), **Image Nodes & Free Stock Photo Library** (Openverse, Pexels, Pixabay), and **Sandboxed Custom ES Module JS + Verified Public JS Libraries** (`element_scripts` with exact `x.y.z` semver, `sha384` Subresource Integrity, and `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">`).
+  - **Screens, Per-Instance Customization & 15 Design Style Families (30 Dark & Light Themes)**: Device-framed compositions across **15 design style families** in both **Dark and Light modes**, with **in-place per-instance customization (`✎`)** so editing a placed icon, button, or element modifies only that copy while leaving the library master untouched (`Edit the original` edits the shared item), plus configurable **screen/element transition timings** and auto-closing **`popup`** surfaces.
+  - **Workflows**: Versioned (`v1`, `v2`…) and approvable screen-to-screen routing graphs with start-screen tracking, multi-column DAG auto-layout (`distributeLevels`), and live routing simulation.
+  - **Conceptual FlowCharts (ComfyUI-Style Frontend, Backend & Business Logic Architect)**: Interactive node-and-wire canvas for conceptual **Screen**, **Step / API / DB**, **Decision / Scenario Router**, **Trigger**, **Subflow**, and **End** nodes—complete with `Home` (`◉`) inputs, diverging action/case sockets, inline **`📝` transition descriptions** and **`◇` decision splitters** over every wire, **per-role / access-level feature variants**, **Reverse Engineering** (`App / Screens → FlowChart`), **1-click Screen Materialization**, and full **`project-definition.md`** export for AI coders.
+- **✨ Built-in Client-Side AI Studio & Runtime Generator (`✨ AI Studio`)**: Generate or refine UI `Screens`, `Elements`, `Buttons`, `Icons`, `Paths`, and Conceptual `FlowCharts` at runtime right inside your browser via **4 pathways**: **(1) Google Gemini API BYOK** (`x-goog-api-key` direct from browser, never sent to `/api/*`), **(2) Chrome Built-in Gemini Nano** (`window.LanguageModel`, zero key), **(3) Local Ollama / LM Studio / OpenAI-Compatible & In-Browser WebGPU** (`@mlc-ai/web-llm`), and **(4) Official Subscription MCP Bridge** (live `/mcp` + SSE sync for Gemini CLI, Antigravity, Claude Code, and Cursor).
 - **🟢 Live "Test Actions" Simulation Mode**: Flip on **`▶ Test actions`** in any Button, Element, Screen, or Workflow designer to test real text inputs, checkboxes, toggles, sliders, CSS keyframe animations, radial/drawer/slider/carousel menus, modal popups, drawers, and multi-screen navigation live on the canvas.
 - **👥 Multi-Project Workspaces (`New`, `Save`, `Clone`, `Browse`, `Delete`), 3-Tier Scopes & Collaborative Change Review**:
   - Manage projects directly from the **Project** menu (`New Project`, `Save Project`, `Clone Project`, `Browse Projects`, `Delete Project`).
@@ -37,16 +39,24 @@ Unlike traditional design tools that trap your layouts in opaque proprietary blo
 
 ```mermaid
 flowchart LR
-  subgraph Hierarchy["Composable Design Hierarchy"]
+  subgraph Hierarchy["Composable Design & Architecture Hierarchy"]
+    FC["🔀 Conceptual FlowChart\n(Screens, API Steps, Decisions, Roles)"]
     P["✒️ Path (24×24)"] --> I["🔷 Icon (24×24)"]
-    I --> B["🔘 Button (+ Radial/Popup Menu)"]
+    I --> B["🔘 Button (+ Hub / Press & Slide)"]
     P --> B
-    I --> E["🧩 Element (Cards, Forms, Flip-Box)"]
+    I --> E["🧩 Element (Containers, Repeaters, JS)"]
     B --> E
     E --> S["📱 Screen (Device Viewports)"]
     B --> S
     I --> S
-    S --> W["🗺️ Workflow (Screen Routing Graph)"]
+    S --> W["🗺️ Workflow (Versioned Screen Graph)"]
+    FC <-->|"Materialize UIs /\nReverse Engineer"| S
+    FC -->|"Sync Routes"| W
+  end
+
+  subgraph AI["Client-Side AI & Live MCP"]
+    Studio["✨ Browser AI Studio\n(Gemini BYOK · Nano · Ollama · WebGPU)"]
+    MCP["🔌 /mcp Server\n(Claude · Gemini CLI · Antigravity · Cursor)"]
   end
 
   subgraph Persistence["Offline-First Dual Storage"]
@@ -57,6 +67,8 @@ flowchart LR
     Outbox <-->|"Push / Pull Sync\n(Optional .env)"| PG
   end
 
+  Studio --> Hierarchy
+  MCP <--> Hierarchy
   Hierarchy --> SQLite
 ```
 
@@ -216,9 +228,10 @@ See **Default Accounts** above: `superadmin` / `superadmin`, `admin` / `admin`, 
 
 ### 3. Interactive Events, Animations, Menus & Responsive Containers
 - **Multi-Event Bindings**: Attach `click`, `dblclick`, `mouseover`, `mouseleave`, `release`, `drag`, `drop`, `rightclick`, `longpress`, or `focus` triggers to any node.
-- **Rich Event Actions**: Route to a Screen (`{ type: 'screen', target }`), Open an Element inline, Open a Popup/Modal dialog, Open a Floating Element Toolbar, Slide in a Drawer (`left`/`right`/`top`/`bottom`), Trigger CSS Keyframe Animations (`pulse`, `bounce`, `flip`, `shake`, `swing`, `glow`, `float`, `shine`, `slide-in`, `fade`, `spin`), Toggle visibility, or Navigate Back.
-- **Button Popup, Radial, Hub, Drawer, Slider & 2D/3D Carousel Menus**: Configure fan, list, rotating hub, drawer, vertical/horizontal slider, or 2D/3D animated carousel menus on any button, with nested sub-menus up to 6 levels deep, custom icons, screen routing, and popup element triggers.
-- **Responsive Containers & Carousels**: `Container` and `Carousel` elements enforce inner/outer margins, responsive `fitNodesToScreen` viewport scaling, and child max-size clamping across mobile, tablet, and desktop viewports.
+- **Rich Event Actions, Press & Slide Joysticks & Transitions**: Route to a Screen (`{ type: 'screen', target }`), Open an Element inline, Open an Auto-Closing Popup/Modal dialog (`role: 'popup'`), Open a Floating Element Toolbar, Slide in a Drawer (`left`/`right`/`top`/`bottom`), Trigger CSS Keyframe Animations (`pulse`, `bounce`, `flip`, `shake`, `swing`, `glow`, `float`, `shine`, `slide-in`, `fade`, `spin`), configure **4/8-direction Press & Slide joystick gestures** (scroll repeaters, step hub focus frames, or trigger directional routes/popups), set transition durations (seconds) for screen navigation & element open/close, or Navigate Back (one-click bulk `Go back` wiring across screen Cancel/Back/Close buttons).
+- **Per-Instance Overrides (`✎` Placed Copy vs `Edit Original`) & Project Prefixes**: Every project defines a title, MCP variable name, description, and **prefix** (`prefix-*` automatically applied to new designs, menu items, and AI-created items, with prefix-first library sorting). Clicking a placed library instance edits **only that placed copy's** label, colors, role settings, menu items, and click/press-slide actions in place—while `Edit the original` opens the shared library item.
+- **Button Popup, Radial, Hub, Drawer, Slider & 2D/3D Carousel Menus**: Configure fan, list, rotating hub (`hubCount`, `hubSubInside`, `hubIconSize`, per-item long-press & double-tap actions), drawer, vertical/horizontal slider, or 2D/3D animated carousel menus on any button, with nested sub-menus up to 6 levels deep.
+- **Nested Scrollable Containers & Fixed-Size Multi-Item Repeaters**: `Container` and `Carousel` elements enforce inner/outer margins, responsive `fitNodesToScreen` scaling, child max-size clamping, and chained wheel/drag scrolling across nested overflowing containers. `Repeater` containers maintain fixed Inspector dimensions, support drag-to-reorder in the Inspector, render every sub-item at least once, and fill remaining slots via deterministic seeded random selection.
 
 ### 4. Multi-Project Library Management, Full Item CRUD & Trash Bin
 - **Full CRUD Across All 6 Item Types**: Create, Read/List, Update, Soft-Delete to Trash, and Restore from Trash for `path`, `icon`, `button`, `element`, `screen`, and `workflow`—both in the Web Studio (Center-Canvas & 90%-Wide Modal Item Browser) and directly over MCP (`uiux_create_item`, `uiux_list_project_items`, `uiux_update_item`, `uiux_delete_item`).
@@ -226,8 +239,8 @@ See **Default Accounts** above: `superadmin` / `superadmin`, `admin` / `admin`, 
 - **Single-Superadmin Public Governance**: Only `superadmin` mutates the public library directly; collaborator edits create reviewable `change_requests` with visual before/after diffs.
 
 ### 5. Self-Hosted Live API & MCP Documentation (`/docs/api` & `/docs/mcp`)
-- **`GET /docs/api`**: Live dark/light reference generated from the canonical 168-route backend catalog (`src/interfaces/http/api-catalog.js`), showing every HTTP endpoint, `api.<action>` client method, parameters, and MCP scope eligibility, plus a live `/api/health` probe.
-- **`GET /docs/mcp`**: Live reference for every registered MCP tool, resource URI, prompt, and copy-paste bearer-key setup, plus `/api/health/mcp`.
+- **`GET /docs/api`**: Live dark/light reference generated from the canonical 180+-route backend catalog (`src/interfaces/http/api-catalog.js`), showing every HTTP endpoint, `api.<action>` client method, parameters, and MCP scope eligibility, plus a live `/api/health` probe.
+- **`GET /docs/mcp`**: Live reference for all 64+ registered MCP tools (including Conceptual FlowCharts & Project Definition), resource URIs, prompts, and copy-paste bearer-key setup, plus `/api/health/mcp`.
 
 ### 6. Multi-Format Library Export & Import (`HTML`, `SVG`, `JSON`)
 Export and import **Paths**, **Icons**, **Buttons**, **Elements**, **Screens**, and **Workflows** directly into either **Project-Specific (`visibility: 'project'`)** or **Public (`visibility: 'public'`)** libraries in three interchangeable formats:
@@ -246,6 +259,20 @@ The **Images** tab of the library holds raster pictures (PNG, JPEG, GIF, WebP; m
 
 ### 8. User Profile, Sessions & Security
 The profile icon (top right) opens **My Profile**: edit display name and email, change your password (minimum 8 characters with a letter and a digit; signs out other sessions), manage active sessions, and create/rotate/revoke **AI Access Keys (MCP)**. System users (`public`, `kyrpy-agent-designer`) cannot sign in or be edited.
+
+### 9. Conceptual FlowChart Designer & Full `project-definition.md` Blueprint
+Open **FlowChart** from the top menu bar, designer switcher dropdown, or left **FlowCharts** browser tab (with inline `+`, `✎`, `⧉`, `📄`, `🗑` CRUD toolbar) to architect Frontend, Backend, Business Logic, and Auth/ACL workflows visually and textually on a ComfyUI-style node canvas:
+- **ComfyUI-Style Nodes & Ports**: Place **Screen**, **Step** (`api-endpoint`, `db-query`, `validation`, `service-logic`, `background-job`, `webhook-out`, `notification`), **Decision** (multi-scenario routers), **Trigger**, **Subflow**, and **End** nodes. Every connectable node exposes a **`Home` (`◉`) input socket** and unlimited **diverging output sockets** (menu items, buttons, form submits, API outcomes, decision cases).
+- **Interactive Wire Badges (`📝` & `◇`)**: Click **`📝`** directly over any connection wire to author textual transition behavior (validation, HTTP call, state mutation, animation, error handling) or click **`◇`** to split a connection into a multi-branch **Decision** node.
+- **Per-Access-Level / Role Feature Matrix**: Define project roles (`guest`, `user`, `pro`, `editor`, `admin`, or custom roles), restrict nodes/ports/edges by role, specify how the **same Screen** adapts across roles (`addedFeatures`, `hiddenFeatures`, `summary`), and live-preview the graph as any role.
+- **Approval Gate, Screen Materialization, Reverse Engineering & `project-definition.md`**: Validate graphs for orphan nodes or missing transitions, sign off as **Approved**, **Materialize** conceptual `Screen` nodes into linked visual `Screen` designs + `Workflow` routes, **Reverse Engineer** existing visual screens/workflows or external app route specs into FlowCharts, and export a comprehensive **`project-definition.md` + JSON** blueprint so any AI coder can build or recreate the entire application.
+
+### 10. Unified Client-Side AI Studio & Runtime Generator (`✨ AI Studio`)
+Click **`✨`** in the top bar (or **`AI` menu**, Designer **`AI Studio`** button, FlowChart **`✨ AI Studio`** button, or **`✨ AI UI`** directly on any FlowChart Screen node) to generate or refine UI `Screens`, `Elements`, `Buttons`, `Icons`, `Paths`, and Conceptual `FlowCharts` at runtime in your browser across **4 sanctioned pathways**:
+1. **Google Gemini API (BYOK — AI Studio)**: Direct browser `fetch` to `generativelanguage.googleapis.com` (`gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`) using `x-goog-api-key` and structured JSON `responseSchema`. Keys stay in browser `sessionStorage` (or opt-in `localStorage`) and **never touch `/api/*`**.
+2. **Chrome Built-in AI (`window.LanguageModel` — Gemini Nano)**: Zero-key, zero-cost on-device inference inside Chrome 138+ with automatic availability detection and download progress monitoring.
+3. **Local Ollama / LM Studio / OpenAI-Compatible & In-Browser WebGPU**: Direct calls to `http://127.0.0.1:11434/v1` (with `/api/tags` & `/v1/models` auto-discovery), LM Studio (`:1234`), OpenRouter, Groq, or OpenAI—plus lazy in-tab WebGPU inference via `@mlc-ai/web-llm` (`Qwen2.5-3B`, `Llama-3.2-3B`, `Qwen2.5-1.5B`).
+4. **Official Subscription MCP Bridge**: One-click **AI Access Keys** launcher + context-aware copyable prompts so **Gemini CLI, Antigravity, Claude Code, and Cursor** subscriptions drive live SSE canvas updates over `/mcp`.
 
 ## 🔌 MCP Server — Design ↔ Code Sync for AI Coding Agents
 
@@ -308,7 +335,8 @@ Then, in the app repository, tell your agent: *"Run uiux_init …"* (the panel s
 | **Full Direct Item CRUD & Trash** | First-class Create, Read/List, Update, Soft-Delete & Trash Restore across **all 6 item types** (`path`, `icon`, `button`, `element`, `screen`, `workflow`) via **`uiux_create_item`**, **`uiux_list_project_items`**, **`uiux_update_item`** (with `copyIfForeign: true`), and **`uiux_delete_item`** (`restore: true` restores from Trash with original `uid`). |
 | **Graphical Editing Tools** | **`uiux_graphic_tool`** runs **38 pure-domain graphical & vector operations** (single step or atomic batch): primitives/containers/carousels (`add_shape`, `add_pen_path`, `place_instance`, `import_svg_nodes`), Boolean Pathfinder (`union`, `subtract`, `intersect`, `exclude`, `crop`, `crop_to_canvas`), Bezier/path ops (`convert_to_path`, `combine_paths`, `break_apart`, `join_paths`, `reverse_path`, `simplify_path`, `bake_transform`, `round_corners`, `smooth_vertices`, `sharp_vertices`, `cut_path`, `edit_vertices`), component extraction (`explode_icon`, `extract_paths_to_library`, `extract_as_element`), and layout/transform (`align`, `distribute`, `move`, `resize`, `fit_to_screen`, `flip`, `rotate`, `group`, `ungroup`, `reorder_layer`, `duplicate_nodes`, `style_nodes`, `delete_nodes`). |
 | **Sandboxed Element JS & Public Libs** | **`uiux_element_script`** (`policy`, `verify`, `get`, `set`, `verify_sri`, `remove`, plus `item.script` on `uiux_create_item` / `uiux_update_item` / `uiux_stage_item`) lets reverse-engineering and coding agents attach custom ES module logic (`mount(container, props, bridge)`) and pinned public JS imports (`cdn.jsdelivr.net`, `esm.sh`, `unpkg.com`) with exact `x.y.z` semver, `sha384` Subresource Integrity (`verifyIntegrity: true`), optional `lockfilePackages` matching, static code audit, and zero-trust execution strictly inside `<iframe sandbox="allow-scripts" referrerpolicy="no-referrer">` (`connect-src 'none'`). |
-| **Full Backend API Bridge** | **`uiux_api_docs`** (`uiux://api/docs`, `uiux://api/docs/{group}`) and **`uiux_api_call`** expose all allowed Designer backend API functions (`api.*` actions & `/api/*` routes) in-process—device/button templates, SVG/font/Iconify imports, nodes, animations, menus, element scripts, route-crawled workflows, translations, library transfer, version snapshots, and HTML/SVG exports—even in standalone MCP mode. |
+| **Conceptual FlowCharts & `project-definition.md`** | **9 first-class FlowChart tools** (`uiux_list_flowcharts`, `uiux_get_flowchart`, `uiux_create_flowchart`, `uiux_update_flowchart`, `uiux_flowchart_op` [13 graph ops], `uiux_delete_flowchart`, `uiux_materialize_flowchart`, `uiux_reverse_engineer_flowchart`, `uiux_export_project_definition`) + resources `uiux://project/flowcharts`, `uiux://project/definition`, and `uiux://flowchart/{ref}` so AI coding agents can read/design conceptual Frontend+Backend+Decision+Role workflows, materialize approved screens, reverse-engineer existing apps, and export full `project-definition.md` blueprints. |
+| **Full Backend API Bridge** | **`uiux_api_docs`** (`uiux://api/docs`, `uiux://api/docs/{group}`) and **`uiux_api_call`** expose all allowed Designer backend API functions (`api.*` actions & `/api/*` routes) in-process—device/button templates, SVG/font/Iconify/stock-photo imports, nodes, animations, menus, element scripts, flowcharts, route-crawled workflows, translations, library transfer, version snapshots, and HTML/SVG exports—even in standalone MCP mode. |
 | **Read, styles & download** | Schema, manifest, ranked search, single items (JSON/SVG/HTML), tokens (JSON/CSS/TS), `uiux_import_styles` + `switch-style.mjs` + live `options-menu.js`, workflows, `uiux_check_update` / `uiux_refresh_info`, and single-use `.tar.gz` bundles with `curl → sha256sum → tar` steps. |
 | **AI & Reverse-Engineer packs** | `uiux_init` installs `kyrpy-uiux-designer` + `kyrpy-skill-uiux-designer` (and optional `kyrpy-uiux-reverse-engineer` + `kyrpy-skill-uiux-reverse-engineer`) for Claude Code, Antigravity, AGENTS.md, Cursor or plain docs, plus `init-prompt.md`, `.uiux/config.json` and lockfile. Local edits are never overwritten. |
 | **Adapters & Working HTML app** | `web` (tokens.css/ts, hoisted icon sprite, typed index), `react-tsx` (typed `<Icon name="…"/>`), `flutter` / `compose` / `swiftui`, and `uiux_export_app` (working HTML app + `app/interactions.json` describing every interaction, menu, workflow and developer note). |
@@ -343,21 +371,18 @@ We are actively evolving **Kyrpy UI/UX Designer** into an AI-native collaborativ
    - AI design co-pilots that propose layout refinements, accessibility (WCAG AAA) fixes, theme token harmonization, and interactive state wiring directly through the **Collaborative Change Request (`pending` → `approved` / `rejected`)** review pipeline.
    - Automated multi-persona UX evaluation agents that simulate user journeys across workflows and attach structured UX feedback to screens.
 
-2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions and restore, changesets, item requests, code bindings, project/account/design keys, public elements & cascade copy-to-project, direct CRUD across all 6 item types + Trash restore, 38-operation graphical vector editing (`uiux_graphic_tool`), in-process backend API bridge (`uiux_api_docs` + `uiux_api_call`), reverse-engineering pack (`mode: "reverse"`), web/React/Flutter/Compose/SwiftUI adapters, working HTML app export, live SSE subscriptions and PostgreSQL sync for AI coding agents.
+2. **🔌 MCP Server — ✅ shipped** (see *MCP Server — Design ↔ Code Sync* above): versions and restore, changesets, item requests, code bindings, project/account/design keys, public elements & cascade copy-to-project, direct CRUD across all 6 item types + Trash restore, 38-operation graphical vector editing (`uiux_graphic_tool`), Conceptual FlowCharts + `project-definition.md` blueprint (`uiux_*_flowchart`, `uiux_export_project_definition`), in-process backend API bridge (`uiux_api_docs` + `uiux_api_call`), reverse-engineering pack (`mode: "reverse"`), web/React/Flutter/Compose/SwiftUI adapters, working HTML app export, live SSE subscriptions and PostgreSQL sync for AI coding agents.
 
-3. **🔑 Use BYOK (Bring Your Own Key) for Users' AI-Assisted Item Generator Features**
-   - Built-in **BYOK (Bring Your Own Key)** settings vault allowing each user to configure their own API keys (OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or local Ollama/vLLM endpoints) stored locally or encrypted per user profile.
-   - **AI-Assisted Item Generator** across all library tiers:
-     - **Paths & Icons**: Natural-language prompt to clean SVG vector path groups and Liquid-Glow icons.
-     - **Buttons & Elements**: Prompt-to-component generation with automatic hover/click animations, form fields, and theme token bindings.
-     - **Screens & Workflows**: Multi-screen user flow synthesis from product requirements or wireframes directly into editable hierarchical screens and connected workflow graphs.
+3. **🔑 Client-Side BYOK, On-Device Browser AI & Runtime Item/FlowChart Generator (`✨ AI Studio`) — ✅ shipped**
+   - Unified browser-side **AI Studio** supporting **Google Gemini API BYOK** (`x-goog-api-key` kept strictly in browser storage, never sent to `/api/*`), **Chrome Built-in Gemini Nano** (`window.LanguageModel`), **Local Ollama / LM Studio / OpenAI-Compatible**, **In-Browser WebGPU** (`@mlc-ai/web-llm`), and the **Official Subscription MCP Bridge**.
+   - Runtime generation, refinement, and node appending across **Paths, Icons, Buttons, Elements, Screens, Conceptual FlowCharts, and Materialized FlowChart Screen UIs** using theme-adaptive tokens and automatic project/public library instance reuse.
 
 ---
 
 ## 🧪 Running Tests & Server Management
 
 ```bash
-# Run the full automated suite (400 tests): core (unit + integration + adversarial personas) + MCP milestones M0–M11
+# Run the full automated suite (527 tests): core (unit + integration + adversarial personas + FlowCharts + AI Studio) + MCP milestones M0–M13
 # (the PostgreSQL round-trip test uses an isolated test database and is skipped when PG is unreachable)
 cd src && npm test
 

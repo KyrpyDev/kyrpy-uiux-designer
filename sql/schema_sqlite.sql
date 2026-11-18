@@ -204,6 +204,79 @@ CREATE TABLE "elements" (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 , project_id INTEGER NOT NULL DEFAULT 1, visibility TEXT NOT NULL DEFAULT 'public', creator_id INTEGER NOT NULL DEFAULT 1, cloned_from_id INTEGER, root_item_id INTEGER, root_owner_id INTEGER NOT NULL DEFAULT 1, locked INTEGER NOT NULL DEFAULT 0, mcp_context TEXT NOT NULL DEFAULT '{}', uid TEXT, content_hash TEXT);
 
+CREATE TABLE flowchart_edges (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  flowchart_id        INTEGER NOT NULL REFERENCES flowcharts(id) ON DELETE CASCADE,
+  edge_key            TEXT NOT NULL,
+  from_node_key       TEXT NOT NULL,
+  from_port_key       TEXT NOT NULL DEFAULT 'out',
+  to_node_key         TEXT NOT NULL,
+  to_port_key         TEXT NOT NULL DEFAULT 'home',
+  label               TEXT NOT NULL DEFAULT '',
+  transition_text     TEXT NOT NULL DEFAULT '',
+  condition_expr      TEXT NOT NULL DEFAULT '',
+  style               TEXT NOT NULL DEFAULT 'bezier',
+  role_settings_json  TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json      TEXT NOT NULL DEFAULT '{}',
+  waypoints_json      TEXT NOT NULL DEFAULT '[]',
+  ord                 INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')), mcp_context TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (flowchart_id, edge_key)
+);
+
+CREATE TABLE flowchart_nodes (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  flowchart_id        INTEGER NOT NULL REFERENCES flowcharts(id) ON DELETE CASCADE,
+  node_key            TEXT NOT NULL,
+  kind                TEXT NOT NULL DEFAULT 'screen',
+  subtype             TEXT NOT NULL DEFAULT 'ui-screen',
+  title               TEXT NOT NULL,
+  description         TEXT NOT NULL DEFAULT '',
+  x                   REAL NOT NULL DEFAULT 80,
+  y                   REAL NOT NULL DEFAULT 80,
+  width               REAL NOT NULL DEFAULT 300,
+  collapsed           INTEGER NOT NULL DEFAULT 0,
+  locked              INTEGER NOT NULL DEFAULT 0,
+  ports_json          TEXT NOT NULL DEFAULT '[]',
+  role_settings_json  TEXT NOT NULL DEFAULT '{}',
+  tech_spec_json      TEXT NOT NULL DEFAULT '{}',
+  linked_screen_id    INTEGER,
+  linked_flowchart_id INTEGER,
+  ord                 INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')), mcp_context TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (flowchart_id, node_key)
+);
+
+CREATE TABLE flowcharts (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid                 TEXT NOT NULL UNIQUE,
+  key                 TEXT NOT NULL,
+  name                TEXT NOT NULL,
+  label               TEXT NOT NULL DEFAULT '',
+  description_dev     TEXT NOT NULL DEFAULT '',
+  domain              TEXT NOT NULL DEFAULT 'fullstack',
+  status              TEXT NOT NULL DEFAULT 'draft',
+  approved_by         INTEGER,
+  approved_at         TEXT,
+  approval_note       TEXT NOT NULL DEFAULT '',
+  access_levels_json  TEXT NOT NULL DEFAULT '[]',
+  spec_json           TEXT NOT NULL DEFAULT '{}',
+  start_node_key      TEXT,
+  linked_workflow_id  INTEGER,
+  project_id          INTEGER NOT NULL DEFAULT 1 REFERENCES projects(id) ON DELETE CASCADE,
+  visibility          TEXT NOT NULL DEFAULT 'project',
+  creator_id          INTEGER NOT NULL DEFAULT 1,
+  cloned_from_id      INTEGER,
+  root_item_id        INTEGER,
+  root_owner_id       INTEGER NOT NULL DEFAULT 1,
+  locked              INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')), mcp_context TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (project_id, key)
+);
+
 CREATE TABLE "icons" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   key             TEXT NOT NULL,          -- variable name used in code (dashed words)
@@ -513,9 +586,9 @@ CREATE TABLE translations (
   UNIQUE (table_name, record_id, field_name, lang_code)
 );
 
-CREATE TABLE trash_items (
+CREATE TABLE "trash_items" (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  item_type       TEXT NOT NULL CHECK (item_type IN ('path','icon','button','element','screen','workflow')),
+  item_type       TEXT NOT NULL CHECK (item_type IN ('path','icon','button','element','screen','workflow','flowchart')),
   original_id     INTEGER NOT NULL,
   item_key        TEXT NOT NULL,
   item_name       TEXT NOT NULL,
@@ -626,6 +699,14 @@ CREATE INDEX idx_elements_creator ON elements(creator_id);
 CREATE INDEX idx_elements_order ON elements(position, name);
 
 CREATE INDEX idx_elements_scope ON elements(visibility, project_id);
+
+CREATE INDEX idx_flowchart_edges_fc ON flowchart_edges(flowchart_id, ord);
+
+CREATE INDEX idx_flowchart_nodes_fc ON flowchart_nodes(flowchart_id, ord);
+
+CREATE INDEX idx_flowcharts_creator ON flowcharts(creator_id);
+
+CREATE INDEX idx_flowcharts_scope ON flowcharts(visibility, project_id);
 
 CREATE INDEX idx_icons_category ON icons(category);
 

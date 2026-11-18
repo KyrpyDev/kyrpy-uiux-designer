@@ -5,7 +5,7 @@
  * Template syntax (see ai-pack-render.js): {{var}}, {{#each list}}…{{this}}…{{/each}}, {{#if var}}…{{/if}}.
  * Bump TEMPLATE_VERSION whenever a body changes, so `uiux_init` updates installed packs.
  */
-export const TEMPLATE_VERSION = 10;
+export const TEMPLATE_VERSION = 11;
 
 import { REVERSE_ARTIFACTS } from './reverse-pack-templates.js';
 
@@ -78,7 +78,8 @@ Follow the skill **{{skillName}}** for every step; it holds the procedures, deci
 1. **Pulling design updates** into \`{{uiuxRoot}}/source/\` and converting them into \`{{uiuxRoot}}/<style-key>/\` for this app's stack{{#if framework}} ({{framework}}){{/if}}.
 2. **Finding & reusing before making**: search project, private, and public libraries first (\`uiux_search_items\`, \`uiux_public_library\`), and adopt or deep-copy matches into \`{{projectKey}}\` (\`uiux_use_public_element\`, \`uiux_copy_item_to_project\`) before creating from scratch.
 3. **Authoring & editing items to the designer's standards**: use \`uiux_graphic_tool\` for vector/boolean/layout operations, configure unified \`hub-menu\` and menu systems with \`orientation\` (\`horizontal\` | \`vertical\`) and mechanism-aware \`labelPosition\` (\`auto\` | \`beside\` | \`over\`), attach sandboxed custom ES modules via \`uiux_element_script\` when needed, validate with \`uiux_validate_item\`, and save or propose changes cleanly.
-4. **Reverse-engineering or reverse-syncing apps** when asked to push an existing repository's UI or capture a running APK/web app.
+4. **Conceptual FlowCharts & full-stack blueprints**: inspect or design conceptual Frontend/Backend/Decision/Role workflows via \`uiux_list_flowcharts\`, \`uiux_get_flowchart\`, \`uiux_create_flowchart\`, \`uiux_flowchart_op\`, materialize approved screens via \`uiux_materialize_flowchart\`, reverse-engineer existing codebases via \`uiux_reverse_engineer_flowchart\`, and read \`uiux_export_project_definition\` (\`uiux://project/definition\`) for end-to-end project specs.
+5. **Reverse-engineering or reverse-syncing apps** when asked to push an existing repository's UI or capture a running APK/web app.
 
 ## Hard rules
 - Never edit \`{{uiuxRoot}}/source/\` by hand; it is overwritten on every pull. App code imports from \`{{uiuxRoot}}/<style-key>/\` (or \`{{uiuxRoot}}/active/\`).
@@ -327,6 +328,7 @@ Call \`uiux_api_docs { group }\` first when unsure of parameters, then \`uiux_ap
 - **Project & devices**: \`saveTemplateDevice\`, \`applyProjectButtonSettings\`, \`adoptProjectDependencies\`, \`snapshotProjectVersion\`.
 - **Menus & animations**: \`menuConfig\`, \`addMenuItem\`, \`updateMenuItem\`, \`addAnimation\`.
 - **Workflows & routes**: \`workflowFromScreen\`, \`importScreenRoutes\`, \`placeScreen\`, \`addLink\`.
+- **Conceptual FlowCharts & Project Blueprint**: prefer first-class tools \`uiux_list_flowcharts\`, \`uiux_get_flowchart\`, \`uiux_create_flowchart\`, \`uiux_flowchart_op\` (\`add_node\`, \`connect\`, \`insert_decision_on_edge\`, \`set_role_variant\`, \`approve\`), \`uiux_materialize_flowchart\`, \`uiux_reverse_engineer_flowchart\`, and \`uiux_export_project_definition\` (\`uiux://project/definition\`).
 - **Assets & localization**: \`importSvg\`, \`onlineSearch\`, \`onlineImport\`, \`saveTranslation\`, \`exportProjectHtml\`.
 `;
 

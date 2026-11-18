@@ -6,7 +6,7 @@ import { cachedIcon, requestIconNodes } from './icon-store.js';
 
 export const TYPE_LIST = ['path', 'icon', 'button', 'element', 'screen'];
 export const ALL_ITEM_TYPES = ['path', 'icon', 'button', 'element', 'screen', 'workflow'];
-export const PLURAL = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens', workflow: 'workflows' };
+export const PLURAL = { path: 'paths', icon: 'icons', button: 'buttons', element: 'elements', screen: 'screens', workflow: 'workflows', flowchart: 'flowcharts' };
 
 const screenSelSet = new Set();
 
@@ -14,8 +14,8 @@ export const state = {
   settings: {}, themes: [], devices: {}, counts: {}, types: {}, menuMeta: {},
   themeKey: 'liquid',
   library: { paths: [], icons: [], buttons: [], elements: [], animations: [] },
-  mode: 'screen',                 // 'screen' (the designers) | 'workflow' | 'browser'
-  tab: 'screen',                  // left panel tab (path | icon | button | element | screen | workflow)
+  mode: 'screen',                 // 'screen' (the designers) | 'workflow' | 'flowchart' | 'browser'
+  tab: 'screen',                  // left panel tab (path | icon | button | element | screen | workflow | flowchart | image)
   catalogSel: screenSelSet,       // multi-selected screen ids in the screen catalog
   libSel: {
     path: new Set(),
@@ -23,10 +23,12 @@ export const state = {
     button: new Set(),
     element: new Set(),
     screen: screenSelSet,
-    workflow: new Set()
+    workflow: new Set(),
+    flowchart: new Set()
   },
   playAnimations: true,
   workflowId: null,
+  flowchartId: null,
   // New project, user, collaboration, templates & sync state
   user: { id: 1, username: 'superadmin', displayName: 'Superadmin', role: 'superadmin', avatarColor: '#2e9bff' },
   publicUserId: null,             // id of the immutable `public` system user (owner of the public library), from /api/bootstrap
