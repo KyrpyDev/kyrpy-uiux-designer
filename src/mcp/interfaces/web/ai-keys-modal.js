@@ -118,8 +118,8 @@ export async function openAiKeysModal() {
 
     host.replaceChildren(
       h('div', { class: 'muted', style: { fontSize: '12px' } },
-        'API keys let an AI coding agent (Claude Code, Cursor, Antigravity …) read this designer’s design system for one project and propose changes. ',
-        'A project key belongs to one project you own. An account key works on every project you can see: on first use the agent lists them with their versions and asks you to clone one into a new project or edit one of yours at a version. Proposals always need your approval in the designer.'),
+        'API keys let an AI coding agent (Claude Code, Cursor, Antigravity …) read this designer’s design system and propose changes. ',
+        'A new key works on all your projects: on first use the agent lists them with their versions and asks you to clone one into a new project or edit one of yours at a version. Proposals always need your approval in the designer.'),
       reveal || '',
       createCard(owned),
       keysCard(keys),
@@ -136,43 +136,26 @@ export async function openAiKeysModal() {
   };
 
   function createCard(owned) {
-    const kind = h('select', { 'aria-label': 'Key type' },
-      h('option', { value: 'project', selected: !!owned.length, disabled: !owned.length }, 'Project key — one project'),
-      h('option', { value: 'account', selected: !owned.length }, 'Account key — all my projects'));
     const name = h('input', { type: 'text', placeholder: 'e.g. Claude Code — laptop', maxlength: '80' });
-    const project = h('select', {}, owned.map(p => h('option', { value: String(p.id), selected: p.id === state.activeProjectId }, `${p.name} (${p.key})`)));
     const expiry = h('select', {}, EXPIRY.map(([v, l]) => h('option', { value: v, selected: v === '90' }, l)));
     const scopeBoxes = Object.entries(SCOPE_INFO).map(([s, info]) => {
       const box = h('input', { type: 'checkbox', checked: s !== 'design', disabled: s === 'read', value: s });
       return { s, box, el: h('label', {}, box, h('span', {}, h('strong', {}, s), ` — ${info}`)) };
     });
-    const projField = h('label', { class: 'field' }, h('span', {}, 'Project'), project);
-    const syncKind = () => {
-      const acc = kind.value === 'account';
-      projField.hidden = acc;
-      for (const x of scopeBoxes) {
-        const allowed = acc || (x.s !== 'create' && x.s !== 'design'); // "create" / "design" only for account keys
-        x.el.hidden = !allowed;
-        if (!allowed) x.box.checked = false; else if (x.s !== 'read' && x.s !== 'design' && !x.box.dataset.touched) x.box.checked = true;
-      }
-    };
-    for (const x of scopeBoxes) x.box.addEventListener('change', () => { x.box.dataset.touched = '1'; });
-    kind.addEventListener('change', syncKind);
-    syncKind();
     const btn = h('button', {
       class: 'btn primary', style: { alignSelf: 'flex-end' },
       onclick: async () => {
         if (!name.value.trim()) { toast('Give the key a name so you can recognise it later', 'error'); name.focus(); return; }
         btn.disabled = true;
         try {
-          const acc = kind.value === 'account';
+          // every new key is an account key: it covers all the user's projects (no project picker)
           const result = await secretRequest('POST', '/api/me/api-keys', {
             name: name.value.trim(),
-            ...(acc ? { kind: 'account' } : { projectId: Number(project.value) }),
+            kind: 'account',
             scopes: scopeBoxes.filter(x => x.box.checked).map(x => x.s),
             expiresInDays: expiry.value === 'never' ? null : Number(expiry.value)
           });
-          reveal = revealPanel(result, acc ? null : owned.find(p => p.id === Number(project.value)));
+          reveal = revealPanel(result, null);
           toast('API key created — copy it now', 'ok');
           await render();
         } catch (e) { toast(e.message, 'error'); }
@@ -182,8 +165,7 @@ export async function openAiKeysModal() {
     return h('div', { class: 'aik-card' }, h('h4', {}, 'Create a key'),
       h('div', { class: 'row wrap' },
         h('label', { class: 'field grow' }, h('span', {}, 'Name'), name),
-        h('label', { class: 'field' }, h('span', {}, 'Type'), kind),
-        projField,
+        h('div', { class: 'field' }, h('span', {}, 'Projects'), h('em', {}, 'All my projects')),
         h('label', { class: 'field' }, h('span', {}, 'Expires'), expiry),
         btn),
       h('div', { class: 'aik-scopes', role: 'group', 'aria-label': 'Scopes' }, scopeBoxes.map(x => x.el)));

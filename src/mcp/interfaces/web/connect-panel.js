@@ -58,7 +58,7 @@ export function connectPanel({ key: givenKey = '', projects = [], projectId = nu
   let shell = SHELLS.some(([s]) => s === prefs.shell) ? prefs.shell : guessShell();
   let keyMode = key ? (prefs.keyMode === 'inline' ? 'inline' : 'env') : 'env';
   const proj = projects.find(p => p.id === projectId) || projects[0] || null;
-  let keyKind = fixedKind || (prefs.keyKind === 'account' ? 'account' : 'project');
+  let keyKind = fixedKind || (prefs.keyKind === 'project' ? 'project' : 'account');   // new keys are account keys; "project" stays for older keys
   const kindSel = h('select', { 'aria-label': 'Key type', disabled: !!fixedKind },
     h('option', { value: 'project', selected: keyKind === 'project' }, 'Project key (stored per repository)'),
     h('option', { value: 'account', selected: keyKind === 'account' }, 'Account key (all my projects, user level)'));
