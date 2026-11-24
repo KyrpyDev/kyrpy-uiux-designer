@@ -11,7 +11,8 @@ import { GEMINI_MODELS, WEBLLM_MODELS, extractJsonObject } from './ai-runtime-sp
 
 export const DEFAULT_AI_CONFIG = Object.freeze({
   provider: 'auto',
-  geminiModel: GEMINI_MODELS[0].id,
+  geminiModel: 'gemini-4-carbon',
+  discoveredGeminiModels: [],
   rememberSecrets: false,
   openAiEnabled: false,
   openAiBaseUrl: 'http://127.0.0.1:11434/v1',
@@ -66,22 +67,23 @@ function assertExternalOrLocalAiUrl(url) {
  */
 export async function callGeminiByok({
   apiKey,
-  model = 'gemini-2.5-flash',
+  model = 'gemini-4-carbon',
   systemPrompt = '',
   userPrompt = '',
   schema = null,
   temperature = 0.35,
   onStatus = null,
+  signal = null,
   fetchImpl = globalThis.fetch
 } = {}) {
   const key = String(apiKey || '').trim();
   if (!key) throw new Error('Gemini API key is empty. Paste your Google AI Studio key in AI Studio → Settings.');
   if (typeof fetchImpl !== 'function') throw new Error('Browser fetch API is unavailable.');
 
-  const cleanModel = String(model || 'gemini-2.5-flash').replace(/^models\//, '').trim();
+  const cleanModel = String(model || 'gemini-4-carbon').replace(/^models\//, '').trim();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cleanModel)}:generateContent`;
   assertExternalOrLocalAiUrl(endpoint);
-  onStatus?.(`Calling Google Gemini (${cleanModel}) directly from browser…`);
+  onStatus?.(`Calling Google Gemini (${cleanModel}) directly from browser…`, 22);
 
   const generationConfig = {
     temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.35,
@@ -101,7 +103,8 @@ export async function callGeminiByok({
       'content-type': 'application/json',
       'x-goog-api-key': key
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {})
   });
 
   const payload = await res.json().catch(() => null);
@@ -122,11 +125,11 @@ export async function callGeminiByok({
   };
 }
 
-/** Verifies a Gemini AI Studio key directly against Google's models endpoint (`x-goog-api-key`). */
+/** Verifies a Gemini AI Studio key directly against Google's models endpoint (`x-goog-api-key`) and discovers all account-accessible models. */
 export async function testGeminiByok({ apiKey, fetchImpl = globalThis.fetch } = {}) {
   const key = String(apiKey || '').trim();
   if (!key) throw new Error('Enter a Gemini API key first.');
-  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=25';
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=100';
   assertExternalOrLocalAiUrl(endpoint);
   const res = await fetchImpl(endpoint, {
     method: 'GET',
@@ -136,11 +139,20 @@ export async function testGeminiByok({ apiKey, fetchImpl = globalThis.fetch } = 
   if (!res.ok) {
     throw new Error(payload?.error?.message || `Gemini key check failed (HTTP ${res.status})`);
   }
-  const models = (payload?.models || [])
-    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+  const genModels = (payload?.models || [])
+    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'));
+  const models = genModels
     .map(m => String(m.name || '').replace(/^models\//, ''))
     .filter(Boolean);
-  return { ok: true, models };
+  const modelDetails = genModels
+    .map(m => ({
+      id: String(m.name || '').replace(/^models\//, ''),
+      displayName: String(m.displayName || '').trim(),
+      inputTokenLimit: Number(m.inputTokenLimit) || null,
+      outputTokenLimit: Number(m.outputTokenLimit) || null
+    }))
+    .filter(m => m.id);
+  return { ok: true, models, modelDetails };
 }
 
 /**
@@ -278,13 +290,14 @@ export async function callOpenAiCompat({
   schema = null,
   temperature = 0.35,
   onStatus = null,
+  signal = null,
   fetchImpl = globalThis.fetch
 } = {}) {
   const base = normalizeBaseUrl(baseUrl);
   const endpoint = `${base}/chat/completions`;
   assertExternalOrLocalAiUrl(endpoint);
   const cleanModel = String(model || 'qwen2.5-coder:7b').trim();
-  onStatus?.(`Calling ${cleanModel} at ${base}…`);
+  onStatus?.(`Calling ${cleanModel} at ${base}…`, 22);
 
   const headers = { 'content-type': 'application/json' };
   if (apiKey) headers.authorization = `Bearer ${String(apiKey).trim()}`;
@@ -297,6 +310,7 @@ export async function callOpenAiCompat({
   const sendReq = async useJsonFormat => fetchImpl(endpoint, {
     method: 'POST',
     headers,
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({
       model: cleanModel,
       temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.35,
@@ -355,6 +369,7 @@ export async function executeClientAiStructured({
   schema = null,
   temperature = null,
   onStatus = null,
+  signal = null,
   fetchImpl = globalThis.fetch,
   globalObj = globalThis,
   webgpuRunner = null,
@@ -372,12 +387,13 @@ export async function executeClientAiStructured({
   if (chosen === 'gemini-byok') {
     return callGeminiByok({
       apiKey: secrets.geminiApiKey,
-      model: config.geminiModel || 'gemini-2.5-flash',
+      model: config.geminiModel || 'gemini-4-carbon',
       systemPrompt,
       userPrompt,
       schema,
       temperature: temp,
       onStatus,
+      signal,
       fetchImpl
     });
   }
@@ -400,6 +416,7 @@ export async function executeClientAiStructured({
       schema,
       temperature: temp,
       onStatus,
+      signal,
       fetchImpl
     });
   }

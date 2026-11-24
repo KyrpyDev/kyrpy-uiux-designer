@@ -165,6 +165,7 @@ export async function generateWithClientAi({
   schema = null,
   temperature = null,
   providerOverride = null,
+  signal = null,
   onStatus = null
 } = {}) {
   const baseCfg = loadAiConfig();
@@ -178,6 +179,7 @@ export async function generateWithClientAi({
     schema,
     temperature,
     onStatus,
+    signal,
     fetchImpl: window.fetch.bind(window),
     globalObj: window,
     webgpuRunner: runWebGpuStructured,

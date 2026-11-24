@@ -11,12 +11,14 @@ import { api } from '../api.js';
 import { state, emit } from '../state.js';
 import { rememberName } from '../edited.js';
 import { reloadLibrary } from '../actions.js';
+import { startScreenProgress } from './screen-progress.js';
 import { TYPES } from '/domain/entities.js';
 import { FLOWCHART_DOMAINS } from '/domain/flowchart.js';
 import {
   AI_PROVIDERS,
   GEMINI_MODELS,
   WEBLLM_MODELS,
+  mergeGeminiModels,
   buildDesignGenerationPrompt,
   sanitizeGeneratedDesign,
   buildFlowchartGenerationPrompt,
@@ -79,7 +81,31 @@ function providerBadgeLabel(probe) {
   const p = probe?.config?.provider === 'auto' ? probe?.resolvedProvider : probe?.config?.provider;
   if (!p) return { text: '⚙ Setup AI Runtime or MCP', cls: 'warn' };
   const found = AI_PROVIDERS.find(x => x.id === p);
-  return { text: `● ${found?.short || p}`, cls: 'ok' };
+  const suffix = p === 'gemini-byok' && probe?.config?.geminiModel ? ` · ${probe.config.geminiModel}` : '';
+  return { text: `● ${found?.short || p}${suffix}`, cls: 'ok' };
+}
+
+function populateGeminiSelect(selEl, mergedList, activeModelId, includeCustom = true) {
+  clear(selEl);
+  const groups = new Map();
+  for (const m of mergedList) {
+    const grp = m.tier || 'Gemini Models';
+    if (!groups.has(grp)) groups.set(grp, []);
+    groups.get(grp).push(m);
+  }
+  const knownIds = new Set(mergedList.map(m => m.id));
+  const isCustom = activeModelId && !knownIds.has(activeModelId);
+  for (const [grpLabel, items] of groups.entries()) {
+    selEl.append(h('optgroup', { label: grpLabel },
+      items.map(m => h('option', { value: m.id, selected: !isCustom && m.id === activeModelId }, m.label))
+    ));
+  }
+  if (includeCustom) {
+    selEl.append(h('option', { value: '__custom__', selected: Boolean(isCustom) }, 'Custom / Newly Released Model ID…'));
+  } else if (isCustom) {
+    selEl.append(h('option', { value: activeModelId, selected: true }, `${activeModelId} (Custom)`));
+  }
+  return isCustom;
 }
 
 async function copyText(text, label = 'Copied') {
@@ -96,11 +122,12 @@ async function copyText(text, label = 'Copied') {
  */
 export async function generateVisualScreenForFlowchartNode(app, fc, fcNode, {
   extraPrompt = '',
+  signal = null,
   onStatus = null
 } = {}) {
   let screenId = fcNode.linkedScreenId ? Number(fcNode.linkedScreenId) : null;
   if (!screenId) {
-    onStatus?.(`Materializing screen "${fcNode.title}" in project…`);
+    onStatus?.(`Materializing screen "${fcNode.title}" in project…`, 14);
     const mat = await api.materializeFlowchart(fc.id, { allowUnapproved: true, syncWorkflow: true });
     const updatedFc = mat?.flowchart || await api.flowchart(fc.id);
     const refreshed = (updatedFc.nodes || []).find(n => n.nodeKey === fcNode.nodeKey);
@@ -128,7 +155,8 @@ export async function generateVisualScreenForFlowchartNode(app, fc, fcNode, {
     systemPrompt,
     userPrompt,
     schema,
-    onStatus: msg => onStatus?.(`[${fcNode.title}] ${msg}`)
+    signal,
+    onStatus: (msg, pct) => onStatus?.(`[${fcNode.title}] ${msg}`, pct)
   });
 
   const clean = sanitizeGeneratedDesign(aiRes.data, {
@@ -163,31 +191,76 @@ export async function openAiStudioModal(app, initialOpts = {}) {
     title: 'Click to configure client-side AI runtime or BYOK keys',
     onclick: () => { activeTab = 'settings'; render(); }
   });
+  const quickModelSel = h('select', {
+    class: 'fc-toolbar-select',
+    title: 'Quick-switch active Gemini model (e.g. Gemini 4 Carbon for deep architecture vs Gemini 3.8 Flash for rapid UI iterations)',
+    dataset: { aiField: 'quick-gemini-model' },
+    hidden: true,
+    onchange: async () => {
+      saveAiConfig({ geminiModel: quickModelSel.value });
+      await refreshProbe();
+      toast(`Active Gemini model: ${quickModelSel.value}`, 'ok', 1600);
+    }
+  });
   const tabBar = h('div', { class: 'ai-studio-tabs', role: 'tablist' });
   const bodyWrap = h('div', { class: 'ai-studio-body' });
-  const statusBanner = h('div', { class: 'ai-studio-status', hidden: true });
+  const inlineMsgEl = h('div', { class: 'ai-status-msg' });
+  const inlineFillEl = h('div', { class: 'ai-inline-fill', style: { width: '0%' } });
+  const inlineTrackEl = h('div', {
+    class: 'ai-inline-track',
+    role: 'progressbar',
+    'aria-label': 'AI Studio progress',
+    'aria-valuemin': '0',
+    'aria-valuemax': '100',
+    'aria-valuenow': '0',
+    hidden: true
+  }, inlineFillEl);
+  const statusBanner = h('div', { class: 'ai-studio-status', hidden: true }, inlineMsgEl, inlineTrackEl);
 
   root.append(
     h('div', { class: 'ai-studio-top' },
       h('div', { class: 'ai-studio-subtitle' },
         'Generate theme-adaptive UI Screens, Elements, Icons & Conceptual FlowCharts at runtime in your browser — or bridge your Gemini / Claude / Cursor subscription live via MCP.'
       ),
-      headerStatus
+      h('div', { class: 'row', style: { gap: '6px' } }, quickModelSel, headerStatus)
     ),
     tabBar,
     statusBanner,
     bodyWrap
   );
 
-  const setBanner = (msg, kind = 'info') => {
+  const syncQuickModelBar = () => {
+    const activeProv = probe?.config?.provider === 'auto' ? probe?.resolvedProvider : probe?.config?.provider;
+    const showQuick = activeProv === 'gemini-byok' && activeTab !== 'settings';
+    quickModelSel.hidden = !showQuick;
+    if (showQuick) {
+      const merged = mergeGeminiModels(probe.config?.discoveredGeminiModels || []);
+      populateGeminiSelect(quickModelSel, merged, probe.config?.geminiModel || 'gemini-4-carbon', false);
+    }
+  };
+
+  const setBanner = (msg, kind = 'info', pct = null) => {
     if (!msg) {
       statusBanner.hidden = true;
-      statusBanner.textContent = '';
+      inlineMsgEl.textContent = '';
+      inlineTrackEl.hidden = true;
       return;
     }
     statusBanner.hidden = false;
     statusBanner.className = `ai-studio-status kind-${kind}`;
-    statusBanner.textContent = msg;
+    inlineMsgEl.textContent = msg;
+    if (kind === 'busy' || typeof pct === 'number') {
+      inlineTrackEl.hidden = false;
+      const p = typeof pct === 'number' ? Math.max(4, Math.min(100, Math.round(pct))) : (kind === 'ok' ? 100 : 35);
+      inlineFillEl.style.width = `${p}%`;
+      inlineTrackEl.setAttribute('aria-valuenow', String(p));
+    } else if (kind === 'ok') {
+      inlineTrackEl.hidden = false;
+      inlineFillEl.style.width = '100%';
+      inlineTrackEl.setAttribute('aria-valuenow', '100');
+    } else {
+      inlineTrackEl.hidden = true;
+    }
   };
 
   const refreshProbe = async () => {
@@ -195,6 +268,7 @@ export async function openAiStudioModal(app, initialOpts = {}) {
     const badge = providerBadgeLabel(probe);
     headerStatus.textContent = badge.text;
     headerStatus.className = `ai-runtime-pill ${badge.cls}`;
+    syncQuickModelBar();
   };
 
   let closeModalFn = () => {};
@@ -271,6 +345,13 @@ export async function openAiStudioModal(app, initialOpts = {}) {
         if (!promptText) return toast('Describe what you want to generate first', 'error');
         busy = true;
         genBtn.disabled = true;
+        const activeBadge = probe?.resolvedProvider === 'gemini-byok' ? (probe.config?.geminiModel || 'gemini-4-carbon') : (probe?.resolvedProvider || 'AI');
+        const prog = startScreenProgress({
+          title: `✨ Generating ${targetType} UI…`,
+          detail: 'Compiling design prompt & theme tokens…',
+          badge: activeBadge,
+          initialPct: 10
+        });
         try {
           const isEditingOpen = (genMode === 'refine' || genMode === 'append') && openDoc;
           const effType = isEditingOpen ? openType : targetType;
@@ -284,14 +365,21 @@ export async function openAiStudioModal(app, initialOpts = {}) {
             libraryCatalog: state.library || {}
           });
 
-          setBanner('Starting client-side AI generation…', 'busy');
+          setBanner('Starting client-side AI generation…', 'busy', 18);
+          prog.update({ detail: 'Waiting for AI reasoning & layout synthesis…', pct: 22 });
           const res = await generateWithClientAi({
             systemPrompt,
             userPrompt,
             schema,
-            onStatus: msg => setBanner(msg, 'busy')
+            signal: prog.signal,
+            onStatus: (msg, pct) => {
+              prog.update({ detail: msg, ...(typeof pct === 'number' ? { pct } : {}) });
+              setBanner(msg, 'busy', prog.pct);
+            }
           });
 
+          prog.update({ detail: 'Sanitizing SVG geometry & resolving library instances…', pct: 90, badge: res.model });
+          setBanner('Sanitizing SVG geometry & resolving library instances…', 'busy', 90);
           const clean = sanitizeGeneratedDesign(res.data, {
             targetType: effType,
             width,
@@ -301,17 +389,20 @@ export async function openAiStudioModal(app, initialOpts = {}) {
           if (!clean.nodes.length) throw new Error('AI returned 0 drawable nodes. Try refining your prompt or switching models.');
 
           if (isEditingOpen) {
+            prog.update({ detail: `Updating "${openDoc.name}" on canvas…`, pct: 96 });
             const mergedNodes = genMode === 'append'
               ? [...(openDoc.nodes || []), ...clean.nodes].map((n, idx) => ({ ...n, ord: idx }))
               : clean.nodes;
             await api.replaceNodes(openType, openDoc.id, mergedNodes);
             await app.designer.reload(false);
             app.designer.fit();
-            setBanner(`Updated "${openDoc.name}" (${clean.nodes.length} AI nodes via ${res.provider}/${res.model})`, 'ok');
+            prog.complete(`✓ Updated "${openDoc.name}" (${clean.nodes.length} nodes)`);
+            setBanner(`Updated "${openDoc.name}" (${clean.nodes.length} AI nodes via ${res.provider}/${res.model})`, 'ok', 100);
             toast(`✨ Updated "${openDoc.name}" with ${clean.nodes.length} AI nodes`, 'ok');
             closeModalFn();
           } else {
-            setBanner(`Saving new ${effType} "${clean.name}" to project…`, 'busy');
+            prog.update({ detail: `Saving new ${effType} "${clean.name}" to project…`, pct: 95 });
+            setBanner(`Saving new ${effType} "${clean.name}" to project…`, 'busy', 95);
             const created = await api.createDesign(effType, {
               name: clean.name,
               label: clean.label,
@@ -331,10 +422,12 @@ export async function openAiStudioModal(app, initialOpts = {}) {
             rememberName(effType, created.id, created.name);
             await reloadLibrary({ silent: true });
             await app.openDesign(effType, created.id);
+            prog.complete(`✓ Created ${effType} "${created.name}" (${clean.nodes.length} nodes)`);
             toast(`✨ Created ${effType} "${created.name}" (${clean.nodes.length} nodes via ${res.model})`, 'ok');
             closeModalFn();
           }
         } catch (err) {
+          prog.fail(err.message);
           setBanner(err.message, 'error');
           toast(err.message, 'error');
         } finally {
@@ -425,6 +518,13 @@ export async function openAiStudioModal(app, initialOpts = {}) {
         if (busy) return;
         busy = true;
         runBtn.disabled = true;
+        const activeBadge = probe?.resolvedProvider === 'gemini-byok' ? (probe.config?.geminiModel || 'gemini-4-carbon') : (probe?.resolvedProvider || 'AI');
+        const prog = startScreenProgress({
+          title: fcMode === 'design-screens' ? '🎨 AI-Designing FlowChart Screens…' : '🔀 AI Building FlowChart…',
+          detail: 'Preparing architecture specification…',
+          badge: activeBadge,
+          initialPct: 8
+        });
         try {
           if (fcMode === 'design-screens') {
             if (!openFc) throw new Error('Open a FlowChart first.');
@@ -433,17 +533,29 @@ export async function openAiStudioModal(app, initialOpts = {}) {
               : screenNodes.filter(n => n.nodeKey === targetScreenSel.value);
             if (!targets.length) throw new Error('This FlowChart has no Screen nodes yet.');
 
+            prog.update({ totalSteps: targets.length, step: 1, pct: 10 });
             let lastScreenId = null;
             let built = 0;
             for (const sn of targets) {
+              prog.update({
+                step: built + 1,
+                totalSteps: targets.length,
+                pct: Math.round((built / targets.length) * 90) + 8,
+                detail: `Designing visual UI for "${sn.title}" (${built + 1} of ${targets.length})…`
+              });
               const r = await generateVisualScreenForFlowchartNode(app, openFc, sn, {
                 extraPrompt: promptIn.value.trim(),
-                onStatus: msg => setBanner(msg, 'busy')
+                signal: prog.signal,
+                onStatus: msg => {
+                  prog.update({ detail: msg });
+                  setBanner(msg, 'busy', prog.pct);
+                }
               });
               lastScreenId = r.screenId;
               built += 1;
             }
             await reloadLibrary({ silent: true });
+            prog.complete(`✓ Designed ${built} visual Screen(s) from "${openFc.name}"`);
             toast(`✨ AI-designed ${built} visual Screen(s) from FlowChart "${openFc.name}"`, 'ok');
             if (built === 1 && lastScreenId) {
               await app.openDesign('screen', lastScreenId);
@@ -463,14 +575,20 @@ export async function openAiStudioModal(app, initialOpts = {}) {
             focusNodeKey: selectedNodeKey || null
           });
 
-          setBanner('Generating Conceptual FlowChart with client-side AI…', 'busy');
+          setBanner('Generating Conceptual FlowChart with client-side AI…', 'busy', 20);
+          prog.update({ detail: 'Synthesizing Screens, Backend Steps, Decisions & Role Variants…', pct: 20 });
           const res = await generateWithClientAi({
             systemPrompt,
             userPrompt,
             schema,
-            onStatus: msg => setBanner(msg, 'busy')
+            signal: prog.signal,
+            onStatus: (msg, pct) => {
+              prog.update({ detail: msg, ...(typeof pct === 'number' ? { pct } : {}) });
+              setBanner(msg, 'busy', prog.pct);
+            }
           });
 
+          prog.update({ detail: 'Running DAG layout & saving FlowChart…', pct: 92, badge: res.model });
           if (fcMode === 'expand' && openFc) {
             const clean = sanitizeGeneratedFlowchart(res.data, {
               existingNodes: openFc.nodes || [],
@@ -483,6 +601,7 @@ export async function openAiStudioModal(app, initialOpts = {}) {
             });
             emit('flowcharts:changed');
             await app.openFlowchart(updated.id);
+            prog.complete(`✓ Added ${clean.addedNodesCount} node(s) & ${clean.addedEdgesCount} wire(s)`);
             toast(`✨ Added ${clean.addedNodesCount} node(s) & ${clean.addedEdgesCount} flow wire(s) to "${updated.name}"`, 'ok');
             closeModalFn();
           } else {
@@ -504,10 +623,12 @@ export async function openAiStudioModal(app, initialOpts = {}) {
             emit('flowcharts:changed');
             await reloadLibrary({ silent: true });
             await app.openFlowchart(created.id);
+            prog.complete(`✓ Created FlowChart "${created.name}" (${created.nodes.length} nodes)`);
             toast(`✨ Created FlowChart "${created.name}" (${created.nodes.length} nodes, ${created.edges.length} wires)`, 'ok');
             closeModalFn();
           }
         } catch (err) {
+          prog.fail(err.message);
           setBanner(err.message, 'error');
           toast(err.message, 'error');
         } finally {
@@ -565,9 +686,29 @@ export async function openAiStudioModal(app, initialOpts = {}) {
       autocomplete: 'off',
       dataset: { aiField: 'gemini-key' }
     });
-    const gemModelSel = h('select', { dataset: { aiField: 'gemini-model' } },
-      GEMINI_MODELS.map(m => h('option', { value: m.id, selected: m.id === cfg.geminiModel }, m.label))
+    const mergedGemModels = mergeGeminiModels(cfg.discoveredGeminiModels || []);
+    const gemModelSel = h('select', { dataset: { aiField: 'gemini-model' } });
+    const initialCustom = populateGeminiSelect(gemModelSel, mergedGemModels, cfg.geminiModel || 'gemini-4-carbon', true);
+    const gemCustomModelIn = h('input', {
+      type: 'text',
+      placeholder: 'e.g. gemini-4-carbon or any new AI Studio model ID',
+      value: initialCustom ? cfg.geminiModel : '',
+      dataset: { aiField: 'gemini-custom-model' }
+    });
+    const gemCustomWrap = h('label', { class: 'field', hidden: !initialCustom },
+      h('span', {}, 'Custom / Preview Gemini Model ID'),
+      gemCustomModelIn
     );
+    gemModelSel.onchange = () => {
+      gemCustomWrap.hidden = gemModelSel.value !== '__custom__';
+      if (!gemCustomWrap.hidden) gemCustomModelIn.focus();
+    };
+    const effectiveGemModel = () => (
+      gemModelSel.value === '__custom__'
+        ? (gemCustomModelIn.value.trim() || 'gemini-4-carbon')
+        : gemModelSel.value
+    );
+
     const rememberChk = h('input', {
       type: 'checkbox',
       checked: Boolean(cfg.rememberSecrets)
@@ -577,34 +718,55 @@ export async function openAiStudioModal(app, initialOpts = {}) {
       type: 'button',
       class: 'btn sm primary',
       onclick: async () => {
+        const chosenModel = effectiveGemModel();
+        const keyTrimmed = gemKeyIn.value.trim();
         saveAiConfig({
-          geminiModel: gemModelSel.value,
+          geminiModel: chosenModel,
           rememberSecrets: rememberChk.checked,
-          ...(gemKeyIn.value.trim() && cfg.provider === 'auto' ? { provider: 'auto' } : {})
+          ...(keyTrimmed && cfg.provider === 'auto' ? { provider: 'auto' } : {})
         });
-        saveAiSecrets({ ...loadAiSecrets(), geminiApiKey: gemKeyIn.value.trim() }, rememberChk.checked);
+        saveAiSecrets({ ...loadAiSecrets(), geminiApiKey: keyTrimmed }, rememberChk.checked);
+        // Automatically sync all account-available models in the background when a key is saved
+        if (keyTrimmed) {
+          testGeminiByok({ apiKey: keyTrimmed, fetchImpl: window.fetch.bind(window) })
+            .then(r => {
+              saveAiConfig({ discoveredGeminiModels: r.modelDetails || r.models || [] });
+              populateGeminiSelect(gemModelSel, mergeGeminiModels(r.modelDetails || r.models || []), effectiveGemModel(), true);
+              refreshProbe();
+            })
+            .catch(() => {});
+        }
         await refreshProbe();
-        toast(gemKeyIn.value.trim() ? 'Gemini BYOK key saved in browser storage' : 'Gemini settings updated', 'ok');
+        toast(keyTrimmed ? `Saved Gemini BYOK key (model: ${chosenModel})` : `Gemini model set to ${chosenModel}`, 'ok');
       }
-    }, 'Save Key');
+    }, 'Save Key & Model');
 
     const testGemBtn = h('button', {
       type: 'button',
       class: 'btn sm',
       onclick: async () => {
         try {
-          setBanner('Testing Gemini API key directly against generativelanguage.googleapis.com…', 'busy');
+          setBanner('Verifying key & syncing available models from generativelanguage.googleapis.com…', 'busy');
           const r = await testGeminiByok({ apiKey: gemKeyIn.value.trim(), fetchImpl: window.fetch.bind(window) });
+          const nextModel = effectiveGemModel();
+          saveAiConfig({
+            discoveredGeminiModels: r.modelDetails || r.models || [],
+            geminiModel: nextModel,
+            rememberSecrets: rememberChk.checked
+          });
           saveAiSecrets({ ...loadAiSecrets(), geminiApiKey: gemKeyIn.value.trim() }, rememberChk.checked);
+          const refreshedList = mergeGeminiModels(r.modelDetails || r.models || []);
+          const customNow = populateGeminiSelect(gemModelSel, refreshedList, nextModel, true);
+          gemCustomWrap.hidden = !customNow;
           await refreshProbe();
-          setBanner(`✓ Gemini API connected! ${r.models.length} generateContent models available.`, 'ok');
-          toast('Gemini API key verified!', 'ok');
+          setBanner(`✓ Connected & synced ${r.models.length} generateContent models unlocked on your Google AI Studio account!`, 'ok');
+          toast(`Synced ${r.models.length} Gemini models from your account!`, 'ok');
         } catch (err) {
           setBanner(err.message, 'error');
           toast(err.message, 'error');
         }
       }
-    }, 'Test Connection');
+    }, 'Test & Sync Account Models');
 
     const clearGemBtn = h('button', {
       type: 'button',
@@ -735,16 +897,17 @@ export async function openAiStudioModal(app, initialOpts = {}) {
       // Card 1: Gemini BYOK
       h('div', { class: 'ai-provider-card' },
         h('div', { class: 'row spread' },
-          h('strong', {}, '1. Google Gemini API (BYOK — Google AI Studio)'),
+          h('strong', {}, '1. Google Gemini API (BYOK — Google AI Studio · Frontier & Preview Models)'),
           h('span', { class: `ai-mini-badge ${probe.hasGeminiKey ? 'ok' : 'muted'}` }, probe.hasGeminiKey ? '✓ Key Set (Client-Only)' : 'No Key Set')
         ),
-        h('div', { class: 'muted', style: { fontSize: '11.5px' } },
-          'Direct HTTPS call from your browser to generativelanguage.googleapis.com (x-goog-api-key header). Free-tier & pay-as-you-go keys from aistudio.google.com/apikey work immediately. Never sent to the Designer server.'
+        h('div', { class: 'muted', style: { fontSize: '11.5px', lineHeight: '1.45' } },
+          'Direct HTTPS call from your browser to generativelanguage.googleapis.com (x-goog-api-key header). Includes Gemini 4 Frontier (Carbon, Argon, Hydrogen), Gemini 3.8 Flash, Gemini 3.1 Pro Preview, and Gemini 2.5. Click "Test & Sync Account Models" to pull every preview/tier model unlocked on your AI Studio key — or use the 🔌 Subscription MCP Bridge tab to spend your included Google AI Ultra quota via Antigravity / Gemini CLI!'
         ),
         h('div', { class: 'ai-grid-2' },
           h('label', { class: 'field' }, h('span', {}, 'Gemini API Key'), gemKeyIn),
-          h('label', { class: 'field' }, h('span', {}, 'Gemini Model'), gemModelSel)
+          h('label', { class: 'field' }, h('span', {}, 'Gemini Model (Frontier / Flash / Synced)'), gemModelSel)
         ),
+        gemCustomWrap,
         h('div', { class: 'row spread' },
           h('label', { class: 'row', style: { gap: '6px', fontSize: '12px', cursor: 'pointer' } },
             rememberChk, 'Remember key in this browser (unchecked = session tab only)'
@@ -865,6 +1028,7 @@ export async function openAiStudioModal(app, initialOpts = {}) {
     const badge = providerBadgeLabel(probe);
     headerStatus.textContent = badge.text;
     headerStatus.className = `ai-runtime-pill ${badge.cls}`;
+    syncQuickModelBar();
 
     clear(tabBar);
     for (const [id, label] of TABS) {

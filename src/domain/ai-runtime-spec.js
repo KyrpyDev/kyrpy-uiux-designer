@@ -55,11 +55,44 @@ export const AI_PROVIDERS = [
 ];
 
 export const GEMINI_MODELS = [
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Fast & High Quality — Recommended)' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (Best Complex Layout & Architecture)' },
-  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (Ultra Fast / High Quota)' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+  // Gemini 4 Frontier Series — Best reasoning, architecture & full-stack UI generation
+  { id: 'gemini-4-carbon', tier: 'Gemini 4 Frontier (Best)', label: 'Gemini 4 Carbon (★ Best Flagship Default — Deepest Architecture & Full-Stack Reasoning)' },
+  { id: 'gemini-4-argon', tier: 'Gemini 4 Frontier (Best)', label: 'Gemini 4 Argon (Frontier Engineering — Fast Heavyweight UI & Code)' },
+  { id: 'gemini-4-hydrogen', tier: 'Gemini 4 Frontier (Best)', label: 'Gemini 4 Hydrogen (1M Context Agentic — Rapid Multi-Step Workflows)' },
+  // Gemini 3.x Pro, Flash & Lite Series
+  { id: 'gemini-3.8-flash', tier: 'Gemini 3.x Series', label: 'Gemini 3.8 Flash (High-Speed 1M Reasoning Workhorse)' },
+  { id: 'gemini-3.7-flash', tier: 'Gemini 3.x Series', label: 'Gemini 3.7 Flash' },
+  { id: 'gemini-3.6-flash', tier: 'Gemini 3.x Series', label: 'Gemini 3.6 Flash' },
+  { id: 'gemini-3.5-flash', tier: 'Gemini 3.x Series', label: 'Gemini 3.5 Flash' },
+  { id: 'gemini-3.5-flash-lite', tier: 'Gemini 3.x Series', label: 'Gemini 3.5 Flash-Lite (Ultra-Fast / High Free-Tier Quota)' },
+  { id: 'gemini-3.1-pro-preview', tier: 'Gemini 3.x Series', label: 'Gemini 3.1 Pro Preview (Advanced Multimodal & Complex Layout)' },
+  { id: 'gemini-3.1-pro-preview-customtools', tier: 'Gemini 3.x Series', label: 'Gemini 3.1 Pro CustomTools Preview' },
+  { id: 'gemini-3.1-flash-lite', tier: 'Gemini 3.x Series', label: 'Gemini 3.1 Flash-Lite' },
+  // Gemini 2.5 & 2.0 Series
+  { id: 'gemini-2.5-pro', tier: 'Gemini 2.5 & 2.0 Series', label: 'Gemini 2.5 Pro (Complex Layout & Architecture)' },
+  { id: 'gemini-2.5-flash', tier: 'Gemini 2.5 & 2.0 Series', label: 'Gemini 2.5 Flash (Balanced Speed & Free Tier)' },
+  { id: 'gemini-2.5-flash-lite', tier: 'Gemini 2.5 & 2.0 Series', label: 'Gemini 2.5 Flash-Lite' },
+  { id: 'gemini-2.0-flash', tier: 'Gemini 2.5 & 2.0 Series', label: 'Gemini 2.0 Flash' },
+  { id: 'gemini-2.0-flash-lite', tier: 'Gemini 2.5 & 2.0 Series', label: 'Gemini 2.0 Flash-Lite' },
+  // Rolling Latest Aliases
+  { id: 'gemini-pro-latest', tier: 'Rolling Latest Aliases', label: 'gemini-pro-latest (Auto-Tracks Latest Pro)' },
+  { id: 'gemini-flash-latest', tier: 'Rolling Latest Aliases', label: 'gemini-flash-latest (Auto-Tracks Latest Flash)' },
+  { id: 'gemini-flash-lite-latest', tier: 'Rolling Latest Aliases', label: 'gemini-flash-lite-latest (Auto-Tracks Latest Flash-Lite)' }
 ];
+
+/** Merges built-in `GEMINI_MODELS` with live models discovered from the user's Google AI Studio account (`GET /v1beta/models`). */
+export function mergeGeminiModels(discovered = []) {
+  const byId = new Map(GEMINI_MODELS.map(m => [m.id, { ...m }]));
+  for (const raw of (Array.isArray(discovered) ? discovered : [])) {
+    const id = String((typeof raw === 'string' ? raw : raw?.id) || '').replace(/^models\//, '').trim();
+    if (!id || byId.has(id)) continue;
+    // Skip pure embedding / imagen / veo / aqa non-JSON-chat models if any slipped in
+    if (/^(text-embedding|embedding|aqa|imagen|veo)/i.test(id)) continue;
+    const display = typeof raw === 'object' && raw?.displayName ? `${raw.displayName} (${id})` : `${id} (Synced from AI Studio)`;
+    byId.set(id, { id, tier: 'Synced from Your AI Studio Account', label: display });
+  }
+  return [...byId.values()];
+}
 
 export const WEBLLM_MODELS = [
   { id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC', label: 'Qwen 2.5 3B Instruct (Fast WebGPU ~1.9 GB)' },

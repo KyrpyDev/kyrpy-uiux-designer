@@ -849,7 +849,9 @@ export class Designer {
     const kids = [
       this.typeSwitch(),
       this.titleField(),
-      h('span', { class: 'sep-v' }), ...toolGroups, h('span', { class: 'sep-v' }),
+      h('span', { class: 'sep-v' }), ...toolGroups,
+      ...(this.type === 'element' && !this.opts.testRunner ? [this.formElementsMenu()] : []),
+      h('span', { class: 'sep-v' }),
       this.toolMenu('undo', 'Edit: undo, redo, duplicate, delete, order', [
         ['undo', 'Undo (Ctrl+Z)', () => this.undo()], ['redo', 'Redo (Ctrl+Y)', () => this.redo()],
         ['copy', 'Duplicate (Ctrl+D)', () => this.duplicateSelected()], ['trash', 'Delete (Del)', () => this.deleteSelected()],
@@ -2574,6 +2576,95 @@ export class Designer {
     if (!d?.trim()) return;
     const glyph = this.isGlyph;
     await this.addNode({ tag: 'path', name: this.uniqueName('path'), attrs: { d: d.trim(), ...(glyph ? {} : { fill: 'none', stroke: '{{accent}}', 'stroke-width': '{{sw}}', 'stroke-linecap': 'round', transform: `translate(${p.x} ${p.y})` }) } });
+    this.setTool('select');
+  }
+
+  /** Toolbar dropdown menu for adding form elements into an Element design. */
+  formElementsMenu() {
+    const btn = this.toolMenu('@☐', 'Form elements: add input, textarea, select, checkbox, radio, toggle, submit button', [
+      ['@▭', 'Text input', () => this.addFormElement('input'), 'Add a labeled text input field'],
+      ['@▤', 'Textarea', () => this.addFormElement('textarea'), 'Add a multi-line textarea field'],
+      ['@▾', 'Select / Dropdown', () => this.addFormElement('select'), 'Add a select dropdown field'],
+      ['@☑', 'Checkbox', () => this.addFormElement('checkbox'), 'Add a checkbox with label'],
+      ['@◉', 'Radio button', () => this.addFormElement('radio'), 'Add a radio button with label'],
+      ['@⏻', 'Toggle switch', () => this.addFormElement('toggle'), 'Add a toggle switch with label'],
+      ['@▣', 'Submit button', () => this.addFormElement('submit'), 'Add a primary submit button']
+    ]);
+    btn.dataset.act = 'form-elements-menu';
+    return btn;
+  }
+
+  /** Adds a composite form element (grouped under a <g> node) at the viewport center. */
+  async addFormElement(kind) {
+    if (this.doc?.locked) return;
+    const specs = {
+      input: {
+        w: 280, h: 70,
+        nodes: (x, y) => [
+          { tag: 'text', kind: 'text', text: 'LABEL', name: this.uniqueName('label'), attrs: { x: x + 4, y: y + 12, 'font-size': 11, 'font-weight': 700, fill: '{{muted}}' } },
+          { tag: 'rect', kind: 'rect', role: 'field', name: this.uniqueName('field'), attrs: { x, y: y + 20, width: 280, height: 48, rx: 12, fill: '{{surface}}', stroke: '{{border}}', 'stroke-width': 1.5 } },
+          { tag: 'text', kind: 'text', text: 'Enter value...', name: this.uniqueName('placeholder'), attrs: { x: x + 16, y: y + 50, 'font-size': 14, fill: '{{muted}}' } }
+        ]
+      },
+      textarea: {
+        w: 280, h: 120,
+        nodes: (x, y) => [
+          { tag: 'rect', kind: 'rect', role: 'field', name: this.uniqueName('textarea'), attrs: { x, y, width: 280, height: 120, rx: 12, fill: '{{surface}}', stroke: '{{border}}', 'stroke-width': 1.5 } },
+          { tag: 'text', kind: 'text', text: 'Write a comment...', name: this.uniqueName('placeholder'), attrs: { x: x + 16, y: y + 30, 'font-size': 14, fill: '{{muted}}' } }
+        ]
+      },
+      select: {
+        w: 280, h: 48,
+        nodes: (x, y) => [
+          { tag: 'rect', kind: 'rect', role: 'field', name: this.uniqueName('select'), attrs: { x, y, width: 280, height: 48, rx: 12, fill: '{{surface}}', stroke: '{{border}}', 'stroke-width': 1.5 } },
+          { tag: 'text', kind: 'text', text: 'Choose an option', name: this.uniqueName('value'), attrs: { x: x + 16, y: y + 30, 'font-size': 14, fill: '{{text}}' } },
+          { tag: 'path', name: this.uniqueName('chevron'), attrs: { d: `M${x + 248} ${y + 21}l6 6 6-6`, fill: 'none', stroke: '{{muted}}', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } }
+        ]
+      },
+      checkbox: {
+        w: 200, h: 28,
+        nodes: (x, y) => [
+          { tag: 'rect', kind: 'rect', role: 'field', name: this.uniqueName('box'), attrs: { x: x + 2, y: y + 2, width: 24, height: 24, rx: 7, fill: '{{surface}}', stroke: '{{border}}', 'stroke-width': 1.5 } },
+          { tag: 'text', kind: 'text', text: 'Checkbox label', name: this.uniqueName('label'), attrs: { x: x + 38, y: y + 20, 'font-size': 14, fill: '{{text}}' } }
+        ]
+      },
+      radio: {
+        w: 200, h: 28,
+        nodes: (x, y) => [
+          { tag: 'circle', kind: 'circle', role: 'field', name: this.uniqueName('ring'), attrs: { cx: x + 14, cy: y + 14, r: 11, fill: '{{surface}}', stroke: '{{border}}', 'stroke-width': 1.5 } },
+          { tag: 'circle', kind: 'circle', name: this.uniqueName('dot'), attrs: { cx: x + 14, cy: y + 14, r: 5, fill: '{{accent}}' } },
+          { tag: 'text', kind: 'text', text: 'Radio option', name: this.uniqueName('label'), attrs: { x: x + 38, y: y + 20, 'font-size': 14, fill: '{{text}}' } }
+        ]
+      },
+      toggle: {
+        w: 200, h: 28,
+        nodes: (x, y) => [
+          { tag: 'rect', kind: 'rect', role: 'field', name: this.uniqueName('track'), attrs: { x, y: y + 2, width: 44, height: 24, rx: 12, fill: '{{accent}}' } },
+          { tag: 'circle', kind: 'circle', name: this.uniqueName('thumb'), attrs: { cx: x + 32, cy: y + 14, r: 9, fill: '{{onAccent}}' } },
+          { tag: 'text', kind: 'text', text: 'Toggle label', name: this.uniqueName('label'), attrs: { x: x + 56, y: y + 20, 'font-size': 14, fill: '{{text}}' } }
+        ]
+      },
+      submit: {
+        w: 280, h: 48,
+        nodes: (x, y) => [
+          { tag: 'rect', kind: 'rect', name: this.uniqueName('submit'), attrs: { x, y, width: 280, height: 48, rx: 14, fill: '{{accent}}' } },
+          { tag: 'text', kind: 'text', text: 'Submit', name: this.uniqueName('submit-label'), attrs: { x: x + 140, y: y + 30, 'font-size': 15, 'font-weight': 700, 'text-anchor': 'middle', fill: '{{onAccent}}' } }
+        ]
+      }
+    };
+    const spec = specs[kind];
+    if (!spec) return;
+    const r = this.viewport?.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+    const c = r.width > 0 && r.height > 0
+      ? this.worldPoint({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
+      : { x: (this.doc?.width || 320) / 2, y: (this.doc?.height || 240) / 2 };
+    const q = this.snapPoint({ x: c.x - spec.w / 2, y: c.y - spec.h / 2 });
+    const group = await this.addNode({ tag: 'g', name: this.uniqueName(kind), attrs: {} }, { select: false });
+    if (!group) return;
+    for (const child of spec.nodes(q.x, q.y)) {
+      await this.addNode({ ...child, parentId: group.id }, { select: false });
+    }
+    this.select([group.id]);
     this.setTool('select');
   }
 

@@ -1631,3 +1631,123 @@ body.dz-hide-pathbar .dz-pathbar, body.dz-hide-drawbar .dz-bar:not(.dz-pathbar) 
   background: rgba(34, 197, 94, 0.12);
   color: #4ade80;
 }
+
+/* ================= On-Screen Progress Bar HUD & Inline Progress ================= */
+.ai-inline-track {
+  width: 100%;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.ai-inline-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+  transition: width 0.25s ease;
+}
+
+.sp-hud {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12000;
+  width: min(560px, calc(100vw - 28px));
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(13, 20, 34, 0.94);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(168, 85, 247, 0.2);
+  backdrop-filter: blur(12px);
+  color: #e8f1ff;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.sp-hud.state-done {
+  border-color: rgba(34, 197, 94, 0.65);
+}
+.sp-hud.state-error {
+  border-color: rgba(239, 68, 68, 0.65);
+}
+.sp-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sp-left, .sp-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sp-title {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.sp-badge, .sp-step {
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.18);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #e9d5ff;
+}
+.sp-pct {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+.sp-time {
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+.sp-bar-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.sp-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2e9bff, #8b5cf6, #ec4899);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.65);
+  transition: width 0.22s ease;
+}
+.sp-hud.state-done .sp-bar-fill {
+  background: linear-gradient(90deg, #22c55e, #4ade80);
+}
+.sp-hud.state-error .sp-bar-fill {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+.sp-detail {
+  font-size: 11.5px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(125, 211, 252, 0.25);
+  border-top-color: #38bdf8;
+  animation: sp-spin 0.8s linear infinite;
+}
+.sp-hud.state-done .sp-spinner, .sp-hud.state-error .sp-spinner {
+  display: none;
+}
+.sp-cancel-btn {
+  padding: 2px 8px !important;
+  font-size: 11px !important;
+}
+@keyframes sp-spin {
+  to { transform: rotate(360deg); }
+}

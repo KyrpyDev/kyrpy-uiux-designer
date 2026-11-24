@@ -323,7 +323,11 @@ export class WorkflowService {
     if (!start) throw new NotFoundError('screen', screenId);
     const recs = new Map([[start.id, start]]);
     const rec = sid => { if (!recs.has(sid)) recs.set(sid, this.screens.get(sid) || null); return recs.get(sid); };
-    const { order, level, routes } = crawlScreenRoutes(start.id, sid => this.screenRoutes(sid), { exists: sid => Boolean(rec(sid)) });
+    const sameScope = sid => {
+      const s = rec(sid);
+      return Boolean(s && !s.trashedAt && (start.projectId == null || s.projectId == null || Number(s.projectId) === Number(start.projectId)));
+    };
+    const { order, level, routes } = crawlScreenRoutes(start.id, sid => this.screenRoutes(sid), { exists: sameScope });
     return this.transaction(() => {
       const placed = new Map(this.workflows.nodes(w.id).map(n => [n.screenId, n]));
       const origin = placed.get(start.id) || { x: Number(x) || 0, y: Number(y) || 0 };

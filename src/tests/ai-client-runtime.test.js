@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
+  GEMINI_MODELS,
+  mergeGeminiModels,
   DESIGN_RESPONSE_SCHEMA,
   FLOWCHART_RESPONSE_SCHEMA,
   extractJsonObject,
@@ -14,6 +16,7 @@ import {
 } from '../domain/ai-runtime-spec.js';
 
 import {
+  DEFAULT_AI_CONFIG,
   toGeminiResponseSchema,
   callGeminiByok,
   testGeminiByok,
@@ -167,11 +170,30 @@ describe('Client-Side Multi-Provider AI Execution Engine', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] })
+          json: async () => ({
+            models: [
+              { name: 'models/gemini-4-carbon', displayName: 'Gemini 4 Carbon', supportedGenerationMethods: ['generateContent'] },
+              { name: 'models/gemini-4-ultra-exp', displayName: 'Gemini 4 Ultra Exp', supportedGenerationMethods: ['generateContent'] },
+              { name: 'models/text-embedding-004', displayName: 'Embedding', supportedGenerationMethods: ['embedContent'] }
+            ]
+          })
         };
       }
     });
-    assert.deepEqual(keyProbe.models, ['gemini-2.5-flash']);
+    assert.deepEqual(keyProbe.models, ['gemini-4-carbon', 'gemini-4-ultra-exp']);
+    const merged = mergeGeminiModels(keyProbe.modelDetails);
+    assert.equal(DEFAULT_AI_CONFIG.geminiModel, 'gemini-4-carbon', 'best flagship model must be default');
+    assert.equal(GEMINI_MODELS[0].id, 'gemini-4-carbon');
+    for (const id of [
+      'gemini-4-carbon', 'gemini-4-argon', 'gemini-4-hydrogen',
+      'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
+      'gemini-3.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.1-pro-preview-customtools', 'gemini-3.1-flash-lite',
+      'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite',
+      'gemini-pro-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest'
+    ]) {
+      assert.ok(GEMINI_MODELS.some(m => m.id === id), `GEMINI_MODELS must include ${id}`);
+    }
+    assert.ok(merged.some(m => m.id === 'gemini-4-ultra-exp' && m.tier === 'Synced from Your AI Studio Account'));
   });
 
   it('supports Chrome Built-in AI (window.LanguageModel — Gemini Nano) with session cleanup', async () => {
@@ -286,10 +308,15 @@ describe('Client-Side Multi-Provider AI Execution Engine', () => {
 
     assert.match(mainJs, /openAiStudioModal/);
     assert.match(mainJs, /topbar-ai-btn/);
+    assert.match(mainJs, /html-progress/);
     assert.match(designerJs, /dz-ai-studio/);
     assert.match(fcJs, /fc-ai-studio/);
     assert.match(fcJs, /fc-ai-screen-btn/);
     assert.match(studioJs, /Subscription MCP Bridge/);
+    assert.match(studioJs, /startScreenProgress/);
+    const progJs = readWeb('js/components/screen-progress.js');
+    assert.match(progJs, /ud-screen-progress/);
+    assert.match(progJs, /progressbar/);
 
     // Verify every named import from state.js in ai-studio-modal.js actually exists in state.js
     const stateSrc = readWeb('js/state.js');
